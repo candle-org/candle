@@ -262,7 +262,7 @@ def buffer_contents(metal_buffer):
     if _HAS_PYOBJC:
         # pyobjc wraps contents() as objc.varlist, not a raw pointer.
         # Use ctypes objc_msgSend on the underlying ObjC id to get void*.
-        import objc
+        import objc  # pylint: disable=import-error
         _load_objc_libs()
         buf_id = objc.pyobjc_id(metal_buffer)
         sel = _libobjc.sel_registerName(b"contents")
