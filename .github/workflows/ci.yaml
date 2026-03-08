@@ -73,6 +73,9 @@ jobs:
     - name: Install candle
       run: |
         pip install -e .
+    - name: Verify MPS availability
+      run: |
+        python -c "from candle._backends.mps.runtime import is_available; print('MPS available:', is_available())"
     - name: Run MPS tests
       run: |
         pytest tests/mps/ -v --tb=short
