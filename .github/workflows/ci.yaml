@@ -34,7 +34,7 @@ jobs:
       run: |
         pylint --jobs=1 src/candle --rcfile=.github/pylint.conf
 
-  test:
+  test-cpu:
     needs: pylint-check
     runs-on: ubuntu-latest
     strategy:
@@ -53,17 +53,60 @@ jobs:
     - name: Install candle
       run: |
         pip install -e .
-    - name: Run tests
+    - name: Run CPU tests
       run: |
-        cd tests
-        pytest . -v --tb=short \
-          --ignore=test_ops_npu.py \
-          --ignore=test_ddp.py \
-          --ignore=test_ddp_cpu.py \
-          --ignore=test_ddp_builtin_hooks.py \
-          --ignore=test_ddp_comm_hook.py \
-          --ignore=test_ddp_unused_params.py \
-          --ignore=test_ddp_static_graph.py \
-          --ignore=test_ddp_bucket_view.py \
-          --ignore=test_gloo_ddp.py \
-          --ignore=test_hccl_all_to_all_multicard.py
+        pytest tests/cpu/ tests/contract/ -v --tb=short
+
+  # Future runners (uncomment and configure when hardware is available):
+  #
+  # test-npu:
+  #   needs: pylint-check
+  #   runs-on: [self-hosted, ascend]
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   - name: Install dependencies
+  #     run: |
+  #       pip install -r requirements/requirements-test.txt
+  #   - name: Install candle
+  #     run: pip install -e .
+  #   - name: Run NPU tests
+  #     run: pytest tests/npu/ -v --tb=short
+  #
+  # test-mps:
+  #   needs: pylint-check
+  #   runs-on: [self-hosted, macos, apple-silicon]
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   - name: Install dependencies
+  #     run: |
+  #       pip install -r requirements/requirements-test.txt
+  #   - name: Install candle
+  #     run: pip install -e .
+  #   - name: Run MPS tests
+  #     run: pytest tests/mps/ -v --tb=short
+  #
+  # test-cuda:
+  #   needs: pylint-check
+  #   runs-on: [self-hosted, cuda]
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   - name: Install dependencies
+  #     run: |
+  #       pip install -r requirements/requirements-test.txt
+  #   - name: Install candle
+  #     run: pip install -e .
+  #   - name: Run CUDA tests
+  #     run: pytest tests/cuda/ -v --tb=short
+  #
+  # test-distributed:
+  #   needs: pylint-check
+  #   runs-on: [self-hosted, ascend, multicard]
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   - name: Install dependencies
+  #     run: |
+  #       pip install -r requirements/requirements-test.txt
+  #   - name: Install candle
+  #     run: pip install -e .
+  #   - name: Run distributed tests
+  #     run: pytest tests/distributed/ -v --tb=short
