@@ -280,8 +280,8 @@ def make_tensor(
 
         # Generate random floats in [low, high)
         result = rand(*shape, dtype=dtype, device=device)
-        result = _to_tensor(result.numpy() * (high - low) + low)
-        result = tensor(result.numpy(), dtype=dtype, device=device)
+        np_result = np.asarray(result.numpy())
+        result = tensor(np_result * (high - low) + low, dtype=dtype, device=device)
 
         if exclude_zero:
             np_data = result.numpy()
