@@ -853,6 +853,11 @@ def unfold(a, dimension, size, step):
 
 
 def squeeze(a, dim=None):
+    if dim is None:
+        # Squeeze all size-1 dimensions without going through schema validation
+        # which rejects None. The kernel in common/view.py handles dim=None.
+        from ._backends.common.view import squeeze as _squeeze_impl
+        return _squeeze_impl(a, dim)
     return dispatch("squeeze", a.device.type, a, dim)
 
 

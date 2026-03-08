@@ -552,6 +552,8 @@ def _pow_backward(grad, a, b, saved_a, saved_b, keyset):
     with _grad_context(keyset):
         grad_a = None
         grad_b = None
+        if not hasattr(saved_b, "requires_grad"):
+            saved_b = _scalar_tensor_like(saved_a, saved_b)
         if getattr(a, "requires_grad", False):
             ones = saved_a._ones_like()
             b_minus_1 = redispatch("add", keyset, saved_b, redispatch("neg", keyset, ones))

@@ -57,6 +57,26 @@ jobs:
       run: |
         pytest tests/cpu/ tests/contract/ -v --tb=short
 
+  test-mps:
+    needs: pylint-check
+    runs-on: macos-14
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements/requirements-test-mps.txt
+    - name: Install candle
+      run: |
+        pip install -e .
+    - name: Run MPS tests
+      run: |
+        pytest tests/mps/ -v --tb=short
+
   # Future runners (uncomment and configure when hardware is available):
   #
   # test-npu:
@@ -71,19 +91,6 @@ jobs:
   #     run: pip install -e .
   #   - name: Run NPU tests
   #     run: pytest tests/npu/ -v --tb=short
-  #
-  # test-mps:
-  #   needs: pylint-check
-  #   runs-on: [self-hosted, macos, apple-silicon]
-  #   steps:
-  #   - uses: actions/checkout@v4
-  #   - name: Install dependencies
-  #     run: |
-  #       pip install -r requirements/requirements-test.txt
-  #   - name: Install candle
-  #     run: pip install -e .
-  #   - name: Run MPS tests
-  #     run: pytest tests/mps/ -v --tb=short
   #
   # test-cuda:
   #   needs: pylint-check

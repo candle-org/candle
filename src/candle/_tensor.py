@@ -878,6 +878,11 @@ class Tensor:
             device = "npu"
         return self.to(device, non_blocking=non_blocking, memory_format=memory_format)
 
+    def mps(self, memory_format=None):
+        if memory_format is None:
+            return self.to("mps")
+        return self.to("mps", memory_format=memory_format)
+
     def cuda(self, device=None, non_blocking=False, memory_format=None):
         if device is None:
             target = "cuda"

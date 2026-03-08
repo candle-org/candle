@@ -102,12 +102,17 @@ def _from_numpy(arr, dtype, device):
 
 
 def add(a, b):
+    # For commutative add, ensure the larger tensor is 'a' so the GPU
+    # dispatch allocates the correct output size and shape.
+    if isinstance(b, Tensor) and _can_use_gpu(b):
+        if not _can_use_gpu(a) or a.numel() < b.numel():
+            a, b = b, a
     if _can_use_gpu(a):
         d = _get_dispatcher()
         sfx = _kernel_suffix(a.dtype)
         numel = a.numel()
         out_buf = _alloc_output_buf(numel, a.dtype)
-        if isinstance(b, Tensor) and _can_use_gpu(b):
+        if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape:
             d.dispatch_binary(f"add_{sfx}", _metal_buf(a), _metal_buf(b),
                               out_buf, numel)
         else:
@@ -122,12 +127,17 @@ def add(a, b):
 
 
 def mul(a, b):
+    # For commutative mul, ensure the larger tensor is 'a' so the GPU
+    # dispatch allocates the correct output size and shape.
+    if isinstance(b, Tensor) and _can_use_gpu(b):
+        if not _can_use_gpu(a) or a.numel() < b.numel():
+            a, b = b, a
     if _can_use_gpu(a):
         d = _get_dispatcher()
         sfx = _kernel_suffix(a.dtype)
         numel = a.numel()
         out_buf = _alloc_output_buf(numel, a.dtype)
-        if isinstance(b, Tensor) and _can_use_gpu(b):
+        if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape:
             d.dispatch_binary(f"mul_{sfx}", _metal_buf(a), _metal_buf(b),
                               out_buf, numel)
         else:
