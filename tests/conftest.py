@@ -42,15 +42,35 @@ def _npu_device_count() -> int:
         return 0
 
 
-def _requires_multicard_npu(item: pytest.Item) -> bool:
+def _mps_available() -> bool:
+    if os.environ.get(_FORCE_CPU_ONLY_ENV) == "1":
+        return False
+    try:
+        import candle as torch
+
+        return bool(torch.mps.is_available())
+    except Exception:
+        return False
+
+
+_NPU_DIRS = (os.sep + "npu" + os.sep, os.sep + "distributed" + os.sep)
+_MPS_DIR = os.sep + "mps" + os.sep
+
+
+def _in_npu_dir(item: pytest.Item) -> bool:
+    """Test lives under tests/npu/ or tests/distributed/ (requires NPU)."""
+    fspath = str(item.fspath)
+    return any(d in fspath for d in _NPU_DIRS)
+
+
+def _in_mps_dir(item: pytest.Item) -> bool:
+    """Test lives under tests/mps/ (requires Apple MPS)."""
+    return _MPS_DIR in str(item.fspath)
+
+
+def _requires_multicard(item: pytest.Item) -> bool:
     nodeid = item.nodeid.lower()
     return any(token in nodeid for token in ("2card", "multicard"))
-
-
-def _requires_npu(item: pytest.Item) -> bool:
-    nodeid = item.nodeid.lower()
-    # Match file/function names that are NPU/HCCL/ACL specific.
-    return any(token in nodeid for token in ("npu", "hccl", "acl", "ddp", "pin_memory", "pinned"))
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -62,12 +82,17 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         skip_reason = f"Requires >=2 NPUs, found {npu_count}"
         skip_marker = pytest.mark.skip(reason=skip_reason)
         for item in items:
-            if _requires_multicard_npu(item):
+            if _requires_multicard(item):
                 item.add_marker(skip_marker)
         return
 
-    skip_reason = "NPU-only test skipped in CPU-only environment"
-    skip_marker = pytest.mark.skip(reason=skip_reason)
+    skip_npu = pytest.mark.skip(reason="NPU-only test skipped in CPU-only environment")
     for item in items:
-        if _requires_npu(item):
-            item.add_marker(skip_marker)
+        if _in_npu_dir(item):
+            item.add_marker(skip_npu)
+
+    if not _mps_available():
+        skip_mps = pytest.mark.skip(reason="MPS-only test skipped (no Apple GPU)")
+        for item in items:
+            if _in_mps_dir(item):
+                item.add_marker(skip_mps)
