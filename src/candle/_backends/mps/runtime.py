@@ -260,7 +260,15 @@ def _commit_and_wait_ctypes(cmd_buffer):
 def buffer_contents(metal_buffer):
     """Get the CPU-accessible pointer from a shared Metal buffer."""
     if _HAS_PYOBJC:
-        return int(metal_buffer.contents())
+        # pyobjc wraps contents() as objc.varlist, not a raw pointer.
+        # Use ctypes objc_msgSend on the underlying ObjC id to get void*.
+        import objc
+        _load_objc_libs()
+        buf_id = objc.pyobjc_id(metal_buffer)
+        sel = _libobjc.sel_registerName(b"contents")
+        _libobjc.objc_msgSend.restype = ctypes.c_void_p
+        _libobjc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        return int(_libobjc.objc_msgSend(buf_id, sel))
     return int(_get_buffer_contents_ctypes(metal_buffer))
 
 
