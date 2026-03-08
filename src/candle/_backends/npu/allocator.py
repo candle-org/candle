@@ -333,7 +333,7 @@ class NpuAllocator:
         try:
             runtime.synchronize_device()
         except Exception:
-            return
+            pass
 
     def _raw_free(self, ptr):
         from . import runtime as npu_runtime

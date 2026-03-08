@@ -28,6 +28,7 @@ dependencies = [
     "numpy",
     "ml_dtypes",
     "safetensors",
+    "scipy",
     "tqdm",
     "requests",
     "pillow>=10.0.0",
