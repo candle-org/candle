@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "candle"
+version = "0.1.0"
+description = "A PyTorch-compatible deep learning framework"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "candle-org"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "numpy",
+    "ml_dtypes",
+    "safetensors",
+    "tqdm",
+    "requests",
+    "pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.2.0,<9.0.0",
+    "torch",
+]
+lint = [
+    "pylint>=2.17",
+]
+all = [
+    "candle[test,lint]",
+]
+
+[project.urls]
+Homepage = "https://github.com/candle-org/candle"
+Repository = "https://github.com/candle-org/candle"
+Issues = "https://github.com/candle-org/candle/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["candle*"]
+
+[tool.setuptools.package-data]
+candle = ["*.py", "*/*.py", "*/*/*.py", "*/*/*/*.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

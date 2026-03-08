@@ -1,0 +1,6 @@
+numpy
+ml_dtypes
+safetensors
+tqdm
+requests
+pillow>=10.0.0
