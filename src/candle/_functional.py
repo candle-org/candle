@@ -172,6 +172,30 @@ def clamp(a, min_val=None, max_val=None):
     return dispatch("clamp", a.device.type, a, min_val, max_val)
 
 
+def add_(a, b):
+    return dispatch("add_", a.device.type, a, b)
+
+
+def mul_(a, b):
+    return dispatch("mul_", a.device.type, a, b)
+
+
+def relu_(a):
+    return dispatch("relu_", a.device.type, a)
+
+
+def zero_(a):
+    return dispatch("zero_", a.device.type, a)
+
+
+def clamp_(a, min=None, max=None):
+    return dispatch("clamp_", a.device.type, a, min, max)
+
+
+def copy_(a, src):
+    return dispatch("copy_", a.device.type, a, src)
+
+
 def clamp_min(a, min_val):
     return dispatch("clamp_min", a.device.type, a, min_val)
 
@@ -277,9 +301,9 @@ def true_divide(a, b):
 def mean(a, dim=None, keepdim=False, *, dtype=None, axis=None):
     if axis is not None:
         dim = axis
-    result = dispatch("mean", a.device.type, a, dim=dim, keepdim=keepdim)
     if dtype is not None:
-        result = result.to(dtype=dtype)
+        a = a.to(dtype=dtype)
+    result = dispatch("mean", a.device.type, a, dim=dim, keepdim=keepdim)
     return result
 
 

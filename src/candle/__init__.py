@@ -44,6 +44,7 @@ from ._functional import pow, log2, log10, exp2, rsqrt
 from ._functional import sign, signbit, isnan, isinf, isfinite
 from ._functional import sinh, cosh, asinh, acosh, atanh, erf, erfc, softplus
 from ._functional import clamp, clamp_min, clamp_max, relu6, hardtanh
+from ._functional import add_, mul_, relu_, zero_, clamp_, copy_
 from ._functional import min, max, amin, amax, fmin, fmax, where
 from ._functional import atan, atan2, asin, acos, lerp, addcmul, addcdiv
 from ._functional import reshape, transpose
@@ -143,10 +144,22 @@ def functionalize():
 
 
 def compile(model=None, *args, **kwargs):
+    backend = kwargs.get("backend", None)
+    mode = kwargs.get("mode", None)
+    if backend is not None or mode is not None:
+        raise NotImplementedError(
+            "compile backend selection is outside 0.1 NPU-first scope"
+        )
+    if args:
+        raise NotImplementedError(
+            "compile advanced options are outside 0.1 NPU-first scope"
+        )
     if callable(model):
         return model
+
     def decorator(fn):
         return fn
+
     return decorator
 
 
@@ -285,6 +298,12 @@ __all__ = [
     "clamp_max",
     "relu6",
     "hardtanh",
+    "add_",
+    "mul_",
+    "relu_",
+    "zero_",
+    "clamp_",
+    "copy_",
     "min",
     "max",
     "amin",

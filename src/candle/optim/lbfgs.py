@@ -143,7 +143,7 @@ class LBFGS(Optimizer):
 
         # Evaluate initial loss and gradient
         orig_params = self._gather_flat_params().copy()
-        loss = float(closure().detach().numpy())
+        loss = float(closure().detach().item())
         flat_grad = self._gather_flat_grad()
         n_eval = 1
 
@@ -171,7 +171,7 @@ class LBFGS(Optimizer):
             self._set_flat_params(current_params)
 
             prev_loss = current_loss
-            current_loss = float(closure().detach().numpy())
+            current_loss = float(closure().detach().item())
             flat_grad = self._gather_flat_grad()
             n_eval += 1
 
@@ -205,7 +205,7 @@ class LBFGS(Optimizer):
         for _ in range(max_ls):
             x_new = x0 + step_size * d
             self._set_flat_params(x_new)
-            f_new = float(closure().detach().numpy())
+            f_new = float(closure().detach().item())
             if f_new <= f0 + c1 * step_size * dg0:
                 return step_size
             step_size *= 0.5

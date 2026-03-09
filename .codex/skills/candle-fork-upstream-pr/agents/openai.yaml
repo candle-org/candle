@@ -1,0 +1,4 @@
+interface:
+  display_name: "Candle PR Flow"
+  short_description: "Enforce worktree fork-to-upstream PR workflow"
+  default_prompt: "Use $candle-fork-upstream-pr to execute this change with worktree isolation, fork push, and an upstream PR."

@@ -1,5 +1,7 @@
 from ._trace import _script_if_tracing
 
+_SCOPE_MSG = "jit scripting is outside 0.1 NPU-first scope"
+
 
 def is_tracing():
     return False
@@ -10,6 +12,8 @@ def is_scripting():
 
 
 def script(obj, optimize=None, _frames_up=0, _rcb=None, example_inputs=None):
+    if optimize is not None or example_inputs is not None:
+        raise NotImplementedError(_SCOPE_MSG)
     return obj
 
 

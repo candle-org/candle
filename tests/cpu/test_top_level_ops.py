@@ -137,6 +137,43 @@ class TestCategoryA:
         assert a[0].item() == 10.0
         assert a[2].item() == 20.0
 
+    def test_top_level_relu_inplace_exists_and_mutates(self):
+        x = torch.tensor([-1.0, 2.0])
+        out = torch.relu_(x)
+        assert out is x
+        assert x.tolist() == [0.0, 2.0]
+
+    def test_top_level_add_inplace_exists_and_mutates(self):
+        x = torch.tensor([1.0, 2.0])
+        out = torch.add_(x, torch.tensor([0.5, 1.5]))
+        assert out is x
+        assert x.tolist() == [1.5, 3.5]
+
+    def test_top_level_mul_inplace_exists_and_mutates(self):
+        x = torch.tensor([1.0, 2.0])
+        out = torch.mul_(x, torch.tensor([2.0, 3.0]))
+        assert out is x
+        assert x.tolist() == [2.0, 6.0]
+
+    def test_top_level_clamp_inplace_exists_and_mutates(self):
+        x = torch.tensor([-1.0, 0.5, 4.0])
+        out = torch.clamp_(x, min=0.0, max=1.0)
+        assert out is x
+        assert x.tolist() == [0.0, 0.5, 1.0]
+
+    def test_top_level_zero_inplace_exists_and_mutates(self):
+        x = torch.tensor([1.0, 2.0, 3.0])
+        out = torch.zero_(x)
+        assert out is x
+        assert x.tolist() == [0.0, 0.0, 0.0]
+
+    def test_top_level_copy_inplace_exists_and_mutates(self):
+        x = torch.tensor([1.0, 2.0, 3.0])
+        src = torch.tensor([4.0, 5.0, 6.0])
+        out = torch.copy_(x, src)
+        assert out is x
+        assert x.tolist() == [4.0, 5.0, 6.0]
+
 
 # ===========================================================================
 # Category B: Wrapper + Export

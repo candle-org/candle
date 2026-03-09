@@ -18,6 +18,10 @@ Candle is a lightweight deep learning framework written entirely in Python. Whil
 pip install -e .
 ```
 
+## 0.1 Support Matrix
+
+Current `0.1.x` support scope is defined in [docs/support-matrix.md](docs/support-matrix.md).
+
 ## Quick Start
 
 ```python

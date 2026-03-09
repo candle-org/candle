@@ -1100,3 +1100,116 @@ def test_clamp_inplace_max_cpu():
     y = x.clamp_(max=5)
     assert y is x
     np.testing.assert_array_equal(x.numpy(), np.array([0, 3, 5], dtype=np.int64))
+
+
+def test_add_dtype_promotion_matches_torch_cpu():
+    import torch as real_torch
+
+    a = torch.tensor([1, 2, 3], dtype=torch.int64)
+    b = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32)
+    out = torch.add(a, b)
+
+    ta = real_torch.tensor([1, 2, 3], dtype=real_torch.int64)
+    tb = real_torch.tensor([0.5, 0.5, 0.5], dtype=real_torch.float32)
+    tout = real_torch.add(ta, tb)
+
+    assert str(out.dtype) == str(tout.dtype)
+    np.testing.assert_allclose(out.numpy(), tout.numpy())
+
+
+def test_mul_dtype_promotion_matches_torch_cpu():
+    import torch as real_torch
+
+    a = torch.tensor([1, 2, 3], dtype=torch.int64)
+    b = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32)
+    out = torch.mul(a, b)
+
+    ta = real_torch.tensor([1, 2, 3], dtype=real_torch.int64)
+    tb = real_torch.tensor([0.5, 0.5, 0.5], dtype=real_torch.float32)
+    tout = real_torch.mul(ta, tb)
+
+    assert str(out.dtype) == str(tout.dtype)
+    np.testing.assert_allclose(out.numpy(), tout.numpy())
+
+
+def test_div_dtype_promotion_matches_torch_cpu():
+    import torch as real_torch
+
+    a = torch.tensor([2, 4, 6], dtype=torch.int64)
+    b = torch.tensor([2.0, 2.0, 2.0], dtype=torch.float32)
+    out = torch.div(a, b)
+
+    ta = real_torch.tensor([2, 4, 6], dtype=real_torch.int64)
+    tb = real_torch.tensor([2.0, 2.0, 2.0], dtype=real_torch.float32)
+    tout = real_torch.div(ta, tb)
+
+    assert str(out.dtype) == str(tout.dtype)
+    np.testing.assert_allclose(out.numpy(), tout.numpy())
+
+
+def test_true_divide_dtype_promotion_matches_torch_cpu():
+    import torch as real_torch
+
+    a = torch.tensor([2, 4, 6], dtype=torch.int64)
+    b = torch.tensor([2, 2, 2], dtype=torch.int32)
+    out = torch.true_divide(a, b)
+
+    ta = real_torch.tensor([2, 4, 6], dtype=real_torch.int64)
+    tb = real_torch.tensor([2, 2, 2], dtype=real_torch.int32)
+    tout = real_torch.true_divide(ta, tb)
+
+    assert str(out.dtype) == str(tout.dtype)
+    np.testing.assert_allclose(out.numpy(), tout.numpy())
+
+
+def test_add_bool_int64_promotion_matches_torch_cpu():
+    import torch as real_torch
+
+    a = torch.tensor([True, False, True], dtype=torch.bool)
+    b = torch.tensor([1, 2, 3], dtype=torch.int64)
+    out = torch.add(a, b)
+
+    ta = real_torch.tensor([True, False, True], dtype=real_torch.bool)
+    tb = real_torch.tensor([1, 2, 3], dtype=real_torch.int64)
+    tout = real_torch.add(ta, tb)
+
+    assert str(out.dtype) == str(tout.dtype)
+    np.testing.assert_allclose(out.numpy(), tout.numpy())
+
+
+def test_mean_int_without_dtype_matches_torch_cpu_error():
+    import torch as real_torch
+
+    x = torch.tensor([1, 2, 3], dtype=torch.int64)
+    with pytest.raises(RuntimeError):
+        torch.mean(x)
+
+    tx = real_torch.tensor([1, 2, 3], dtype=real_torch.int64)
+    with pytest.raises(RuntimeError):
+        real_torch.mean(tx)
+
+
+def test_mean_int_with_dtype_matches_torch_cpu():
+    import torch as real_torch
+
+    x = torch.tensor([1, 2, 3], dtype=torch.int64)
+    out = torch.mean(x, dtype=torch.float32)
+
+    tx = real_torch.tensor([1, 2, 3], dtype=real_torch.int64)
+    tout = real_torch.mean(tx, dtype=real_torch.float32)
+
+    assert str(out.dtype) == str(tout.dtype)
+    np.testing.assert_allclose(out.numpy(), tout.numpy())
+
+
+def test_sum_dtype_accumulates_in_target_dtype_matches_torch_cpu():
+    import torch as real_torch
+
+    x = torch.tensor([120, 120], dtype=torch.int8)
+    out = torch.sum(x, dtype=torch.int64)
+
+    tx = real_torch.tensor([120, 120], dtype=real_torch.int8)
+    tout = real_torch.sum(tx, dtype=real_torch.int64)
+
+    assert str(out.dtype) == str(tout.dtype)
+    assert out.item() == tout.item() == 240

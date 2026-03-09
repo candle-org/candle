@@ -2,7 +2,14 @@ import math
 import numpy as np
 
 from ..._dtype import bool as bool_dtype
+from ..._dtype import bfloat16 as bfloat16_dtype
+from ..._dtype import complex64 as complex64_dtype
+from ..._dtype import complex128 as complex128_dtype
+from ..._dtype import float16 as float16_dtype
+from ..._dtype import float32 as float32_dtype
+from ..._dtype import float64 as float64_dtype
 from ..._dtype import int64 as int64_dtype
+from ..._dtype import from_numpy_dtype
 from ..._dtype import to_numpy_dtype
 from ..._storage import typed_storage_from_numpy
 from ..._tensor import Tensor
@@ -24,23 +31,107 @@ def _from_numpy(arr, dtype, device):
     return Tensor(storage, arr.shape, stride)
 
 
+def _dtype_of(value):
+    if isinstance(value, Tensor):
+        return value.dtype
+    return from_numpy_dtype(np.asarray(value).dtype)
+
+
+def _promote_binary_dtype(dtype_a, dtype_b):
+    # Mirror torch.promote_types for common CPU arithmetic dtypes.
+    if dtype_a == dtype_b:
+        return dtype_a
+
+    if dtype_a == bool_dtype:
+        return dtype_b
+    if dtype_b == bool_dtype:
+        return dtype_a
+
+    if dtype_a in (complex64_dtype, complex128_dtype) or dtype_b in (complex64_dtype, complex128_dtype):
+        if dtype_a == complex128_dtype or dtype_b == complex128_dtype:
+            return complex128_dtype
+        return complex64_dtype
+
+    float_rank = {
+        float16_dtype: 1,
+        bfloat16_dtype: 2,
+        float32_dtype: 3,
+        float64_dtype: 4,
+    }
+    has_float = dtype_a in float_rank or dtype_b in float_rank
+    if has_float:
+        if dtype_a in float_rank and dtype_b in float_rank:
+            if float_rank[dtype_a] >= float_rank[dtype_b]:
+                return dtype_a
+            return dtype_b
+        return dtype_a if dtype_a in float_rank else dtype_b
+
+    # Integer-only promotion. Keep this minimal and torch-like for signed/common cases.
+    if not dtype_a.is_signed or not dtype_b.is_signed:
+        if dtype_a == bool_dtype:
+            return dtype_b
+        if dtype_b == bool_dtype:
+            return dtype_a
+        rank = {
+            np.dtype(np.int8): 1,
+            np.dtype(np.uint8): 1,
+            np.dtype(np.int16): 2,
+            np.dtype(np.int32): 3,
+            np.dtype(np.int64): 4,
+        }
+        np_a = to_numpy_dtype(dtype_a)
+        np_b = to_numpy_dtype(dtype_b)
+        width = max(rank.get(np.dtype(np_a), 4), rank.get(np.dtype(np_b), 4))
+        if width == 1:
+            return from_numpy_dtype(np.int16)
+        if width == 2:
+            return from_numpy_dtype(np.int16)
+        if width == 3:
+            return from_numpy_dtype(np.int32)
+        return from_numpy_dtype(np.int64)
+
+    if dtype_a.itemsize >= dtype_b.itemsize:
+        return dtype_a
+    return dtype_b
+
+
+def _promote_div_dtype(dtype_a, dtype_b):
+    promoted = _promote_binary_dtype(dtype_a, dtype_b)
+    if promoted.is_floating_point or promoted.is_complex:
+        return promoted
+    return float32_dtype
+
+
+def _binary_out_dtype(a, b, *, for_div=False):
+    dtype_a = _dtype_of(a)
+    dtype_b = _dtype_of(b)
+    if for_div:
+        return _promote_div_dtype(dtype_a, dtype_b)
+    return _promote_binary_dtype(dtype_a, dtype_b)
+
+
 def add(a, b):
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(a_np + b_np, a.dtype, a.device)
+    out_dtype = _binary_out_dtype(a, b)
+    out = np.add(a_np, b_np).astype(to_numpy_dtype(out_dtype), copy=False)
+    return _from_numpy(out, out_dtype, a.device)
 
 
 def mul(a, b):
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(a_np * b_np, a.dtype, a.device)
+    out_dtype = _binary_out_dtype(a, b)
+    out = np.multiply(a_np, b_np).astype(to_numpy_dtype(out_dtype), copy=False)
+    return _from_numpy(out, out_dtype, a.device)
 
 
 def div(a, b):
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    out = np.true_divide(a_np, b_np)
-    return _from_numpy(out.astype(to_numpy_dtype(a.dtype), copy=False), a.dtype, a.device)
+    out_dtype = _binary_out_dtype(a, b, for_div=True)
+    out = np.true_divide(a_np, b_np).astype(to_numpy_dtype(out_dtype), copy=False)
+    return _from_numpy(out, out_dtype, a.device)
 
 
 def true_divide(a, b):
@@ -70,8 +161,6 @@ def gelu(a):
 
 
 def sum_(a, dim=None, keepdim=False, dtype=None):
-    if dtype is not None:
-        raise NotImplementedError("sum dtype not supported yet")
     if isinstance(dim, list):
         dim = tuple(dim)
     if isinstance(dim, tuple) and len(dim) == 0:
@@ -91,11 +180,30 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
         for d in dim:
             _check_dim_range(d)
 
-    return _from_numpy(_to_numpy(a).sum(axis=dim, keepdims=keepdim), a.dtype, a.device)
+    arr = _to_numpy(a)
+    if dtype is not None:
+        out_dtype = dtype
+        acc_dtype = to_numpy_dtype(dtype)
+    else:
+        if a.dtype.is_floating_point or a.dtype.is_complex:
+            out_dtype = a.dtype
+            acc_dtype = None
+        else:
+            out_dtype = int64_dtype
+            acc_dtype = np.int64
+
+    out = arr.sum(axis=dim, keepdims=keepdim, dtype=acc_dtype)
+    out = np.ascontiguousarray(out.astype(to_numpy_dtype(out_dtype), copy=False))
+    return _from_numpy(out, out_dtype, a.device)
 
 
 def mean_(a, dim=None, keepdim=False):
-    return _from_numpy(_to_numpy(a).mean(axis=dim, keepdims=keepdim), a.dtype, a.device)
+    if not a.dtype.is_floating_point and not a.dtype.is_complex:
+        raise RuntimeError(
+            f"mean(): could not infer output dtype. Input dtype must be either a floating point or complex dtype. Got: {a.dtype.name.capitalize()}"
+        )
+    out = np.ascontiguousarray(_to_numpy(a).mean(axis=dim, keepdims=keepdim))
+    return _from_numpy(out, a.dtype, a.device)
 
 
 def std_(a, dim=None, keepdim=False, unbiased=True):
