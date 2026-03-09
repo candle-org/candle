@@ -325,7 +325,17 @@ def add(a, b):
 def mul(a, b):
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
-    return _binary_op(a, b, aclnn.mul, "mul")
+    try:
+        return _binary_op(a, b, aclnn.mul, "mul")
+    except RuntimeError as exc:
+        # On some Ascend runtime builds, aclnnMul intermittently fails for
+        # scalar-like paths. Fall back to div(a, reciprocal(b)) semantics to
+        # keep training-critical execution stable for 0.1 scope.
+        if a.device.type != "npu" or getattr(b, "device", None) is None or b.device.type != "npu":
+            raise
+        one = _scalar_to_npu_tensor(1.0, b)
+        recip = div(one, b)
+        return div(a, recip)
 
 
 
@@ -11410,6 +11420,5 @@ def upsample_nearest1d_op(a, output_size, scales=None):
     a_4d = view_backend.reshape(a, (N, C, 1, W))
     out_4d = dispatch("upsample_nearest2d", "npu", a_4d, [1, oW], None, scales)
     return view_backend.reshape(out_4d, (N, C, oW))
-
 
 
