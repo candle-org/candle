@@ -429,3 +429,45 @@ def test_max_unpool1d_invalid_index_raises():
     bad_indices = torch.tensor([[[5]]], device='cpu', dtype=torch.int64)
     with pytest.raises((RuntimeError, ValueError, IndexError)):
         F.max_unpool1d(pooled, bad_indices, kernel_size=2, stride=2, output_size=(1, 1, 2))
+
+
+def test_max_pool3d_with_indices_returns_tuple():
+    x = torch.tensor([[[[[1.0, 3.0], [2.0, 4.0]], [[5.0, 7.0], [6.0, 8.0]]]]], device='cpu')
+    out, idx = F.max_pool3d_with_indices(x, kernel_size=2, stride=2)
+    assert out.shape == (1, 1, 1, 1, 1)
+    assert idx.shape == (1, 1, 1, 1, 1)
+
+
+def test_adaptive_max_pool2d_with_indices_wrapper_exists():
+    x = torch.tensor([[[[1.0, 3.0], [2.0, 4.0]]]], device='cpu')
+    out, idx = F.adaptive_max_pool2d_with_indices(x, output_size=(1, 1))
+    assert out.shape == (1, 1, 1, 1)
+    assert idx.shape == (1, 1, 1, 1)
+
+
+def test_adaptive_max_pool3d_wrapper_exists():
+    x = torch.tensor([[[[[1.0, 3.0], [2.0, 4.0]], [[5.0, 7.0], [6.0, 8.0]]]]], device='cpu')
+    out = F.adaptive_max_pool3d(x, output_size=(1, 1, 1))
+    assert out.shape == (1, 1, 1, 1, 1)
+
+
+def test_adaptive_max_pool3d_with_indices_wrapper_exists():
+    x = torch.tensor([[[[[1.0, 3.0], [2.0, 4.0]], [[5.0, 7.0], [6.0, 8.0]]]]], device='cpu')
+    out, idx = F.adaptive_max_pool3d_with_indices(x, output_size=(1, 1, 1))
+    assert out.shape == (1, 1, 1, 1, 1)
+    assert idx.shape == (1, 1, 1, 1, 1)
+
+
+def test_max_unpool3d_scatter_matches_indices():
+    x = torch.tensor([[[[[1.0, 3.0], [2.0, 4.0]], [[5.0, 7.0], [6.0, 8.0]]]]], device='cpu')
+    pooled, indices = F.max_pool3d_with_indices(x, kernel_size=2, stride=2)
+    out = F.max_unpool3d(pooled, indices, kernel_size=2, stride=2, output_size=(1, 1, 2, 2, 2))
+    expected = torch.tensor([[[[[0.0, 0.0], [0.0, 0.0]], [[0.0, 0.0], [0.0, 8.0]]]]], device='cpu')
+    assert torch.allclose(out, expected, atol=1e-6)
+
+
+def test_max_unpool3d_invalid_index_raises():
+    pooled = torch.tensor([[[[[2.0]]]]], device='cpu')
+    bad_indices = torch.tensor([[[[[99]]]]], device='cpu', dtype=torch.int64)
+    with pytest.raises((RuntimeError, ValueError, IndexError)):
+        F.max_unpool3d(pooled, bad_indices, kernel_size=2, stride=2, output_size=(1, 1, 2, 2, 2))

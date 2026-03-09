@@ -4177,14 +4177,16 @@ def max_pool3d(input, kernel_size, stride, padding, dilation, ceil_mode=False, r
         oH = int(np.floor((H_pad - dH * (kH - 1) - 1) / sH + 1))
         oW = int(np.floor((W_pad - dW * (kW - 1) - 1) / sW + 1))
 
-    out = np.empty((N, C, oD, oH, oW), dtype=a.dtype)
+    out = np.full((N, C, oD, oH, oW), -np.inf, dtype=a.dtype)
+    if return_indices:
+        out_indices = np.zeros((N, C, oD, oH, oW), dtype=np.int64)
+
     for od in range(oD):
         for oh in range(oH):
             for ow in range(oW):
                 d_start = od * sD
                 h_start = oh * sH
                 w_start = ow * sW
-                window_vals = []
                 for kd in range(kD):
                     di = d_start + kd * dD
                     if di >= D_pad:
@@ -4197,11 +4199,22 @@ def max_pool3d(input, kernel_size, stride, padding, dilation, ceil_mode=False, r
                             wi = w_start + kw * dW
                             if wi >= W_pad:
                                 continue
-                            window_vals.append(a[:, :, di, hi, wi])
-                if window_vals:
-                    out[:, :, od, oh, ow] = np.maximum.reduce(window_vals)
+                            cand = a[:, :, di, hi, wi]
+                            mask = cand > out[:, :, od, oh, ow]
+                            out[:, :, od, oh, ow] = np.where(mask, cand, out[:, :, od, oh, ow])
+                            if return_indices:
+                                in_d = di - pD
+                                in_h = hi - pH
+                                in_w = wi - pW
+                                if 0 <= in_d < D and 0 <= in_h < H and 0 <= in_w < W:
+                                    flat_idx = (in_d * H + in_h) * W + in_w
+                                    out_indices[:, :, od, oh, ow] = np.where(mask, flat_idx, out_indices[:, :, od, oh, ow])
 
-    return _from_numpy(out, input.dtype, input.device)
+    out_t = _from_numpy(np.ascontiguousarray(out), input.dtype, input.device)
+    if return_indices:
+        idx_t = _from_numpy(np.ascontiguousarray(out_indices), int64_dtype, input.device)
+        return out_t, idx_t
+    return out_t
 
 
 def avg_pool3d(input, kernel_size, stride, padding, ceil_mode=False, count_include_pad=True):
@@ -4398,6 +4411,48 @@ def adaptive_max_pool1d(input, output_size, return_indices=False):
     return _from_numpy(out, input.dtype, input.device)
 
 
+def adaptive_max_pool3d(input, output_size, return_indices=False):
+    """Adaptive max pooling 3D via numpy."""
+    a = _to_numpy(input)
+    N, C, D, H, W = a.shape
+    if isinstance(output_size, int):
+        oD = oH = oW = output_size
+    else:
+        oD, oH, oW = output_size
+
+    out = np.empty((N, C, oD, oH, oW), dtype=a.dtype)
+    if return_indices:
+        out_indices = np.empty((N, C, oD, oH, oW), dtype=np.int64)
+
+    for od in range(oD):
+        d_start = od * D // oD
+        d_end = (od + 1) * D // oD
+        for oh in range(oH):
+            h_start = oh * H // oH
+            h_end = (oh + 1) * H // oH
+            for ow in range(oW):
+                w_start = ow * W // oW
+                w_end = (ow + 1) * W // oW
+                region = a[:, :, d_start:d_end, h_start:h_end, w_start:w_end]
+                region_flat = region.reshape(N, C, -1)
+                out[:, :, od, oh, ow] = region_flat.max(axis=2)
+                if return_indices:
+                    local_idx = region_flat.argmax(axis=2)
+                    rH = h_end - h_start
+                    rW = w_end - w_start
+                    local_d = local_idx // (rH * rW) + d_start
+                    rem = local_idx % (rH * rW)
+                    local_h = rem // rW + h_start
+                    local_w = rem % rW + w_start
+                    out_indices[:, :, od, oh, ow] = (local_d * H + local_h) * W + local_w
+
+    out_t = _from_numpy(np.ascontiguousarray(out), input.dtype, input.device)
+    if return_indices:
+        idx_t = _from_numpy(np.ascontiguousarray(out_indices), int64_dtype, input.device)
+        return out_t, idx_t
+    return out_t
+
+
 def max_unpool1d(input, indices, kernel_size, stride, padding, output_size=None):
     """Max unpooling 1D by scattering pooled values back using flattened indices."""
     in_np = _to_numpy(input)
@@ -4478,6 +4533,53 @@ def max_unpool2d(input, indices, kernel_size, stride, padding, output_size=None)
     for n in range(N):
         for c in range(C):
             out[n, c, h_idx[n, c], w_idx[n, c]] = in_np[n, c]
+
+    return _from_numpy(np.ascontiguousarray(out), input.dtype, input.device)
+
+
+def max_unpool3d(input, indices, kernel_size, stride, padding, output_size=None):
+    """Max unpooling 3D by scattering pooled values back using flattened DHW indices."""
+    in_np = _to_numpy(input)
+    idx_np = _ensure_integer_indices(_to_numpy(indices), "indices").astype(np.int64, copy=False)
+    if in_np.shape != idx_np.shape:
+        raise ValueError("input and indices must have the same shape")
+
+    if input.ndim != 5:
+        raise ValueError(f"Expected 5D input, got {input.ndim}D")
+
+    N, C, D_in, H_in, W_in = in_np.shape
+    kD, kH, kW = kernel_size
+    sD, sH, sW = stride
+    pD, pH, pW = padding
+
+    if output_size is not None:
+        if len(output_size) == 5:
+            out_shape = tuple(int(v) for v in output_size)
+        elif len(output_size) == 3:
+            out_shape = (N, C, int(output_size[0]), int(output_size[1]), int(output_size[2]))
+        else:
+            raise ValueError("output_size must have length 3 or 5 for max_unpool3d")
+        if out_shape[0] != N or out_shape[1] != C:
+            raise ValueError("output_size batch/channel dimensions must match input")
+        D_out, H_out, W_out = out_shape[2], out_shape[3], out_shape[4]
+    else:
+        D_out = (D_in - 1) * sD - 2 * pD + kD
+        H_out = (H_in - 1) * sH - 2 * pH + kH
+        W_out = (W_in - 1) * sW - 2 * pW + kW
+        out_shape = (N, C, D_out, H_out, W_out)
+
+    out = np.zeros(out_shape, dtype=in_np.dtype)
+    max_flat = D_out * H_out * W_out
+    if (idx_np < 0).any() or (idx_np >= max_flat).any():
+        raise IndexError("index out of range")
+
+    d_idx = idx_np // (H_out * W_out)
+    rem = idx_np % (H_out * W_out)
+    h_idx = rem // W_out
+    w_idx = rem % W_out
+    for n in range(N):
+        for c in range(C):
+            out[n, c, d_idx[n, c], h_idx[n, c], w_idx[n, c]] = in_np[n, c]
 
     return _from_numpy(np.ascontiguousarray(out), input.dtype, input.device)
 

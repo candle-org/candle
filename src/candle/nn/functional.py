@@ -349,6 +349,10 @@ def adaptive_max_pool2d(input, output_size, return_indices=False):
                     return_indices)
 
 
+def adaptive_max_pool2d_with_indices(input, output_size):
+    return adaptive_max_pool2d(input, output_size, return_indices=True)
+
+
 def cross_entropy(input, target, weight=None, size_average=None, ignore_index=-100,
                   reduce=None, reduction='mean', label_smoothing=0.0):
     log_probs = log_softmax(input, dim=1)
@@ -1426,6 +1430,18 @@ def max_pool3d(input, kernel_size, stride=None, padding=0, dilation=1,
                     _padding, _dilation, ceil_mode, return_indices)
 
 
+def max_pool3d_with_indices(input, kernel_size, stride=None, padding=0, dilation=1, ceil_mode=False):
+    return max_pool3d(
+        input,
+        kernel_size,
+        stride=stride,
+        padding=padding,
+        dilation=dilation,
+        ceil_mode=ceil_mode,
+        return_indices=True,
+    )
+
+
 def avg_pool3d(input, kernel_size, stride=None, padding=0, ceil_mode=False,
                count_include_pad=True):
     from .._dispatch import dispatch
@@ -1445,6 +1461,19 @@ def adaptive_avg_pool3d(input, output_size):
     return dispatch("adaptive_avg_pool3d", input.device.type, input, _output_size)
 
 
+def adaptive_max_pool3d(input, output_size, return_indices=False):
+    from .._dispatch import dispatch
+    if isinstance(output_size, int):
+        _output_size = (output_size, output_size, output_size)
+    else:
+        _output_size = tuple(output_size)
+    return dispatch("adaptive_max_pool3d", input.device.type, input, _output_size, return_indices)
+
+
+def adaptive_max_pool3d_with_indices(input, output_size):
+    return adaptive_max_pool3d(input, output_size, return_indices=True)
+
+
 def max_unpool1d(input, indices, kernel_size, stride=None, padding=0, output_size=None):
     from .._dispatch import dispatch
     _kernel_size = (kernel_size,) if isinstance(kernel_size, int) else tuple(kernel_size)
@@ -1459,4 +1488,12 @@ def max_unpool2d(input, indices, kernel_size, stride=None, padding=0, output_siz
     _stride = _kernel_size if stride is None else ((stride, stride) if isinstance(stride, int) else tuple(stride))
     _padding = (padding, padding) if isinstance(padding, int) else tuple(padding)
     return dispatch("max_unpool2d", input.device.type, input, indices, _kernel_size, _stride, _padding, output_size)
+
+
+def max_unpool3d(input, indices, kernel_size, stride=None, padding=0, output_size=None):
+    from .._dispatch import dispatch
+    _kernel_size = (kernel_size, kernel_size, kernel_size) if isinstance(kernel_size, int) else tuple(kernel_size)
+    _stride = _kernel_size if stride is None else ((stride, stride, stride) if isinstance(stride, int) else tuple(stride))
+    _padding = (padding, padding, padding) if isinstance(padding, int) else tuple(padding)
+    return dispatch("max_unpool3d", input.device.type, input, indices, _kernel_size, _stride, _padding, output_size)
 
