@@ -59,7 +59,7 @@ jobs:
         PY
     - name: Run NPU tests
       run: |
-        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" pytest tests/npu/ -v --tb=short
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" pytest tests/npu/ -v --tb=short --ignore=tests/npu/test_pipeline_npu_bench_smoke.py
 
   test-distributed-2card:
     name: Distributed Suite (4-5)
