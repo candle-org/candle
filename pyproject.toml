@@ -51,12 +51,7 @@ Homepage = "https://github.com/candle-org/candle"
 Repository = "https://github.com/candle-org/candle"
 Issues = "https://github.com/candle-org/candle/issues"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["candle*"]
-
-[tool.setuptools.package-data]
-candle = ["*.py", "*/*.py", "*/*/*.py", "*/*/*/*.py"]
+# Package discovery is in setup.py (needed for py_modules + packages coexistence)
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
