@@ -63,6 +63,14 @@ jobs:
         print('NPU available:', torch.npu.is_available())
         print('NPU device count:', torch.npu.device_count())
         PY
+    - name: Assert NPU availability
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python - <<'PY'
+        import candle as torch
+        assert torch.npu.is_available(), 'expected NPU to be available in NPU Suite (6-7)'
+        assert torch.npu.device_count() >= 2, f'expected >=2 visible NPUs, found {torch.npu.device_count()}'
+        PY
     - name: Run NPU tests
       run: |
         source "$ASCEND_ENV_SCRIPT"
@@ -107,6 +115,14 @@ jobs:
         print('NPU available:', torch.npu.is_available())
         print('NPU device count:', torch.npu.device_count())
         PY
+    - name: Assert NPU availability
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python - <<'PY'
+        import candle as torch
+        assert torch.npu.is_available(), 'expected NPU to be available in Distributed Suite (4-5)'
+        assert torch.npu.device_count() >= 2, f'expected >=2 visible NPUs, found {torch.npu.device_count()}'
+        PY
     - name: Run distributed baseline suite
       run: |
         source "$ASCEND_ENV_SCRIPT"
@@ -119,7 +135,8 @@ jobs:
           'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py::test_hccl_all_to_all_single_invalid_split_pairing_multicard[2-29715]' \
           'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-2-29716]' \
           'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-2-29716]' \
-          -v --tb=short
+          -v -rs --tb=short | tee /tmp/candle-hccl-2card.log
+        ! rg -n "SKIPPED|skipped" /tmp/candle-hccl-2card.log
 
   test-distributed-4card:
     name: HCCL 4-Card Suite (0-3)
@@ -160,6 +177,14 @@ jobs:
         print('NPU available:', torch.npu.is_available())
         print('NPU device count:', torch.npu.device_count())
         PY
+    - name: Assert NPU availability
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python - <<'PY'
+        import candle as torch
+        assert torch.npu.is_available(), 'expected NPU to be available in HCCL 4-Card Suite (0-3)'
+        assert torch.npu.device_count() >= 4, f'expected >=4 visible NPUs, found {torch.npu.device_count()}'
+        PY
     - name: Run 4-card HCCL all_to_all coverage
       run: |
         source "$ASCEND_ENV_SCRIPT"
@@ -168,4 +193,5 @@ jobs:
           'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py::test_hccl_all_to_all_single_invalid_split_pairing_multicard[4-29725]' \
           'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-4-29726]' \
           'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-4-29726]' \
-          -v --tb=short
+          -v -rs --tb=short | tee /tmp/candle-hccl-4card.log
+        ! rg -n "SKIPPED|skipped" /tmp/candle-hccl-4card.log
