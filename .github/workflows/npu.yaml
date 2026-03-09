@@ -129,6 +129,7 @@ jobs:
         "$CONDA_EXE" run -p "$JOB_CONDA_ENV" pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard"
     - name: Run 2-card HCCL all_to_all coverage
       run: |
+        set -o pipefail
         source "$ASCEND_ENV_SCRIPT"
         "$CONDA_EXE" run -p "$JOB_CONDA_ENV" pytest \
           'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[2-29714]' \
@@ -136,7 +137,10 @@ jobs:
           'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-2-29716]' \
           'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-2-29716]' \
           -v -rs --tb=short | tee /tmp/candle-hccl-2card.log
-        ! rg -n "SKIPPED|skipped" /tmp/candle-hccl-2card.log
+        if rg -n "SKIPPED|skipped" /tmp/candle-hccl-2card.log; then
+          echo "2-card HCCL coverage unexpectedly skipped tests" >&2
+          exit 1
+        fi
 
   test-distributed-4card:
     name: HCCL 4-Card Suite (0-3)
@@ -187,6 +191,7 @@ jobs:
         PY
     - name: Run 4-card HCCL all_to_all coverage
       run: |
+        set -o pipefail
         source "$ASCEND_ENV_SCRIPT"
         "$CONDA_EXE" run -p "$JOB_CONDA_ENV" pytest \
           'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[4-29724]' \
@@ -194,4 +199,7 @@ jobs:
           'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-4-29726]' \
           'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-4-29726]' \
           -v -rs --tb=short | tee /tmp/candle-hccl-4card.log
-        ! rg -n "SKIPPED|skipped" /tmp/candle-hccl-4card.log
+        if rg -n "SKIPPED|skipped" /tmp/candle-hccl-4card.log; then
+          echo "4-card HCCL coverage unexpectedly skipped tests" >&2
+          exit 1
+        fi
