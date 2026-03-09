@@ -1028,10 +1028,26 @@ def _autograd_embedding(name, backward_impl):
         if GradMode.enabled and getattr(weight, "requires_grad", False):
             node_holder = {}
 
+            padding_idx = kwargs.get("padding_idx")
+            if padding_idx is None and len(args) >= 1:
+                padding_idx = args[0]
+            scale_grad_by_freq = kwargs.get("scale_grad_by_freq", False)
+            if len(args) >= 2:
+                scale_grad_by_freq = args[1]
+
             def _backward(grad):
                 saved_w, saved_idx = node_holder["node"].saved_tensors()
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
-                return backward_impl(grad, weight, indices, saved_w, saved_idx, backward_keyset)
+                return backward_impl(
+                    grad,
+                    weight,
+                    indices,
+                    saved_w,
+                    saved_idx,
+                    backward_keyset,
+                    padding_idx=padding_idx,
+                    scale_grad_by_freq=scale_grad_by_freq,
+                )
 
             node = Node(_backward, (weight, indices))
             node_holder["node"] = node
@@ -1043,13 +1059,35 @@ def _autograd_embedding(name, backward_impl):
     return wrapper
 
 
-def _embedding_backward(grad, weight, _indices, saved_weight, saved_indices, keyset):
+def _embedding_backward(
+    grad,
+    weight,
+    _indices,
+    saved_weight,
+    saved_indices,
+    keyset,
+    *,
+    padding_idx=None,
+    scale_grad_by_freq=False,
+):
     with _grad_context(keyset):
         grad_weight = redispatch("zeros", keyset, saved_weight.shape, dtype=saved_weight.dtype, device=saved_weight.device)
         num_indices = saved_indices.numel()
         emb_dim = saved_weight.shape[-1]
         flat_idx = redispatch("reshape", keyset, saved_indices, (num_indices,))
         flat_grad = redispatch("reshape", keyset, grad, (num_indices, emb_dim))
+
+        if padding_idx is not None:
+            mask = redispatch("ne", keyset, flat_idx, padding_idx)
+            flat_grad = redispatch("mul", keyset, flat_grad, redispatch("unsqueeze", keyset, mask, 1))
+
+        if scale_grad_by_freq:
+            one_hot = redispatch("one_hot", keyset, flat_idx, saved_weight.shape[0])
+            counts = redispatch("sum", keyset, one_hot, dim=0, keepdim=False)
+            counts = redispatch("to", keyset, counts, flat_grad.device, dtype=flat_grad.dtype, non_blocking=False)
+            freq = redispatch("index_select", keyset, counts, 0, flat_idx)
+            flat_grad = redispatch("true_divide", keyset, flat_grad, redispatch("unsqueeze", keyset, freq, 1))
+
         redispatch("index_add_", keyset, grad_weight, 0, flat_idx, flat_grad)
     return (grad_weight, None)
 
