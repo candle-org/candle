@@ -34,6 +34,13 @@ def test_peer_access_unsupported():
         torch.npu.enable_peer_access(1)
 
 
+def test_peer_access_input_validation_like_torch_style():
+    with pytest.raises((TypeError, ValueError)):
+        torch.npu.can_device_access_peer("bad", 1)
+    with pytest.raises((TypeError, ValueError)):
+        torch.npu.can_device_access_peer(0, "bad")
+
+
 def test_get_device_properties_schema():
     props = torch.npu.get_device_properties(0)
     assert props.name
@@ -43,6 +50,33 @@ def test_get_device_properties_schema():
 
 def test_stream_priority_range_fallback():
     assert torch.npu.stream_priority_range() == (0, 0)
+
+
+def test_stream_priority_range_is_sorted_pair():
+    low, high = torch.npu.stream_priority_range()
+    assert isinstance(low, int)
+    assert isinstance(high, int)
+    assert low <= high
+
+
+def test_memory_fraction_enforcement_uses_runtime_mem_info(monkeypatch):
+    import candle._backends.npu.runtime as npu_runtime
+    import candle._backends.npu.allocator as npu_allocator
+
+    class DummyAlloc:
+        def __init__(self):
+            self.asked = 0
+
+        def memory_stats(self):
+            return {}
+
+    monkeypatch.setattr(npu_allocator, "get_allocator", lambda device_id=0: DummyAlloc())
+    monkeypatch.setattr(npu_runtime, "mem_get_info", lambda device_id=0, attr=0: (40, 100))
+
+    torch.npu._reset_memory_fraction_for_test()
+    torch.npu.set_per_process_memory_fraction(0.5)
+    with pytest.raises(RuntimeError):
+        torch.npu._enforce_memory_fraction(20, device=0)
 
 
 def test_pinned_memory():

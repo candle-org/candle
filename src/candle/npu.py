@@ -250,7 +250,24 @@ def _reset_init_for_test():
 
 
 def _get_memory_stats(device=None):
-    return {}
+    dev = _normalize_npu_device(device)
+    from ._backends.npu import runtime as npu_runtime
+
+    free, total = npu_runtime.mem_get_info(dev.index or 0)
+    alloc_stats = _get_allocator(dev.index or 0).memory_stats()
+    allocated = int(alloc_stats.get("allocated_bytes.all.current", 0))
+    reserved = int(alloc_stats.get("reserved_bytes.all.current", 0))
+    if allocated <= 0 and reserved <= 0:
+        # Fallback when allocator stats are unavailable in tests/minimal runtimes.
+        used_estimate = max(0, int(total) - int(free))
+        allocated = used_estimate
+        reserved = used_estimate
+    return {
+        "total_reserved_memory": int(total),
+        "total_allocated_memory": int(allocated),
+        "total_cached_memory": int(reserved),
+        "free_memory": int(free),
+    }
 
 
 def _enforce_memory_fraction(requested_bytes, device=None):
@@ -354,14 +371,20 @@ def get_device_properties(device=None):
     return _DeviceProperties(name=name, major=major, minor=minor)
 
 def can_device_access_peer(device, peer_device):
+    _normalize_npu_device(device)
+    _normalize_npu_device(peer_device)
     return False
 
 
 def enable_peer_access(peer_device, device=None):
+    _normalize_npu_device(device)
+    _normalize_npu_device(peer_device)
     raise RuntimeError("Peer access is not supported on NPU")
 
 
 def disable_peer_access(peer_device, device=None):
+    _normalize_npu_device(device)
+    _normalize_npu_device(peer_device)
     raise RuntimeError("Peer access is not supported on NPU")
 
 
