@@ -64,6 +64,13 @@ def view(a, shape):
     else:
         shape = tuple(shape)
 
+    if not a.is_contiguous():
+        raise RuntimeError(
+            "view size is not compatible with input tensor's size and stride "
+            "(at least one dimension spans across two contiguous subspaces). "
+            "Use .reshape(...) instead."
+        )
+
     size = 1
     for d in a.shape:
         size *= d
