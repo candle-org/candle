@@ -337,6 +337,15 @@ def _infer_dispatch_device(dispatch_device, tensors, keyset):
     return "cpu"
 
 
+def _format_dispatch_context(op_name, dispatch_device):
+    device_value = getattr(dispatch_device, "type", dispatch_device)
+    return f"op={op_name}, device={device_value}"
+
+
+def _wrap_dispatch_error(exc, op_name, dispatch_device):
+    return RuntimeError(f"{exc} [{_format_dispatch_context(op_name, dispatch_device)}]")
+
+
 def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
     tensors = _extract_tensors(args, kwargs)
     _validate_tensor_devices(tensors)
@@ -344,8 +353,11 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
     pipe = current_pipeline()
     dispatch_device = _infer_dispatch_device(dispatch_device, tensors, keyset)
     alias_name = name
-    name = registry.resolve(name)
-    entry = registry.get(name)
+    try:
+        name = registry.resolve(name)
+        entry = registry.get(name)
+    except Exception as exc:
+        raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
 
     if entry.schema_obj is not None:
         entry.schema_obj.bind(args, kwargs, op_name=alias_name, error_overrides=entry.error_overrides)
@@ -361,9 +373,10 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
     def _run_kernel():
         kernel, key = _kernel_for_entry(entry, _key_order(keyset))
         if kernel is None:
-            raise RuntimeError(
+            exc = RuntimeError(
                 f"could not find kernel for op {name} with keys {[k.name for k in _key_order(keyset)]}"
             )
+            raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
         impl_kwargs = _prepare_kwargs(kernel, kwargs, dispatch_device)
         token = None
         if is_profiler_enabled():
@@ -371,6 +384,8 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
         _push_dispatch_context(keyset, key)
         try:
             result = kernel(*args, **impl_kwargs)
+        except Exception as exc:
+            raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
         finally:
             _pop_dispatch_context()
             if token is not None:
