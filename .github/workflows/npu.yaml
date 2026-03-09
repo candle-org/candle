@@ -18,6 +18,10 @@ on:
 permissions:
   contents: read
 
+env:
+  CONDA_EXE: /home/lvyufeng/miniconda3/bin/conda
+  CONDA_ENV_PREFIX: /tmp/candle-npu-ci
+
 jobs:
   test-npu:
     name: NPU Suite (6-7)
@@ -26,24 +30,26 @@ jobs:
     env:
       ASCEND_RT_VISIBLE_DEVICES: 6,7
       ASCEND_VISIBLE_DEVICES: 6,7
+      JOB_CONDA_ENV: /tmp/candle-npu-ci-6-7
     steps:
     - uses: actions/checkout@v4
+    - name: Prepare conda environment
+      run: |
+        "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
     - name: Show Python environment
       run: |
-        which python
-        which pip
-        python --version
-        pip --version
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python --version
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip --version
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements/requirements-test.txt
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip install --upgrade pip
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip install -r requirements/requirements-test.txt
     - name: Install candle
       run: |
-        pip install -e .
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip install -e .
     - name: Show runner NPU mapping
       run: |
-        python - <<'PY'
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python - <<'PY'
         import os
         import candle as torch
         print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES'))
@@ -53,7 +59,7 @@ jobs:
         PY
     - name: Run NPU tests
       run: |
-        pytest tests/npu/ -v --tb=short
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" pytest tests/npu/ -v --tb=short
 
   test-distributed-2card:
     name: Distributed Suite (4-5)
@@ -62,24 +68,26 @@ jobs:
     env:
       ASCEND_RT_VISIBLE_DEVICES: 4,5
       ASCEND_VISIBLE_DEVICES: 4,5
+      JOB_CONDA_ENV: /tmp/candle-npu-ci-4-5
     steps:
     - uses: actions/checkout@v4
+    - name: Prepare conda environment
+      run: |
+        "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
     - name: Show Python environment
       run: |
-        which python
-        which pip
-        python --version
-        pip --version
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python --version
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip --version
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements/requirements-test.txt
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip install --upgrade pip
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip install -r requirements/requirements-test.txt
     - name: Install candle
       run: |
-        pip install -e .
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip install -e .
     - name: Show runner NPU mapping
       run: |
-        python - <<'PY'
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python - <<'PY'
         import os
         import candle as torch
         print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES'))
@@ -89,10 +97,10 @@ jobs:
         PY
     - name: Run distributed baseline suite
       run: |
-        pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard"
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard"
     - name: Run 2-card HCCL all_to_all coverage
       run: |
-        pytest \
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" pytest \
           'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[2-29714]' \
           'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py::test_hccl_all_to_all_single_invalid_split_pairing_multicard[2-29715]' \
           'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-2-29716]' \
@@ -106,24 +114,26 @@ jobs:
     env:
       ASCEND_RT_VISIBLE_DEVICES: 0,1,2,3
       ASCEND_VISIBLE_DEVICES: 0,1,2,3
+      JOB_CONDA_ENV: /tmp/candle-npu-ci-0-3
     steps:
     - uses: actions/checkout@v4
+    - name: Prepare conda environment
+      run: |
+        "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
     - name: Show Python environment
       run: |
-        which python
-        which pip
-        python --version
-        pip --version
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python --version
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip --version
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements/requirements-test.txt
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip install --upgrade pip
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip install -r requirements/requirements-test.txt
     - name: Install candle
       run: |
-        pip install -e .
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python -m pip install -e .
     - name: Show runner NPU mapping
       run: |
-        python - <<'PY'
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" python - <<'PY'
         import os
         import candle as torch
         print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES'))
@@ -133,7 +143,7 @@ jobs:
         PY
     - name: Run 4-card HCCL all_to_all coverage
       run: |
-        pytest \
+        "$CONDA_EXE" run -p "$JOB_CONDA_ENV" pytest \
           'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[4-29724]' \
           'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py::test_hccl_all_to_all_single_invalid_split_pairing_multicard[4-29725]' \
           'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-4-29726]' \
