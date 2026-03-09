@@ -1,6 +1,6 @@
 ---
 name: candle-fork-upstream-pr
-description: Enforce Candle contribution flow: never modify main directly, always create a worktree branch, push to fork lvyufeng/candle, and open PR to upstream candle-org/candle. Use for any coding, bugfix, refactor, or release-prep work in this repository.
+description: "Enforce Candle contribution flow: never modify main directly, always create a worktree branch, push to fork lvyufeng/candle, and open PR to upstream candle-org/candle. Use for any coding, bugfix, refactor, or release-prep work in this repository."
 ---
 
 # Candle Fork -> Upstream PR Workflow
