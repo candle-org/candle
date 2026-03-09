@@ -57,9 +57,10 @@ class GradScaler:
     def scale(self, outputs):
         if not self._enabled:
             return outputs
-        from .._creation import tensor
         self._lazy_init_scale_growth_tracker()
-        return outputs * tensor(self._scale)
+        # Keep scale as Python scalar so backend scalar-mul paths are used
+        # uniformly across devices (avoids backend-specific 0-d tensor issues).
+        return outputs * float(self._scale)
 
     def _params_for_optimizer(self, optimizer):
         if hasattr(optimizer, "param_groups"):

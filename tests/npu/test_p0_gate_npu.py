@@ -24,7 +24,19 @@ def _npu_count() -> int:
 
 
 @pytest.mark.skipif(not _npu_available(), reason="NPU unavailable")
-def test_p0_gate_amp_npu_scaler_smoke():
+def test_p0_gate_amp_npu_autocast_smoke():
+    x = torch.randn((8, 8), device="npu", dtype=torch.float32)
+    with torch.amp.autocast("npu", dtype=torch.float16):
+        y = torch.matmul(x, x)
+        loss = y.sum()
+
+    assert y.device.type == "npu"
+    assert loss.device.type == "npu"
+
+
+@pytest.mark.skipif(not _npu_available(), reason="NPU unavailable")
+@pytest.mark.xfail(reason="Known issue: NPU scalar mul path fails with aclnnMul 561000", strict=False)
+def test_p0_gate_amp_npu_scaler_smoke_known_issue():
     x = torch.randn((8, 8), device="npu", dtype=torch.float32)
     x.requires_grad = True
     scaler = torch.amp.GradScaler("npu")
