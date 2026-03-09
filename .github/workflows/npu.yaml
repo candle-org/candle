@@ -22,6 +22,7 @@ env:
   CONDA_EXE: /home/lvyufeng/miniconda3/bin/conda
   CONDA_ENV_PREFIX: /tmp/candle-npu-ci
   ASCEND_ENV_SCRIPT: /usr/local/Ascend/ascend-toolkit/set_env.sh
+  ASCEND_REQUIRED_GROUP: HwHiAiUser
   PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
   PYTHONNOUSERSITE: '1'
 
@@ -55,6 +56,8 @@ jobs:
         source "$ASCEND_ENV_SCRIPT"
         # Run test-facing commands in a minimal env so runner-local Python state does not leak into pytest.
         clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
           env -i \
             HOME="$HOME" \
             PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
@@ -71,12 +74,15 @@ jobs:
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
             "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
+        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('Process groups:', os.getgroups()); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
     - name: Assert NPU availability
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
           env -i \
             HOME="$HOME" \
             PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
@@ -93,12 +99,15 @@ jobs:
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
             "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
         clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in NPU Suite (6-7)'; assert count >= 2, f'expected >=2 visible NPUs, found {count}'"
     - name: Run NPU tests
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
           env -i \
             HOME="$HOME" \
             PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
@@ -115,6 +124,7 @@ jobs:
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
             "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
         clean_env pytest tests/npu/ -v --tb=short --ignore=tests/npu/test_pipeline_npu_bench_smoke.py
 
@@ -146,6 +156,8 @@ jobs:
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
           env -i \
             HOME="$HOME" \
             PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
@@ -162,12 +174,15 @@ jobs:
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
             "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
+        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('Process groups:', os.getgroups()); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
     - name: Assert NPU availability
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
           env -i \
             HOME="$HOME" \
             PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
@@ -184,12 +199,15 @@ jobs:
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
             "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
         clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in Distributed Suite (4-5)'; assert count >= 2, f'expected >=2 visible NPUs, found {count}'"
     - name: Run distributed baseline suite
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
           env -i \
             HOME="$HOME" \
             PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
@@ -206,6 +224,7 @@ jobs:
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
             "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
         clean_env pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard"
     - name: Run 2-card HCCL all_to_all coverage
@@ -213,6 +232,8 @@ jobs:
         set -o pipefail
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
           env -i \
             HOME="$HOME" \
             PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
@@ -229,6 +250,7 @@ jobs:
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
             "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
         clean_env pytest \
           'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[2-29714]' \
@@ -269,6 +291,8 @@ jobs:
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
           env -i \
             HOME="$HOME" \
             PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
@@ -285,12 +309,15 @@ jobs:
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
             "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
+        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('Process groups:', os.getgroups()); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
     - name: Assert NPU availability
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
           env -i \
             HOME="$HOME" \
             PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
@@ -307,6 +334,7 @@ jobs:
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
             "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
         clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in HCCL 4-Card Suite (0-3)'; assert count >= 4, f'expected >=4 visible NPUs, found {count}'"
     - name: Run 4-card HCCL all_to_all coverage
@@ -314,6 +342,8 @@ jobs:
         set -o pipefail
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
           env -i \
             HOME="$HOME" \
             PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
@@ -330,6 +360,7 @@ jobs:
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
             "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
         clean_env pytest \
           'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[4-29724]' \

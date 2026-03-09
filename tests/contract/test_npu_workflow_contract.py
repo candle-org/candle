@@ -8,6 +8,7 @@ def test_npu_workflow_partitions_suites_by_runner_pool():
     assert 'workflow_dispatch:' in payload
     assert 'CONDA_EXE: /home/lvyufeng/miniconda3/bin/conda' in payload
     assert 'ASCEND_ENV_SCRIPT: /usr/local/Ascend/ascend-toolkit/set_env.sh' in payload
+    assert 'ASCEND_REQUIRED_GROUP: HwHiAiUser' in payload
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'" in payload
     assert "PYTHONNOUSERSITE: '1'" in payload
     assert 'create -y -p "$JOB_CONDA_ENV" python=3.11 pip' in payload
@@ -15,11 +16,14 @@ def test_npu_workflow_partitions_suites_by_runner_pool():
     assert '"$JOB_CONDA_ENV/bin/python" -m pip --version' in payload
     assert '"$JOB_CONDA_ENV/bin/python" -m pip install -e .' in payload
     assert 'clean_env() {' in payload
+    assert "printf -v cmd '%q '" in payload
+    assert '/usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"' in payload
     assert 'env -i \\' in payload
     assert 'PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:' in payload
     assert 'PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD"' in payload
     assert 'PYTHONNOUSERSITE="$PYTHONNOUSERSITE"' in payload
     assert "print('Python executable:', sys.executable)" in payload
+    assert "print('Process groups:', os.getgroups())" in payload
     assert 'Assert NPU availability' in payload
     assert 'grep -nE "SKIPPED|skipped"' in payload
 
