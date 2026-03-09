@@ -80,7 +80,7 @@ jobs:
       run: |
         pytest tests/mps/ -v --tb=short
 
-  # Future runners (uncomment and configure when hardware is available):
+  # Future runners (configure when hardware is available):
   #
   # test-npu:
   #   needs: pylint-check
@@ -92,8 +92,31 @@ jobs:
   #       pip install -r requirements/requirements-test.txt
   #   - name: Install candle
   #     run: pip install -e .
-  #   - name: Run NPU tests
-  #     run: pytest tests/npu/ -v --tb=short
+  #   - name: Run NPU 0.1 gate tests
+  #     run: |
+  #       PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:src \
+  #       pytest \
+  #         tests/npu/test_npu_golden_training_loop.py \
+  #         tests/npu/test_npu_training_checkpoint_continuity.py \
+  #         tests/npu/test_mul_scalar_regression_npu.py \
+  #         tests/npu/test_no_cpu_fallback_npu.py \
+  #         -v --tb=short
+  #
+  # test-distributed-experimental:
+  #   needs: test-npu
+  #   runs-on: [self-hosted, ascend, multicard]
+  #   continue-on-error: true
+  #   steps:
+  #   - uses: actions/checkout@v4
+  #   - name: Install dependencies
+  #     run: |
+  #       pip install -r requirements/requirements-test.txt
+  #   - name: Install candle
+  #     run: pip install -e .
+  #   - name: Run experimental HCCL validation
+  #     run: |
+  #       PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:src \
+  #       pytest tests/distributed/test_hccl_mvp_longrun.py -v --tb=short
   #
   # test-cuda:
   #   needs: pylint-check
@@ -107,16 +130,3 @@ jobs:
   #     run: pip install -e .
   #   - name: Run CUDA tests
   #     run: pytest tests/cuda/ -v --tb=short
-  #
-  # test-distributed:
-  #   needs: pylint-check
-  #   runs-on: [self-hosted, ascend, multicard]
-  #   steps:
-  #   - uses: actions/checkout@v4
-  #   - name: Install dependencies
-  #     run: |
-  #       pip install -r requirements/requirements-test.txt
-  #   - name: Install candle
-  #     run: pip install -e .
-  #   - name: Run distributed tests
-  #     run: pytest tests/distributed/ -v --tb=short

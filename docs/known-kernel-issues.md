@@ -11,7 +11,10 @@ This document tracks native kernel bugs and their on-device composite workaround
 
 | Op | Backend | Error Description | Composite Workaround | Platform Version | Status |
 |----|---------|-------------------|----------------------|------------------|--------|
-| — | — | No known issues yet | — | — | — |
+| `cartesian_prod` | npu | Current implementation required `Tensor.to("cpu")` to enumerate values, which violates the no-CPU-fallback rule. | No workaround yet; fail explicitly until a true on-device composition is implemented. | CANN 8.3 / Candle `0.1.x` | open |
+| `block_diag` | npu | Current implementation required `Tensor.to("cpu")` to materialize block contents, which violates the no-CPU-fallback rule. | No workaround yet; fail explicitly until a true on-device composition is implemented. | CANN 8.3 / Candle `0.1.x` | open |
+| `repeat_interleave` (tensor `repeats`) | npu | Current implementation required reading NPU `repeats` values on CPU to build gather indices, which violates the no-CPU-fallback rule. | Use integer `repeats` only for now; fail explicitly for tensor-valued repeats until an on-device index builder exists. | CANN 8.3 / Candle `0.1.x` | open |
+| `baddbmm` (tensor `alpha`/`beta`) | npu | Current implementation required reading NPU tensor scalars for `alpha`/`beta` on CPU, which violates the no-CPU-fallback rule. | Use Python numeric `alpha`/`beta` only for now; fail explicitly for tensor-valued scalars until an on-device scalar path is implemented. | CANN 8.3 / Candle `0.1.x` | open |
 
 <!--
 Entry template:
