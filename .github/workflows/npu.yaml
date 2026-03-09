@@ -1,0 +1,135 @@
+name: NPU
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - 'src/candle/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+  push:
+    branches: ["main"]
+    paths:
+      - 'src/candle/**'
+      - 'tests/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test-npu:
+    name: NPU Suite (6-7)
+    runs-on: [self-hosted, linux, ascend, 910a, npu-6-7]
+    timeout-minutes: 90
+    env:
+      ASCEND_RT_VISIBLE_DEVICES: 6,7
+      ASCEND_VISIBLE_DEVICES: 6,7
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements/requirements-test.txt
+    - name: Install candle
+      run: |
+        pip install -e .
+    - name: Show runner NPU mapping
+      run: |
+        python - <<'PY'
+        import os
+        import candle as torch
+        print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES'))
+        print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES'))
+        print('NPU available:', torch.npu.is_available())
+        print('NPU device count:', torch.npu.device_count())
+        PY
+    - name: Run NPU tests
+      run: |
+        pytest tests/npu/ -v --tb=short
+
+  test-distributed-2card:
+    name: Distributed Suite (4-5)
+    runs-on: [self-hosted, linux, ascend, 910a, npu-4-5]
+    timeout-minutes: 120
+    env:
+      ASCEND_RT_VISIBLE_DEVICES: 4,5
+      ASCEND_VISIBLE_DEVICES: 4,5
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements/requirements-test.txt
+    - name: Install candle
+      run: |
+        pip install -e .
+    - name: Show runner NPU mapping
+      run: |
+        python - <<'PY'
+        import os
+        import candle as torch
+        print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES'))
+        print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES'))
+        print('NPU available:', torch.npu.is_available())
+        print('NPU device count:', torch.npu.device_count())
+        PY
+    - name: Run distributed baseline suite
+      run: |
+        pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard"
+    - name: Run 2-card HCCL all_to_all coverage
+      run: |
+        pytest \
+          'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[2-29714]' \
+          'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py::test_hccl_all_to_all_single_invalid_split_pairing_multicard[2-29715]' \
+          'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-2-29716]' \
+          'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-2-29716]' \
+          -v --tb=short
+
+  test-distributed-4card:
+    name: HCCL 4-Card Suite (0-3)
+    runs-on: [self-hosted, linux, ascend, 910a, npu-0-3]
+    timeout-minutes: 120
+    env:
+      ASCEND_RT_VISIBLE_DEVICES: 0,1,2,3
+      ASCEND_VISIBLE_DEVICES: 0,1,2,3
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements/requirements-test.txt
+    - name: Install candle
+      run: |
+        pip install -e .
+    - name: Show runner NPU mapping
+      run: |
+        python - <<'PY'
+        import os
+        import candle as torch
+        print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES'))
+        print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES'))
+        print('NPU available:', torch.npu.is_available())
+        print('NPU device count:', torch.npu.device_count())
+        PY
+    - name: Run 4-card HCCL all_to_all coverage
+      run: |
+        pytest \
+          'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[4-29724]' \
+          'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py::test_hccl_all_to_all_single_invalid_split_pairing_multicard[4-29725]' \
+          'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-4-29726]' \
+          'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-4-29726]' \
+          -v --tb=short
