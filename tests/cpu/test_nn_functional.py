@@ -486,3 +486,43 @@ def test_leaky_relu_inplace_wrapper_exists_and_mutates():
     assert out is x
     expected = torch.tensor([-0.2, 0.0, 2.0], device='cpu')
     assert torch.allclose(x, expected, atol=1e-6)
+
+
+def test_upsample_alias_matches_interpolate_nearest_2d():
+    x = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]]]], device='cpu')
+    out = F.upsample(x, size=(4, 4), mode='nearest')
+    ref = F.interpolate(x, size=(4, 4), mode='nearest')
+    assert out.shape == (1, 1, 4, 4)
+    assert torch.allclose(out, ref, atol=1e-6)
+
+
+def test_upsample_nearest_alias_exists():
+    x = torch.tensor([[[1.0, 2.0, 3.0]]], device='cpu')
+    out = F.upsample_nearest(x, size=6)
+    ref = F.interpolate(x, size=6, mode='nearest')
+    assert out.shape == (1, 1, 6)
+    assert torch.allclose(out, ref, atol=1e-6)
+
+
+def test_upsample_bilinear_alias_exists():
+    x = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]]]], device='cpu')
+    out = F.upsample_bilinear(x, size=(4, 4), align_corners=False)
+    ref = F.interpolate(x, size=(4, 4), mode='bilinear', align_corners=False)
+    assert out.shape == (1, 1, 4, 4)
+    assert torch.allclose(out, ref, atol=1e-6)
+
+
+def test_lp_pool1d_wrapper_exists_matches_torch():
+    x = torch.tensor([[[1.0, -2.0, 3.0, -4.0]]], device='cpu')
+    out = F.lp_pool1d(x, norm_type=2.0, kernel_size=2, stride=2)
+    expected = torch.tensor([[[np.sqrt(5.0), 5.0]]], device='cpu')
+    assert out.shape == (1, 1, 2)
+    assert torch.allclose(out, expected, atol=1e-6)
+
+
+def test_lp_pool2d_wrapper_exists_matches_torch():
+    x = torch.tensor([[[[1.0, -2.0], [3.0, -4.0]]]], device='cpu')
+    out = F.lp_pool2d(x, norm_type=2.0, kernel_size=2, stride=2)
+    expected = torch.tensor([[[[np.sqrt(30.0)]]]], device='cpu')
+    assert out.shape == (1, 1, 1, 1)
+    assert torch.allclose(out, expected, atol=1e-6)

@@ -315,6 +315,39 @@ def avg_pool2d(input, kernel_size, stride=None, padding=0, ceil_mode=False,
                     _padding, ceil_mode, count_include_pad, divisor_override)
 
 
+def lp_pool1d(input, norm_type, kernel_size, stride=None, ceil_mode=False):
+    from .._functional import abs as _abs, pow as _pow
+    from .._creation import tensor as _tensor
+    p = float(norm_type)
+    if p <= 0:
+        raise ValueError('norm_type must be positive')
+    p_t = _tensor(p, device=input.device)
+    inv_p_t = _tensor(1.0 / p, device=input.device)
+    powered = _pow(_abs(input), p_t)
+    pooled = avg_pool1d(powered, kernel_size, stride=stride, padding=0, ceil_mode=ceil_mode, count_include_pad=True)
+    kernel_len = kernel_size if isinstance(kernel_size, int) else kernel_size[0]
+    k_t = _tensor(float(kernel_len), device=input.device)
+    return _pow(pooled * k_t, inv_p_t)
+
+
+def lp_pool2d(input, norm_type, kernel_size, stride=None, ceil_mode=False):
+    from .._functional import abs as _abs, pow as _pow
+    from .._creation import tensor as _tensor
+    p = float(norm_type)
+    if p <= 0:
+        raise ValueError('norm_type must be positive')
+    p_t = _tensor(p, device=input.device)
+    inv_p_t = _tensor(1.0 / p, device=input.device)
+    powered = _pow(_abs(input), p_t)
+    pooled = avg_pool2d(powered, kernel_size, stride=stride, padding=0, ceil_mode=ceil_mode, count_include_pad=True)
+    if isinstance(kernel_size, int):
+        area = kernel_size * kernel_size
+    else:
+        area = int(kernel_size[0]) * int(kernel_size[1])
+    area_t = _tensor(float(area), device=input.device)
+    return _pow(pooled * area_t, inv_p_t)
+
+
 def adaptive_avg_pool1d(input, output_size):
     from .._dispatch import dispatch
     if isinstance(output_size, int):
@@ -623,6 +656,18 @@ def interpolate(input, size=None, scale_factor=None, mode='nearest',
         return dispatch("upsample_bicubic2d", input.device.type, input, output_size, ac, sh, sw)
     else:
         raise NotImplementedError(f"interpolate mode '{mode}' is not yet implemented")
+
+
+def upsample(input, size=None, scale_factor=None, mode='nearest', align_corners=None):
+    return interpolate(input, size=size, scale_factor=scale_factor, mode=mode, align_corners=align_corners)
+
+
+def upsample_nearest(input, size=None, scale_factor=None):
+    return interpolate(input, size=size, scale_factor=scale_factor, mode='nearest')
+
+
+def upsample_bilinear(input, size=None, scale_factor=None, align_corners=False):
+    return interpolate(input, size=size, scale_factor=scale_factor, mode='bilinear', align_corners=align_corners)
 
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
