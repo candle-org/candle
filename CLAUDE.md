@@ -80,14 +80,21 @@ Candle does NOT depend on PyTorch at runtime. PyTorch is only used in tests for 
 - All computation must be implemented via the internal dispatch mechanism and backend-specific kernels
 - Allowed dependencies: `numpy`, `scipy`, `ctypes`, and the Python standard library
 
-### Core Design Principle: No Fallback to Numpy on GPU/NPU
+### Core Design Principle: No Fallback to CPU on GPU/NPU
 
-For MPS/CUDA/NPU devices, **NEVER** fall back to numpy for computation.
+For MPS/CUDA/NPU devices, **NEVER** fall back to CPU (numpy) to work around kernel bugs or missing functionality.
 
-- MPS ops should stay on the Metal GPU path
-- NPU ops should use ACLNN kernels via ctypes
-- CUDA ops should use CUDA kernels
+- MPS ops must stay on the Metal GPU path
+- NPU ops must use ACLNN kernels via ctypes
+- CUDA ops must use CUDA kernels
 - NumPy is ONLY acceptable for the CPU backend
+
+**When a native kernel has a bug or limitation:**
+
+1. **Composite workaround allowed**: You MAY reimplement the op as a composition of smaller on-device ops that already work correctly. All computation must remain on the same device.
+2. **Preserve the native kernel entry point**: Do NOT delete the broken native kernel call. Keep it in the code behind a clear guard (e.g., a flag or commented-out block) so it can be re-enabled and tested when the underlying platform (CANN SDK / CUDA toolkit / macOS) is updated.
+3. **Document the issue**: Record every known kernel issue in `docs/known-kernel-issues.md` with: op name, backend, error description, workaround used, and the platform version that exhibits the bug.
+4. **Never silently degrade**: Moving computation to CPU is never an acceptable workaround — it hides the real problem and breaks device-placement guarantees.
 
 ### Core Design Principle: Schema Validation is Intentional
 
@@ -102,8 +109,13 @@ For each backend, follow this priority order:
 
 1. **Native device kernels** (Metal shaders for MPS, ACLNN for NPU, CUDA kernels) — always preferred
 2. **Accelerate BLAS** (for MPS matmul) or equivalent hardware-accelerated libraries
-3. **Composite of existing dispatched ops** — build complex ops from simpler ones
-4. **NumPy fallback** — ONLY for CPU backend
+3. **Composite of existing dispatched ops** — build complex ops from smaller on-device ops that already work. This is the **only acceptable workaround** when a native kernel has a bug. All ops in the composite must run on the same device.
+4. **NumPy fallback** — ONLY for CPU backend, NEVER for MPS/CUDA/NPU
+
+When using option 3 as a workaround for a broken native kernel:
+- Keep the native kernel code in place (guarded, not deleted)
+- Add an entry to `docs/known-kernel-issues.md`
+- Add a `# TODO: re-enable native kernel when <platform> fixes <issue>` comment
 
 ### For Bug Fixes
 

@@ -67,3 +67,28 @@ pytest tests/mps/ -v --tb=short
 git checkout main && git pull upstream main
 git checkout -b feat/<name>
 ```
+
+## GPU/NPU Kernel Fallback Policy (Mandatory)
+
+This rule applies to all MPS, CUDA, and NPU backend code. Violations will block PR merge.
+
+### NEVER fall back to CPU
+
+- **NEVER** move computation from GPU/NPU to CPU (numpy) to work around a kernel bug or missing op.
+- CPU fallback hides real problems, breaks device-placement guarantees, and will not be accepted in review.
+
+### Composite workarounds ARE allowed
+
+- When a native kernel (Metal shader, ACLNN large kernel, CUDA kernel) has a bug, you MAY reimplement the op as a **composite of smaller on-device ops** that already work.
+- Every op in the composite must execute on the **same device** — no CPU round-trips.
+
+### Preserve native kernel entry points
+
+- Do NOT delete broken native kernel code. Keep it guarded so it can be re-enabled when the underlying platform is updated (CANN SDK, CUDA toolkit, macOS/Metal).
+- Mark with: `# TODO: re-enable native kernel when <platform> fixes <issue>`
+
+### Document every known issue
+
+- Record every known kernel issue in `docs/known-kernel-issues.md`.
+- Each entry must include: op name, backend, error description, composite workaround used, and the platform version that exhibits the bug.
+- This document is the checklist for regression testing after platform upgrades.
