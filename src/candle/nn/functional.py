@@ -937,6 +937,58 @@ def multi_margin_loss(input, target, p=1, margin=1.0, weight=None, reduction='me
     raise ValueError(f"Invalid reduction mode: {reduction}")
 
 
+
+
+def multilabel_margin_loss(input, target, reduction='mean'):
+    from .._creation import tensor as _tensor, arange as _arange
+    from .._dispatch import dispatch
+    from .._functional import add, neg, mean, sum as _sum, clamp
+
+    if input.ndim != 2 or target.ndim != 2:
+        raise ValueError('multilabel_margin_loss expects 2D input and target')
+
+    n_batch, n_classes = input.shape
+    losses = []
+    one_t = _tensor(1.0, device=input.device)
+    c_t = _tensor(float(n_classes), device=input.device)
+
+    for n in range(n_batch):
+        t_row = target[n]
+        valid_mask = dispatch('ge', input.device.type, t_row, 0)
+        valid_idx = t_row[valid_mask]
+        if valid_idx.shape[0] == 0:
+            losses.append(_tensor(0.0, device=input.device))
+            continue
+
+        cls = _arange(n_classes, device=input.device).unsqueeze(1)
+        eq = dispatch('eq', input.device.type, cls, valid_idx.unsqueeze(0))
+        is_target = dispatch('any', input.device.type, eq, dim=1)
+
+        x_row = input[n]
+        x_targets = x_row[is_target]
+        not_target = dispatch('eq', input.device.type, is_target, False)
+        x_non = x_row[not_target]
+
+        if x_non.shape[0] == 0:
+            losses.append(_tensor(0.0, device=input.device))
+            continue
+
+        acc = _tensor(0.0, device=input.device)
+        for i in range(x_targets.shape[0]):
+            margins = add(one_t, add(x_non, neg(x_targets[i])))
+            acc = add(acc, _sum(clamp(margins, 0.0, None)))
+
+        losses.append(dispatch('div', input.device.type, acc, c_t))
+
+    batch = dispatch('stack', input.device.type, losses, 0)
+    if reduction == 'none':
+        return batch
+    if reduction == 'sum':
+        return _sum(batch)
+    if reduction == 'mean':
+        return mean(batch)
+    raise ValueError(f'Invalid reduction mode: {reduction}')
+
 def multilabel_soft_margin_loss(input, target, weight=None, reduction='mean'):
     from .._functional import mul, neg, log, add, mean, sum as _sum
     from .._creation import tensor as _tensor
@@ -1505,6 +1557,25 @@ def avg_pool3d(input, kernel_size, stride=None, padding=0, ceil_mode=False,
     return dispatch("avg_pool3d", input.device.type, input, _kernel_size, _stride,
                     _padding, ceil_mode, count_include_pad)
 
+
+
+
+def lp_pool3d(input, norm_type, kernel_size, stride=None, ceil_mode=False):
+    from .._functional import abs as _abs, pow as _pow
+    from .._creation import tensor as _tensor
+    p = float(norm_type)
+    if p <= 0:
+        raise ValueError('norm_type must be positive')
+    p_t = _tensor(p, device=input.device)
+    inv_p_t = _tensor(1.0 / p, device=input.device)
+    powered = _pow(_abs(input), p_t)
+    pooled = avg_pool3d(powered, kernel_size, stride=stride, padding=0, ceil_mode=ceil_mode, count_include_pad=True)
+    if isinstance(kernel_size, int):
+        vol = kernel_size * kernel_size * kernel_size
+    else:
+        vol = int(kernel_size[0]) * int(kernel_size[1]) * int(kernel_size[2])
+    vol_t = _tensor(float(vol), device=input.device)
+    return _pow(pooled * vol_t, inv_p_t)
 
 def adaptive_avg_pool3d(input, output_size):
     from .._dispatch import dispatch

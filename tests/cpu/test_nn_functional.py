@@ -526,3 +526,24 @@ def test_lp_pool2d_wrapper_exists_matches_torch():
     expected = torch.tensor([[[[np.sqrt(30.0)]]]], device='cpu')
     assert out.shape == (1, 1, 1, 1)
     assert torch.allclose(out, expected, atol=1e-6)
+
+
+def test_lp_pool3d_wrapper_exists_matches_expected():
+    x = torch.tensor([[[[[1.0, -2.0], [3.0, -4.0]], [[5.0, -6.0], [7.0, -8.0]]]]], device='cpu')
+    out = F.lp_pool3d(x, norm_type=2.0, kernel_size=2, stride=2)
+    expected = torch.tensor([[[[[np.sqrt(204.0)]]]]], device='cpu')
+    assert out.shape == (1, 1, 1, 1, 1)
+    assert torch.allclose(out, expected, atol=1e-6)
+
+
+def test_multilabel_margin_loss_wrapper_exists_basic():
+    # input: (N=1, C=4), target uses class indices and -1 padding
+    input = torch.tensor([[0.9, 0.2, 0.8, -0.1]], device='cpu')
+    target = torch.tensor([[0, 2, -1, -1]], device='cpu', dtype=torch.int64)
+    loss = F.multilabel_margin_loss(input, target, reduction='mean')
+    # For y={0,2}, non-targets={1,3}:
+    # max(0, 1 - (x0-x1))=0.3, max(0,1-(x0-x3))=0.0
+    # max(0, 1 - (x2-x1))=0.4, max(0,1-(x2-x3))=0.1
+    # sum=0.8, divide by C=4 -> 0.2
+    expected = torch.tensor(0.2, device='cpu')
+    assert torch.allclose(loss, expected, atol=1e-6)
