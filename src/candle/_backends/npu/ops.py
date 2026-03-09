@@ -2452,6 +2452,9 @@ def repeat_interleave(a, repeats, dim=None):
 
     from .creation import zeros_create
 
+    if hasattr(repeats, "shape"):
+        raise RuntimeError("NPU repeat_interleave with tensor repeats is not implemented without CPU fallback")
+
     if isinstance(repeats, int) and aclnn.repeat_interleave_int_symbols_ok():
         rep = int(repeats)
         if rep < 0:
@@ -2713,24 +2716,14 @@ def cartesian_prod(*tensors):
         if t.dtype != first.dtype:
             raise RuntimeError("meshgrid expects all tensors to have the same dtype")
 
-    from .creation import tensor_create
-
-    cols = [t.to("cpu").tolist() for t in tensors]
-    if any(len(c) == 0 for c in cols):
-        return tensor_create([], dtype=first.dtype, device=first.device).reshape((0, len(tensors)))
-
-    rows = [[]]
-    for c in cols:
-        rows = [prefix + [v] for prefix in rows for v in c]
-    return tensor_create(rows, dtype=first.dtype, device=first.device)
+    raise RuntimeError("NPU cartesian_prod is not implemented without CPU fallback")
 
 
 def block_diag(*tensors):
     tensors = _normalize_tensor_sequence_args(tensors)
-    from .creation import tensor_create
 
     if len(tensors) == 0:
-        return tensor_create([[]], dtype=float_dtype, device="cpu")
+        raise RuntimeError("NPU block_diag is not implemented without CPU fallback")
 
     first = tensors[0]
     for t in tensors:
@@ -2741,24 +2734,7 @@ def block_diag(*tensors):
         if t.dtype != first.dtype:
             raise ValueError("block_diag expects tensors with the same dtype")
 
-    rows = sum(int(t.shape[0]) for t in tensors)
-    cols = sum(int(t.shape[1]) for t in tensors)
-    out = [[0 for _ in range(cols)] for _ in range(rows)]
-
-    r0 = 0
-    c0 = 0
-    for t in tensors:
-        data = t.to("cpu").tolist()
-        h = int(t.shape[0])
-        w = int(t.shape[1])
-        for i in range(h):
-            row_vals = data[i]
-            for j in range(w):
-                out[r0 + i][c0 + j] = row_vals[j]
-        r0 += h
-        c0 += w
-
-    return tensor_create(out, dtype=first.dtype, device=first.device)
+    raise RuntimeError("NPU block_diag is not implemented without CPU fallback")
 
 
 def nonzero(a, as_tuple=False):
@@ -7599,10 +7575,8 @@ def baddbmm(self_tensor, batch1, batch2, beta=1.0, alpha=1.0):
     out_stride = npu_runtime._contiguous_stride(out_shape)
     out_size = _numel(out_shape) * _dtype_itemsize(self_tensor.dtype)
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    if hasattr(beta, "shape"):
-        beta = float(_unwrap_storage(beta).to_numpy())
-    if hasattr(alpha, "shape"):
-        alpha = float(_unwrap_storage(alpha).to_numpy())
+    if hasattr(beta, "shape") or hasattr(alpha, "shape"):
+        raise RuntimeError("NPU baddbmm does not support tensor alpha/beta without CPU fallback")
     aclnn.baddbmm(
         self_storage.data_ptr(), b1_storage.data_ptr(), b2_storage.data_ptr(), out_ptr,
         self_tensor.shape, self_tensor.stride, batch1.shape, batch1.stride,
