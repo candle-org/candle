@@ -424,6 +424,173 @@ class MetalKernelDispatcher:
         self.dispatch_binary(kernel_name, src_buf, dst_buf, numel)
 
     # ------------------------------------------------------------------
+    # Dispatch: unary strided  (a → out, with shape/strides)
+    # ------------------------------------------------------------------
+
+    def dispatch_unary_strided(self, kernel_name, a_metal_buf, out_metal_buf,
+                               numel, shape_array, strides_a_array, ndim):
+        """Encode and execute a strided unary element-wise kernel."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        shape_bytes = struct.pack(f"{ndim}I", *shape_array)
+        strides_bytes = struct.pack(f"{ndim}i", *strides_a_array)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(a_metal_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(out_metal_buf, 0, 1)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 2)
+            enc.setBytes_length_atIndex_(shape_bytes, len(shape_bytes), 3)
+            enc.setBytes_length_atIndex_(strides_bytes, len(strides_bytes), 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", ndim), 4, 5)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_unary_strided_ctypes(enc, pipeline, a_metal_buf,
+                                         out_metal_buf, numel,
+                                         shape_bytes, strides_bytes, ndim,
+                                         groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: binary strided  (a, b → out, with shape/strides)
+    # ------------------------------------------------------------------
+
+    def dispatch_binary_strided(self, kernel_name, a_buf, b_buf, out_buf,
+                                numel, shape_array, strides_a_array,
+                                strides_b_array, ndim):
+        """Encode and execute a strided binary element-wise kernel."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        shape_bytes = struct.pack(f"{ndim}I", *shape_array)
+        strides_a_bytes = struct.pack(f"{ndim}i", *strides_a_array)
+        strides_b_bytes = struct.pack(f"{ndim}i", *strides_b_array)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(a_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(b_buf, 0, 1)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 3)
+            enc.setBytes_length_atIndex_(shape_bytes, len(shape_bytes), 4)
+            enc.setBytes_length_atIndex_(strides_a_bytes, len(strides_a_bytes), 5)
+            enc.setBytes_length_atIndex_(strides_b_bytes, len(strides_b_bytes), 6)
+            enc.setBytes_length_atIndex_(struct.pack("I", ndim), 4, 7)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_binary_strided_ctypes(enc, pipeline, a_buf, b_buf,
+                                          out_buf, numel, shape_bytes,
+                                          strides_a_bytes, strides_b_bytes,
+                                          ndim, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: binary scalar strided  (a, scalar → out, with strides)
+    # ------------------------------------------------------------------
+
+    def dispatch_binary_scalar_strided(self, kernel_name, a_buf, scalar,
+                                       out_buf, numel, shape_array,
+                                       strides_a_array, ndim,
+                                       scalar_fmt="f"):
+        """Encode and execute a strided binary-scalar kernel."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        scalar_bytes = struct.pack(scalar_fmt, scalar)
+        scalar_size = len(scalar_bytes)
+        shape_bytes = struct.pack(f"{ndim}I", *shape_array)
+        strides_bytes = struct.pack(f"{ndim}i", *strides_a_array)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(a_buf, 0, 0)
+            enc.setBytes_length_atIndex_(scalar_bytes, scalar_size, 1)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 3)
+            enc.setBytes_length_atIndex_(shape_bytes, len(shape_bytes), 4)
+            enc.setBytes_length_atIndex_(strides_bytes, len(strides_bytes), 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", ndim), 4, 6)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_binary_scalar_strided_ctypes(
+                enc, pipeline, a_buf, scalar_bytes, scalar_size,
+                out_buf, numel, shape_bytes, strides_bytes, ndim,
+                groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: comparison  (a, b → uchar out)
+    # ------------------------------------------------------------------
+
+    def dispatch_comparison(self, kernel_name, a_buf, b_buf, out_buf, numel):
+        """Encode and execute a comparison kernel (typed input, uchar output)."""
+        self.dispatch_binary(kernel_name, a_buf, b_buf, out_buf, numel)
+
+    def dispatch_comparison_scalar(self, kernel_name, a_buf, scalar, out_buf,
+                                   numel, scalar_fmt="f"):
+        """Encode and execute a scalar comparison kernel."""
+        self.dispatch_binary_scalar(kernel_name, a_buf, scalar, out_buf,
+                                    numel, scalar_fmt=scalar_fmt)
+
+    # ------------------------------------------------------------------
+    # Dispatch: axis reduction  (input → reduced output along dim)
+    # ------------------------------------------------------------------
+
+    def dispatch_reduce_dim(self, kernel_name, a_buf, out_buf,
+                            outer_size, reduce_size, inner_size,
+                            out_numel):
+        """Dispatch an axis-reduce kernel over one dimension."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (out_numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(a_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 1)
+            enc.setBytes_length_atIndex_(struct.pack("I", outer_size), 4, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", reduce_size), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", inner_size), 4, 4)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_reduce_dim_ctypes(enc, pipeline, a_buf, out_buf,
+                                      outer_size, reduce_size, inner_size,
+                                      groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
     # Dispatch: softmax 2D  (input → output, with rows/cols)
     # ------------------------------------------------------------------
 
@@ -670,4 +837,67 @@ def _encode_softmax_ctypes(enc, pipeline, a_buf, out_buf, rows, cols):
     _libobjc.objc_msgSend(enc, sel, grid, tpg_s)
     _libobjc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
     _libobjc.objc_msgSend.restype = ctypes.c_void_p
+    _ctypes_end_encoding(enc)
+
+
+def _encode_unary_strided_ctypes(enc, pipeline, a_buf, out_buf, numel,
+                                  shape_bytes, strides_bytes, ndim,
+                                  groups, tpg):
+    """Encode a strided unary kernel dispatch via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, a_buf, 0, 0)
+    _ctypes_set_buffer(enc, out_buf, 0, 1)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 2)
+    _ctypes_set_bytes(enc, shape_bytes, len(shape_bytes), 3)
+    _ctypes_set_bytes(enc, strides_bytes, len(strides_bytes), 4)
+    _ctypes_set_bytes(enc, struct.pack("I", ndim), 4, 5)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_binary_strided_ctypes(enc, pipeline, a_buf, b_buf, out_buf,
+                                   numel, shape_bytes, strides_a_bytes,
+                                   strides_b_bytes, ndim, groups, tpg):
+    """Encode a strided binary kernel dispatch via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, a_buf, 0, 0)
+    _ctypes_set_buffer(enc, b_buf, 0, 1)
+    _ctypes_set_buffer(enc, out_buf, 0, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 3)
+    _ctypes_set_bytes(enc, shape_bytes, len(shape_bytes), 4)
+    _ctypes_set_bytes(enc, strides_a_bytes, len(strides_a_bytes), 5)
+    _ctypes_set_bytes(enc, strides_b_bytes, len(strides_b_bytes), 6)
+    _ctypes_set_bytes(enc, struct.pack("I", ndim), 4, 7)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_binary_scalar_strided_ctypes(enc, pipeline, a_buf, scalar_bytes,
+                                          scalar_size, out_buf, numel,
+                                          shape_bytes, strides_bytes, ndim,
+                                          groups, tpg):
+    """Encode a strided binary-scalar kernel dispatch via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, a_buf, 0, 0)
+    _ctypes_set_bytes(enc, scalar_bytes, scalar_size, 1)
+    _ctypes_set_buffer(enc, out_buf, 0, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 3)
+    _ctypes_set_bytes(enc, shape_bytes, len(shape_bytes), 4)
+    _ctypes_set_bytes(enc, strides_bytes, len(strides_bytes), 5)
+    _ctypes_set_bytes(enc, struct.pack("I", ndim), 4, 6)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_reduce_dim_ctypes(enc, pipeline, a_buf, out_buf,
+                               outer_size, reduce_size, inner_size,
+                               groups, tpg):
+    """Encode an axis-reduce kernel dispatch via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, a_buf, 0, 0)
+    _ctypes_set_buffer(enc, out_buf, 0, 1)
+    _ctypes_set_bytes(enc, struct.pack("I", outer_size), 4, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", reduce_size), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", inner_size), 4, 4)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
     _ctypes_end_encoding(enc)

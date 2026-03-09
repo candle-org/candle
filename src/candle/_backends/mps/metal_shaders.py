@@ -1,11 +1,32 @@
 """Metal Shading Language (MSL) kernel source strings for GPU compute.
 
 All kernels are compiled once at first use via MetalKernelDispatcher.
-Naming convention: <op>_f32 / <op>_f16 for each dtype variant.
+Naming convention: <op>_<suffix> for each dtype variant (f32, f16, i32, i64, u8).
 """
 
 # ---------------------------------------------------------------------------
-# Helper: generate element-wise kernels for both f32 and f16
+# Dtype mapping: (MSL type, kernel suffix)
+# ---------------------------------------------------------------------------
+DTYPE_MAP = [
+    ("float", "f32"),
+    ("half",  "f16"),
+    ("int",   "i32"),
+    ("long",  "i64"),
+    ("uchar", "u8"),     # bool
+]
+
+_FLOAT_TYPES = ("float", "half")
+_ALL_TYPES = tuple(t for t, _ in DTYPE_MAP)
+_SUFFIX = dict(DTYPE_MAP)
+
+# Ops that require math functions — only valid for float/half
+_FLOAT_ONLY_OPS = frozenset({
+    "sqrt", "rsqrt", "exp", "log", "log2", "sin", "cos", "tanh",
+    "sigmoid", "gelu", "silu", "floor", "ceil", "round",
+})
+
+# ---------------------------------------------------------------------------
+# Templates: element-wise kernels
 # ---------------------------------------------------------------------------
 
 _UNARY_TEMPLATE = """
@@ -40,24 +61,194 @@ kernel void {name}_scalar_{suffix}(device const {type}* a  [[buffer(0)]],
 }}
 """
 
+# ---------------------------------------------------------------------------
+# Templates: strided element-wise kernels
+# ---------------------------------------------------------------------------
 
-def _gen_unary(name, expr, types=("float", "half")):
-    """Generate unary kernel source for given types."""
+_STRIDED_INDEX_HELPER = """
+// Strided indexing helper: convert linear index to byte offset
+inline uint index_to_offset(uint linear_idx,
+                            constant uint* shape,
+                            constant int*  strides,
+                            uint ndim) {
+    uint offset = 0;
+    for (uint d = ndim; d > 0; d--) {
+        offset += (linear_idx % shape[d-1]) * uint(strides[d-1]);
+        linear_idx /= shape[d-1];
+    }
+    return offset;
+}
+"""
+
+_UNARY_STRIDED_TEMPLATE = """
+kernel void {name}_strided_{suffix}(
+    device const {type}* a   [[buffer(0)]],
+    device {type}* out       [[buffer(1)]],
+    constant uint& N         [[buffer(2)]],
+    constant uint* shape     [[buffer(3)]],
+    constant int*  strides_a [[buffer(4)]],
+    constant uint& ndim      [[buffer(5)]],
+    uint id [[thread_position_in_grid]]) {{
+    if (id < N) {{
+        uint off_a = index_to_offset(id, shape, strides_a, ndim);
+        {type} x = a[off_a];
+        out[id] = {expr};
+    }}
+}}
+"""
+
+_BINARY_STRIDED_TEMPLATE = """
+kernel void {name}_strided_{suffix}(
+    device const {type}* a   [[buffer(0)]],
+    device const {type}* b   [[buffer(1)]],
+    device {type}* out       [[buffer(2)]],
+    constant uint& N         [[buffer(3)]],
+    constant uint* shape     [[buffer(4)]],
+    constant int*  strides_a [[buffer(5)]],
+    constant int*  strides_b [[buffer(6)]],
+    constant uint& ndim      [[buffer(7)]],
+    uint id [[thread_position_in_grid]]) {{
+    if (id < N) {{
+        uint off_a = index_to_offset(id, shape, strides_a, ndim);
+        uint off_b = index_to_offset(id, shape, strides_b, ndim);
+        out[id] = {expr_strided};
+    }}
+}}
+"""
+
+_BINARY_SCALAR_STRIDED_TEMPLATE = """
+kernel void {name}_scalar_strided_{suffix}(
+    device const {type}* a   [[buffer(0)]],
+    constant {type}& scalar  [[buffer(1)]],
+    device {type}* out       [[buffer(2)]],
+    constant uint& N         [[buffer(3)]],
+    constant uint* shape     [[buffer(4)]],
+    constant int*  strides_a [[buffer(5)]],
+    constant uint& ndim      [[buffer(6)]],
+    uint id [[thread_position_in_grid]]) {{
+    if (id < N) {{
+        uint off_a = index_to_offset(id, shape, strides_a, ndim);
+        out[id] = {expr_strided};
+    }}
+}}
+"""
+
+# ---------------------------------------------------------------------------
+# Templates: comparison kernels (typed input, uchar output)
+# ---------------------------------------------------------------------------
+
+_COMPARISON_TEMPLATE = """
+kernel void {name}_{suffix}(device const {type}* a [[buffer(0)]],
+                              device const {type}* b [[buffer(1)]],
+                              device uchar* out      [[buffer(2)]],
+                              constant uint& N       [[buffer(3)]],
+                              uint id [[thread_position_in_grid]]) {{
+    if (id < N) out[id] = (a[id] {op} b[id]) ? 1 : 0;
+}}
+"""
+
+_COMPARISON_SCALAR_TEMPLATE = """
+kernel void {name}_scalar_{suffix}(device const {type}* a  [[buffer(0)]],
+                                    constant {type}& scalar [[buffer(1)]],
+                                    device uchar* out       [[buffer(2)]],
+                                    constant uint& N        [[buffer(3)]],
+                                    uint id [[thread_position_in_grid]]) {{
+    if (id < N) out[id] = (a[id] {op} scalar) ? 1 : 0;
+}}
+"""
+
+# ---------------------------------------------------------------------------
+# Templates: axis-reduce kernels
+# ---------------------------------------------------------------------------
+
+_REDUCE_DIM_TEMPLATE = """
+kernel void reduce_{name}_dim_{suffix}(
+    device const {type}* input  [[buffer(0)]],
+    device {out_type}* output   [[buffer(1)]],
+    constant uint& outer_size   [[buffer(2)]],
+    constant uint& reduce_size  [[buffer(3)]],
+    constant uint& inner_size   [[buffer(4)]],
+    uint gid [[thread_position_in_grid]]) {{
+    if (gid >= outer_size * inner_size) return;
+    uint outer = gid / inner_size;
+    uint inner = gid % inner_size;
+    {init}
+    for (uint r = 0; r < reduce_size; r++) {{
+        {type} val = input[(outer * reduce_size + r) * inner_size + inner];
+        {body}
+    }}
+    output[gid] = {finalize};
+}}
+"""
+
+# ---------------------------------------------------------------------------
+# Generator functions
+# ---------------------------------------------------------------------------
+
+def _gen_unary(name, expr, types=None, float_only=False):
+    """Generate unary kernel source for given types (contiguous + strided)."""
+    if types is None:
+        types = _FLOAT_TYPES if float_only else _ALL_TYPES
     parts = []
     for t in types:
-        suffix = "f32" if t == "float" else "f16"
-        parts.append(_UNARY_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=expr))
+        suffix = _SUFFIX[t]
+        parts.append(_UNARY_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, expr=expr))
+        parts.append(_UNARY_STRIDED_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, expr=expr))
     return "".join(parts)
 
 
-def _gen_binary(name, expr, types=("float", "half")):
-    """Generate binary kernel source for given types."""
+def _gen_binary(name, expr, types=None, float_only=False):
+    """Generate binary kernel source for given types (contiguous + strided)."""
+    if types is None:
+        types = _FLOAT_TYPES if float_only else _ALL_TYPES
     parts = []
     for t in types:
-        suffix = "f32" if t == "float" else "f16"
-        parts.append(_BINARY_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=expr))
+        suffix = _SUFFIX[t]
+        # Contiguous variants
+        parts.append(_BINARY_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, expr=expr))
         scalar_expr = expr.replace("b[id]", "scalar")
-        parts.append(_BINARY_SCALAR_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=scalar_expr))
+        parts.append(_BINARY_SCALAR_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, expr=scalar_expr))
+        # Strided variants: replace a[id]/b[id] with a[off_a]/b[off_b]
+        strided_expr = expr.replace("a[id]", "a[off_a]").replace("b[id]", "b[off_b]")
+        parts.append(_BINARY_STRIDED_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, expr_strided=strided_expr))
+        scalar_strided_expr = expr.replace("a[id]", "a[off_a]").replace("b[id]", "scalar")
+        parts.append(_BINARY_SCALAR_STRIDED_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, expr_strided=scalar_strided_expr))
+    return "".join(parts)
+
+
+def _gen_comparison(name, op, types=None):
+    """Generate comparison kernels (typed input → uchar output)."""
+    if types is None:
+        types = ("float", "half", "int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_COMPARISON_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, op=op))
+        parts.append(_COMPARISON_SCALAR_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, op=op))
+    return "".join(parts)
+
+
+def _gen_reduce_dim(name, init, body, finalize, out_type=None, types=None):
+    """Generate axis-reduce kernels for each dtype."""
+    if types is None:
+        types = ("float", "half", "int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        ot = out_type if out_type else t
+        parts.append(_REDUCE_DIM_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, out_type=ot,
+            init=init.replace("{type}", t).replace("{out_type}", ot),
+            body=body.replace("{type}", t),
+            finalize=finalize.replace("{type}", t)))
     return "".join(parts)
 
 
@@ -78,15 +269,23 @@ _BINARY_OPS = (
     ("div", "a[id] / b[id]"),
     ("maximum", "max(a[id], b[id])"),
     ("minimum", "min(a[id], b[id])"),
+)
+
+_BINARY_FLOAT_OPS = (
     ("pow", "pow(a[id], b[id])"),
     ("fmod", "fmod(a[id], b[id])"),
     ("remainder", "a[id] - b[id] * floor(a[id] / b[id])"),
 )
 
-# --- Unary element-wise ---
-_UNARY_OPS = (
+# --- Unary element-wise (numeric types: float, half, int, long) ---
+_UNARY_NUMERIC_OPS = (
     ("neg", "-x"),
     ("abs", "abs(x)"),
+    ("relu", "max(x, ({type})0)"),
+)
+
+_UNARY_FLOAT_OPS = (
+    ("sign", "sign(x)"),
     ("sqrt", "sqrt(x)"),
     ("rsqrt", "rsqrt(x)"),
     ("exp", "exp(x)"),
@@ -96,284 +295,147 @@ _UNARY_OPS = (
     ("cos", "cos(x)"),
     ("tanh", "tanh(x)"),
     ("sigmoid", "1.0 / (1.0 + exp(-x))"),
-    ("sign", "sign(x)"),
     ("floor", "floor(x)"),
     ("ceil", "ceil(x)"),
     ("round", "rint(x)"),
-    ("relu", "max(x, ({type})0)"),
     ("gelu", "0.5f * x * (1.0f + tanh(0.7978845608f * (x + 0.044715f * x * x * x)))"),
     ("silu", "x / (1.0f + exp(-x))"),
 )
 
-# --- Reduction kernels (two-pass parallel) ---
-_REDUCTION_SOURCE = """
-// ---- sum reduction ----
-kernel void sum_partial_f32(device const float* input [[buffer(0)]],
-                            device float* partials     [[buffer(1)]],
+# --- Comparison ops ---
+_COMPARISON_OPS = (
+    ("eq", "=="), ("ne", "!="), ("lt", "<"),
+    ("le", "<="), ("gt", ">"),  ("ge", ">="),
+)
+
+# --- Reduction templates (full-tensor, two-pass parallel) ---
+
+_REDUCTION_PARTIAL_TEMPLATE = """
+kernel void {name}_partial_{suffix}(device const {type}* input [[buffer(0)]],
+                            device {type}* partials     [[buffer(1)]],
                             constant uint& N           [[buffer(2)]],
                             uint gid [[thread_position_in_grid]],
                             uint lid [[thread_position_in_threadgroup]],
                             uint group_id [[threadgroup_position_in_grid]],
-                            uint group_size [[threads_per_threadgroup]]) {
-    threadgroup float shared[256];
-    float val = (gid < N) ? input[gid] : 0.0f;
+                            uint group_size [[threads_per_threadgroup]]) {{
+    threadgroup {type} shared[256];
+    {type} val = (gid < N) ? input[gid] : {identity};
     shared[lid] = val;
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint s = group_size / 2; s > 0; s >>= 1) {
-        if (lid < s) shared[lid] += shared[lid + s];
+    for (uint s = group_size / 2; s > 0; s >>= 1) {{
+        if (lid < s) shared[lid] = {combine};
         threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
+    }}
     if (lid == 0) partials[group_id] = shared[0];
-}
-
-kernel void sum_final_f32(device const float* partials [[buffer(0)]],
-                          device float* output          [[buffer(1)]],
-                          constant uint& N              [[buffer(2)]],
-                          uint lid [[thread_position_in_threadgroup]],
-                          uint group_size [[threads_per_threadgroup]]) {
-    threadgroup float shared[256];
-    float val = (lid < N) ? partials[lid] : 0.0f;
-    shared[lid] = val;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint s = group_size / 2; s > 0; s >>= 1) {
-        if (lid < s) shared[lid] += shared[lid + s];
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lid == 0) output[0] = shared[0];
-}
-
-// ---- max reduction ----
-kernel void max_partial_f32(device const float* input [[buffer(0)]],
-                            device float* partials     [[buffer(1)]],
-                            constant uint& N           [[buffer(2)]],
-                            uint gid [[thread_position_in_grid]],
-                            uint lid [[thread_position_in_threadgroup]],
-                            uint group_id [[threadgroup_position_in_grid]],
-                            uint group_size [[threads_per_threadgroup]]) {
-    threadgroup float shared[256];
-    float val = (gid < N) ? input[gid] : -INFINITY;
-    shared[lid] = val;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint s = group_size / 2; s > 0; s >>= 1) {
-        if (lid < s) shared[lid] = max(shared[lid], shared[lid + s]);
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lid == 0) partials[group_id] = shared[0];
-}
-
-kernel void max_final_f32(device const float* partials [[buffer(0)]],
-                          device float* output          [[buffer(1)]],
-                          constant uint& N              [[buffer(2)]],
-                          uint lid [[thread_position_in_threadgroup]],
-                          uint group_size [[threads_per_threadgroup]]) {
-    threadgroup float shared[256];
-    float val = (lid < N) ? partials[lid] : -INFINITY;
-    shared[lid] = val;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint s = group_size / 2; s > 0; s >>= 1) {
-        if (lid < s) shared[lid] = max(shared[lid], shared[lid + s]);
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lid == 0) output[0] = shared[0];
-}
-
-// ---- min reduction ----
-kernel void min_partial_f32(device const float* input [[buffer(0)]],
-                            device float* partials     [[buffer(1)]],
-                            constant uint& N           [[buffer(2)]],
-                            uint gid [[thread_position_in_grid]],
-                            uint lid [[thread_position_in_threadgroup]],
-                            uint group_id [[threadgroup_position_in_grid]],
-                            uint group_size [[threads_per_threadgroup]]) {
-    threadgroup float shared[256];
-    float val = (gid < N) ? input[gid] : INFINITY;
-    shared[lid] = val;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint s = group_size / 2; s > 0; s >>= 1) {
-        if (lid < s) shared[lid] = min(shared[lid], shared[lid + s]);
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lid == 0) partials[group_id] = shared[0];
-}
-
-kernel void min_final_f32(device const float* partials [[buffer(0)]],
-                          device float* output          [[buffer(1)]],
-                          constant uint& N              [[buffer(2)]],
-                          uint lid [[thread_position_in_threadgroup]],
-                          uint group_size [[threads_per_threadgroup]]) {
-    threadgroup float shared[256];
-    float val = (lid < N) ? partials[lid] : INFINITY;
-    shared[lid] = val;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint s = group_size / 2; s > 0; s >>= 1) {
-        if (lid < s) shared[lid] = min(shared[lid], shared[lid + s]);
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lid == 0) output[0] = shared[0];
-}
-
-// ---- argmax reduction ----
-kernel void argmax_partial_f32(device const float* input [[buffer(0)]],
-                               device float* partial_vals [[buffer(1)]],
-                               device uint* partial_idxs   [[buffer(2)]],
-                               constant uint& N            [[buffer(3)]],
-                               uint gid [[thread_position_in_grid]],
-                               uint lid [[thread_position_in_threadgroup]],
-                               uint group_id [[threadgroup_position_in_grid]],
-                               uint group_size [[threads_per_threadgroup]]) {
-    threadgroup float s_val[256];
-    threadgroup uint s_idx[256];
-    float val = (gid < N) ? input[gid] : -INFINITY;
-    uint idx = gid;
-    s_val[lid] = val;
-    s_idx[lid] = idx;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint s = group_size / 2; s > 0; s >>= 1) {
-        if (lid < s && s_val[lid + s] > s_val[lid]) {
-            s_val[lid] = s_val[lid + s];
-            s_idx[lid] = s_idx[lid + s];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lid == 0) {
-        partial_vals[group_id] = s_val[0];
-        partial_idxs[group_id] = s_idx[0];
-    }
-}
-
-kernel void argmax_final_f32(device const float* partial_vals [[buffer(0)]],
-                             device const uint* partial_idxs   [[buffer(1)]],
-                             device uint* output               [[buffer(2)]],
-                             constant uint& N                  [[buffer(3)]],
-                             uint lid [[thread_position_in_threadgroup]],
-                             uint group_size [[threads_per_threadgroup]]) {
-    threadgroup float s_val[256];
-    threadgroup uint s_idx[256];
-    float val = (lid < N) ? partial_vals[lid] : -INFINITY;
-    uint idx = (lid < N) ? partial_idxs[lid] : 0;
-    s_val[lid] = val;
-    s_idx[lid] = idx;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint s = group_size / 2; s > 0; s >>= 1) {
-        if (lid < s && s_val[lid + s] > s_val[lid]) {
-            s_val[lid] = s_val[lid + s];
-            s_idx[lid] = s_idx[lid + s];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lid == 0) output[0] = s_idx[0];
-}
-
-// ---- argmin reduction ----
-kernel void argmin_partial_f32(device const float* input [[buffer(0)]],
-                               device float* partial_vals [[buffer(1)]],
-                               device uint* partial_idxs   [[buffer(2)]],
-                               constant uint& N            [[buffer(3)]],
-                               uint gid [[thread_position_in_grid]],
-                               uint lid [[thread_position_in_threadgroup]],
-                               uint group_id [[threadgroup_position_in_grid]],
-                               uint group_size [[threads_per_threadgroup]]) {
-    threadgroup float s_val[256];
-    threadgroup uint s_idx[256];
-    float val = (gid < N) ? input[gid] : INFINITY;
-    uint idx = gid;
-    s_val[lid] = val;
-    s_idx[lid] = idx;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint s = group_size / 2; s > 0; s >>= 1) {
-        if (lid < s && s_val[lid + s] < s_val[lid]) {
-            s_val[lid] = s_val[lid + s];
-            s_idx[lid] = s_idx[lid + s];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lid == 0) {
-        partial_vals[group_id] = s_val[0];
-        partial_idxs[group_id] = s_idx[0];
-    }
-}
-
-kernel void argmin_final_f32(device const float* partial_vals [[buffer(0)]],
-                             device const uint* partial_idxs   [[buffer(1)]],
-                             device uint* output               [[buffer(2)]],
-                             constant uint& N                  [[buffer(3)]],
-                             uint lid [[thread_position_in_threadgroup]],
-                             uint group_size [[threads_per_threadgroup]]) {
-    threadgroup float s_val[256];
-    threadgroup uint s_idx[256];
-    float val = (lid < N) ? partial_vals[lid] : INFINITY;
-    uint idx = (lid < N) ? partial_idxs[lid] : 0;
-    s_val[lid] = val;
-    s_idx[lid] = idx;
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint s = group_size / 2; s > 0; s >>= 1) {
-        if (lid < s && s_val[lid + s] < s_val[lid]) {
-            s_val[lid] = s_val[lid + s];
-            s_idx[lid] = s_idx[lid + s];
-        }
-        threadgroup_barrier(mem_flags::mem_threadgroup);
-    }
-    if (lid == 0) output[0] = s_idx[0];
-}
-
-// ---- fill kernel ----
-kernel void fill_f32(device float* out    [[buffer(0)]],
-                     constant float& val  [[buffer(1)]],
-                     constant uint& N     [[buffer(2)]],
-                     uint id [[thread_position_in_grid]]) {
-    if (id < N) out[id] = val;
-}
-
-kernel void fill_f16(device half* out    [[buffer(0)]],
-                     constant half& val  [[buffer(1)]],
-                     constant uint& N    [[buffer(2)]],
-                     uint id [[thread_position_in_grid]]) {
-    if (id < N) out[id] = val;
-}
-
-// ---- copy kernel ----
-kernel void copy_f32(device const float* src [[buffer(0)]],
-                     device float* dst       [[buffer(1)]],
-                     constant uint& N        [[buffer(2)]],
-                     uint id [[thread_position_in_grid]]) {
-    if (id < N) dst[id] = src[id];
-}
-
-kernel void copy_f16(device const half* src [[buffer(0)]],
-                     device half* dst       [[buffer(1)]],
-                     constant uint& N       [[buffer(2)]],
-                     uint id [[thread_position_in_grid]]) {
-    if (id < N) dst[id] = src[id];
-}
-
-// ---- softmax (per-row, last dim) ----
-kernel void softmax_f32(device const float* input [[buffer(0)]],
-                        device float* output       [[buffer(1)]],
-                        constant uint& rows        [[buffer(2)]],
-                        constant uint& cols        [[buffer(3)]],
-                        uint2 pos [[thread_position_in_grid]]) {
-    uint row = pos.y;
-    uint col = pos.x;
-    if (row >= rows || col >= cols) return;
-
-    // Find max in this row
-    float max_val = -INFINITY;
-    for (uint c = 0; c < cols; c++) {
-        max_val = max(max_val, input[row * cols + c]);
-    }
-
-    // Compute exp(x - max)
-    float exp_val = exp(input[row * cols + col] - max_val);
-
-    // Sum of exp in this row
-    float sum_exp = 0.0f;
-    for (uint c = 0; c < cols; c++) {
-        sum_exp += exp(input[row * cols + c] - max_val);
-    }
-
-    output[row * cols + col] = exp_val / sum_exp;
-}
+}}
 """
+
+_REDUCTION_FINAL_TEMPLATE = """
+kernel void {name}_final_{suffix}(device const {type}* partials [[buffer(0)]],
+                          device {type}* output          [[buffer(1)]],
+                          constant uint& N              [[buffer(2)]],
+                          uint lid [[thread_position_in_threadgroup]],
+                          uint group_size [[threads_per_threadgroup]]) {{
+    threadgroup {type} shared[256];
+    {type} val = (lid < N) ? partials[lid] : {identity};
+    shared[lid] = val;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = group_size / 2; s > 0; s >>= 1) {{
+        if (lid < s) shared[lid] = {combine};
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }}
+    if (lid == 0) output[0] = shared[0];
+}}
+"""
+
+
+def _gen_reduction(name, identity, combine, types=None):
+    """Generate full-tensor two-pass reduction kernels per dtype."""
+    if types is None:
+        types = ("float", "half", "int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        ident = identity.replace("{type}", t)
+        comb = combine.replace("{type}", t)
+        parts.append(_REDUCTION_PARTIAL_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, identity=ident, combine=comb))
+        parts.append(_REDUCTION_FINAL_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, identity=ident, combine=comb))
+    return "".join(parts)
+
+
+# Argmax/argmin reduction templates (value + index pairs)
+_ARG_REDUCTION_PARTIAL_TEMPLATE = """
+kernel void {name}_partial_{suffix}(device const {type}* input [[buffer(0)]],
+                               device {type}* partial_vals [[buffer(1)]],
+                               device uint* partial_idxs   [[buffer(2)]],
+                               constant uint& N            [[buffer(3)]],
+                               uint gid [[thread_position_in_grid]],
+                               uint lid [[thread_position_in_threadgroup]],
+                               uint group_id [[threadgroup_position_in_grid]],
+                               uint group_size [[threads_per_threadgroup]]) {{
+    threadgroup {type} s_val[256];
+    threadgroup uint s_idx[256];
+    {type} val = (gid < N) ? input[gid] : {identity};
+    uint idx = gid;
+    s_val[lid] = val;
+    s_idx[lid] = idx;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = group_size / 2; s > 0; s >>= 1) {{
+        if (lid < s && s_val[lid + s] {cmp} s_val[lid]) {{
+            s_val[lid] = s_val[lid + s];
+            s_idx[lid] = s_idx[lid + s];
+        }}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }}
+    if (lid == 0) {{
+        partial_vals[group_id] = s_val[0];
+        partial_idxs[group_id] = s_idx[0];
+    }}
+}}
+"""
+
+_ARG_REDUCTION_FINAL_TEMPLATE = """
+kernel void {name}_final_{suffix}(device const {type}* partial_vals [[buffer(0)]],
+                             device const uint* partial_idxs   [[buffer(1)]],
+                             device uint* output               [[buffer(2)]],
+                             constant uint& N                  [[buffer(3)]],
+                             uint lid [[thread_position_in_threadgroup]],
+                             uint group_size [[threads_per_threadgroup]]) {{
+    threadgroup {type} s_val[256];
+    threadgroup uint s_idx[256];
+    {type} val = (lid < N) ? partial_vals[lid] : {identity};
+    uint idx = (lid < N) ? partial_idxs[lid] : 0;
+    s_val[lid] = val;
+    s_idx[lid] = idx;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint s = group_size / 2; s > 0; s >>= 1) {{
+        if (lid < s && s_val[lid + s] {cmp} s_val[lid]) {{
+            s_val[lid] = s_val[lid + s];
+            s_idx[lid] = s_idx[lid + s];
+        }}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }}
+    if (lid == 0) output[0] = s_idx[0];
+}}
+"""
+
+
+def _gen_arg_reduction(name, identity, cmp, types=None):
+    """Generate full-tensor argmax/argmin two-pass reduction kernels."""
+    if types is None:
+        types = ("float", "half", "int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        ident = identity.replace("{type}", t)
+        parts.append(_ARG_REDUCTION_PARTIAL_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, identity=ident, cmp=cmp))
+        parts.append(_ARG_REDUCTION_FINAL_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, identity=ident, cmp=cmp))
+    return "".join(parts)
+
 
 # --- In-place binary kernels ---
 _INPLACE_BINARY_TEMPLATE = """
@@ -409,23 +471,179 @@ kernel void relu_inplace_f16(device half* a [[buffer(0)]],
 
 def _build_msl_source():
     """Assemble the complete MSL source string."""
-    parts = [_HEADER]
+    parts = [_HEADER, _STRIDED_INDEX_HELPER]
 
-    # Binary ops
+    # Binary ops (all dtypes)
     for name, expr in _BINARY_OPS:
         parts.append(_gen_binary(name, expr))
 
-    # Unary ops
-    for name, expr in _UNARY_OPS:
-        # Handle {type} placeholder in expressions like relu
-        for t, suffix in (("float", "f32"), ("half", "f16")):
+    # Binary ops (float-only)
+    for name, expr in _BINARY_FLOAT_OPS:
+        parts.append(_gen_binary(name, expr, float_only=True))
+
+    # Unary ops (numeric types: float, half, int, long)
+    _NUMERIC_TYPES = ("float", "half", "int", "long")
+    for name, expr in _UNARY_NUMERIC_OPS:
+        for t in _NUMERIC_TYPES:
+            suffix = _SUFFIX[t]
             e = expr.replace("{type}", t)
             parts.append(_UNARY_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=e))
+            parts.append(_UNARY_STRIDED_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=e))
 
-    # Reductions and special kernels
-    parts.append(_REDUCTION_SOURCE)
+    # Unary ops (float-only)
+    for name, expr in _UNARY_FLOAT_OPS:
+        for t in _FLOAT_TYPES:
+            suffix = _SUFFIX[t]
+            e = expr.replace("{type}", t)
+            parts.append(_UNARY_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=e))
+            parts.append(_UNARY_STRIDED_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=e))
 
-    # In-place binary ops
+    # Full-tensor reductions (multi-dtype)
+    # sum: identity=0, combine=add
+    parts.append(_gen_reduction(
+        "sum", "({type})0",
+        "shared[lid] + shared[lid + s]"))
+    # max: identity=-INFINITY for float, type_min for int
+    parts.append(_gen_reduction(
+        "max", "-INFINITY",
+        "max(shared[lid], shared[lid + s])",
+        types=("float", "half")))
+    parts.append(_gen_reduction(
+        "max", "INT_MIN",
+        "max(shared[lid], shared[lid + s])",
+        types=("int",)))
+    parts.append(_gen_reduction(
+        "max", "LONG_MIN",
+        "max(shared[lid], shared[lid + s])",
+        types=("long",)))
+    # min
+    parts.append(_gen_reduction(
+        "min", "INFINITY",
+        "min(shared[lid], shared[lid + s])",
+        types=("float", "half")))
+    parts.append(_gen_reduction(
+        "min", "INT_MAX",
+        "min(shared[lid], shared[lid + s])",
+        types=("int",)))
+    parts.append(_gen_reduction(
+        "min", "LONG_MAX",
+        "min(shared[lid], shared[lid + s])",
+        types=("long",)))
+
+    # argmax/argmin (multi-dtype)
+    parts.append(_gen_arg_reduction(
+        "argmax", "-INFINITY", ">", types=("float", "half")))
+    parts.append(_gen_arg_reduction(
+        "argmax", "INT_MIN", ">", types=("int",)))
+    parts.append(_gen_arg_reduction(
+        "argmax", "LONG_MIN", ">", types=("long",)))
+    parts.append(_gen_arg_reduction(
+        "argmin", "INFINITY", "<", types=("float", "half")))
+    parts.append(_gen_arg_reduction(
+        "argmin", "INT_MAX", "<", types=("int",)))
+    parts.append(_gen_arg_reduction(
+        "argmin", "LONG_MAX", "<", types=("long",)))
+
+    # Axis-reduce kernels (dim reduction)
+    parts.append(_gen_reduce_dim(
+        "sum",
+        init="{type} acc = ({type})0;",
+        body="acc += val;",
+        finalize="acc"))
+    parts.append(_gen_reduce_dim(
+        "mean",
+        init="float acc = 0.0f;",
+        body="acc += (float)val;",
+        finalize="({type})(acc / (float)reduce_size)",
+        types=("float", "half")))
+    parts.append(_gen_reduce_dim(
+        "prod",
+        init="{type} acc = ({type})1;",
+        body="acc *= val;",
+        finalize="acc"))
+    parts.append(_gen_reduce_dim(
+        "max",
+        init="{type} acc = input[(outer * reduce_size + 0) * inner_size + inner];",
+        body="if (val > acc) acc = val;",
+        finalize="acc"))
+    parts.append(_gen_reduce_dim(
+        "min",
+        init="{type} acc = input[(outer * reduce_size + 0) * inner_size + inner];",
+        body="if (val < acc) acc = val;",
+        finalize="acc"))
+    parts.append(_gen_reduce_dim(
+        "argmax",
+        init="{type} best = input[(outer * reduce_size + 0) * inner_size + inner]; uint best_idx = 0;",
+        body="if (val > best) { best = val; best_idx = r; }",
+        finalize="best_idx",
+        out_type="uint"))
+    parts.append(_gen_reduce_dim(
+        "argmin",
+        init="{type} best = input[(outer * reduce_size + 0) * inner_size + inner]; uint best_idx = 0;",
+        body="if (val < best) { best = val; best_idx = r; }",
+        finalize="best_idx",
+        out_type="uint"))
+
+    # Comparison ops
+    for name, op in _COMPARISON_OPS:
+        parts.append(_gen_comparison(name, op))
+
+    # Fill kernels (multi-dtype)
+    for t in _ALL_TYPES:
+        suffix = _SUFFIX[t]
+        parts.append(f"""
+kernel void fill_{suffix}(device {t}* out    [[buffer(0)]],
+                     constant {t}& val  [[buffer(1)]],
+                     constant uint& N     [[buffer(2)]],
+                     uint id [[thread_position_in_grid]]) {{
+    if (id < N) out[id] = val;
+}}
+""")
+
+    # Copy kernels (multi-dtype)
+    for t in _ALL_TYPES:
+        suffix = _SUFFIX[t]
+        parts.append(f"""
+kernel void copy_{suffix}(device const {t}* src [[buffer(0)]],
+                     device {t}* dst       [[buffer(1)]],
+                     constant uint& N        [[buffer(2)]],
+                     uint id [[thread_position_in_grid]]) {{
+    if (id < N) dst[id] = src[id];
+}}
+""")
+
+    # Softmax (float only — existing)
+    parts.append("""
+// ---- softmax (per-row, last dim) ----
+kernel void softmax_f32(device const float* input [[buffer(0)]],
+                        device float* output       [[buffer(1)]],
+                        constant uint& rows        [[buffer(2)]],
+                        constant uint& cols        [[buffer(3)]],
+                        uint2 pos [[thread_position_in_grid]]) {
+    uint row = pos.y;
+    uint col = pos.x;
+    if (row >= rows || col >= cols) return;
+
+    // Find max in this row
+    float max_val = -INFINITY;
+    for (uint c = 0; c < cols; c++) {
+        max_val = max(max_val, input[row * cols + c]);
+    }
+
+    // Compute exp(x - max)
+    float exp_val = exp(input[row * cols + col] - max_val);
+
+    // Sum of exp in this row
+    float sum_exp = 0.0f;
+    for (uint c = 0; c < cols; c++) {
+        sum_exp += exp(input[row * cols + c] - max_val);
+    }
+
+    output[row * cols + col] = exp_val / sum_exp;
+}
+""")
+
+    # In-place binary ops (float types only — existing behavior)
     for name, op in (("add", "+"), ("sub", "-"), ("mul", "*"), ("div", "/")):
         for t, suffix in (("float", "f32"), ("half", "f16")):
             parts.append(_INPLACE_BINARY_TEMPLATE.format(

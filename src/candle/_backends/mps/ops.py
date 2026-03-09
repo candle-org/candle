@@ -4,6 +4,7 @@ import struct
 import numpy as np
 
 from ..._dtype import bool as bool_dtype
+from ..._dtype import int32 as int32_dtype
 from ..._dtype import int64 as int64_dtype
 from ..._dtype import float16 as float16_dtype
 from ..._dtype import float32 as float32_dtype
@@ -16,13 +17,12 @@ from . import accelerate as _accel
 # ---------------------------------------------------------------------------
 # GPU dispatch helpers
 # ---------------------------------------------------------------------------
-_GPU_FLOAT_DTYPES = frozenset({float32_dtype, float16_dtype})
+_GPU_DTYPES = frozenset({float32_dtype, float16_dtype, int32_dtype, int64_dtype, bool_dtype})
 
 
 def _can_use_gpu(t):
     """Check if tensor can use Metal GPU kernels."""
-    return (t.dtype in _GPU_FLOAT_DTYPES
-            and t.is_contiguous()
+    return (t.dtype in _GPU_DTYPES
             and t.numel() > 0
             and hasattr(t._storage, '_untyped')
             and hasattr(t._storage._untyped, '_metal_buffer')
@@ -36,17 +36,32 @@ def _metal_buf(t):
 
 def _kernel_suffix(dtype):
     """Return MSL kernel suffix for dtype."""
-    return "f16" if dtype == float16_dtype else "f32"
+    _SUFFIX = {
+        float32_dtype: "f32", float16_dtype: "f16",
+        int32_dtype: "i32", int64_dtype: "i64",
+        bool_dtype: "u8",
+    }
+    return _SUFFIX[dtype]
 
 
 def _scalar_fmt(dtype):
     """Return struct format char for scalar encoding."""
-    return "e" if dtype == float16_dtype else "f"
+    _FMT = {
+        float32_dtype: "f", float16_dtype: "e",
+        int32_dtype: "i", int64_dtype: "q",
+        bool_dtype: "B",
+    }
+    return _FMT[dtype]
 
 
 def _itemsize(dtype):
     """Return byte size per element."""
-    return 2 if dtype == float16_dtype else 4
+    _SIZES = {
+        float32_dtype: 4, float16_dtype: 2,
+        int32_dtype: 4, int64_dtype: 8,
+        bool_dtype: 1,
+    }
+    return _SIZES.get(dtype, dtype.itemsize)
 
 
 def _alloc_output_buf(numel, dtype):
@@ -85,8 +100,142 @@ def _get_dispatcher():
     return get_dispatcher()
 
 
+def _dispatch_unary_gpu(a, kernel_base):
+    """Dispatch a unary GPU kernel, choosing contiguous or strided variant."""
+    d = _get_dispatcher()
+    sfx = _kernel_suffix(a.dtype)
+    numel = a.numel()
+    out_buf = _alloc_output_buf(numel, a.dtype)
+    if a.is_contiguous():
+        d.dispatch_unary(f"{kernel_base}_{sfx}", _metal_buf(a), out_buf, numel)
+    else:
+        d.dispatch_unary_strided(
+            f"{kernel_base}_strided_{sfx}", _metal_buf(a), out_buf, numel,
+            list(a.shape), list(a.stride), len(a.shape))
+    from ..._tensor import _compute_strides
+    out_shape = tuple(a.shape)
+    out_stride = _compute_strides(out_shape)
+    return _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
+
+
+def _scalar_value(val, dtype):
+    """Convert a scalar to the appropriate Python type for the given dtype."""
+    if dtype in (int32_dtype, int64_dtype, bool_dtype):
+        return int(val)
+    return float(val)
+
+
+def _dispatch_binary_gpu(a, b, kernel_base):
+    """Dispatch a binary GPU kernel, choosing contiguous or strided variant."""
+    d = _get_dispatcher()
+    sfx = _kernel_suffix(a.dtype)
+    numel = a.numel()
+    out_buf = _alloc_output_buf(numel, a.dtype)
+    if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape:
+        if a.is_contiguous() and b.is_contiguous():
+            d.dispatch_binary(f"{kernel_base}_{sfx}", _metal_buf(a),
+                              _metal_buf(b), out_buf, numel)
+        else:
+            d.dispatch_binary_strided(
+                f"{kernel_base}_strided_{sfx}", _metal_buf(a), _metal_buf(b),
+                out_buf, numel, list(a.shape), list(a.stride),
+                list(b.stride), len(a.shape))
+    else:
+        raw = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+        scalar = _scalar_value(raw, a.dtype)
+        if a.is_contiguous():
+            d.dispatch_binary_scalar(f"{kernel_base}_scalar_{sfx}",
+                                     _metal_buf(a), scalar, out_buf, numel,
+                                     scalar_fmt=_scalar_fmt(a.dtype))
+        else:
+            d.dispatch_binary_scalar_strided(
+                f"{kernel_base}_scalar_strided_{sfx}", _metal_buf(a), scalar,
+                out_buf, numel, list(a.shape), list(a.stride),
+                len(a.shape), scalar_fmt=_scalar_fmt(a.dtype))
+    from ..._tensor import _compute_strides
+    out_shape = tuple(a.shape)
+    out_stride = _compute_strides(out_shape)
+    return _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
+
+
 def _to_numpy(t):
     return t._numpy_view()
+
+
+def _compute_reduce_dims(shape, dim):
+    """Compute (outer_size, reduce_size, inner_size) for axis reduction."""
+    ndim = len(shape)
+    if isinstance(dim, int):
+        dim = (dim,)
+    dims = tuple(d % ndim for d in dim)
+    outer = 1
+    reduce = 1
+    inner = 1
+    # Find contiguous range or single dim
+    sorted_dims = sorted(dims)
+    for i in range(ndim):
+        if i < sorted_dims[0]:
+            outer *= shape[i]
+        elif i in sorted_dims:
+            reduce *= shape[i]
+        else:
+            inner *= shape[i]
+    return outer, reduce, inner
+
+
+def _reduce_shape(shape, dim, keepdim):
+    """Compute output shape after reduction."""
+    ndim = len(shape)
+    if isinstance(dim, int):
+        dim = (dim,)
+    dims = set(d % ndim for d in dim)
+    if keepdim:
+        return tuple(1 if i in dims else s for i, s in enumerate(shape))
+    return tuple(s for i, s in enumerate(shape) if i not in dims)
+
+
+def _gpu_reduce_single_dim(a, dim, op_name, keepdim):
+    """Reduce a single dimension on GPU using axis-reduce kernels."""
+    d = _get_dispatcher()
+    sfx = _kernel_suffix(a.dtype)
+    ndim = len(a.shape)
+    dim = dim % ndim
+
+    outer = 1
+    for i in range(dim):
+        outer *= a.shape[i]
+    reduce_size = a.shape[dim]
+    inner = 1
+    for i in range(dim + 1, ndim):
+        inner *= a.shape[i]
+
+    out_numel = outer * inner
+    # argmax/argmin output uint, stored as int64
+    if op_name in ("argmax", "argmin"):
+        out_buf = _alloc_output_buf(out_numel, int32_dtype)
+        out_dtype = int64_dtype
+    else:
+        out_buf = _alloc_output_buf(out_numel, a.dtype)
+        out_dtype = a.dtype
+
+    kernel = f"reduce_{op_name}_dim_{sfx}"
+    d.dispatch_reduce_dim(kernel, _metal_buf(a), out_buf,
+                          outer, reduce_size, inner, out_numel)
+
+    out_shape = _reduce_shape(a.shape, dim, keepdim)
+    from ..._tensor import _compute_strides
+    out_stride = _compute_strides(out_shape)
+
+    if op_name in ("argmax", "argmin"):
+        # Read uint32 results, convert to int64 numpy
+        from .runtime import buffer_contents
+        ptr = buffer_contents(out_buf)
+        raw = (ctypes.c_char * (out_numel * 4)).from_address(ptr)
+        arr = np.frombuffer(bytes(raw), dtype=np.uint32, count=out_numel)
+        arr = arr.astype(np.int64).reshape(out_shape)
+        return _from_numpy(np.ascontiguousarray(arr), int64_dtype, a.device)
+
+    return _from_metal_buffer(out_buf, out_shape, out_stride, out_dtype, a.device)
 
 
 def _normalize_tensor_sequence_args(tensors):
@@ -108,19 +257,7 @@ def add(a, b):
         if not _can_use_gpu(a) or a.numel() < b.numel():
             a, b = b, a
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape:
-            d.dispatch_binary(f"add_{sfx}", _metal_buf(a), _metal_buf(b),
-                              out_buf, numel)
-        else:
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
-            d.dispatch_binary_scalar(f"add_scalar_{sfx}", _metal_buf(a),
-                                     scalar, out_buf, numel,
-                                     scalar_fmt=_scalar_fmt(a.dtype))
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_binary_gpu(a, b, "add")
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(a_np + b_np, a.dtype, a.device)
@@ -133,19 +270,7 @@ def mul(a, b):
         if not _can_use_gpu(a) or a.numel() < b.numel():
             a, b = b, a
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape:
-            d.dispatch_binary(f"mul_{sfx}", _metal_buf(a), _metal_buf(b),
-                              out_buf, numel)
-        else:
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
-            d.dispatch_binary_scalar(f"mul_scalar_{sfx}", _metal_buf(a),
-                                     scalar, out_buf, numel,
-                                     scalar_fmt=_scalar_fmt(a.dtype))
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_binary_gpu(a, b, "mul")
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(a_np * b_np, a.dtype, a.device)
@@ -153,19 +278,7 @@ def mul(a, b):
 
 def div(a, b):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        if isinstance(b, Tensor) and _can_use_gpu(b):
-            d.dispatch_binary(f"div_{sfx}", _metal_buf(a), _metal_buf(b),
-                              out_buf, numel)
-        else:
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
-            d.dispatch_binary_scalar(f"div_scalar_{sfx}", _metal_buf(a),
-                                     scalar, out_buf, numel,
-                                     scalar_fmt=_scalar_fmt(a.dtype))
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_binary_gpu(a, b, "div")
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     out = np.true_divide(a_np, b_np)
@@ -251,23 +364,13 @@ def bmm(a, b):
 
 def relu(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"relu_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "relu")
     return _from_numpy(np.maximum(_to_numpy(a), 0), a.dtype, a.device)
 
 
 def gelu(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"gelu_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "gelu")
     arr = _to_numpy(a)
     out = 0.5 * arr * (1.0 + np.vectorize(math.erf)(arr / math.sqrt(2.0)))
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
@@ -296,29 +399,59 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
             _check_dim_range(d)
 
     # GPU path: full-tensor reduction (dim=None)
-    if dim is None and not keepdim and _can_use_gpu(a) and a.dtype == float32_dtype:
+    if dim is None and _can_use_gpu(a) and a.is_contiguous():
         d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
         out_buf = _alloc_output_buf(1, a.dtype)
-        d.dispatch_reduction("sum_partial_f32", "sum_final_f32",
+        d.dispatch_reduction(f"sum_partial_{sfx}", f"sum_final_{sfx}",
                              _metal_buf(a), out_buf, a.numel())
-        from ..._tensor import _compute_strides
-        return _from_metal_buffer(out_buf, (), (), a.dtype, a.device)
+        out_shape = (1,) * ndim if keepdim else ()
+        out_stride = (1,) * ndim if keepdim else ()
+        return _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
+
+    # GPU path: axis reduction (dim specified)
+    if dim is not None and _can_use_gpu(a) and a.is_contiguous():
+        if isinstance(dim, int):
+            dim_tuple = (dim,)
+        else:
+            dim_tuple = dim
+        # For multi-dim, reduce sequentially
+        result = a
+        for d in sorted([x % ndim for x in dim_tuple], reverse=True):
+            result = _gpu_reduce_single_dim(result, d, "sum", keepdim)
+        return result
 
     return _from_numpy(_to_numpy(a).sum(axis=dim, keepdims=keepdim), a.dtype, a.device)
 
 
 def mean_(a, dim=None, keepdim=False):
     # GPU path: full-tensor mean (dim=None)
-    if dim is None and not keepdim and _can_use_gpu(a) and a.dtype == float32_dtype:
+    if dim is None and _can_use_gpu(a) and a.is_contiguous():
         d = _get_dispatcher()
-        # mean = sum / N
+        sfx = _kernel_suffix(a.dtype)
         sum_buf = _alloc_output_buf(1, a.dtype)
-        d.dispatch_reduction("sum_partial_f32", "sum_final_f32",
+        d.dispatch_reduction(f"sum_partial_{sfx}", f"sum_final_{sfx}",
                              _metal_buf(a), sum_buf, a.numel())
         out_buf = _alloc_output_buf(1, a.dtype)
         n = float(a.numel())
-        d.dispatch_binary_scalar("div_scalar_f32", sum_buf, n, out_buf, 1)
-        return _from_metal_buffer(out_buf, (), (), a.dtype, a.device)
+        d.dispatch_binary_scalar(f"div_scalar_{sfx}", sum_buf, n, out_buf, 1)
+        ndim = len(a.shape)
+        out_shape = (1,) * ndim if keepdim else ()
+        out_stride = (1,) * ndim if keepdim else ()
+        return _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
+
+    # GPU path: axis reduction (dim specified)
+    if dim is not None and _can_use_gpu(a) and a.is_contiguous():
+        if isinstance(dim, int):
+            dim_tuple = (dim,)
+        else:
+            dim_tuple = dim if isinstance(dim, tuple) else tuple(dim)
+        ndim = len(a.shape)
+        result = a
+        for d in sorted([x % ndim for x in dim_tuple], reverse=True):
+            result = _gpu_reduce_single_dim(result, d, "mean", keepdim)
+        return result
+
     return _from_numpy(_to_numpy(a).mean(axis=dim, keepdims=keepdim), a.dtype, a.device)
 
 
@@ -340,17 +473,22 @@ def any_(a, dim=None, keepdim=False):
 
 def argmax(a, dim=None, keepdim=False):
     # GPU path: full-tensor argmax (dim=None)
-    if dim is None and _can_use_gpu(a) and a.dtype == float32_dtype:
+    if dim is None and _can_use_gpu(a) and a.is_contiguous():
         d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
         out_buf = _alloc_output_buf(1, int64_dtype)  # uint output
-        d.dispatch_arg_reduction("argmax_partial_f32", "argmax_final_f32",
+        d.dispatch_arg_reduction(f"argmax_partial_{sfx}", f"argmax_final_{sfx}",
                                  _metal_buf(a), out_buf, a.numel())
-        # Read uint32 result, convert to int64
         from .runtime import buffer_contents
         ptr = buffer_contents(out_buf)
         idx_val = struct.unpack("I", (ctypes.c_char * 4).from_address(ptr))[0]
         out = np.array(int(idx_val), dtype=np.int64)
         return _from_numpy(out, int64_dtype, a.device)
+
+    # GPU path: axis argmax (dim specified)
+    if dim is not None and _can_use_gpu(a) and a.is_contiguous():
+        return _gpu_reduce_single_dim(a, dim, "argmax", keepdim)
+
     arr = _to_numpy(a)
     if dim is None:
         out = np.array(np.argmax(arr), dtype=np.int64)
@@ -364,16 +502,22 @@ def argmax(a, dim=None, keepdim=False):
 
 def argmin(a, dim=None, keepdim=False):
     # GPU path: full-tensor argmin (dim=None)
-    if dim is None and _can_use_gpu(a) and a.dtype == float32_dtype:
+    if dim is None and _can_use_gpu(a) and a.is_contiguous():
         d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
         out_buf = _alloc_output_buf(1, int64_dtype)
-        d.dispatch_arg_reduction("argmin_partial_f32", "argmin_final_f32",
+        d.dispatch_arg_reduction(f"argmin_partial_{sfx}", f"argmin_final_{sfx}",
                                  _metal_buf(a), out_buf, a.numel())
         from .runtime import buffer_contents
         ptr = buffer_contents(out_buf)
         idx_val = struct.unpack("I", (ctypes.c_char * 4).from_address(ptr))[0]
         out = np.array(int(idx_val), dtype=np.int64)
         return _from_numpy(out, int64_dtype, a.device)
+
+    # GPU path: axis argmin (dim specified)
+    if dim is not None and _can_use_gpu(a) and a.is_contiguous():
+        return _gpu_reduce_single_dim(a, dim, "argmin", keepdim)
+
     arr = _to_numpy(a)
     if dim is None:
         out = np.array(np.argmin(arr), dtype=np.int64)
@@ -887,31 +1031,151 @@ def equal(a, b):
 
 
 def eq(a, b):
+    if _can_use_gpu(a):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        out_buf = _alloc_output_buf(numel, bool_dtype)
+        if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
+            d.dispatch_comparison(f"eq_{sfx}", _metal_buf(a), _metal_buf(b),
+                                  out_buf, numel)
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
+            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+            if a.is_contiguous():
+                d.dispatch_comparison_scalar(f"eq_scalar_{sfx}", _metal_buf(a),
+                                             scalar, out_buf, numel,
+                                             scalar_fmt=_scalar_fmt(a.dtype))
+            else:
+                return _from_numpy(np.equal(_to_numpy(a), scalar), bool_dtype, a.device)
+        else:
+            return _from_numpy(np.equal(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.equal(_to_numpy(a), b_np), bool_dtype, a.device)
 
 
 def ne(a, b):
+    if _can_use_gpu(a):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        out_buf = _alloc_output_buf(numel, bool_dtype)
+        if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
+            d.dispatch_comparison(f"ne_{sfx}", _metal_buf(a), _metal_buf(b),
+                                  out_buf, numel)
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
+            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+            if a.is_contiguous():
+                d.dispatch_comparison_scalar(f"ne_scalar_{sfx}", _metal_buf(a),
+                                             scalar, out_buf, numel,
+                                             scalar_fmt=_scalar_fmt(a.dtype))
+            else:
+                return _from_numpy(np.not_equal(_to_numpy(a), scalar), bool_dtype, a.device)
+        else:
+            return _from_numpy(np.not_equal(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.not_equal(_to_numpy(a), b_np), bool_dtype, a.device)
 
 
 def lt(a, b):
+    if _can_use_gpu(a):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        out_buf = _alloc_output_buf(numel, bool_dtype)
+        if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
+            d.dispatch_comparison(f"lt_{sfx}", _metal_buf(a), _metal_buf(b),
+                                  out_buf, numel)
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
+            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+            if a.is_contiguous():
+                d.dispatch_comparison_scalar(f"lt_scalar_{sfx}", _metal_buf(a),
+                                             scalar, out_buf, numel,
+                                             scalar_fmt=_scalar_fmt(a.dtype))
+            else:
+                return _from_numpy(np.less(_to_numpy(a), scalar), bool_dtype, a.device)
+        else:
+            return _from_numpy(np.less(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.less(_to_numpy(a), b_np), bool_dtype, a.device)
 
 
 def le(a, b):
+    if _can_use_gpu(a):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        out_buf = _alloc_output_buf(numel, bool_dtype)
+        if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
+            d.dispatch_comparison(f"le_{sfx}", _metal_buf(a), _metal_buf(b),
+                                  out_buf, numel)
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
+            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+            if a.is_contiguous():
+                d.dispatch_comparison_scalar(f"le_scalar_{sfx}", _metal_buf(a),
+                                             scalar, out_buf, numel,
+                                             scalar_fmt=_scalar_fmt(a.dtype))
+            else:
+                return _from_numpy(np.less_equal(_to_numpy(a), scalar), bool_dtype, a.device)
+        else:
+            return _from_numpy(np.less_equal(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.less_equal(_to_numpy(a), b_np), bool_dtype, a.device)
 
 
 def gt(a, b):
+    if _can_use_gpu(a):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        out_buf = _alloc_output_buf(numel, bool_dtype)
+        if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
+            d.dispatch_comparison(f"gt_{sfx}", _metal_buf(a), _metal_buf(b),
+                                  out_buf, numel)
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
+            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+            if a.is_contiguous():
+                d.dispatch_comparison_scalar(f"gt_scalar_{sfx}", _metal_buf(a),
+                                             scalar, out_buf, numel,
+                                             scalar_fmt=_scalar_fmt(a.dtype))
+            else:
+                return _from_numpy(np.greater(_to_numpy(a), scalar), bool_dtype, a.device)
+        else:
+            return _from_numpy(np.greater(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.greater(_to_numpy(a), b_np), bool_dtype, a.device)
 
 
 def ge(a, b):
+    if _can_use_gpu(a):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        out_buf = _alloc_output_buf(numel, bool_dtype)
+        if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
+            d.dispatch_comparison(f"ge_{sfx}", _metal_buf(a), _metal_buf(b),
+                                  out_buf, numel)
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
+            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+            if a.is_contiguous():
+                d.dispatch_comparison_scalar(f"ge_scalar_{sfx}", _metal_buf(a),
+                                             scalar, out_buf, numel,
+                                             scalar_fmt=_scalar_fmt(a.dtype))
+            else:
+                return _from_numpy(np.greater_equal(_to_numpy(a), scalar), bool_dtype, a.device)
+        else:
+            return _from_numpy(np.greater_equal(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.greater_equal(_to_numpy(a), b_np), bool_dtype, a.device)
 
@@ -1170,78 +1434,43 @@ def contiguous(a):
 
 def abs(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"abs_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "abs")
     return _from_numpy(np.abs(_to_numpy(a)), a.dtype, a.device)
 
 
 def neg(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"neg_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "neg")
     return _from_numpy(np.negative(_to_numpy(a)), a.dtype, a.device)
 
 
 def exp(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"exp_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "exp")
     return _from_numpy(np.exp(_to_numpy(a)), a.dtype, a.device)
 
 
 def log(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"log_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "log")
     return _from_numpy(np.log(_to_numpy(a)), a.dtype, a.device)
 
 
 def sqrt(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"sqrt_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "sqrt")
     return _from_numpy(np.sqrt(_to_numpy(a)), a.dtype, a.device)
 
 
 def sin(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"sin_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "sin")
     return _from_numpy(np.sin(_to_numpy(a)), a.dtype, a.device)
 
 
 def cos(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"cos_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "cos")
     return _from_numpy(np.cos(_to_numpy(a)), a.dtype, a.device)
 
 
@@ -1251,23 +1480,13 @@ def tan(a):
 
 def tanh(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"tanh_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "tanh")
     return _from_numpy(np.tanh(_to_numpy(a)), a.dtype, a.device)
 
 
 def sigmoid(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"sigmoid_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "sigmoid")
     arr = _to_numpy(a)
     out = 1.0 / (1.0 + np.exp(-arr))
     return _from_numpy(out, a.dtype, a.device)
@@ -1275,34 +1494,19 @@ def sigmoid(a):
 
 def floor(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"floor_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "floor")
     return _from_numpy(np.floor(_to_numpy(a)), a.dtype, a.device)
 
 
 def ceil(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"ceil_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "ceil")
     return _from_numpy(np.ceil(_to_numpy(a)), a.dtype, a.device)
 
 
 def round(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"round_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "round")
     return _from_numpy(np.round(_to_numpy(a)), a.dtype, a.device)
 
 
@@ -1346,12 +1550,7 @@ def pow(a, b):
 
 def log2(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"log2_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "log2")
     return _from_numpy(np.log2(_to_numpy(a)), a.dtype, a.device)
 
 
@@ -1365,12 +1564,7 @@ def exp2(a):
 
 def rsqrt(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"rsqrt_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "rsqrt")
     arr = _to_numpy(a)
     out = 1.0 / np.sqrt(arr)
     return _from_numpy(out, a.dtype, a.device)
@@ -1378,12 +1572,7 @@ def rsqrt(a):
 
 def sign(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"sign_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "sign")
     return _from_numpy(np.sign(_to_numpy(a)), a.dtype, a.device)
 
 
@@ -1453,12 +1642,7 @@ def softplus(a):
 
 def silu(a):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_unary(f"silu_{sfx}", _metal_buf(a), out_buf, numel)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_unary_gpu(a, "silu")
     arr = _to_numpy(a)
     out = arr / (1.0 + np.exp(-arr))
     return _from_numpy(out, a.dtype, a.device)
@@ -1598,12 +1782,28 @@ def normalize(a, p=2.0, dim=1, eps=1e-12):
 
 
 def amin(a, dim=None, keepdim=False):
+    if dim is not None and _can_use_gpu(a) and a.is_contiguous():
+        if isinstance(dim, int):
+            return _gpu_reduce_single_dim(a, dim, "min", keepdim)
+        ndim = len(a.shape)
+        result = a
+        for d in sorted([x % ndim for x in dim], reverse=True):
+            result = _gpu_reduce_single_dim(result, d, "min", keepdim)
+        return result
     arr = _to_numpy(a)
     out = np.amin(arr, axis=dim, keepdims=keepdim)
     return _from_numpy(out, a.dtype, a.device)
 
 
 def amax(a, dim=None, keepdim=False):
+    if dim is not None and _can_use_gpu(a) and a.is_contiguous():
+        if isinstance(dim, int):
+            return _gpu_reduce_single_dim(a, dim, "max", keepdim)
+        ndim = len(a.shape)
+        result = a
+        for d in sorted([x % ndim for x in dim], reverse=True):
+            result = _gpu_reduce_single_dim(result, d, "max", keepdim)
+        return result
     arr = _to_numpy(a)
     out = np.amax(arr, axis=dim, keepdims=keepdim)
     return _from_numpy(out, a.dtype, a.device)
@@ -2532,19 +2732,7 @@ def adaptive_avg_pool2d(input, output_size):
 
 def sub(a, b):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        if isinstance(b, Tensor) and _can_use_gpu(b):
-            d.dispatch_binary(f"sub_{sfx}", _metal_buf(a), _metal_buf(b),
-                              out_buf, numel)
-        else:
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
-            d.dispatch_binary_scalar(f"sub_scalar_{sfx}", _metal_buf(a),
-                                     scalar, out_buf, numel,
-                                     scalar_fmt=_scalar_fmt(a.dtype))
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_binary_gpu(a, b, "sub")
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(a_np - b_np, a.dtype, a.device)
@@ -2564,19 +2752,7 @@ def reciprocal(a):
 
 def maximum(a, b):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        if isinstance(b, Tensor) and _can_use_gpu(b):
-            d.dispatch_binary(f"maximum_{sfx}", _metal_buf(a), _metal_buf(b),
-                              out_buf, numel)
-        else:
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
-            d.dispatch_binary_scalar(f"maximum_scalar_{sfx}", _metal_buf(a),
-                                     scalar, out_buf, numel,
-                                     scalar_fmt=_scalar_fmt(a.dtype))
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_binary_gpu(a, b, "maximum")
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.maximum(a_np, b_np), a.dtype, a.device)
@@ -2584,19 +2760,7 @@ def maximum(a, b):
 
 def minimum(a, b):
     if _can_use_gpu(a):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        if isinstance(b, Tensor) and _can_use_gpu(b):
-            d.dispatch_binary(f"minimum_{sfx}", _metal_buf(a), _metal_buf(b),
-                              out_buf, numel)
-        else:
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
-            d.dispatch_binary_scalar(f"minimum_scalar_{sfx}", _metal_buf(a),
-                                     scalar, out_buf, numel,
-                                     scalar_fmt=_scalar_fmt(a.dtype))
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        return _dispatch_binary_gpu(a, b, "minimum")
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.minimum(a_np, b_np), a.dtype, a.device)
