@@ -28,10 +28,12 @@ jobs:
       ASCEND_VISIBLE_DEVICES: 6,7
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+    - name: Show Python environment
+      run: |
+        which python
+        which pip
+        python --version
+        pip --version
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -62,10 +64,12 @@ jobs:
       ASCEND_VISIBLE_DEVICES: 4,5
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+    - name: Show Python environment
+      run: |
+        which python
+        which pip
+        python --version
+        pip --version
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -104,10 +108,12 @@ jobs:
       ASCEND_VISIBLE_DEVICES: 0,1,2,3
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+    - name: Show Python environment
+      run: |
+        which python
+        which pip
+        python --version
+        pip --version
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
