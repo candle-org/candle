@@ -34,3 +34,8 @@ This matrix defines the effective support scope for Candle `0.1.x`.
 - deterministic NPU golden training loop on Ascend 910B,
 - checkpoint continuity on NPU (save/load then continue training),
 - CPU fallback CI test baseline.
+
+## Runtime Rule
+
+- NPU execution paths must remain on NPU.
+- Runtime fallback from NPU kernels to CPU is not allowed.
