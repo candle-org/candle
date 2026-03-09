@@ -105,6 +105,16 @@ def _promote_div_dtype(dtype_a, dtype_b):
 def _binary_out_dtype(a, b, *, for_div=False):
     dtype_a = _dtype_of(a)
     dtype_b = _dtype_of(b)
+
+    # Match torch tensor-scalar behavior for common floating-point scalars:
+    # float32_tensor * 0.5 stays float32 instead of promoting to float64.
+    if isinstance(a, Tensor) and not isinstance(b, Tensor):
+        if dtype_a.is_floating_point and isinstance(b, float):
+            return dtype_a if not for_div else dtype_a
+    if isinstance(b, Tensor) and not isinstance(a, Tensor):
+        if dtype_b.is_floating_point and isinstance(a, float):
+            return dtype_b if not for_div else dtype_b
+
     if for_div:
         return _promote_div_dtype(dtype_a, dtype_b)
     return _promote_binary_dtype(dtype_a, dtype_b)

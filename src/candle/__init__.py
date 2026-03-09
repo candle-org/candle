@@ -106,6 +106,7 @@ from . import compiler
 from .ops import ops
 from . import library
 from . import optim
+from . import nn
 from . import jit
 from . import profiler
 from . import multiprocessing
@@ -387,6 +388,7 @@ __all__ = [
     "library",
     "compiler",
     "optim",
+    "nn",
     "jit",
     "profiler",
     "compile",
