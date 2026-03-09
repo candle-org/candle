@@ -13,6 +13,10 @@ def relu(input, inplace=False):
     from .._functional import relu as _relu
     return _relu(input)
 
+def relu_(input):
+    from .._functional import relu_ as _relu_
+    return _relu_(input)
+
 
 def sigmoid(input):
     from .._functional import sigmoid as _sigmoid
@@ -68,6 +72,11 @@ def leaky_relu(input, negative_slope=0.01, inplace=False):
 def elu(input, alpha=1.0, inplace=False):
     from .._dispatch import dispatch
     return dispatch("elu", input.device.type, input, alpha)
+
+
+def elu_(input, alpha=1.0):
+    input.copy_(elu(input, alpha=alpha))
+    return input
 
 
 def mish(input, inplace=False):
@@ -242,6 +251,20 @@ def max_pool1d(input, kernel_size, stride=None, padding=0, dilation=1,
                     _padding, _dilation, ceil_mode, return_indices)
 
 
+
+
+def max_pool1d_with_indices(input, kernel_size, stride=None, padding=0, dilation=1, ceil_mode=False):
+    return max_pool1d(
+        input,
+        kernel_size,
+        stride=stride,
+        padding=padding,
+        dilation=dilation,
+        ceil_mode=ceil_mode,
+        return_indices=True,
+    )
+
+
 def max_pool2d(input, kernel_size, stride=None, padding=0, dilation=1,
                ceil_mode=False, return_indices=False):
     from .._dispatch import dispatch
@@ -251,6 +274,20 @@ def max_pool2d(input, kernel_size, stride=None, padding=0, dilation=1,
     _dilation = (dilation, dilation) if isinstance(dilation, int) else tuple(dilation)
     return dispatch("max_pool2d", input.device.type, input, _kernel_size, _stride,
                     _padding, _dilation, ceil_mode, return_indices)
+
+
+
+
+def max_pool2d_with_indices(input, kernel_size, stride=None, padding=0, dilation=1, ceil_mode=False):
+    return max_pool2d(
+        input,
+        kernel_size,
+        stride=stride,
+        padding=padding,
+        dilation=dilation,
+        ceil_mode=ceil_mode,
+        return_indices=True,
+    )
 
 
 def avg_pool1d(input, kernel_size, stride=None, padding=0, ceil_mode=False,
@@ -289,6 +326,17 @@ def adaptive_avg_pool2d(input, output_size):
     else:
         _output_size = tuple(output_size)
     return dispatch("adaptive_avg_pool2d", input.device.type, input, _output_size)
+
+
+
+
+def adaptive_max_pool1d(input, output_size, return_indices=False):
+    from .._dispatch import dispatch
+    if isinstance(output_size, int):
+        _output_size = (output_size,)
+    else:
+        _output_size = tuple(output_size)
+    return dispatch("adaptive_max_pool1d", input.device.type, input, _output_size, return_indices)
 
 
 def adaptive_max_pool2d(input, output_size, return_indices=False):
@@ -632,6 +680,13 @@ def hardtanh(input, min_val=-1.0, max_val=1.0, inplace=False):
     return _hardtanh(input, min_val, max_val)
 
 
+
+
+def hardtanh_(input, min_val=-1.0, max_val=1.0):
+    input.copy_(hardtanh(input, min_val=min_val, max_val=max_val))
+    return input
+
+
 def logsigmoid(input):
     from .._functional import softplus as _softplus, neg as _neg
     return _neg(_softplus(_neg(input)))
@@ -893,9 +948,23 @@ def selu(input, inplace=False):
     return dispatch("selu", input.device.type, input)
 
 
+
+
+def selu_(input):
+    input.copy_(selu(input))
+    return input
+
+
 def celu(input, alpha=1.0, inplace=False):
     from .._dispatch import dispatch
     return dispatch("celu", input.device.type, input, alpha)
+
+
+
+
+def celu_(input, alpha=1.0):
+    input.copy_(celu(input, alpha=alpha))
+    return input
 
 
 def softplus(input, beta=1, threshold=20):
@@ -916,6 +985,13 @@ def softsign(input):
 def threshold(input, threshold, value, inplace=False):
     from .._dispatch import dispatch
     return dispatch("threshold", input.device.type, input, threshold, value)
+
+
+
+
+def threshold_(input, threshold_value, value):
+    input.copy_(threshold(input, threshold_value, value))
+    return input
 
 
 def glu(input, dim=-1):
@@ -954,6 +1030,13 @@ def hardshrink(input, lambd=0.5):
 def rrelu(input, lower=1.0/8, upper=1.0/3, training=False, inplace=False):
     from .._dispatch import dispatch
     return dispatch("rrelu", input.device.type, input, lower, upper, training)
+
+
+
+
+def rrelu_(input, lower=1.0/8, upper=1.0/3, training=False):
+    input.copy_(rrelu(input, lower=lower, upper=upper, training=training))
+    return input
 
 
 def cosine_similarity(x1, x2, dim=1, eps=1e-8):
@@ -1360,3 +1443,20 @@ def adaptive_avg_pool3d(input, output_size):
     else:
         _output_size = tuple(output_size)
     return dispatch("adaptive_avg_pool3d", input.device.type, input, _output_size)
+
+
+def max_unpool1d(input, indices, kernel_size, stride=None, padding=0, output_size=None):
+    from .._dispatch import dispatch
+    _kernel_size = (kernel_size,) if isinstance(kernel_size, int) else tuple(kernel_size)
+    _stride = _kernel_size if stride is None else ((stride,) if isinstance(stride, int) else tuple(stride))
+    _padding = (padding,) if isinstance(padding, int) else tuple(padding)
+    return dispatch("max_unpool1d", input.device.type, input, indices, _kernel_size, _stride, _padding, output_size)
+
+
+def max_unpool2d(input, indices, kernel_size, stride=None, padding=0, output_size=None):
+    from .._dispatch import dispatch
+    _kernel_size = (kernel_size, kernel_size) if isinstance(kernel_size, int) else tuple(kernel_size)
+    _stride = _kernel_size if stride is None else ((stride, stride) if isinstance(stride, int) else tuple(stride))
+    _padding = (padding, padding) if isinstance(padding, int) else tuple(padding)
+    return dispatch("max_unpool2d", input.device.type, input, indices, _kernel_size, _stride, _padding, output_size)
+

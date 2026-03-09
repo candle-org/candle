@@ -1,6 +1,7 @@
 import candle as torch
 from candle.nn import functional as F
 import numpy as np
+import pytest
 
 
 def test_silu_cpu():
@@ -329,3 +330,102 @@ def test_kl_div_mean():
     expected_val = np.mean(tn * (np.log(tn + 1e-12) - pn))
     expected = torch.tensor(expected_val, device='cpu')
     assert torch.allclose(loss, expected, atol=1e-4)
+
+
+# --- CPU Parity P1 Tests ---
+
+
+def _assert_inplace_wrapper(fn, *args, expected):
+    x = torch.tensor([-1.0, 0.0, 2.0], device='cpu')
+    out = fn(x, *args)
+    assert out is x
+    assert torch.allclose(x, expected, atol=1e-6)
+
+
+def test_relu_inplace_wrapper_exists_and_mutates():
+    _assert_inplace_wrapper(F.relu_, expected=torch.tensor([0.0, 0.0, 2.0], device='cpu'))
+
+
+def test_elu_inplace_wrapper_exists_and_mutates():
+    expected = F.elu(torch.tensor([-1.0, 0.0, 2.0], device='cpu'))
+    _assert_inplace_wrapper(F.elu_, expected=expected)
+
+
+def test_hardtanh_inplace_wrapper_exists_and_mutates():
+    expected = torch.tensor([-0.5, 0.0, 0.5], device='cpu')
+    _assert_inplace_wrapper(F.hardtanh_, -0.5, 0.5, expected=expected)
+
+
+def test_rrelu_inplace_wrapper_exists_and_mutates_training_false():
+    x = torch.tensor([-1.0, 0.0, 2.0], device='cpu')
+    out = F.rrelu_(x, training=False)
+    assert out is x
+    # training=False should be deterministic slope=(lower+upper)/2
+    expected = F.rrelu(torch.tensor([-1.0, 0.0, 2.0], device='cpu'), training=False)
+    assert torch.allclose(x, expected, atol=1e-6)
+
+
+def test_threshold_inplace_wrapper_exists_and_mutates():
+    expected = torch.tensor([3.0, 3.0, 2.0], device='cpu')
+    _assert_inplace_wrapper(F.threshold_, 0.5, 3.0, expected=expected)
+
+
+def test_selu_inplace_wrapper_exists_and_mutates():
+    expected = F.selu(torch.tensor([-1.0, 0.0, 2.0], device='cpu'))
+    _assert_inplace_wrapper(F.selu_, expected=expected)
+
+
+def test_celu_inplace_wrapper_exists_and_mutates():
+    expected = F.celu(torch.tensor([-1.0, 0.0, 2.0], device='cpu'), alpha=0.75)
+    _assert_inplace_wrapper(F.celu_, 0.75, expected=expected)
+
+
+def test_max_pool1d_with_indices_returns_tuple():
+    x = torch.tensor([[[1.0, 3.0, 2.0, 4.0]]], device='cpu')
+    out, idx = F.max_pool1d_with_indices(x, kernel_size=2, stride=2)
+    assert out.shape == (1, 1, 2)
+    assert idx.shape == (1, 1, 2)
+
+
+def test_max_pool2d_with_indices_returns_tuple():
+    x = torch.tensor([[[[1.0, 3.0], [2.0, 4.0]]]], device='cpu')
+    out, idx = F.max_pool2d_with_indices(x, kernel_size=2)
+    assert out.shape == (1, 1, 1, 1)
+    assert idx.shape == (1, 1, 1, 1)
+
+
+def test_adaptive_max_pool1d_wrapper_exists():
+    x = torch.tensor([[[1.0, 3.0, 2.0, 4.0]]], device='cpu')
+    out = F.adaptive_max_pool1d(x, output_size=2)
+    assert out.shape == (1, 1, 2)
+
+
+def test_adaptive_max_pool2d_return_indices_returns_tuple():
+    x = torch.tensor([[[[1.0, 3.0], [2.0, 4.0]]]], device='cpu')
+    out, idx = F.adaptive_max_pool2d(x, output_size=(1, 1), return_indices=True)
+    assert out.shape == (1, 1, 1, 1)
+    assert idx.shape == (1, 1, 1, 1)
+
+
+def test_max_unpool1d_scatter_matches_indices():
+    x = torch.tensor([[[1.0, 3.0, 2.0, 4.0]]], device='cpu')
+    pooled, indices = F.max_pool1d_with_indices(x, kernel_size=2, stride=2)
+    out = F.max_unpool1d(pooled, indices, kernel_size=2, stride=2, output_size=(1, 1, 4))
+    expected = torch.tensor([[[0.0, 3.0, 0.0, 4.0]]], device='cpu')
+    assert torch.allclose(out, expected, atol=1e-6)
+
+
+def test_max_unpool2d_scatter_matches_indices():
+    x = torch.tensor([[[[1.0, 3.0], [2.0, 4.0]]]], device='cpu')
+    pooled, indices = F.max_pool2d_with_indices(x, kernel_size=2, stride=2)
+    out = F.max_unpool2d(pooled, indices, kernel_size=2, stride=2, output_size=(1, 1, 2, 2))
+    expected = torch.tensor([[[[0.0, 0.0], [0.0, 4.0]]]], device='cpu')
+    assert torch.allclose(out, expected, atol=1e-6)
+
+
+def test_max_unpool1d_invalid_index_raises():
+    x = torch.tensor([[[2.0, 1.0]]], device='cpu')
+    pooled = torch.tensor([[[2.0]]], device='cpu')
+    bad_indices = torch.tensor([[[5]]], device='cpu', dtype=torch.int64)
+    with pytest.raises((RuntimeError, ValueError, IndexError)):
+        F.max_unpool1d(pooled, bad_indices, kernel_size=2, stride=2, output_size=(1, 1, 2))
