@@ -175,6 +175,12 @@ class OpSchema:
             if isinstance(value, bool):
                 _raise_invalid_combo()
             if isinstance(value, int):
+                rank = len(getattr(input_tensor, "shape", ()) or ())
+                if rank > 0 and (value < -rank or value >= rank):
+                    raise IndexError(
+                        f"Dimension out of range (expected to be in range of "
+                        f"[{-rank}, {rank - 1}], but got {value})"
+                    )
                 return
             if isinstance(value, str):
                 if value.isidentifier():
@@ -221,6 +227,11 @@ class OpSchema:
                         # bool inside dim sequence is treated as an integer dim value.
                         item = int(item)
                     dim_idx = _normalize_dim_index(item, rank)
+                    if rank > 0 and (dim_idx < 0 or dim_idx >= rank):
+                        raise IndexError(
+                            f"Dimension out of range (expected to be in range of "
+                            f"[{-rank}, {rank - 1}], but got {item})"
+                        )
                     if dim_idx in seen:
                         raise RuntimeError(f"dim {dim_idx} appears multiple times in the list of dims")
                     seen.add(dim_idx)

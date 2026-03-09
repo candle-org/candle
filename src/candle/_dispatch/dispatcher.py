@@ -343,7 +343,15 @@ def _format_dispatch_context(op_name, dispatch_device):
 
 
 def _wrap_dispatch_error(exc, op_name, dispatch_device):
-    return RuntimeError(f"{exc} [{_format_dispatch_context(op_name, dispatch_device)}]")
+    context = _format_dispatch_context(op_name, dispatch_device)
+    msg = f"{exc} [{context}]"
+    exc_type = type(exc)
+    if isinstance(exc, (ValueError, IndexError, TypeError, RuntimeError)):
+        try:
+            return exc_type(msg)
+        except Exception:
+            pass
+    return RuntimeError(msg)
 
 
 def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
