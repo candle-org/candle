@@ -69,6 +69,11 @@ def leaky_relu(input, negative_slope=0.01, inplace=False):
     return dispatch("leaky_relu", input.device.type, input, negative_slope)
 
 
+def leaky_relu_(input, negative_slope=0.01):
+    input.copy_(leaky_relu(input, negative_slope=negative_slope))
+    return input
+
+
 def elu(input, alpha=1.0, inplace=False):
     from .._dispatch import dispatch
     return dispatch("elu", input.device.type, input, alpha)
@@ -347,6 +352,10 @@ def adaptive_max_pool2d(input, output_size, return_indices=False):
         _output_size = tuple(output_size)
     return dispatch("adaptive_max_pool2d", input.device.type, input, _output_size,
                     return_indices)
+
+
+def adaptive_max_pool1d_with_indices(input, output_size):
+    return adaptive_max_pool1d(input, output_size, return_indices=True)
 
 
 def adaptive_max_pool2d_with_indices(input, output_size):

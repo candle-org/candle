@@ -471,3 +471,18 @@ def test_max_unpool3d_invalid_index_raises():
     bad_indices = torch.tensor([[[[[99]]]]], device='cpu', dtype=torch.int64)
     with pytest.raises((RuntimeError, ValueError, IndexError)):
         F.max_unpool3d(pooled, bad_indices, kernel_size=2, stride=2, output_size=(1, 1, 2, 2, 2))
+
+
+def test_adaptive_max_pool1d_with_indices_wrapper_exists():
+    x = torch.tensor([[[1.0, 3.0, 2.0, 4.0]]], device='cpu')
+    out, idx = F.adaptive_max_pool1d_with_indices(x, output_size=2)
+    assert out.shape == (1, 1, 2)
+    assert idx.shape == (1, 1, 2)
+
+
+def test_leaky_relu_inplace_wrapper_exists_and_mutates():
+    x = torch.tensor([-2.0, 0.0, 2.0], device='cpu')
+    out = F.leaky_relu_(x, negative_slope=0.1)
+    assert out is x
+    expected = torch.tensor([-0.2, 0.0, 2.0], device='cpu')
+    assert torch.allclose(x, expected, atol=1e-6)
