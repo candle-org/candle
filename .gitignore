@@ -209,6 +209,7 @@ __marimo__/
 # Local git worktrees
 .worktrees/
 
-# Compat test artifacts (cloned transformers + reports)
-compat/_transformers/
-compat/_reports/
+# Compat test artifacts
+compat/*/_transformers/
+compat/*/_pytorch/
+compat/*/_reports/

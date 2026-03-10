@@ -20,7 +20,7 @@ Run transformers compatibility tests against candle and report results.
 ```bash
 source ~/miniconda3/etc/profile.d/conda.sh && \
 conda run -n mindnlp env USE_CANDLE=1 \
-  python compat/run.py $PARSED_ARGS \
+  python compat/transformers/run.py $PARSED_ARGS \
   --json-report /tmp/compat-report.json \
   -v --tb=short
 ```
@@ -28,7 +28,7 @@ conda run -n mindnlp env USE_CANDLE=1 \
 3. Summarize the results:
 
 ```bash
-python compat/run.py --summarize /tmp/compat-report.json
+python compat/transformers/run.py --summarize /tmp/compat-report.json
 ```
 
 4. For each **collection error**, report:
@@ -42,7 +42,7 @@ python compat/run.py --summarize /tmp/compat-report.json
    - Which candle source file is likely responsible
 
 6. Suggest next steps:
-   - New entries for `compat/xfail.yaml` (with reason)
+   - New entries for `compat/transformers/xfail.yaml` (with reason)
    - Issues to file (title + label)
 
 ## Labels for Issues

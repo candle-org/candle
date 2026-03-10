@@ -1,0 +1,10 @@
+# Known failures -- populated after first run
+# Format: test node ID pattern + reason
+
+_global:
+  - pattern: "test_.*compile.*"
+    reason: "torch.compile not implemented"
+  - pattern: "test_.*dynamo.*"
+    reason: "torch._dynamo not implemented"
+  - pattern: "test_.*export.*"
+    reason: "torch.export not implemented"

@@ -1,0 +1,39 @@
+pytorch_ref: "v2.5.0"
+
+tier1_mechanism:
+  - test_torch.py
+  - test_tensor_creation_ops.py
+  - test_autograd.py
+
+tier2_mechanism:
+  - test_nn.py
+  - test_ops.py
+  - test_modules.py
+  - test_linalg.py
+
+tier1_gpu:
+  - test_cuda.py
+
+tier2_gpu:
+  - test_ops.py
+
+mps:
+  - test_mps.py
+
+distributed:
+  - distributed/test_c10d_gloo.py
+  - distributed/test_c10d_nccl.py
+
+deselect_patterns:
+  - "*dynamo*"
+  - "*inductor*"
+  - "*compile*"
+  - "*export*"
+  - "*fx*"
+  - "*quantization*"
+  - "*onnx*"
+  - "*functorch*"
+
+skip_markers:
+  - slow
+  - skipIfTorchDynamo

@@ -44,7 +44,7 @@ jobs:
 
       - name: Install compat dependencies
         run: |
-          pip install -r compat/requirements.txt
+          pip install -r compat/transformers/requirements.txt
 
       - name: Run compatibility tests
         env:
@@ -62,11 +62,11 @@ jobs:
 
           TIER="${{ github.event.inputs.tier || '1' }}"
 
-          python compat/run.py \
+          python compat/transformers/run.py \
             --tier "$TIER" \
             $MODEL_ARG \
             $REF_ARG \
-            --json-report compat/_reports/report.json \
+            --json-report compat/transformers/_reports/report.json \
             -v --tb=short
 
       - name: Upload test report
@@ -74,14 +74,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: compat-report
-          path: compat/_reports/report.json
+          path: compat/transformers/_reports/report.json
           if-no-files-found: ignore
 
       - name: Post summary
         if: always()
         run: |
-          if [ -f compat/_reports/report.json ]; then
-            python compat/run.py --summarize compat/_reports/report.json >> "$GITHUB_STEP_SUMMARY"
+          if [ -f compat/transformers/_reports/report.json ]; then
+            python compat/transformers/run.py --summarize compat/transformers/_reports/report.json >> "$GITHUB_STEP_SUMMARY"
           else
             echo "No report generated" >> "$GITHUB_STEP_SUMMARY"
           fi

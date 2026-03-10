@@ -1,0 +1,57 @@
+name: PyTorch Compat
+
+on:
+  schedule:
+    - cron: "0 3 * * *"    # nightly at 3 AM UTC
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "Tier spec (e.g. mechanism:1, gpu:1)"
+        required: false
+        default: "mechanism:1"
+      file:
+        description: "Single test file (e.g. test_torch.py)"
+        required: false
+        default: ""
+  pull_request:
+    paths:
+      - "src/candle/**"
+      - "compat/pytorch/**"
+
+jobs:
+  pr-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e . && pip install -r compat/pytorch/requirements.txt
+      - run: USE_CANDLE=1 python compat/pytorch/run.py --tier mechanism:1 --gate-only --tb=short
+
+  nightly:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e . && pip install -r compat/pytorch/requirements.txt
+      - run: |
+          TIER="${{ github.event.inputs.tier || 'mechanism:1' }}"
+          FILE="${{ github.event.inputs.file || '' }}"
+          ARGS="--tier $TIER"
+          [ -n "$FILE" ] && ARGS="--file $FILE"
+          USE_CANDLE=1 python compat/pytorch/run.py $ARGS \
+            --json-report compat/pytorch/_reports/report.json -v --tb=short
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pytorch-compat-report
+          path: "compat/pytorch/_reports/"
+      - if: always()
+        run: python compat/pytorch/run.py --summarize compat/pytorch/_reports/report.json >> "$GITHUB_STEP_SUMMARY"
