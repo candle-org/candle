@@ -666,6 +666,21 @@ def _build_msl_source():
     parts.append(_gen_arg_reduction(
         "argmin", "LONG_MAX", "<", types=("long",)))
 
+    # Full-tensor prod reduction
+    parts.append(_gen_reduction(
+        "prod", "({type})1",
+        "shared[lid] * shared[lid + s]"))
+
+    # Full-tensor any/all reductions (uchar only — input is pre-cast to bool)
+    parts.append(_gen_reduction(
+        "any", "0",
+        "(shared[lid] || shared[lid + s]) ? (uchar)1 : (uchar)0",
+        types=("uchar",)))
+    parts.append(_gen_reduction(
+        "all", "1",
+        "(shared[lid] && shared[lid + s]) ? (uchar)1 : (uchar)0",
+        types=("uchar",)))
+
     # Axis-reduce kernels (dim reduction)
     parts.append(_gen_reduce_dim(
         "sum",
@@ -705,6 +720,21 @@ def _build_msl_source():
         body="if (val < best) { best = val; best_idx = r; }",
         finalize="best_idx",
         out_type="uint"))
+    # any/all axis-reduce (typed input → uchar output)
+    parts.append(_gen_reduce_dim(
+        "any",
+        init="uchar acc = 0;",
+        body="if (val != 0) acc = 1;",
+        finalize="acc",
+        out_type="uchar",
+        types=("float", "half", "int", "long", "uchar")))
+    parts.append(_gen_reduce_dim(
+        "all",
+        init="uchar acc = 1;",
+        body="if (val == 0) acc = 0;",
+        finalize="acc",
+        out_type="uchar",
+        types=("float", "half", "int", "long", "uchar")))
 
     # Comparison ops
     for name, op in _COMPARISON_OPS:

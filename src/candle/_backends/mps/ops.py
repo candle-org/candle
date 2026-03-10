@@ -232,6 +232,9 @@ def _gpu_reduce_single_dim(a, dim, op_name, keepdim):
     if op_name in ("argmax", "argmin"):
         out_buf = _alloc_output_buf(out_numel, int32_dtype)
         out_dtype = int64_dtype
+    elif op_name in ("any", "all"):
+        out_buf = _alloc_output_buf(out_numel, bool_dtype)
+        out_dtype = bool_dtype
     else:
         out_buf = _alloc_output_buf(out_numel, a.dtype)
         out_dtype = a.dtype
@@ -476,16 +479,66 @@ def mean_(a, dim=None, keepdim=False):
 def std_(a, dim=None, keepdim=False, unbiased=True):
     if not a.dtype.is_floating_point and not a.dtype.is_complex:
         raise RuntimeError("std and var only support floating point and complex dtypes")
+    # GPU composite: sqrt(var)
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype.is_floating_point:
+        v = var_(a, dim=dim, unbiased=unbiased, keepdim=keepdim)
+        return sqrt(v)
     ddof = 1 if unbiased else 0
     out = np.std(_to_numpy(a), axis=dim, keepdims=keepdim, ddof=ddof)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
 
 
 def all_(a, dim=None, keepdim=False):
+    if _can_use_gpu(a) and a.is_contiguous():
+        # GPU path: axis reduction (dim specified)
+        if dim is not None:
+            ndim = len(a.shape)
+            if isinstance(dim, int):
+                return _gpu_reduce_single_dim(a, dim, "all", keepdim)
+            dim_tuple = dim if isinstance(dim, tuple) else tuple(dim)
+            result = a
+            for d in sorted([x % ndim for x in dim_tuple], reverse=True):
+                result = _gpu_reduce_single_dim(result, d, "all", keepdim)
+            return result
+        # GPU path: full-tensor reduction (dim=None)
+        # Convert to bool if not already
+        if a.dtype != bool_dtype:
+            a = ne(a, 0)
+        d = _get_dispatcher()
+        out_buf = _alloc_output_buf(1, bool_dtype)
+        d.dispatch_reduction("all_partial_u8", "all_final_u8",
+                             _metal_buf(a), out_buf, a.numel())
+        ndim = len(a.shape)
+        out_shape = (1,) * ndim if keepdim else ()
+        out_stride = (1,) * ndim if keepdim else ()
+        return _from_metal_buffer(out_buf, out_shape, out_stride, bool_dtype, a.device)
     return _from_numpy(np.all(_to_numpy(a), axis=dim, keepdims=keepdim), bool_dtype, a.device)
 
 
 def any_(a, dim=None, keepdim=False):
+    if _can_use_gpu(a) and a.is_contiguous():
+        # GPU path: axis reduction (dim specified)
+        if dim is not None:
+            ndim = len(a.shape)
+            if isinstance(dim, int):
+                return _gpu_reduce_single_dim(a, dim, "any", keepdim)
+            dim_tuple = dim if isinstance(dim, tuple) else tuple(dim)
+            result = a
+            for d in sorted([x % ndim for x in dim_tuple], reverse=True):
+                result = _gpu_reduce_single_dim(result, d, "any", keepdim)
+            return result
+        # GPU path: full-tensor reduction (dim=None)
+        # Convert to bool if not already
+        if a.dtype != bool_dtype:
+            a = ne(a, 0)
+        d = _get_dispatcher()
+        out_buf = _alloc_output_buf(1, bool_dtype)
+        d.dispatch_reduction("any_partial_u8", "any_final_u8",
+                             _metal_buf(a), out_buf, a.numel())
+        ndim = len(a.shape)
+        out_shape = (1,) * ndim if keepdim else ()
+        out_stride = (1,) * ndim if keepdim else ()
+        return _from_metal_buffer(out_buf, out_shape, out_stride, bool_dtype, a.device)
     return _from_numpy(np.any(_to_numpy(a), axis=dim, keepdims=keepdim), bool_dtype, a.device)
 
 
@@ -2549,6 +2602,30 @@ def unfold(a, dimension, size, step):
 
 
 def var_(a, dim=None, unbiased=True, keepdim=False):
+    # GPU composite using E[X^2] - E[X]^2 (avoids broadcast sub)
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype.is_floating_point:
+        sq = mul(a, a)
+        mean_sq = mean_(sq, dim=dim, keepdim=keepdim)
+        mean_val = mean_(a, dim=dim, keepdim=keepdim)
+        mean_val_sq = mul(mean_val, mean_val)
+        var_val = sub(mean_sq, mean_val_sq)
+        if unbiased:
+            if dim is None:
+                n = a.numel()
+            else:
+                if isinstance(dim, int):
+                    dims = (dim,)
+                else:
+                    dims = tuple(dim)
+                n = 1
+                ndim = len(a.shape)
+                for d in dims:
+                    n *= a.shape[d % ndim]
+            if n > 1:
+                correction = float(n) / float(n - 1)
+                var_val = mul(var_val, correction)
+        return var_val
+
     arr = _to_numpy(a)
     ddof = 1 if unbiased else 0
     if dim is not None:
@@ -2578,6 +2655,29 @@ def norm_(a, p=2, dim=None, keepdim=False):
 
 
 def prod_(a, dim=None, keepdim=False):
+    ndim = len(a.shape)
+
+    # GPU path: full-tensor reduction (dim=None)
+    if dim is None and _can_use_gpu(a) and a.is_contiguous():
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        out_buf = _alloc_output_buf(1, a.dtype)
+        d.dispatch_reduction(f"prod_partial_{sfx}", f"prod_final_{sfx}",
+                             _metal_buf(a), out_buf, a.numel())
+        out_shape = (1,) * ndim if keepdim else ()
+        out_stride = (1,) * ndim if keepdim else ()
+        return _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
+
+    # GPU path: axis reduction (dim specified)
+    if dim is not None and _can_use_gpu(a) and a.is_contiguous():
+        if isinstance(dim, int):
+            return _gpu_reduce_single_dim(a, dim, "prod", keepdim)
+        dim_tuple = dim if isinstance(dim, tuple) else tuple(dim)
+        result = a
+        for d in sorted([x % ndim for x in dim_tuple], reverse=True):
+            result = _gpu_reduce_single_dim(result, d, "prod", keepdim)
+        return result
+
     arr = _to_numpy(a)
     if dim is not None:
         out = np.prod(arr, axis=dim, keepdims=keepdim)
@@ -3189,6 +3289,25 @@ def median(a, dim=None, keepdim=False):
 
 def logsumexp(a, dim, keepdim=False):
     """Numerically stable logsumexp: log(sum(exp(x), dim))."""
+    # GPU composite: amax → sub → exp → sum → log → add
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype.is_floating_point:
+        max_val = amax(a, dim=dim, keepdim=True)
+        # expand max_val to match a's shape for broadcast subtraction
+        max_expanded = expand(max_val, tuple(a.shape))
+        shifted = sub(a, max_expanded)
+        exp_shifted = exp(shifted)
+        sum_exp = sum_(exp_shifted, dim=dim, keepdim=keepdim)
+        log_sum = log(sum_exp)
+        if keepdim:
+            result = add(log_sum, max_val)
+        else:
+            ndim = len(a.shape)
+            d = dim % ndim if isinstance(dim, int) else dim
+            from ..common.view import squeeze as _squeeze
+            max_squeezed = _squeeze(max_val, d)
+            result = add(log_sum, max_squeezed)
+        return result
+
     arr = _to_numpy(a)
     max_val = np.max(arr, axis=dim, keepdims=True)
     exp_shifted = np.exp(arr - max_val)
