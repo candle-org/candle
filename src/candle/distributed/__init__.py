@@ -257,6 +257,11 @@ def destroy_process_group(group=None):
 # Utility functions
 # ---------------------------------------------------------------------------
 
+def _get_default_group():
+    """Return the default (WORLD) ProcessGroup, or None if not initialized."""
+    return _default_pg
+
+
 def get_rank(group=None):
     pg = group or _default_pg
     if pg is None:
