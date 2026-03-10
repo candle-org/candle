@@ -593,3 +593,262 @@ def test_conv_tbc_wrapper_exists():
     ], device='cpu')
     assert out.shape == (2, 1, 1)
     assert torch.allclose(out, expected, atol=1e-6)
+
+
+def test_multi_head_attention_forward_wrapper_exists_basic_need_weights_true():
+    # Basic parity check against torch reference on CPU.
+    import torch as torch_ref
+    import torch.nn.functional as F_ref
+
+    torch_ref.manual_seed(0)
+    L, S, N, E, H = 2, 2, 1, 4, 2
+    query = torch_ref.randn(L, N, E)
+    key = torch_ref.randn(S, N, E)
+    value = torch_ref.randn(S, N, E)
+
+    in_proj_weight = torch_ref.randn(3 * E, E)
+    in_proj_bias = torch_ref.randn(3 * E)
+    out_proj_weight = torch_ref.randn(E, E)
+    out_proj_bias = torch_ref.randn(E)
+
+    out_ref, w_ref = F_ref.multi_head_attention_forward(
+        query,
+        key,
+        value,
+        embed_dim_to_check=E,
+        num_heads=H,
+        in_proj_weight=in_proj_weight,
+        in_proj_bias=in_proj_bias,
+        bias_k=None,
+        bias_v=None,
+        add_zero_attn=False,
+        dropout_p=0.0,
+        out_proj_weight=out_proj_weight,
+        out_proj_bias=out_proj_bias,
+        training=False,
+        key_padding_mask=None,
+        need_weights=True,
+        attn_mask=None,
+        use_separate_proj_weight=False,
+        q_proj_weight=None,
+        k_proj_weight=None,
+        v_proj_weight=None,
+        static_k=None,
+        static_v=None,
+        average_attn_weights=True,
+        is_causal=False,
+    )
+
+    # Run candle version with identical inputs.
+    q = torch.tensor(query.numpy())
+    k = torch.tensor(key.numpy())
+    v = torch.tensor(value.numpy())
+    w = torch.tensor(in_proj_weight.numpy())
+    b = torch.tensor(in_proj_bias.numpy())
+    ow = torch.tensor(out_proj_weight.numpy())
+    ob = torch.tensor(out_proj_bias.numpy())
+
+    out, attn_w = F.multi_head_attention_forward(
+        q,
+        k,
+        v,
+        embed_dim_to_check=E,
+        num_heads=H,
+        in_proj_weight=w,
+        in_proj_bias=b,
+        bias_k=None,
+        bias_v=None,
+        add_zero_attn=False,
+        dropout_p=0.0,
+        out_proj_weight=ow,
+        out_proj_bias=ob,
+        training=False,
+        key_padding_mask=None,
+        need_weights=True,
+        attn_mask=None,
+        use_separate_proj_weight=False,
+        q_proj_weight=None,
+        k_proj_weight=None,
+        v_proj_weight=None,
+        static_k=None,
+        static_v=None,
+        average_attn_weights=True,
+        is_causal=False,
+    )
+
+    assert out.shape == (L, N, E)
+    assert attn_w is not None
+    assert attn_w.shape == (N, L, S)
+    np.testing.assert_allclose(out.numpy(), out_ref.detach().numpy(), rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(attn_w.numpy(), w_ref.detach().numpy(), rtol=1e-5, atol=1e-5)
+
+
+def test_multi_head_attention_forward_attn_mask_bool_and_key_padding_mask_bool():
+    # Verify boolean mask semantics match torch: True means masked out.
+    import torch as torch_ref
+    import torch.nn.functional as F_ref
+
+    torch_ref.manual_seed(0)
+    L, S, N, E, H = 2, 2, 1, 4, 2
+    query = torch_ref.randn(L, N, E)
+    key = torch_ref.randn(S, N, E)
+    value = torch_ref.randn(S, N, E)
+    in_proj_weight = torch_ref.randn(3 * E, E)
+    in_proj_bias = torch_ref.randn(3 * E)
+    out_proj_weight = torch_ref.randn(E, E)
+    out_proj_bias = torch_ref.randn(E)
+
+    attn_mask = torch_ref.tensor([[False, True], [False, False]])
+    key_padding_mask = torch_ref.tensor([[False, True]])
+
+    out_ref, w_ref = F_ref.multi_head_attention_forward(
+        query,
+        key,
+        value,
+        embed_dim_to_check=E,
+        num_heads=H,
+        in_proj_weight=in_proj_weight,
+        in_proj_bias=in_proj_bias,
+        bias_k=None,
+        bias_v=None,
+        add_zero_attn=False,
+        dropout_p=0.0,
+        out_proj_weight=out_proj_weight,
+        out_proj_bias=out_proj_bias,
+        training=False,
+        key_padding_mask=key_padding_mask,
+        need_weights=True,
+        attn_mask=attn_mask,
+        use_separate_proj_weight=False,
+        q_proj_weight=None,
+        k_proj_weight=None,
+        v_proj_weight=None,
+        static_k=None,
+        static_v=None,
+        average_attn_weights=True,
+        is_causal=False,
+    )
+
+    q = torch.tensor(query.numpy())
+    k = torch.tensor(key.numpy())
+    v = torch.tensor(value.numpy())
+    w = torch.tensor(in_proj_weight.numpy())
+    b = torch.tensor(in_proj_bias.numpy())
+    ow = torch.tensor(out_proj_weight.numpy())
+    ob = torch.tensor(out_proj_bias.numpy())
+    am = torch.tensor(attn_mask.numpy(), dtype=torch.bool)
+    kpm = torch.tensor(key_padding_mask.numpy(), dtype=torch.bool)
+
+    out, attn_w = F.multi_head_attention_forward(
+        q,
+        k,
+        v,
+        embed_dim_to_check=E,
+        num_heads=H,
+        in_proj_weight=w,
+        in_proj_bias=b,
+        bias_k=None,
+        bias_v=None,
+        add_zero_attn=False,
+        dropout_p=0.0,
+        out_proj_weight=ow,
+        out_proj_bias=ob,
+        training=False,
+        key_padding_mask=kpm,
+        need_weights=True,
+        attn_mask=am,
+        use_separate_proj_weight=False,
+        q_proj_weight=None,
+        k_proj_weight=None,
+        v_proj_weight=None,
+        static_k=None,
+        static_v=None,
+        average_attn_weights=True,
+        is_causal=False,
+    )
+
+    np.testing.assert_allclose(out.numpy(), out_ref.detach().numpy(), rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(attn_w.numpy(), w_ref.detach().numpy(), rtol=1e-5, atol=1e-5)
+
+
+def test_multi_head_attention_forward_wrapper_need_weights_false_returns_none_weights():
+    import torch as torch_ref
+    import torch.nn.functional as F_ref
+
+    torch_ref.manual_seed(0)
+    L, S, N, E, H = 2, 2, 1, 4, 2
+    query = torch_ref.randn(L, N, E)
+    key = torch_ref.randn(S, N, E)
+    value = torch_ref.randn(S, N, E)
+    in_proj_weight = torch_ref.randn(3 * E, E)
+    in_proj_bias = torch_ref.randn(3 * E)
+    out_proj_weight = torch_ref.randn(E, E)
+    out_proj_bias = torch_ref.randn(E)
+
+    out_ref, w_ref = F_ref.multi_head_attention_forward(
+        query,
+        key,
+        value,
+        embed_dim_to_check=E,
+        num_heads=H,
+        in_proj_weight=in_proj_weight,
+        in_proj_bias=in_proj_bias,
+        bias_k=None,
+        bias_v=None,
+        add_zero_attn=False,
+        dropout_p=0.0,
+        out_proj_weight=out_proj_weight,
+        out_proj_bias=out_proj_bias,
+        training=False,
+        key_padding_mask=None,
+        need_weights=False,
+        attn_mask=None,
+        use_separate_proj_weight=False,
+        q_proj_weight=None,
+        k_proj_weight=None,
+        v_proj_weight=None,
+        static_k=None,
+        static_v=None,
+        average_attn_weights=True,
+        is_causal=False,
+    )
+    assert w_ref is None
+
+    q = torch.tensor(query.numpy())
+    k = torch.tensor(key.numpy())
+    v = torch.tensor(value.numpy())
+    w = torch.tensor(in_proj_weight.numpy())
+    b = torch.tensor(in_proj_bias.numpy())
+    ow = torch.tensor(out_proj_weight.numpy())
+    ob = torch.tensor(out_proj_bias.numpy())
+
+    out, attn_w = F.multi_head_attention_forward(
+        q,
+        k,
+        v,
+        embed_dim_to_check=E,
+        num_heads=H,
+        in_proj_weight=w,
+        in_proj_bias=b,
+        bias_k=None,
+        bias_v=None,
+        add_zero_attn=False,
+        dropout_p=0.0,
+        out_proj_weight=ow,
+        out_proj_bias=ob,
+        training=False,
+        key_padding_mask=None,
+        need_weights=False,
+        attn_mask=None,
+        use_separate_proj_weight=False,
+        q_proj_weight=None,
+        k_proj_weight=None,
+        v_proj_weight=None,
+        static_k=None,
+        static_v=None,
+        average_attn_weights=True,
+        is_causal=False,
+    )
+
+    assert attn_w is None
+    np.testing.assert_allclose(out.numpy(), out_ref.detach().numpy(), rtol=1e-5, atol=1e-5)
