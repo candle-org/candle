@@ -11,6 +11,7 @@ import pytest
 import candle as torch
 import candle.distributed as dist
 from candle.utils.data import Dataset, DistributedSampler
+from tests.distributed.worker_utils import write_worker_script
 
 
 def _free_port():
@@ -126,9 +127,7 @@ def test_hccl_rank_failure_does_not_hang_parent():
     env["PYTHONNOUSERSITE"] = "1"
     env["PYTHONPATH"] = os.path.join(os.path.dirname(__file__), "..", "..", "src")
 
-    worker = "/tmp/_hccl_rank_fail_fast.py"
-    with open(worker, "w") as f:
-        f.write(SCRIPT_FAIL_FAST)
+    worker = write_worker_script(SCRIPT_FAIL_FAST, name="hccl_rank_fail_fast")
 
     procs = []
     for rank in range(2):

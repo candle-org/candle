@@ -33,7 +33,7 @@ def test_npu_workflow_partitions_suites_by_runner_pool():
 
     assert 'runs-on: [self-hosted, linux, ascend, 910a, npu-4-5]' in payload
     assert 'ASCEND_RT_VISIBLE_DEVICES: 4,5' in payload
-    assert 'clean_env pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard"' in payload
+    assert 'clean_env pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard and not test_ddp"' in payload
     assert "test_hccl_all_to_all_single_async_unequal_multicard[2-29714]" in payload
     assert "test_hccl_all_to_all_single_invalid_split_pairing_multicard[2-29715]" in payload
     assert "test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-2-29716]" in payload

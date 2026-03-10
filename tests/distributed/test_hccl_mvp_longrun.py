@@ -6,6 +6,8 @@ import subprocess
 
 import pytest
 
+from tests.distributed.worker_utils import write_worker_script
+
 
 def _require_npu_cards(min_cards):
     try:
@@ -111,9 +113,7 @@ def _run_two_rank_worker(script_text, worker_name, timeout_sec=240):
     env["WORLD_SIZE"] = "2"
     env["PYTHONPATH"] = os.path.join(os.path.dirname(__file__), "..", "..", "src")
 
-    worker_file = f"/tmp/{worker_name}.py"
-    with open(worker_file, "w") as f:
-        f.write(script_text)
+    worker_file = write_worker_script(script_text, name=worker_name)
 
     procs = []
     for rank in range(2):

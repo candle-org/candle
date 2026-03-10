@@ -11,6 +11,8 @@ import os
 import sys
 import subprocess
 
+from tests.distributed.worker_utils import write_worker_script
+
 SCRIPT = r'''
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
@@ -71,9 +73,7 @@ def test_hccl_mvp_2card():
     env["WORLD_SIZE"] = "2"
     env["PYTHONPATH"] = os.path.join(os.path.dirname(__file__), "src") + ((":" + env["PYTHONPATH"]) if "PYTHONPATH" in env else "")
 
-    worker_file = "/tmp/_hccl_mvp_2card_worker.py"
-    with open(worker_file, "w") as f:
-        f.write(SCRIPT)
+    worker_file = write_worker_script(SCRIPT, name="hccl_mvp_2card")
 
     procs = []
     for rank in range(2):

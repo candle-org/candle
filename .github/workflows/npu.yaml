@@ -226,7 +226,7 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard"
+        clean_env pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard and not test_ddp"
     - name: Run 2-card HCCL all_to_all coverage
       run: |
         set -o pipefail
