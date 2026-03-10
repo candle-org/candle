@@ -223,6 +223,143 @@ kernel void {name}_scalar_{suffix}(device const {type}* a  [[buffer(0)]],
 # Templates: axis-reduce kernels
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Templates: shape & index kernels (Phase 3)
+# ---------------------------------------------------------------------------
+
+_WHERE_TEMPLATE = """
+kernel void where_{suffix}(device const uchar* cond [[buffer(0)]],
+                            device const {type}* x   [[buffer(1)]],
+                            device const {type}* y   [[buffer(2)]],
+                            device {type}* out        [[buffer(3)]],
+                            constant uint& N          [[buffer(4)]],
+                            uint id [[thread_position_in_grid]]) {{
+    if (id < N) out[id] = cond[id] ? x[id] : y[id];
+}}
+"""
+
+_WHERE_SCALAR_Y_TEMPLATE = """
+kernel void where_scalar_y_{suffix}(device const uchar* cond [[buffer(0)]],
+                                     device const {type}* x   [[buffer(1)]],
+                                     constant {type}& y_val    [[buffer(2)]],
+                                     device {type}* out        [[buffer(3)]],
+                                     constant uint& N          [[buffer(4)]],
+                                     uint id [[thread_position_in_grid]]) {{
+    if (id < N) out[id] = cond[id] ? x[id] : y_val;
+}}
+"""
+
+_WHERE_SCALAR_X_TEMPLATE = """
+kernel void where_scalar_x_{suffix}(device const uchar* cond [[buffer(0)]],
+                                     constant {type}& x_val    [[buffer(1)]],
+                                     device const {type}* y    [[buffer(2)]],
+                                     device {type}* out        [[buffer(3)]],
+                                     constant uint& N          [[buffer(4)]],
+                                     uint id [[thread_position_in_grid]]) {{
+    if (id < N) out[id] = cond[id] ? x_val : y[id];
+}}
+"""
+
+_MASKED_FILL_TEMPLATE = """
+kernel void masked_fill_{suffix}(device const {type}* a  [[buffer(0)]],
+                                  device const uchar* mask [[buffer(1)]],
+                                  constant {type}& value   [[buffer(2)]],
+                                  device {type}* out       [[buffer(3)]],
+                                  constant uint& N         [[buffer(4)]],
+                                  uint id [[thread_position_in_grid]]) {{
+    if (id < N) out[id] = mask[id] ? value : a[id];
+}}
+"""
+
+_TRIL_TEMPLATE = """
+kernel void tril_{suffix}(device const {type}* a [[buffer(0)]],
+                           device {type}* out      [[buffer(1)]],
+                           constant uint& rows     [[buffer(2)]],
+                           constant uint& cols     [[buffer(3)]],
+                           constant int& diagonal  [[buffer(4)]],
+                           constant uint& N        [[buffer(5)]],
+                           uint id [[thread_position_in_grid]]) {{
+    if (id >= N) return;
+    uint plane = rows * cols;
+    uint pos = id % plane;
+    uint row = pos / cols;
+    uint col = pos % cols;
+    out[id] = ((int)col <= (int)row + diagonal) ? a[id] : ({type})0;
+}}
+"""
+
+_TRIU_TEMPLATE = """
+kernel void triu_{suffix}(device const {type}* a [[buffer(0)]],
+                           device {type}* out      [[buffer(1)]],
+                           constant uint& rows     [[buffer(2)]],
+                           constant uint& cols     [[buffer(3)]],
+                           constant int& diagonal  [[buffer(4)]],
+                           constant uint& N        [[buffer(5)]],
+                           uint id [[thread_position_in_grid]]) {{
+    if (id >= N) return;
+    uint plane = rows * cols;
+    uint pos = id % plane;
+    uint row = pos / cols;
+    uint col = pos % cols;
+    out[id] = ((int)col >= (int)row + diagonal) ? a[id] : ({type})0;
+}}
+"""
+
+_INDEX_SELECT_TEMPLATE = """
+kernel void index_select_{suffix}(device const {type}* input   [[buffer(0)]],
+                                   device const int* indices    [[buffer(1)]],
+                                   device {type}* output        [[buffer(2)]],
+                                   constant uint& outer_size    [[buffer(3)]],
+                                   constant uint& idx_size      [[buffer(4)]],
+                                   constant uint& inner_size    [[buffer(5)]],
+                                   constant uint& input_dim_size [[buffer(6)]],
+                                   uint gid [[thread_position_in_grid]]) {{
+    if (gid >= outer_size * idx_size * inner_size) return;
+    uint inner_idx = gid % inner_size;
+    uint k = (gid / inner_size) % idx_size;
+    uint outer = gid / (idx_size * inner_size);
+    output[gid] = input[(outer * input_dim_size + (uint)indices[k]) * inner_size + inner_idx];
+}}
+"""
+
+_GATHER_TEMPLATE = """
+kernel void gather_{suffix}(device const {type}* input   [[buffer(0)]],
+                             device const int* indices    [[buffer(1)]],
+                             device {type}* output        [[buffer(2)]],
+                             constant uint& outer_size    [[buffer(3)]],
+                             constant uint& idx_size      [[buffer(4)]],
+                             constant uint& inner_size    [[buffer(5)]],
+                             constant uint& input_dim_size [[buffer(6)]],
+                             uint gid [[thread_position_in_grid]]) {{
+    if (gid >= outer_size * idx_size * inner_size) return;
+    uint inner_idx = gid % inner_size;
+    uint k = (gid / inner_size) % idx_size;
+    uint outer = gid / (idx_size * inner_size);
+    output[gid] = input[(outer * input_dim_size + (uint)indices[gid]) * inner_size + inner_idx];
+}}
+"""
+
+_CAT_COPY_TEMPLATE = """
+kernel void cat_copy_{suffix}(device const {type}* src [[buffer(0)]],
+                               device {type}* dst       [[buffer(1)]],
+                               constant uint& outer_size [[buffer(2)]],
+                               constant uint& src_dim    [[buffer(3)]],
+                               constant uint& inner_size [[buffer(4)]],
+                               constant uint& dst_dim    [[buffer(5)]],
+                               constant uint& offset     [[buffer(6)]],
+                               uint gid [[thread_position_in_grid]]) {{
+    if (gid >= outer_size * src_dim * inner_size) return;
+    uint inner_idx = gid % inner_size;
+    uint dim_idx = (gid / inner_size) % src_dim;
+    uint outer = gid / (src_dim * inner_size);
+    dst[(outer * dst_dim + offset + dim_idx) * inner_size + inner_idx] = src[gid];
+}}
+"""
+
+# ---------------------------------------------------------------------------
+# Templates: axis-reduce kernels
+# ---------------------------------------------------------------------------
+
 _REDUCE_DIM_TEMPLATE = """
 kernel void reduce_{name}_dim_{suffix}(
     device const {type}* input  [[buffer(0)]],
@@ -338,6 +475,75 @@ def _gen_reduce_dim(name, init, body, finalize, out_type=None, types=None):
             init=init.replace("{type}", t).replace("{out_type}", ot),
             body=body.replace("{type}", t),
             finalize=finalize.replace("{type}", t)))
+    return "".join(parts)
+
+
+def _gen_where(types=None):
+    """Generate where kernels (3 variants per type)."""
+    if types is None:
+        types = ("float", "half", "int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_WHERE_TEMPLATE.format(suffix=suffix, type=t))
+        parts.append(_WHERE_SCALAR_Y_TEMPLATE.format(suffix=suffix, type=t))
+        parts.append(_WHERE_SCALAR_X_TEMPLATE.format(suffix=suffix, type=t))
+    return "".join(parts)
+
+
+def _gen_masked_fill(types=None):
+    """Generate masked_fill kernels (1 per type)."""
+    if types is None:
+        types = ("float", "half", "int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_MASKED_FILL_TEMPLATE.format(suffix=suffix, type=t))
+    return "".join(parts)
+
+
+def _gen_tril_triu(types=None):
+    """Generate tril and triu kernels (2 per type)."""
+    if types is None:
+        types = ("float", "half", "int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_TRIL_TEMPLATE.format(suffix=suffix, type=t))
+        parts.append(_TRIU_TEMPLATE.format(suffix=suffix, type=t))
+    return "".join(parts)
+
+
+def _gen_index_select(types=None):
+    """Generate index_select kernels (1 per type)."""
+    if types is None:
+        types = ("float", "half", "int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_INDEX_SELECT_TEMPLATE.format(suffix=suffix, type=t))
+    return "".join(parts)
+
+
+def _gen_gather(types=None):
+    """Generate gather kernels (1 per type)."""
+    if types is None:
+        types = ("float", "half", "int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_GATHER_TEMPLATE.format(suffix=suffix, type=t))
+    return "".join(parts)
+
+
+def _gen_cat_copy(types=None):
+    """Generate cat_copy kernels (1 per type, includes bool/uchar)."""
+    if types is None:
+        types = ("float", "half", "int", "long", "uchar")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_CAT_COPY_TEMPLATE.format(suffix=suffix, type=t))
     return "".join(parts)
 
 
@@ -735,6 +941,14 @@ def _build_msl_source():
         finalize="acc",
         out_type="uchar",
         types=("float", "half", "int", "long", "uchar")))
+
+    # Shape & index kernels (Phase 3)
+    parts.append(_gen_where())
+    parts.append(_gen_masked_fill())
+    parts.append(_gen_tril_triu())
+    parts.append(_gen_index_select())
+    parts.append(_gen_gather())
+    parts.append(_gen_cat_copy())
 
     # Comparison ops
     for name, op in _COMPARISON_OPS:

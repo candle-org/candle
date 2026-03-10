@@ -633,6 +633,210 @@ class MetalKernelDispatcher:
         rt.commit_and_wait(cmd)
 
     # ------------------------------------------------------------------
+    # Dispatch: where  (cond, x, y → out)
+    # ------------------------------------------------------------------
+
+    def dispatch_where(self, kernel_name, cond_buf, x_buf, y_buf, out_buf,
+                       numel):
+        """Encode and execute a where kernel (4 buffers + 1 uint)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(cond_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(x_buf, 0, 1)
+            enc.setBuffer_offset_atIndex_(y_buf, 0, 2)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 4)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_where_ctypes(enc, pipeline, cond_buf, x_buf, y_buf,
+                                 out_buf, numel, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: where_scalar  (cond, tensor, scalar → out)
+    # ------------------------------------------------------------------
+
+    def dispatch_where_scalar(self, kernel_name, cond_buf, tensor_buf,
+                              scalar, out_buf, numel, scalar_fmt="f"):
+        """Encode where with one scalar operand (3 bufs + 1 scalar + 1 uint)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        scalar_bytes = struct.pack(scalar_fmt, scalar)
+        scalar_size = len(scalar_bytes)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(cond_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(tensor_buf, 0, 1)
+            enc.setBytes_length_atIndex_(scalar_bytes, scalar_size, 2)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 4)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_where_scalar_ctypes(enc, pipeline, cond_buf, tensor_buf,
+                                        scalar_bytes, scalar_size, out_buf,
+                                        numel, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: masked_fill  (a, mask, scalar → out)
+    # ------------------------------------------------------------------
+
+    def dispatch_masked_fill(self, kernel_name, a_buf, mask_buf, scalar,
+                             out_buf, numel, scalar_fmt="f"):
+        """Encode masked_fill kernel (3 bufs + 1 scalar + 1 uint)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        scalar_bytes = struct.pack(scalar_fmt, scalar)
+        scalar_size = len(scalar_bytes)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(a_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(mask_buf, 0, 1)
+            enc.setBytes_length_atIndex_(scalar_bytes, scalar_size, 2)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 4)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_masked_fill_ctypes(enc, pipeline, a_buf, mask_buf,
+                                       scalar_bytes, scalar_size, out_buf,
+                                       numel, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: tril/triu  (a → out, with rows/cols/diagonal/N)
+    # ------------------------------------------------------------------
+
+    def dispatch_tril_triu(self, kernel_name, a_buf, out_buf, rows, cols,
+                           diagonal, numel):
+        """Encode tril/triu kernel (2 bufs + 2 uint + 1 int + 1 uint)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(a_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 1)
+            enc.setBytes_length_atIndex_(struct.pack("I", rows), 4, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", cols), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("i", diagonal), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 5)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_tril_triu_ctypes(enc, pipeline, a_buf, out_buf,
+                                     rows, cols, diagonal, numel,
+                                     groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: index_select / gather  (input, index → output)
+    # ------------------------------------------------------------------
+
+    def dispatch_index_gather(self, kernel_name, input_buf, index_buf,
+                              out_buf, outer_size, idx_size, inner_size,
+                              input_dim_size, numel):
+        """Encode index_select or gather kernel (3 bufs + 4 uint)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(index_buf, 0, 1)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", outer_size), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", idx_size), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", inner_size), 4, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", input_dim_size), 4, 6)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_index_gather_ctypes(enc, pipeline, input_buf, index_buf,
+                                        out_buf, outer_size, idx_size,
+                                        inner_size, input_dim_size,
+                                        groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: cat_copy  (src → dst region)
+    # ------------------------------------------------------------------
+
+    def dispatch_cat_copy(self, kernel_name, src_buf, dst_buf, outer_size,
+                          src_dim, inner_size, dst_dim, offset, numel):
+        """Encode cat_copy kernel (2 bufs + 5 uint)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(src_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(dst_buf, 0, 1)
+            enc.setBytes_length_atIndex_(struct.pack("I", outer_size), 4, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", src_dim), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", inner_size), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", dst_dim), 4, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", offset), 4, 6)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_cat_copy_ctypes(enc, pipeline, src_buf, dst_buf,
+                                    outer_size, src_dim, inner_size,
+                                    dst_dim, offset, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
     # Dispatch: axis reduction  (input → reduced output along dim)
     # ------------------------------------------------------------------
 
@@ -1005,5 +1209,96 @@ def _encode_clamp_strided_ctypes(enc, pipeline, a_buf, s1_bytes, s2_bytes,
     _ctypes_set_bytes(enc, shape_bytes, len(shape_bytes), 5)
     _ctypes_set_bytes(enc, strides_bytes, len(strides_bytes), 6)
     _ctypes_set_bytes(enc, struct.pack("I", ndim), 4, 7)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: shape & index ctypes encoders
+# ---------------------------------------------------------------------------
+
+def _encode_where_ctypes(enc, pipeline, cond_buf, x_buf, y_buf, out_buf,
+                          numel, groups, tpg):
+    """Encode where kernel (4 buffers + 1 uint) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, cond_buf, 0, 0)
+    _ctypes_set_buffer(enc, x_buf, 0, 1)
+    _ctypes_set_buffer(enc, y_buf, 0, 2)
+    _ctypes_set_buffer(enc, out_buf, 0, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 4)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_where_scalar_ctypes(enc, pipeline, cond_buf, tensor_buf,
+                                 scalar_bytes, scalar_size, out_buf,
+                                 numel, groups, tpg):
+    """Encode where_scalar kernel (3 bufs + 1 scalar + 1 uint) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, cond_buf, 0, 0)
+    _ctypes_set_buffer(enc, tensor_buf, 0, 1)
+    _ctypes_set_bytes(enc, scalar_bytes, scalar_size, 2)
+    _ctypes_set_buffer(enc, out_buf, 0, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 4)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_masked_fill_ctypes(enc, pipeline, a_buf, mask_buf,
+                                scalar_bytes, scalar_size, out_buf,
+                                numel, groups, tpg):
+    """Encode masked_fill kernel (3 bufs + 1 scalar + 1 uint) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, a_buf, 0, 0)
+    _ctypes_set_buffer(enc, mask_buf, 0, 1)
+    _ctypes_set_bytes(enc, scalar_bytes, scalar_size, 2)
+    _ctypes_set_buffer(enc, out_buf, 0, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 4)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_tril_triu_ctypes(enc, pipeline, a_buf, out_buf,
+                              rows, cols, diagonal, numel, groups, tpg):
+    """Encode tril/triu kernel (2 bufs + 2 uint + 1 int + 1 uint) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, a_buf, 0, 0)
+    _ctypes_set_buffer(enc, out_buf, 0, 1)
+    _ctypes_set_bytes(enc, struct.pack("I", rows), 4, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", cols), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("i", diagonal), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 5)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_index_gather_ctypes(enc, pipeline, input_buf, index_buf, out_buf,
+                                 outer_size, idx_size, inner_size,
+                                 input_dim_size, groups, tpg):
+    """Encode index_select/gather kernel (3 bufs + 4 uint) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, index_buf, 0, 1)
+    _ctypes_set_buffer(enc, out_buf, 0, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", outer_size), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", idx_size), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", inner_size), 4, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", input_dim_size), 4, 6)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_cat_copy_ctypes(enc, pipeline, src_buf, dst_buf,
+                             outer_size, src_dim, inner_size,
+                             dst_dim, offset, groups, tpg):
+    """Encode cat_copy kernel (2 bufs + 5 uint) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, src_buf, 0, 0)
+    _ctypes_set_buffer(enc, dst_buf, 0, 1)
+    _ctypes_set_bytes(enc, struct.pack("I", outer_size), 4, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", src_dim), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", inner_size), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", dst_dim), 4, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", offset), 4, 6)
     _ctypes_dispatch_threadgroups(enc, groups, tpg)
     _ctypes_end_encoding(enc)

@@ -740,11 +740,64 @@ def topk(a, k, dim=-1, largest=True, sorted=True):
 
 
 def stack(tensors, dim=0):
+    # GPU path: composite via unsqueeze + cat
+    if (tensors and all(_can_use_gpu(t) and t.is_contiguous() for t in tensors)
+            and all(t.dtype == tensors[0].dtype for t in tensors)):
+        unsqueezed = [t.unsqueeze(dim) for t in tensors]
+        return cat(unsqueezed, dim=dim)
     arrays = [_to_numpy(t) for t in tensors]
     return _from_numpy(np.stack(arrays, axis=dim), tensors[0].dtype, tensors[0].device)
 
 
 def cat(tensors, dim=0):
+    # GPU path: all tensors GPU+contiguous+same dtype+ndim>0
+    if (tensors and len(tensors) > 0
+            and all(_can_use_gpu(t) and t.is_contiguous() and t.dim() > 0
+                    for t in tensors)
+            and all(t.dtype == tensors[0].dtype for t in tensors)):
+        dtype = tensors[0].dtype
+        ndim = tensors[0].dim()
+        d_pos = dim if dim >= 0 else dim + ndim
+        if 0 <= d_pos < ndim:
+            d = _get_dispatcher()
+            sfx = _kernel_suffix(dtype)
+            # Compute output shape
+            out_shape = list(tensors[0].shape)
+            total_dim = tensors[0].shape[d_pos]
+            for t in tensors[1:]:
+                total_dim += t.shape[d_pos]
+            out_shape[d_pos] = total_dim
+            out_numel = 1
+            for s in out_shape:
+                out_numel *= s
+            out_buf = _alloc_output_buf(out_numel, dtype)
+            # Compute outer_size and inner_size
+            outer_size = 1
+            for i in range(d_pos):
+                outer_size *= out_shape[i]
+            inner_size = 1
+            for i in range(d_pos + 1, ndim):
+                inner_size *= out_shape[i]
+            dst_dim = total_dim
+            offset = 0
+            for t in tensors:
+                src_dim = t.shape[d_pos]
+                src_numel = t.numel()
+                if src_numel > 0:
+                    d.dispatch_cat_copy(f"cat_copy_{sfx}", _metal_buf(t),
+                                        out_buf, outer_size, src_dim,
+                                        inner_size, dst_dim, offset,
+                                        src_numel)
+                offset += src_dim
+            out_stride = []
+            stride = 1
+            for s in reversed(out_shape):
+                out_stride.append(stride)
+                stride *= s
+            out_stride.reverse()
+            return _from_metal_buffer(out_buf, tuple(out_shape),
+                                      tuple(out_stride), dtype,
+                                      tensors[0].device)
     arrays = [_to_numpy(t) for t in tensors]
     return _from_numpy(np.concatenate(arrays, axis=dim), tensors[0].dtype, tensors[0].device)
 
@@ -847,6 +900,38 @@ def index_select(a, dim, index):
         dim += arr.ndim
     if dim < 0 or dim >= arr.ndim:
         raise ValueError("dim out of range")
+    # GPU path: a is GPU+contiguous
+    if _can_use_gpu(a) and a.is_contiguous():
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        idx_size = len(idx)
+        input_dim_size = a.shape[dim]
+        # Compute outer/inner sizes
+        outer_size = 1
+        for i in range(dim):
+            outer_size *= a.shape[i]
+        inner_size = 1
+        for i in range(dim + 1, a.dim()):
+            inner_size *= a.shape[i]
+        out_numel = outer_size * idx_size * inner_size
+        out_buf = _alloc_output_buf(out_numel, a.dtype)
+        # Cast indices to int32 for Metal
+        idx_i32 = idx.astype(np.int32)
+        idx_tensor = _from_numpy(idx_i32, int32_dtype, a.device)
+        d.dispatch_index_gather(f"index_select_{sfx}", _metal_buf(a),
+                                _metal_buf(idx_tensor), out_buf,
+                                outer_size, idx_size, inner_size,
+                                input_dim_size, out_numel)
+        out_shape = list(a.shape)
+        out_shape[dim] = idx_size
+        out_stride = []
+        stride = 1
+        for s in reversed(out_shape):
+            out_stride.append(stride)
+            stride *= s
+        out_stride.reverse()
+        return _from_metal_buffer(out_buf, tuple(out_shape), tuple(out_stride),
+                                  a.dtype, a.device)
     out = np.take(arr, idx, axis=dim)
     return _from_numpy(out, a.dtype, a.device)
 
@@ -869,6 +954,38 @@ def gather(a, dim, index):
         if i != dim and size != arr.shape[i]:
             raise ValueError("index shape mismatch")
     _check_index_range(idx, arr.shape[dim])
+    # GPU path: a and index are GPU+contiguous
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and isinstance(index, Tensor) and _can_use_gpu(index)
+            and index.is_contiguous()):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        idx_size = idx.shape[dim]
+        input_dim_size = a.shape[dim]
+        outer_size = 1
+        for i in range(dim):
+            outer_size *= idx.shape[i]
+        inner_size = 1
+        for i in range(dim + 1, idx.ndim):
+            inner_size *= idx.shape[i]
+        out_numel = outer_size * idx_size * inner_size
+        out_buf = _alloc_output_buf(out_numel, a.dtype)
+        # Cast indices to int32 for Metal
+        idx_i32 = idx.astype(np.int32)
+        idx_tensor = _from_numpy(idx_i32, int32_dtype, a.device)
+        d.dispatch_index_gather(f"gather_{sfx}", _metal_buf(a),
+                                _metal_buf(idx_tensor), out_buf,
+                                outer_size, idx_size, inner_size,
+                                input_dim_size, out_numel)
+        out_shape = tuple(idx.shape)
+        out_stride = []
+        stride = 1
+        for s in reversed(out_shape):
+            out_stride.append(stride)
+            stride *= s
+        out_stride.reverse()
+        return _from_metal_buffer(out_buf, out_shape, tuple(out_stride),
+                                  a.dtype, a.device)
     out = np.take_along_axis(arr, idx, axis=dim)
     return _from_numpy(out, a.dtype, a.device)
 
@@ -951,11 +1068,33 @@ def block_diag(*tensors):
 
 
 def tril(a, diagonal=0):
+    # GPU path: a is GPU+contiguous+ndim>=2
+    if _can_use_gpu(a) and a.is_contiguous() and a.dim() >= 2:
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        rows = a.shape[-2]
+        cols = a.shape[-1]
+        out_buf = _alloc_output_buf(numel, a.dtype)
+        d.dispatch_tril_triu(f"tril_{sfx}", _metal_buf(a), out_buf,
+                             rows, cols, diagonal, numel)
+        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
     out = np.tril(_to_numpy(a), k=diagonal)
     return _from_numpy(out, a.dtype, a.device)
 
 
 def triu(a, diagonal=0):
+    # GPU path: a is GPU+contiguous+ndim>=2
+    if _can_use_gpu(a) and a.is_contiguous() and a.dim() >= 2:
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        rows = a.shape[-2]
+        cols = a.shape[-1]
+        out_buf = _alloc_output_buf(numel, a.dtype)
+        d.dispatch_tril_triu(f"triu_{sfx}", _metal_buf(a), out_buf,
+                             rows, cols, diagonal, numel)
+        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
     out = np.triu(_to_numpy(a), k=diagonal)
     return _from_numpy(out, a.dtype, a.device)
 
@@ -1977,6 +2116,42 @@ def fmax(a, b):
 
 
 def where(cond, x, y):
+    # GPU path: both cond and x are GPU+contiguous
+    if (isinstance(x, Tensor) and _can_use_gpu(x) and x.is_contiguous()
+            and isinstance(cond, Tensor) and _can_use_gpu(cond) and cond.is_contiguous()):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(x.dtype)
+        numel = x.numel()
+        out_buf = _alloc_output_buf(numel, x.dtype)
+        # Ensure condition is uint8 (uchar) for the shader
+        if cond.dtype != bool_dtype:
+            cond_u8 = _from_numpy(
+                _to_numpy(cond).astype(np.bool_).astype(np.uint8),
+                bool_dtype, cond.device)
+        else:
+            cond_u8 = cond
+        cond_buf = _metal_buf(cond_u8)
+
+        if isinstance(y, Tensor) and _can_use_gpu(y) and y.is_contiguous() and y.shape == x.shape:
+            # Both tensors, same shape
+            d.dispatch_where(f"where_{sfx}", cond_buf, _metal_buf(x),
+                             _metal_buf(y), out_buf, numel)
+        elif not isinstance(y, Tensor):
+            # y is scalar
+            scalar_val = float(y) if x.dtype in (float32_dtype, float16_dtype) else int(y)
+            d.dispatch_where_scalar(f"where_scalar_y_{sfx}", cond_buf,
+                                    _metal_buf(x), scalar_val, out_buf,
+                                    numel, scalar_fmt=_scalar_fmt(x.dtype))
+        else:
+            # Fallback to numpy
+            cond_arr = _to_numpy(cond)
+            x_arr = _to_numpy(x)
+            y_arr = _to_numpy(y)
+            out = np.where(cond_arr, x_arr, y_arr)
+            return _from_numpy(out, x.dtype, x.device)
+        return _from_metal_buffer(out_buf, x.shape, x.stride, x.dtype, x.device)
+
+    # numpy fallback
     cond_arr = _to_numpy(cond)
     x_arr = _to_numpy(x)
     if isinstance(y, Tensor):
@@ -2459,6 +2634,26 @@ def expand(a, sizes):
 
 
 def masked_fill(a, mask, value):
+    # GPU path: a and mask are GPU+contiguous+same shape
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and isinstance(mask, Tensor) and _can_use_gpu(mask)
+            and mask.is_contiguous() and mask.shape == a.shape):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        out_buf = _alloc_output_buf(numel, a.dtype)
+        # Ensure mask is uint8 (uchar) for the shader
+        if mask.dtype != bool_dtype:
+            mask_u8 = _from_numpy(
+                _to_numpy(mask).astype(np.bool_).astype(np.uint8),
+                bool_dtype, mask.device)
+        else:
+            mask_u8 = mask
+        scalar_val = float(value) if a.dtype in (float32_dtype, float16_dtype) else int(value)
+        d.dispatch_masked_fill(f"masked_fill_{sfx}", _metal_buf(a),
+                               _metal_buf(mask_u8), scalar_val, out_buf,
+                               numel, scalar_fmt=_scalar_fmt(a.dtype))
+        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
     arr = _to_numpy(a).copy()
     m = _to_numpy(mask).astype(bool)
     arr[m] = value

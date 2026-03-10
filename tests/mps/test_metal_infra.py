@@ -563,3 +563,259 @@ class TestPhase2Reductions:
                                  axis=1)) + arr.max(axis=1)
         np.testing.assert_allclose(r.cpu().numpy(), expected.astype(np.float16),
                                    rtol=5e-2)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Shape & Index GPU kernels
+# ---------------------------------------------------------------------------
+
+class TestPhase3ShapeIndex:
+    """Verify GPU kernels for where, masked_fill, tril, triu,
+    index_select, gather, cat, stack."""
+
+    # --- where ---
+
+    def test_where_f32(self):
+        cond = torch.tensor([True, False, True, False], device="mps")
+        x = torch.tensor([1.0, 2.0, 3.0, 4.0], device="mps")
+        y = torch.tensor([10.0, 20.0, 30.0, 40.0], device="mps")
+        result = torch.where(cond, x, y)
+        expected = np.array([1.0, 20.0, 3.0, 40.0])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_where_f16(self):
+        cond = torch.tensor([True, False, True], device="mps")
+        x = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float16, device="mps")
+        y = torch.tensor([10.0, 20.0, 30.0], dtype=torch.float16, device="mps")
+        result = torch.where(cond, x, y)
+        expected = np.array([1.0, 20.0, 3.0])
+        np.testing.assert_allclose(result.cpu().numpy(), expected, rtol=1e-3)
+
+    def test_where_i32(self):
+        cond = torch.tensor([True, False, True], device="mps")
+        x = torch.tensor([1, 2, 3], dtype=torch.int32, device="mps")
+        y = torch.tensor([10, 20, 30], dtype=torch.int32, device="mps")
+        result = torch.where(cond, x, y)
+        expected = np.array([1, 20, 3])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_where_scalar_y(self):
+        cond = torch.tensor([True, False, True, False], device="mps")
+        x = torch.tensor([1.0, 2.0, 3.0, 4.0], device="mps")
+        result = torch.where(cond, x, 0.0)
+        expected = np.array([1.0, 0.0, 3.0, 0.0])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_where_2d(self):
+        cond = torch.tensor([[True, False], [False, True]], device="mps")
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device="mps")
+        y = torch.tensor([[10.0, 20.0], [30.0, 40.0]], device="mps")
+        result = torch.where(cond, x, y)
+        expected = np.array([[1.0, 20.0], [30.0, 4.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    # --- masked_fill ---
+
+    def test_masked_fill_f32(self):
+        a = torch.tensor([1.0, 2.0, 3.0, 4.0], device="mps")
+        mask = torch.tensor([True, False, True, False], device="mps")
+        result = a.masked_fill(mask, -1.0)
+        expected = np.array([-1.0, 2.0, -1.0, 4.0])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_masked_fill_f16(self):
+        a = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float16, device="mps")
+        mask = torch.tensor([False, True, False], device="mps")
+        result = a.masked_fill(mask, 0.0)
+        expected = np.array([1.0, 0.0, 3.0])
+        np.testing.assert_allclose(result.cpu().numpy(), expected, rtol=1e-3)
+
+    def test_masked_fill_i32(self):
+        a = torch.tensor([1, 2, 3, 4], dtype=torch.int32, device="mps")
+        mask = torch.tensor([True, True, False, False], device="mps")
+        result = a.masked_fill(mask, -99)
+        expected = np.array([-99, -99, 3, 4])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_masked_fill_2d(self):
+        a = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device="mps")
+        mask = torch.tensor([[True, False], [False, True]], device="mps")
+        result = a.masked_fill(mask, 0.0)
+        expected = np.array([[0.0, 2.0], [3.0, 0.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    # --- tril ---
+
+    def test_tril_f32(self):
+        a = torch.ones(3, 3, device="mps")
+        result = torch.tril(a)
+        expected = np.tril(np.ones((3, 3)))
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_tril_i32(self):
+        a = torch.ones(3, 3, dtype=torch.int32, device="mps")
+        result = torch.tril(a)
+        expected = np.tril(np.ones((3, 3)))
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_tril_diagonal(self):
+        a = torch.ones(4, 4, device="mps")
+        result = torch.tril(a, diagonal=1)
+        expected = np.tril(np.ones((4, 4)), k=1)
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_tril_batched(self):
+        a = torch.ones(2, 3, 3, device="mps")
+        result = torch.tril(a)
+        expected = np.tril(np.ones((3, 3)))
+        for b in range(2):
+            np.testing.assert_allclose(result[b].cpu().numpy(), expected)
+
+    # --- triu ---
+
+    def test_triu_f32(self):
+        a = torch.ones(3, 3, device="mps")
+        result = torch.triu(a)
+        expected = np.triu(np.ones((3, 3)))
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_triu_i32(self):
+        a = torch.ones(3, 3, dtype=torch.int32, device="mps")
+        result = torch.triu(a)
+        expected = np.triu(np.ones((3, 3)))
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_triu_diagonal(self):
+        a = torch.ones(4, 4, device="mps")
+        result = torch.triu(a, diagonal=-1)
+        expected = np.triu(np.ones((4, 4)), k=-1)
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    # --- index_select ---
+
+    def test_index_select_dim0_f32(self):
+        a = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], device="mps")
+        idx = torch.tensor([0, 2], dtype=torch.int64, device="mps")
+        result = torch.index_select(a, 0, idx)
+        expected = np.array([[1.0, 2.0], [5.0, 6.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_index_select_dim0_i32(self):
+        a = torch.tensor([[1, 2], [3, 4], [5, 6]], dtype=torch.int32, device="mps")
+        idx = torch.tensor([1, 2], dtype=torch.int64, device="mps")
+        result = torch.index_select(a, 0, idx)
+        expected = np.array([[3, 4], [5, 6]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_index_select_dim1(self):
+        a = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="mps")
+        idx = torch.tensor([0, 2], dtype=torch.int64, device="mps")
+        result = torch.index_select(a, 1, idx)
+        expected = np.array([[1.0, 3.0], [4.0, 6.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_index_select_3d(self):
+        a = torch.arange(24, dtype=torch.float32, device="mps").reshape(2, 3, 4)
+        idx = torch.tensor([1, 2], dtype=torch.int64, device="mps")
+        result = torch.index_select(a, 1, idx)
+        expected = np.arange(24).reshape(2, 3, 4)[:, [1, 2], :]
+        np.testing.assert_allclose(result.cpu().numpy(), expected.astype(np.float32))
+
+    # --- gather ---
+
+    def test_gather_dim0(self):
+        a = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device="mps")
+        idx = torch.tensor([[0, 1], [1, 0]], dtype=torch.int64, device="mps")
+        result = torch.gather(a, 0, idx)
+        expected = np.array([[1.0, 4.0], [3.0, 2.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_gather_dim1(self):
+        a = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="mps")
+        idx = torch.tensor([[2, 0], [1, 2]], dtype=torch.int64, device="mps")
+        result = torch.gather(a, 1, idx)
+        expected = np.array([[3.0, 1.0], [5.0, 6.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_gather_i32(self):
+        a = torch.tensor([[10, 20, 30], [40, 50, 60]], dtype=torch.int32, device="mps")
+        idx = torch.tensor([[1, 0], [2, 1]], dtype=torch.int64, device="mps")
+        result = torch.gather(a, 1, idx)
+        expected = np.array([[20, 10], [60, 50]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    # --- cat ---
+
+    def test_cat_dim0_f32(self):
+        a = torch.tensor([1.0, 2.0, 3.0], device="mps")
+        b = torch.tensor([4.0, 5.0, 6.0], device="mps")
+        result = torch.cat([a, b], dim=0)
+        expected = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_cat_dim0_f16(self):
+        a = torch.tensor([1.0, 2.0], dtype=torch.float16, device="mps")
+        b = torch.tensor([3.0, 4.0], dtype=torch.float16, device="mps")
+        result = torch.cat([a, b], dim=0)
+        expected = np.array([1.0, 2.0, 3.0, 4.0])
+        np.testing.assert_allclose(result.cpu().numpy(), expected, rtol=1e-3)
+
+    def test_cat_dim0_i32(self):
+        a = torch.tensor([1, 2, 3], dtype=torch.int32, device="mps")
+        b = torch.tensor([4, 5, 6], dtype=torch.int32, device="mps")
+        result = torch.cat([a, b], dim=0)
+        expected = np.array([1, 2, 3, 4, 5, 6])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_cat_dim1(self):
+        a = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device="mps")
+        b = torch.tensor([[5.0], [6.0]], device="mps")
+        result = torch.cat([a, b], dim=1)
+        expected = np.array([[1.0, 2.0, 5.0], [3.0, 4.0, 6.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_cat_multiple(self):
+        a = torch.tensor([1.0, 2.0], device="mps")
+        b = torch.tensor([3.0], device="mps")
+        c = torch.tensor([4.0, 5.0, 6.0], device="mps")
+        result = torch.cat([a, b, c], dim=0)
+        expected = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_cat_3d(self):
+        a = torch.arange(12, dtype=torch.float32, device="mps").reshape(2, 2, 3)
+        b = torch.arange(12, 24, dtype=torch.float32, device="mps").reshape(2, 2, 3)
+        result = torch.cat([a, b], dim=0)
+        assert result.shape == (4, 2, 3)
+        expected = np.arange(24, dtype=np.float32).reshape(4, 2, 3)
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    # --- stack ---
+
+    def test_stack_dim0_f32(self):
+        a = torch.tensor([1.0, 2.0, 3.0], device="mps")
+        b = torch.tensor([4.0, 5.0, 6.0], device="mps")
+        result = torch.stack([a, b], dim=0)
+        expected = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_stack_dim0_i32(self):
+        a = torch.tensor([1, 2, 3], dtype=torch.int32, device="mps")
+        b = torch.tensor([4, 5, 6], dtype=torch.int32, device="mps")
+        result = torch.stack([a, b], dim=0)
+        expected = np.array([[1, 2, 3], [4, 5, 6]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_stack_dim1(self):
+        a = torch.tensor([1.0, 2.0, 3.0], device="mps")
+        b = torch.tensor([4.0, 5.0, 6.0], device="mps")
+        result = torch.stack([a, b], dim=1)
+        expected = np.array([[1.0, 4.0], [2.0, 5.0], [3.0, 6.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_stack_2d(self):
+        a = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device="mps")
+        b = torch.tensor([[5.0, 6.0], [7.0, 8.0]], device="mps")
+        result = torch.stack([a, b], dim=0)
+        expected = np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], dtype=np.float32)
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
