@@ -11,6 +11,8 @@ import os
 import subprocess
 import sys
 
+from tests.distributed.worker_utils import write_worker_script
+
 
 SCRIPT_UNUSED = r'''
 import os, sys
@@ -220,9 +222,7 @@ def _run_two_rank_worker(script_text, worker_name, master_port, timeout_sec=240)
     src_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src"))
     env["PYTHONPATH"] = src_root + ((":" + env["PYTHONPATH"]) if "PYTHONPATH" in env else "")
 
-    worker_file = f"/tmp/{worker_name}.py"
-    with open(worker_file, "w") as f:
-        f.write(script_text)
+    worker_file = write_worker_script(script_text, name=worker_name)
 
     procs = []
     for rank in range(2):

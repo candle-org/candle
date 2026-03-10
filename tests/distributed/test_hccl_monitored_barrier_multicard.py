@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 
+from tests.distributed.worker_utils import write_worker_script
+
 
 SCRIPT_STRESS = r'''
 import os, sys
@@ -106,9 +108,7 @@ def _run_two_rank(script_text: str, worker_name: str, master_port: int, timeout_
     env["PYTHONPATH"] = src_dir + \
         (":" + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
 
-    worker_file = f"/tmp/{worker_name}.py"
-    with open(worker_file, "w") as f:
-        f.write(script_text)
+    worker_file = write_worker_script(script_text, name=worker_name)
 
     failed = []
     outputs = []

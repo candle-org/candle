@@ -4,6 +4,8 @@ import os
 import sys
 import subprocess
 
+from tests.distributed.worker_utils import write_worker_script
+
 SCRIPT = r'''
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
@@ -69,9 +71,7 @@ def run_test(world_size):
         ((":" + env["PYTHONPATH"]) if "PYTHONPATH" in env else "")
 
     # Write the worker script to a temp file
-    worker_file = f"/tmp/_hccl_all_to_all_test_{world_size}cards.py"
-    with open(worker_file, "w") as f:
-        f.write(SCRIPT)
+    worker_file = write_worker_script(SCRIPT, name=f"hccl_all_to_all_{world_size}card")
 
     # Launch all ranks
     processes = []

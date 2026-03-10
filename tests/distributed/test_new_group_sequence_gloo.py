@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 
+from tests.distributed.worker_utils import write_worker_script
+
 
 SCRIPT = r'''
 import os, sys
@@ -48,9 +50,7 @@ def test_new_group_sequence_gloo_world2():
     env["PYTHONPATH"] = src_dir + \
         ((":" + env["PYTHONPATH"]) if "PYTHONPATH" in env else "")
 
-    worker_file = "/tmp/_new_group_sequence_gloo_worker.py"
-    with open(worker_file, "w") as f:
-        f.write(SCRIPT)
+    worker_file = write_worker_script(SCRIPT, name="new_group_sequence_gloo")
 
     p0 = subprocess.Popen(
         [sys.executable, worker_file],

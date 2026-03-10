@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 
+from tests.distributed.worker_utils import write_worker_script
+
 
 SCRIPT = r'''
 import os, sys
@@ -53,9 +55,7 @@ def test_hccl_new_group_semantics_2card():
     env["PYTHONPATH"] = src_dir + \
         (":" + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
 
-    worker_file = "/tmp/_hccl_new_group_semantics_2card.py"
-    with open(worker_file, "w") as f:
-        f.write(SCRIPT)
+    worker_file = write_worker_script(SCRIPT, name="hccl_new_group_semantics_2card")
 
     failed = []
     outputs = []

@@ -7,6 +7,8 @@ import time
 
 import pytest
 
+from tests.distributed.worker_utils import write_worker_script
+
 
 SCRIPT = r'''
 import os, sys, time
@@ -70,9 +72,10 @@ def _run_once(world_size, master_port):
     env["PYTHONPATH"] = src_dir + \
         (":" + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
 
-    worker_file = f"/tmp/_hccl_all_to_all_single_invalid_split_{world_size}card.py"
-    with open(worker_file, "w") as f:
-        f.write(SCRIPT)
+    worker_file = write_worker_script(
+        SCRIPT,
+        name=f"hccl_all_to_all_single_invalid_split_{world_size}card",
+    )
 
     failed = []
     outputs = []

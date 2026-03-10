@@ -4,6 +4,8 @@ import os
 import sys
 import subprocess
 
+from tests.distributed.worker_utils import write_worker_script
+
 SCRIPT = r'''
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
@@ -103,9 +105,7 @@ def main():
         ((":" + env["PYTHONPATH"]) if "PYTHONPATH" in env else "")
 
     # Write the worker script to a temp file
-    worker_file = "/tmp/_gloo_test_worker.py"
-    with open(worker_file, "w") as f:
-        f.write(SCRIPT)
+    worker_file = write_worker_script(SCRIPT, name="gloo_ddp")
 
     # Launch rank 0 in background
     env0 = {**env, "RANK": "0"}
