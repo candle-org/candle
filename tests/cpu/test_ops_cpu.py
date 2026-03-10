@@ -770,10 +770,10 @@ def test_index_select_cpu():
     expected = np.take(x.numpy(), index.numpy().astype(np.int64), axis=1)
     np.testing.assert_allclose(torch.index_select(x, dim=1, index=index).numpy(), expected)
     neg_index = torch.tensor([-1, 0], dtype=torch.int64)
-    expected_neg = np.take(x.numpy(), neg_index.numpy().astype(np.int64), axis=1)
-    np.testing.assert_allclose(torch.index_select(x, dim=1, index=neg_index).numpy(), expected_neg)
+    with pytest.raises(RuntimeError, match="INDICES element is out of DATA bounds"):
+        torch.index_select(x, dim=1, index=neg_index)
     out_of_range = torch.tensor([3], dtype=torch.int64)
-    with pytest.raises(IndexError):
+    with pytest.raises(RuntimeError, match="INDICES element is out of DATA bounds"):
         torch.index_select(x, dim=1, index=out_of_range)
     bad_index = torch.tensor([[0, 1]], dtype=torch.int64)
     with pytest.raises(ValueError):

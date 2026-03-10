@@ -503,6 +503,8 @@ def index_select(a, dim, index):
         dim += arr.ndim
     if dim < 0 or dim >= arr.ndim:
         raise ValueError("dim out of range")
+    if (idx < 0).any() or (idx >= arr.shape[dim]).any():
+        raise RuntimeError("INDICES element is out of DATA bounds")
     out = np.take(arr, idx, axis=dim)
     return _from_numpy(out, a.dtype, a.device)
 
