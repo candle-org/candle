@@ -181,9 +181,7 @@ def _writeback(target, result, op_name=None):
             copy_size = int(numel * itemsize)
             dst_ptr = int(base_storage.data_ptr()) + int(target.offset * itemsize)
             src_ptr = int(src_storage.data_ptr()) + int(result.offset * itemsize)
-            ret = npu_runtime.acl.rt.memcpy(dst_ptr, copy_size, src_ptr, copy_size, 3)
-            if ret != npu_runtime.ACL_ERROR_CODE:
-                raise RuntimeError(f"acl.rt.memcpy D2D failed: {ret}")
+            npu_runtime.memcpy_d2d(dst_ptr, copy_size, src_ptr, runtime=runtime)
         else:
             if not npu_ops.aclnn.arange_symbols_ok():
                 raise RuntimeError("aclnnArange symbols not available")

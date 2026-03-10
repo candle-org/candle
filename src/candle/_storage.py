@@ -359,15 +359,13 @@ class _NPUUntypedStorage(UntypedStorage):
         if self._device_ptr:
             copy_bytes = min(self._nbytes, new_nbytes)
             if copy_bytes:
-                ret = npu_runtime.acl.rt.memcpy(
+                npu_runtime.memcpy_d2d(
                     new_ptr,
                     copy_bytes,
                     self._device_ptr,
-                    copy_bytes,
-                    ACL_MEMCPY_DEVICE_TO_DEVICE,
+                    runtime=runtime,
+                    stream=stream,
                 )
-                if ret != 0:
-                    raise RuntimeError(f"acl.rt.memcpy D2D failed: {ret}")
         alloc.free(self._device_ptr, stream=stream)
         self._device_ptr = int(new_ptr)
         self._nbytes = new_nbytes
@@ -480,15 +478,12 @@ class TypedStorage:
             runtime = npu_runtime.get_runtime(self.device.index or 0)
             dst_ptr = npu_runtime._alloc_device(size, runtime=runtime)
             runtime.activate()
-            ret = npu_runtime.acl.rt.memcpy(
+            npu_runtime.memcpy_d2d(
                 dst_ptr,
                 size,
                 self.data_ptr(),
-                size,
-                ACL_MEMCPY_DEVICE_TO_DEVICE,
+                runtime=runtime,
             )
-            if ret != 0:
-                raise RuntimeError(f"acl.rt.memcpy D2D failed: {ret}")
             untyped = _NPUUntypedStorage(dst_ptr, size, device=self.device)
             return TypedStorage(untyped, self.dtype, self._size)
         if self.device.type == "mps":
@@ -524,15 +519,12 @@ class TypedStorage:
             size = min(self.nbytes(), other.nbytes())
             runtime = npu_runtime.get_runtime(self.device.index or 0)
             runtime.activate()
-            ret = npu_runtime.acl.rt.memcpy(
+            npu_runtime.memcpy_d2d(
                 self.data_ptr(),
                 size,
                 other.data_ptr(),
-                size,
-                ACL_MEMCPY_DEVICE_TO_DEVICE,
+                runtime=runtime,
             )
-            if ret != 0:
-                raise RuntimeError(f"acl.rt.memcpy D2D failed: {ret}")
             return self
         if self.device.type == "cuda":
             from ._backends.cuda import storage as cuda_storage

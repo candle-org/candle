@@ -3398,10 +3398,7 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
             raise ValueError(f"Unsupported scalar dtype: {dtype_name}")
         for offset in range(0, int(out_size), itemsize):
             host_buf[offset:offset + itemsize] = pattern
-        runtime.activate()
-        ret = acl.rt.memcpy(out_ptr, int(out_size), host_ptr, int(out_size), npu_runtime.ACL_MEMCPY_HOST_TO_DEVICE)
-        if ret != npu_runtime.ACL_ERROR_CODE:
-            raise RuntimeError(f"acl.rt.memcpy H2D failed: {ret}")
+        npu_runtime.memcpy_h2d(out_ptr, int(out_size), host_ptr, runtime=runtime)
     finally:
         acl.rt.free_host(host_ptr)
     out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), ref_tensor.dtype, device=ref_tensor.device)
@@ -3504,16 +3501,12 @@ def relu_(a):
         runtime,
         stream=stream.stream,
     )
-    runtime.activate()
-    ret = npu_runtime.acl.rt.memcpy(
+    npu_runtime.memcpy_d2d(
         a_storage.data_ptr(),
         out_size,
         out_ptr,
-        out_size,
-        3,
+        runtime=runtime,
     )
-    if ret != npu_runtime.ACL_ERROR_CODE:
-        raise RuntimeError(f"acl.rt.memcpy D2D failed: {ret}")
     npu_runtime.get_runtime((a.device.index or 0)).defer_free(out_ptr)
     return a
 
@@ -3949,15 +3942,12 @@ def contiguous(a):
     a_storage = _unwrap_storage(a)
     out_size = _numel(a.shape) * _dtype_itemsize(a.dtype)
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    ret = npu_runtime.acl.rt.memcpy(
+    npu_runtime.memcpy_d2d(
         out_ptr,
         out_size,
         a_storage.data_ptr(),
-        out_size,
-        3,
+        runtime=runtime,
     )
-    if ret != npu_runtime.ACL_ERROR_CODE:
-        raise RuntimeError(f"acl.rt.memcpy D2D failed: {ret}")
 
     storage = npu_typed_storage_from_ptr(out_ptr, _numel(a.shape), a.dtype, device=a.device)
     return _wrap_tensor(storage, a.shape, npu_runtime._contiguous_stride(a.shape))
@@ -4309,12 +4299,10 @@ def _npu_assign_to_view(view, value):
             copy_size = numel * itemsize
             if value.device.type != "npu":
                 src_ptr = value.storage().data_ptr()
-                ret = npu_runtime.acl.rt.memcpy(dst_ptr, copy_size, src_ptr, copy_size, 1)  # H2D
+                npu_runtime.memcpy_h2d(dst_ptr, copy_size, src_ptr, runtime=runtime)
             else:
                 src_ptr = _npu_data_ptr(value)
-                ret = npu_runtime.acl.rt.memcpy(dst_ptr, copy_size, src_ptr, copy_size, 3)  # D2D
-            if ret != npu_runtime.ACL_ERROR_CODE:
-                raise RuntimeError(f"acl.rt.memcpy failed: {ret}")
+                npu_runtime.memcpy_d2d(dst_ptr, copy_size, src_ptr, runtime=runtime)
         else:
             # Non-contiguous: use aclnnInplaceCopy
             dst_ptr = _npu_data_ptr(view)
@@ -5621,29 +5609,23 @@ def pad_sequence(seqs, batch_first=False, padding_value=0.0, padding_side="right
         if batch_first:
             dst_elem_offset = int(i) * int(out_stride[0]) + int(start_idx) * int(out_stride[1])
             copy_bytes = int(length * trailing_numel * itemsize)
-            ret = npu_runtime.acl.rt.memcpy(
+            npu_runtime.memcpy_d2d(
                 dst_base + dst_elem_offset * itemsize,
                 copy_bytes,
                 src_base,
-                copy_bytes,
-                3,
+                runtime=runtime,
             )
-            if ret != npu_runtime.ACL_ERROR_CODE:
-                raise RuntimeError(f"acl.rt.memcpy failed: {ret}")
         else:
             block_bytes = int(trailing_numel * itemsize)
             for step in range(length):
                 dst_elem_offset = (int(start_idx + step) * int(out_stride[0])) + (int(i) * int(out_stride[1]))
                 src_elem_offset = int(step) * int(src.stride[0])
-                ret = npu_runtime.acl.rt.memcpy(
+                npu_runtime.memcpy_d2d(
                     dst_base + dst_elem_offset * itemsize,
                     block_bytes,
                     src_base + src_elem_offset * itemsize,
-                    block_bytes,
-                    3,
+                    runtime=runtime,
                 )
-                if ret != npu_runtime.ACL_ERROR_CODE:
-                    raise RuntimeError(f"acl.rt.memcpy failed: {ret}")
     return out
 
 
@@ -5701,9 +5683,7 @@ def _slice_along_dim(a, start, end, dim):
         for outer_idx in range(outer):
             src_ptr = src_base + (outer_idx * dim_size + start) * itemsize
             dst_ptr = dst_base + outer_idx * length * itemsize
-            ret = npu_runtime.acl.rt.memcpy(dst_ptr, block_bytes, src_ptr, block_bytes, 3)
-            if ret != npu_runtime.ACL_ERROR_CODE:
-                raise RuntimeError(f"acl.rt.memcpy failed: {ret}")
+            npu_runtime.memcpy_d2d(dst_ptr, block_bytes, src_ptr, runtime=runtime)
     else:
         block_bytes = inner * itemsize
         for outer_idx in range(outer):
@@ -5712,9 +5692,7 @@ def _slice_along_dim(a, start, end, dim):
             for i in range(length):
                 src_ptr = src_outer + (start + i) * inner * itemsize
                 dst_ptr = dst_outer + i * inner * itemsize
-                ret = npu_runtime.acl.rt.memcpy(dst_ptr, block_bytes, src_ptr, block_bytes, 3)
-                if ret != npu_runtime.ACL_ERROR_CODE:
-                    raise RuntimeError(f"acl.rt.memcpy failed: {ret}")
+                npu_runtime.memcpy_d2d(dst_ptr, block_bytes, src_ptr, runtime=runtime)
 
     storage = npu_typed_storage_from_ptr(out_ptr, out_numel, a.dtype, device=a.device)
     return _wrap_tensor(storage, out_shape, out_stride)
@@ -5848,15 +5826,12 @@ def _read_bool_scalar(tensor):
     if hasattr(runtime, "synchronize_stream"):
         runtime.synchronize_stream(stream.stream)
     buf = (ctypes.c_uint8 * 1)()
-    ret = npu_runtime.acl.rt.memcpy(
+    npu_runtime.memcpy_d2h(
         ctypes.addressof(buf),
         1,
         _unwrap_storage(tensor).data_ptr(),
-        1,
-        npu_runtime.ACL_MEMCPY_DEVICE_TO_HOST,
+        runtime=runtime,
     )
-    if ret != npu_runtime.ACL_ERROR_CODE:
-        raise RuntimeError(f"acl.rt.memcpy D2H failed: {ret}")
     return bool(buf[0])
 
 
@@ -5868,15 +5843,12 @@ def _read_int64_scalar(tensor):
         runtime.synchronize_stream(stream.stream)
     buf = ctypes.c_int64()
     size = ctypes.sizeof(buf)
-    ret = npu_runtime.acl.rt.memcpy(
+    npu_runtime.memcpy_d2h(
         ctypes.addressof(buf),
         size,
         _unwrap_storage(tensor).data_ptr(),
-        size,
-        npu_runtime.ACL_MEMCPY_DEVICE_TO_HOST,
+        runtime=runtime,
     )
-    if ret != npu_runtime.ACL_ERROR_CODE:
-        raise RuntimeError(f"acl.rt.memcpy D2H failed: {ret}")
     return int(buf.value)
 
 
@@ -6370,9 +6342,7 @@ def scatter_add_(a, dim, index, src):
     )
     # Copy result back to a
     nbytes = max(_numel(a.shape), 1) * _dtype_itemsize(a.dtype)
-    ret = npu_runtime.acl.rt.memcpy(_npu_data_ptr(a), nbytes, out_ptr, nbytes, 3)
-    if ret != npu_runtime.ACL_ERROR_CODE:
-        raise RuntimeError(f"acl.rt.memcpy D2D failed: {ret}")
+    npu_runtime.memcpy_d2d(_npu_data_ptr(a), nbytes, out_ptr, runtime=runtime)
     runtime.defer_free(out_ptr)
     return a
 
@@ -6670,7 +6640,7 @@ def unfold(a, dimension, size, step):
         dst_ptr_val = _npu_data_ptr(dst)
         copy_bytes = dst_shape_flat * itemsize
         if copy_bytes > 0:
-            npu_runtime.acl.rt.memcpy(dst_ptr_val, copy_bytes, src_ptr, copy_bytes, 3)
+            npu_runtime.memcpy_d2d(dst_ptr_val, copy_bytes, src_ptr, runtime=runtime)
     return result
 
 
@@ -11271,10 +11241,12 @@ def ctc_loss_op(log_probs, targets, input_lengths, target_lengths,
         host_ptr, ret = acl.rt.malloc_host(int(nbytes))
         if ret != 0:
             raise RuntimeError(f"malloc_host failed: {ret}")
-        ret = acl.rt.memcpy(host_ptr, int(nbytes), _unwrap_storage(tensor).data_ptr(),
-                            int(nbytes), 2)
-        if ret != 0:
-            raise RuntimeError(f"memcpy D2H failed: {ret}")
+        npu_runtime.memcpy_d2h(
+            host_ptr,
+            int(nbytes),
+            _unwrap_storage(tensor).data_ptr(),
+            runtime=runtime,
+        )
         data = _np.empty(int(nbytes), dtype=_np.uint8)
         import ctypes
         ctypes.memmove(data.ctypes.data, host_ptr, int(nbytes))
@@ -11307,10 +11279,12 @@ def ctc_loss_op(log_probs, targets, input_lengths, target_lengths,
     host_ptr2, ret = acl.rt.malloc_host(int(lp_nbytes))
     if ret != 0:
         raise RuntimeError(f"malloc_host failed: {ret}")
-    ret = acl.rt.memcpy(host_ptr2, int(lp_nbytes), _unwrap_storage(log_probs).data_ptr(),
-                        int(lp_nbytes), 2)
-    if ret != 0:
-        raise RuntimeError(f"memcpy D2H failed: {ret}")
+    npu_runtime.memcpy_d2h(
+        host_ptr2,
+        int(lp_nbytes),
+        _unwrap_storage(log_probs).data_ptr(),
+        runtime=runtime,
+    )
     lp_data = _np.empty(int(lp_nbytes), dtype=_np.uint8)
     import ctypes
     ctypes.memmove(lp_data.ctypes.data, host_ptr2, int(lp_nbytes))
@@ -11384,5 +11358,4 @@ def upsample_nearest1d_op(a, output_size, scales=None):
     a_4d = view_backend.reshape(a, (N, C, 1, W))
     out_4d = dispatch("upsample_nearest2d", "npu", a_4d, [1, oW], None, scales)
     return view_backend.reshape(out_4d, (N, C, oW))
-
 

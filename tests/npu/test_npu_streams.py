@@ -240,3 +240,165 @@ def test_npu_stream_wait_stream(monkeypatch):
     s1 = torch.npu.Stream()
     s0.wait_stream(s1)
     assert runtime.wait_calls == [(s0.stream, s0._event.event)]
+
+
+def test_runtime_memcpy_helpers_use_current_stream(monkeypatch):
+    import candle._backends.npu.runtime as npu_runtime
+    import candle._backends.npu.state as npu_state
+
+    calls = []
+
+    class FakeRt:
+        def memcpy_async(self, dst, dst_size, src, src_size, kind, stream):
+            calls.append((kind, stream))
+            return 0
+
+        def memcpy(self, dst, dst_size, src, src_size, kind):
+            calls.append((kind, None))
+            return 0
+
+    class FakeAcl:
+        def __init__(self):
+            self.rt = FakeRt()
+
+    class DummyRuntime:
+        device_id = 0
+
+        def activate(self):
+            return None
+
+    class DummyStream:
+        stream = 123
+
+    monkeypatch.setattr(npu_runtime, "acl", FakeAcl())
+    monkeypatch.setattr(npu_runtime, "ensure_acl", lambda: npu_runtime.acl)
+    monkeypatch.setattr(npu_state, "current_stream", lambda device_id=0: DummyStream())
+
+    npu_runtime.memcpy_h2d(1, 4, 2, runtime=DummyRuntime(), stream=None, non_blocking=True)
+    npu_runtime.memcpy_d2h(1, 4, 2, runtime=DummyRuntime(), stream=None, non_blocking=True)
+    npu_runtime.memcpy_d2d(1, 4, 2, runtime=DummyRuntime(), stream=None, non_blocking=True)
+
+    assert [entry[1] for entry in calls] == [123, 123, 123]
+
+
+def test_copy_cpu_to_npu_uses_current_stream_when_none(monkeypatch):
+    _stub_runtime(monkeypatch)
+    import numpy as np
+    import candle._backends.npu.runtime as npu_runtime
+
+    calls = {}
+
+    class DummyRuntime:
+        stream = 999
+        device_id = 0
+
+        def activate(self):
+            return None
+
+        def defer_host_free(self, ptr):
+            return None
+
+    import candle._backends.npu.state as npu_state
+
+    class DummyStream:
+        stream = 111
+
+    monkeypatch.setattr(npu_state, "current_stream", lambda device_id=0: DummyStream())
+    monkeypatch.setattr(
+        npu_runtime,
+        "_memcpy_h2d",
+        lambda dst, size, src_ptr, runtime=None: calls.setdefault("stream", "sync"),
+    )
+
+    class FakeAcl:
+        class Rt:
+            def malloc_host(self, size):
+                return (1234, 0)
+
+            def free_host(self, ptr):
+                return 0
+
+            def memcpy_async(self, dst, dst_size, src, src_size, kind, stream):
+                calls["stream"] = stream
+                return 0
+
+        def __init__(self):
+            self.rt = self.Rt()
+
+    fake_acl = FakeAcl()
+    monkeypatch.setattr(npu_runtime, "acl", fake_acl)
+    monkeypatch.setattr(npu_runtime, "ensure_acl", lambda: fake_acl)
+    monkeypatch.setattr(npu_runtime, "_alloc_device", lambda size, runtime=None: 5678)
+    monkeypatch.setattr(npu_runtime.ctypes, "memmove", lambda *args, **kwargs: None)
+
+    arr = np.zeros((2,), dtype=np.float32)
+    npu_runtime._copy_cpu_to_npu(arr, runtime=DummyRuntime(), non_blocking=True, stream=None)
+
+    assert calls.get("stream") == 111
+
+
+def test_copy_npu_to_cpu_uses_current_stream_when_none(monkeypatch):
+    _stub_runtime(monkeypatch)
+    import numpy as np
+    import candle._backends.npu.runtime as npu_runtime
+
+    calls = {}
+
+    class DummyRuntime:
+        stream = 999
+        device_id = 0
+
+        def activate(self):
+            return None
+
+        def synchronize_stream(self, stream):
+            calls["sync_stream"] = stream
+
+    class FakeAcl:
+        class Rt:
+            def memcpy_async(self, dst, dst_size, src, src_size, kind, stream):
+                calls["stream"] = stream
+                return 0
+
+            def memcpy(self, dst, dst_size, src, src_size, kind):
+                calls["stream"] = "sync"
+                return 0
+
+            def malloc_host(self, size):
+                return (1234, 0)
+
+            def free_host(self, ptr):
+                return 0
+
+        def __init__(self):
+            self.rt = self.Rt()
+
+    fake_acl = FakeAcl()
+    monkeypatch.setattr(npu_runtime, "acl", fake_acl)
+    monkeypatch.setattr(npu_runtime, "ensure_acl", lambda: fake_acl)
+    monkeypatch.setattr(
+        npu_runtime,
+        "_numpy_from_ptr",
+        lambda ptr, shape, dtype: np.zeros(shape, dtype=np.float32),
+    )
+
+    import candle._backends.npu.state as npu_state
+
+    class DummyStream:
+        stream = 111
+
+    monkeypatch.setattr(npu_state, "current_stream", lambda device_id=0: DummyStream())
+
+    arr = npu_runtime._copy_npu_to_cpu(
+        123,
+        8,
+        (2,),
+        "float32",
+        runtime=DummyRuntime(),
+        non_blocking=True,
+        stream=None,
+    )
+
+    assert calls.get("stream") == 111
+    assert calls.get("sync_stream") == 111
+    assert arr.shape == (2,)

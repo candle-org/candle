@@ -363,19 +363,14 @@ def _split_flat_to_list(flat_tensor, tensor_list, numel, dtype):
 
     if device_type == "npu":
         from .._backends.npu import runtime as npu_runtime
-        ACL_MEMCPY_D2D = 3
         dev_id = flat_tensor.storage().device.index or 0
         runtime = npu_runtime.get_runtime(dev_id)
-        runtime.activate()
         for i, t in enumerate(tensor_list):
             src_ptr = src_base + i * shard_bytes
             dst_ptr = t.storage().data_ptr()
-            ret = npu_runtime.acl.rt.memcpy(
-                dst_ptr, shard_bytes, src_ptr, shard_bytes,
-                ACL_MEMCPY_D2D,
+            npu_runtime.memcpy_d2d(
+                dst_ptr, shard_bytes, src_ptr, runtime=runtime,
             )
-            if ret != 0:
-                raise RuntimeError(f"acl.rt.memcpy D2D failed: {ret}")
     else:
         import ctypes
         for i, t in enumerate(tensor_list):
@@ -747,12 +742,10 @@ def all_to_all_single(output, input, output_split_sizes=None,
             for size in input_split_sizes:
                 t = torch.empty(size, dtype=input.dtype, device=input.device)
                 nbytes = size * itemsize
-                ret = npu_runtime.acl.rt.memcpy(
+                npu_runtime.memcpy_d2d(
                     t.storage().data_ptr(), nbytes,
-                    src_base + offset, nbytes, ACL_MEMCPY_D2D,
+                    src_base + offset, runtime=npu_runtime.get_runtime(input.device.index or 0),
                 )
-                if ret != 0:
-                    raise RuntimeError(f"D2D memcpy failed: {ret}")
                 input_list.append(t)
                 offset += nbytes
 
@@ -766,12 +759,11 @@ def all_to_all_single(output, input, output_split_sizes=None,
                 dst_offset = 0
                 for t, out_size in zip(output_list, output_split_sizes):
                     nbytes = out_size * output.dtype.itemsize
-                    ret = npu_runtime.acl.rt.memcpy(
+                    npu_runtime.memcpy_d2d(
                         dst_base + dst_offset, nbytes,
-                        t.storage().data_ptr(), nbytes, ACL_MEMCPY_D2D,
+                        t.storage().data_ptr(),
+                        runtime=npu_runtime.get_runtime(output.device.index or 0),
                     )
-                    if ret != 0:
-                        raise RuntimeError(f"D2D memcpy failed: {ret}")
                     dst_offset += nbytes
                 return None
             def _writeback_npu_output():
@@ -779,12 +771,11 @@ def all_to_all_single(output, input, output_split_sizes=None,
                 dst_offset = 0
                 for t, out_size in zip(output_list, output_split_sizes):
                     nbytes = out_size * output.dtype.itemsize
-                    ret = npu_runtime.acl.rt.memcpy(
+                    npu_runtime.memcpy_d2d(
                         dst_base + dst_offset, nbytes,
-                        t.storage().data_ptr(), nbytes, ACL_MEMCPY_D2D,
+                        t.storage().data_ptr(),
+                        runtime=npu_runtime.get_runtime(output.device.index or 0),
                     )
-                    if ret != 0:
-                        raise RuntimeError(f"D2D memcpy failed: {ret}")
                     dst_offset += nbytes
             work._on_wait = _writeback_npu_output
             return work

@@ -328,14 +328,11 @@ class ProcessGroupHCCL(ProcessGroup):
 
                 dst_base = send_flat.storage().data_ptr()
                 for i, t in enumerate(input_tensors):
-                    ret = npu_runtime.acl.rt.memcpy(
+                    npu_runtime.memcpy_d2d(
                         dst_base + i * count_per_rank * itemsize,
                         count_per_rank * itemsize,
                         t.storage().data_ptr(),
-                        count_per_rank * itemsize,
-                        ACL_MEMCPY_D2D)
-                    if ret != 0:
-                        raise RuntimeError(f"D2D memcpy pack failed: {ret}")
+                    )
 
                 # Call HcclAlltoAll
                 ret = bindings.all_to_all(
@@ -355,14 +352,11 @@ class ProcessGroupHCCL(ProcessGroup):
 
                 src_base = recv_flat.storage().data_ptr()
                 for i, t in enumerate(output_tensors):
-                    ret = npu_runtime.acl.rt.memcpy(
+                    npu_runtime.memcpy_d2d(
                         t.storage().data_ptr(),
                         count_per_rank * itemsize,
                         src_base + i * count_per_rank * itemsize,
-                        count_per_rank * itemsize,
-                        ACL_MEMCPY_D2D)
-                    if ret != 0:
-                        raise RuntimeError(f"D2D memcpy unpack failed: {ret}")
+                    )
 
                 return self._make_work(stream)
 
@@ -373,12 +367,10 @@ class ProcessGroupHCCL(ProcessGroup):
             itemsize = input_tensors[peer].dtype.itemsize
             if peer == self._rank:
                 nbytes = numel * itemsize
-                ret = npu_runtime.acl.rt.memcpy(
+                npu_runtime.memcpy_d2d(
                     output_tensors[peer].storage().data_ptr(), nbytes,
-                    input_tensors[peer].storage().data_ptr(), nbytes,
-                    ACL_MEMCPY_D2D)
-                if ret != 0:
-                    raise RuntimeError(f"D2D memcpy failed: {ret}")
+                    input_tensors[peer].storage().data_ptr(),
+                )
             else:
                 send_ptr = ctypes.c_void_p(input_tensors[peer].storage().data_ptr())
                 recv_ptr = ctypes.c_void_p(output_tensors[peer].storage().data_ptr())
@@ -418,12 +410,10 @@ class ProcessGroupHCCL(ProcessGroup):
 
         for peer in range(self._size):
             if peer == self._rank:
-                ret = npu_runtime.acl.rt.memcpy(
+                npu_runtime.memcpy_d2d(
                     out_base + peer * chunk_bytes, chunk_bytes,
-                    in_base + peer * chunk_bytes, chunk_bytes,
-                    ACL_MEMCPY_D2D)
-                if ret != 0:
-                    raise RuntimeError(f"D2D memcpy failed: {ret}")
+                    in_base + peer * chunk_bytes,
+                )
             else:
                 send_ptr = ctypes.c_void_p(in_base + peer * chunk_bytes)
                 recv_ptr = ctypes.c_void_p(out_base + peer * chunk_bytes)
