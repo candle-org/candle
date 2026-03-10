@@ -217,7 +217,6 @@ class Tensor:
     @classmethod
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
         return NotImplemented
-
     def storage(self):
         return self._storage
 
