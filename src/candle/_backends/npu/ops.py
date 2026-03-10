@@ -1529,12 +1529,11 @@ def any_(a, dim=None, keepdim=False):
     stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU any expects NPU tensors")
-    if not (aclnn.eq_scalar_symbols_ok() and aclnn.logical_not_symbols_ok() and aclnn.cast_symbols_ok()):
-        raise RuntimeError("aclnn eq_scalar/logical_not/cast not available")
+    if not (aclnn.eq_scalar_symbols_ok() and aclnn.logical_not_symbols_ok()):
+        raise RuntimeError("aclnn eq_scalar/logical_not not available")
     dims = _normalize_reduction_dims(dim, len(a.shape))
     out_shape = _reduce_out_shape(a.shape, dims, keepdim)
     out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
     mask_ptr = npu_runtime._alloc_device(_numel(a.shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
     aclnn.eq_scalar(
         _unwrap_storage(a).data_ptr(),
@@ -1555,46 +1554,36 @@ def any_(a, dim=None, keepdim=False):
         runtime,
         stream=stream.stream,
     )
-    cast_ptr = npu_runtime._alloc_device(_numel(a.shape) * _dtype_itemsize(int32_dtype), runtime=runtime)
-    aclnn.cast(
+    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
+    aclnn.reduce_sum(
         mask_ptr,
-        cast_ptr,
+        out_ptr,
         a.shape,
         a.stride,
         bool_dtype,
-        int32_dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    count_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(int32_dtype), runtime=runtime)
-    dims_payload = {
-        "dims": dims if dim is not None else None,
-        "out_shape": out_shape,
-        "out_stride": out_stride,
-    }
-    aclnn.reduce_sum(
-        cast_ptr,
-        count_ptr,
-        a.shape,
-        a.stride,
-        int32_dtype,
-        dims_payload,
+        {
+            "dims": dims if dim is not None else None,
+            "out_shape": out_shape,
+            "out_stride": out_stride,
+        },
         keepdim,
         runtime,
         stream=stream.stream,
     )
+    # reduce_sum on bool writes integer counts; convert to bool via eq_scalar(0) + logical_not.
+    zero_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
     aclnn.eq_scalar(
-        count_ptr,
-        0,
         out_ptr,
+        0,
+        zero_ptr,
         out_shape,
         out_stride,
-        int32_dtype,
+        bool_dtype,
         runtime,
         stream=stream.stream,
     )
     aclnn.logical_not(
-        out_ptr,
+        zero_ptr,
         out_ptr,
         out_shape,
         out_stride,
@@ -1603,8 +1592,7 @@ def any_(a, dim=None, keepdim=False):
         stream=stream.stream,
     )
     runtime.defer_free(mask_ptr)
-    runtime.defer_free(cast_ptr)
-    runtime.defer_free(count_ptr)
+    runtime.defer_free(zero_ptr)
     out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
@@ -11358,4 +11346,3 @@ def upsample_nearest1d_op(a, output_size, scales=None):
     a_4d = view_backend.reshape(a, (N, C, 1, W))
     out_4d = dispatch("upsample_nearest2d", "npu", a_4d, [1, oW], None, scales)
     return view_backend.reshape(out_4d, (N, C, oW))
-
