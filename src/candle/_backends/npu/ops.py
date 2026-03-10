@@ -298,20 +298,41 @@ def _binary_op(a, b, fn, name):
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
     a_storage = _unwrap_storage(a)
     b_storage = _unwrap_storage(b)
-    fn(
-        a_storage.data_ptr(),
-        b_storage.data_ptr(),
-        out_ptr,
-        a.shape,
-        a.stride,
-        b.shape,
-        b.stride,
-        out_shape,
-        out_stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
+    try:
+        fn(
+            a_storage.data_ptr(),
+            b_storage.data_ptr(),
+            out_ptr,
+            a.shape,
+            a.stride,
+            b.shape,
+            b.stride,
+            out_shape,
+            out_stride,
+            a.dtype,
+            runtime,
+            stream=stream.stream,
+        )
+    except RuntimeError as exc:
+        if "failed: 361001" not in str(exc):
+            raise
+        # Retry on a refreshed runtime/stream to handle transient 361001 failures.
+        runtime = npu_runtime.get_runtime((a.device.index or 0))
+        stream = npu_state.current_stream((a.device.index or 0))
+        fn(
+            a_storage.data_ptr(),
+            b_storage.data_ptr(),
+            out_ptr,
+            a.shape,
+            a.stride,
+            b.shape,
+            b.stride,
+            out_shape,
+            out_stride,
+            a.dtype,
+            runtime,
+            stream=stream.stream,
+        )
     out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
