@@ -413,3 +413,153 @@ class TestPhase1Ops:
         assert result.dtype == torch.float32
         expected = np.array([[0.0900, 0.2447, 0.6652]], dtype=np.float32)
         np.testing.assert_allclose(result.cpu().numpy(), expected, rtol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# Step 6: Phase 2 reduction ops
+# ---------------------------------------------------------------------------
+
+class TestPhase2Reductions:
+    """Verify Phase 2 GPU reduction kernels: prod, any, all, var, std, logsumexp."""
+
+    # --- prod ---
+
+    def test_prod_dim(self):
+        t = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="mps")
+        r0 = torch.prod(t, dim=0)
+        np.testing.assert_allclose(r0.cpu().numpy(), [4.0, 10.0, 18.0])
+        r1 = torch.prod(t, dim=1)
+        np.testing.assert_allclose(r1.cpu().numpy(), [6.0, 120.0])
+
+    def test_prod_full_tensor(self):
+        t = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device="mps")
+        result = torch.prod(t)
+        np.testing.assert_allclose(result.cpu().numpy(), 24.0)
+
+    def test_prod_keepdim(self):
+        t = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="mps")
+        result = torch.prod(t, dim=1, keepdim=True)
+        assert result.shape == (2, 1)
+        np.testing.assert_allclose(result.cpu().numpy(), [[6.0], [120.0]])
+
+    def test_prod_int32(self):
+        t = torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.int32, device="mps")
+        result = torch.prod(t, dim=1)
+        np.testing.assert_array_equal(result.cpu().numpy(), [6, 120])
+
+    # --- any ---
+
+    def test_any_dim(self):
+        t = torch.tensor([[True, False, False], [False, False, False]], device="mps")
+        r0 = torch.any(t, dim=0)
+        assert r0.dtype.name == "bool"
+        np.testing.assert_array_equal(r0.cpu().numpy(), [True, False, False])
+        r1 = torch.any(t, dim=1)
+        np.testing.assert_array_equal(r1.cpu().numpy(), [True, False])
+
+    def test_any_full_tensor(self):
+        t_true = torch.tensor([[False, True], [False, False]], device="mps")
+        assert torch.any(t_true).cpu().numpy() == True
+        t_false = torch.tensor([[False, False], [False, False]], device="mps")
+        assert torch.any(t_false).cpu().numpy() == False
+
+    def test_any_numeric(self):
+        t = torch.tensor([[0.0, 1.0, 0.0], [0.0, 0.0, 0.0]], device="mps")
+        r = torch.any(t, dim=1)
+        assert r.dtype.name == "bool"
+        np.testing.assert_array_equal(r.cpu().numpy(), [True, False])
+
+    # --- all ---
+
+    def test_all_dim(self):
+        t = torch.tensor([[True, True, False], [True, True, True]], device="mps")
+        r0 = torch.all(t, dim=0)
+        assert r0.dtype.name == "bool"
+        np.testing.assert_array_equal(r0.cpu().numpy(), [True, True, False])
+        r1 = torch.all(t, dim=1)
+        np.testing.assert_array_equal(r1.cpu().numpy(), [False, True])
+
+    def test_all_full_tensor(self):
+        t_true = torch.tensor([[True, True], [True, True]], device="mps")
+        assert torch.all(t_true).cpu().numpy() == True
+        t_false = torch.tensor([[True, True], [True, False]], device="mps")
+        assert torch.all(t_false).cpu().numpy() == False
+
+    def test_all_numeric(self):
+        t = torch.tensor([[1.0, 2.0, 3.0], [1.0, 0.0, 3.0]], device="mps")
+        r = torch.all(t, dim=1)
+        assert r.dtype.name == "bool"
+        np.testing.assert_array_equal(r.cpu().numpy(), [True, False])
+
+    # --- var ---
+
+    def test_var_dim(self):
+        t = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="mps")
+        # unbiased (default)
+        r = torch.var(t, dim=1)
+        expected = np.var(np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32),
+                         axis=1, ddof=1)
+        np.testing.assert_allclose(r.cpu().numpy(), expected, rtol=1e-5)
+        # biased
+        r_biased = torch.var(t, dim=1, unbiased=False)
+        expected_biased = np.var(np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32),
+                                axis=1, ddof=0)
+        np.testing.assert_allclose(r_biased.cpu().numpy(), expected_biased, rtol=1e-5)
+
+    def test_var_full_tensor(self):
+        t = torch.tensor([1.0, 2.0, 3.0, 4.0], device="mps")
+        r = torch.var(t)
+        expected = np.var(np.array([1, 2, 3, 4], dtype=np.float32), ddof=1)
+        np.testing.assert_allclose(r.cpu().numpy(), expected, rtol=1e-5)
+
+    def test_var_keepdim(self):
+        t = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="mps")
+        r = torch.var(t, dim=1, keepdim=True)
+        assert r.shape == (2, 1)
+
+    # --- std ---
+
+    def test_std_dim(self):
+        t = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="mps")
+        r = torch.std(t, dim=1)
+        expected = np.std(np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32),
+                         axis=1, ddof=1)
+        np.testing.assert_allclose(r.cpu().numpy(), expected, rtol=1e-5)
+
+    def test_std_full_tensor(self):
+        t = torch.tensor([1.0, 2.0, 3.0, 4.0], device="mps")
+        r = torch.std(t)
+        expected = np.std(np.array([1, 2, 3, 4], dtype=np.float32), ddof=1)
+        np.testing.assert_allclose(r.cpu().numpy(), expected, rtol=1e-5)
+
+    # --- logsumexp ---
+
+    def test_logsumexp_dim(self):
+        t = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="mps")
+        r = torch.logsumexp(t, dim=1)
+        arr = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
+        expected = np.log(np.sum(np.exp(arr), axis=1))
+        np.testing.assert_allclose(r.cpu().numpy(), expected, rtol=1e-5)
+
+    def test_logsumexp_keepdim(self):
+        t = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="mps")
+        r = torch.logsumexp(t, dim=1, keepdim=True)
+        assert r.shape == (2, 1)
+
+    def test_logsumexp_large_values(self):
+        """Numerical stability: large inputs should not overflow."""
+        t = torch.tensor([1000.0, 1001.0, 1002.0], device="mps")
+        r = torch.logsumexp(t, dim=0)
+        arr = np.array([1000, 1001, 1002], dtype=np.float32)
+        expected = np.log(np.sum(np.exp(arr - arr.max()))) + arr.max()
+        np.testing.assert_allclose(r.cpu().numpy(), expected, rtol=1e-5)
+
+    def test_logsumexp_f16(self):
+        t = torch.tensor([[1.0, 2.0, 3.0]], dtype=torch.float16, device="mps")
+        r = torch.logsumexp(t, dim=1)
+        assert r.dtype == torch.float16
+        arr = np.array([[1, 2, 3]], dtype=np.float16)
+        expected = np.log(np.sum(np.exp(arr - arr.max(axis=1, keepdims=True)),
+                                 axis=1)) + arr.max(axis=1)
+        np.testing.assert_allclose(r.cpu().numpy(), expected.astype(np.float16),
+                                   rtol=5e-2)
