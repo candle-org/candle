@@ -7,6 +7,7 @@ import os
 import sys
 import socket
 import subprocess
+import tempfile
 import textwrap
 
 import pytest
@@ -93,7 +94,8 @@ def _run_workers(world_size, timeout=120):
     env["_CANDLE_PROJECT_ROOT"] = os.path.join(_PROJECT_ROOT, "src")
 
     # Write the worker script to a temp file
-    worker_file = f"/tmp/_fsdp2_gloo_worker_{os.getpid()}.py"
+    fd, worker_file = tempfile.mkstemp(suffix=".py", prefix="_fsdp2_gloo_worker_")
+    os.close(fd)
     with open(worker_file, "w") as f:
         f.write(_WORKER_SCRIPT)
 
