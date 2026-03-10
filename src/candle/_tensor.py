@@ -210,6 +210,10 @@ class Tensor:
         """Returns True if the tensor is quantized."""
         return False
 
+    @classmethod
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        return NotImplemented
+
     def storage(self):
         return self._storage
 

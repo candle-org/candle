@@ -6,7 +6,59 @@ from ._dtype import to_numpy_dtype
 import builtins as _builtins
 
 
+def _has_torch_function(args, kwargs):
+    """Fast check: do any tensor args have __torch_function__ overrides?"""
+    from ._tensor import Tensor
+    _builtin_any = _builtins.any
+    def _check(val):
+        if isinstance(val, Tensor) and type(val) is not Tensor:
+            cls = type(val)
+            if cls.__torch_function__ is not Tensor.__torch_function__:
+                return True
+        if isinstance(val, (list, tuple)):
+            return _builtin_any(_check(v) for v in val)
+        return False
+    for a in args:
+        if _check(a):
+            return True
+    if kwargs:
+        for v in kwargs.values():
+            if _check(v):
+                return True
+    return False
+
+
+def _handle_torch_function(func, args, kwargs):
+    """Dispatch to __torch_function__ if any arg is an overriding tensor subclass."""
+    from ._tensor import Tensor
+    if not _has_torch_function(args, kwargs):
+        return NotImplemented
+    types = set()
+    def _collect(val):
+        if isinstance(val, Tensor) and type(val) is not Tensor:
+            cls = type(val)
+            if cls.__torch_function__ is not Tensor.__torch_function__:
+                types.add(cls)
+        if isinstance(val, (list, tuple)):
+            for v in val:
+                _collect(v)
+    for a in args:
+        _collect(a)
+    if kwargs:
+        for v in kwargs.values():
+            _collect(v)
+    sorted_types = sorted(types, key=lambda c: len(c.__mro__), reverse=True)
+    for cls in sorted_types:
+        result = cls.__torch_function__(func, types, args, kwargs or {})
+        if result is not NotImplemented:
+            return result
+    return NotImplemented
+
+
 def add(*args, **kwargs):
+    r = _handle_torch_function(add, args, kwargs)
+    if r is not NotImplemented:
+        return r
     alpha = kwargs.pop("alpha", 1)
     kwargs.pop("out", None)
     if alpha != 1:
@@ -26,14 +78,23 @@ def reshape(*args, **kwargs):
 
 
 def mul(*args, **kwargs):
+    r = _handle_torch_function(mul, args, kwargs)
+    if r is not NotImplemented:
+        return r
     return dispatch("mul", None, *args, **kwargs)
 
 
 def matmul(*args, **kwargs):
+    r = _handle_torch_function(matmul, args, kwargs)
+    if r is not NotImplemented:
+        return r
     return dispatch("matmul", None, *args, **kwargs)
 
 
 def relu(*args, **kwargs):
+    r = _handle_torch_function(relu, args, kwargs)
+    if r is not NotImplemented:
+        return r
     return dispatch("relu", None, *args, **kwargs)
 
 
@@ -42,6 +103,9 @@ def abs(a):
 
 
 def neg(a):
+    r = _handle_torch_function(neg, (a,), {})
+    if r is not NotImplemented:
+        return r
     return dispatch("neg", a.device.type, a)
 
 
@@ -291,6 +355,9 @@ def fmod(a, b):
 
 
 def div(a, b, *, rounding_mode=None):
+    r = _handle_torch_function(div, (a, b), {'rounding_mode': rounding_mode})
+    if r is not NotImplemented:
+        return r
     return dispatch("div", a.device.type, a, b)
 
 
@@ -299,6 +366,9 @@ def true_divide(a, b):
 
 
 def mean(a, dim=None, keepdim=False, *, dtype=None, axis=None):
+    r = _handle_torch_function(mean, (a,), {'dim': dim, 'keepdim': keepdim, 'dtype': dtype, 'axis': axis})
+    if r is not NotImplemented:
+        return r
     if axis is not None:
         dim = axis
     if dtype is not None:
@@ -334,6 +404,9 @@ def softplus(a):
 
 
 def sum(*args, **kwargs):
+    r = _handle_torch_function(sum, args, kwargs)
+    if r is not NotImplemented:
+        return r
     dtype = kwargs.pop("dtype", None)
     kwargs.pop("device", None)
     result = dispatch("sum", None, *args, **kwargs)
@@ -480,6 +553,9 @@ def topk(a, k, dim=-1, largest=True, sorted=True, out=None):
 
 
 def stack(tensors, dim=0, out=None):
+    r = _handle_torch_function(stack, (tensors,), {'dim': dim, 'out': out})
+    if r is not NotImplemented:
+        return r
     result = dispatch("stack", tensors[0].device.type, tensors, dim=dim)
     if out is not None:
         out._storage = result.storage()
@@ -493,6 +569,9 @@ def stack(tensors, dim=0, out=None):
 
 
 def cat(tensors, dim=0, out=None):
+    r = _handle_torch_function(cat, (tensors,), {'dim': dim, 'out': out})
+    if r is not NotImplemented:
+        return r
     result = dispatch("cat", tensors[0].device.type, tensors, dim=dim)
     if out is not None:
         out._storage = result.storage()
@@ -1016,6 +1095,9 @@ def normal(mean, std, size=None, *, generator=None, out=None):
 # ---------------------------------------------------------------------------
 
 def sub(*args, **kwargs):
+    r = _handle_torch_function(sub, args, kwargs)
+    if r is not NotImplemented:
+        return r
     alpha = kwargs.pop("alpha", 1)
     kwargs.pop("out", None)
     if alpha != 1:
