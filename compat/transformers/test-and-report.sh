@@ -3,21 +3,21 @@
 # Designed to be called by AI agents (Claude Code, Codex CLI, etc.)
 #
 # Usage:
-#   ./compat/test-and-report.sh bert          # test one model
-#   ./compat/test-and-report.sh --tier 1      # test all tier-1
-#   ./compat/test-and-report.sh               # default: tier 1
+#   ./compat/transformers/test-and-report.sh bert          # test one model
+#   ./compat/transformers/test-and-report.sh --tier 1      # test all tier-1
+#   ./compat/transformers/test-and-report.sh               # default: tier 1
 #
 # Prerequisites:
-#   pip install -e . && pip install -r compat/requirements.txt
+#   pip install -e . && pip install -r compat/transformers/requirements.txt
 #
 # Output:
-#   - JSON report: compat/_reports/latest.json
+#   - JSON report: compat/transformers/_reports/latest.json
 #   - Human summary: stdout
 
 set -euo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
-REPORT_DIR="compat/_reports"
+REPORT_DIR="compat/transformers/_reports"
 mkdir -p "$REPORT_DIR"
 REPORT_FILE="$REPORT_DIR/latest.json"
 
@@ -38,11 +38,11 @@ echo "Args: $ARGS"
 echo ""
 
 # Run tests
-USE_CANDLE=1 python compat/run.py \
+USE_CANDLE=1 python compat/transformers/run.py \
     $ARGS \
     --json-report "$REPORT_FILE" \
     -v --tb=short || true
 
 # Summarize
 echo ""
-python compat/run.py --summarize "$REPORT_FILE"
+python compat/transformers/run.py --summarize "$REPORT_FILE"

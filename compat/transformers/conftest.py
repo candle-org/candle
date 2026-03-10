@@ -32,8 +32,8 @@ import yaml
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-_COMPAT_DIR = Path(__file__).resolve().parent
-_PROJECT_ROOT = _COMPAT_DIR.parent
+_COMPAT_DIR = Path(__file__).resolve().parent          # compat/transformers/
+_PROJECT_ROOT = _COMPAT_DIR.parent.parent              # project root
 _SRC_DIR = _PROJECT_ROOT / "src"
 
 # ---------------------------------------------------------------------------

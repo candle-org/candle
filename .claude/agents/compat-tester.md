@@ -10,9 +10,9 @@ Candle is a PyTorch-compatible ML framework (`import candle as torch`). The
 `compat/` directory contains a test harness that runs transformers' official unit
 tests with candle as the torch backend.
 
-- **Test runner**: `python compat/run.py`
-- **Config**: `compat/models.yaml` (model tiers), `compat/xfail.yaml` (known failures)
-- **Patches**: `compat/conftest.py` (version spoof, module stubs, etc.)
+- **Test runner**: `python compat/transformers/run.py`
+- **Config**: `compat/transformers/models.yaml` (model tiers), `compat/transformers/xfail.yaml` (known failures)
+- **Patches**: `compat/transformers/conftest.py` (version spoof, module stubs, etc.)
 - **Source code**: `src/candle/`
 - **Conda env**: `mindnlp` (`source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp ...`)
 
@@ -22,7 +22,7 @@ tests with candle as the torch backend.
 
 ```bash
 source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
-  env USE_CANDLE=1 python compat/run.py --model MODEL \
+  env USE_CANDLE=1 python compat/transformers/run.py --model MODEL \
   --json-report /tmp/compat-report.json -v --tb=short
 ```
 
@@ -81,7 +81,7 @@ Test(s): `<test_name_1>`, `<test_name_2>`, ...
 ## Repro
 
 ```bash
-USE_CANDLE=1 python compat/run.py --model <model> -v --tb=short -k "<test_name>"
+USE_CANDLE=1 python compat/transformers/run.py --model <model> -v --tb=short -k "<test_name>"
 ```
 EOF
 )"
@@ -89,7 +89,7 @@ EOF
 
 ### Step 6: Update xfail.yaml
 
-Add filed issues to `compat/xfail.yaml` so they show as xfail instead of fail:
+Add filed issues to `compat/transformers/xfail.yaml` so they show as xfail instead of fail:
 
 ```yaml
 model_name:
@@ -118,7 +118,7 @@ Output a summary like:
 ## Important Rules
 
 - **DO NOT modify candle source code** — only file issues
-- **DO NOT modify compat/conftest.py** to work around failures — file issues instead
-- **DO** update `compat/xfail.yaml` after filing issues
+- **DO NOT modify compat/transformers/conftest.py** to work around failures — file issues instead
+- **DO** update `compat/transformers/xfail.yaml` after filing issues
 - **DO** deduplicate — one issue per root cause, not per test
 - **DO** include repro commands in every issue
