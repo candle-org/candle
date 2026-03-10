@@ -28,7 +28,7 @@ PyTorch is powerful — but it's also **2GB+ of C++ binaries**, hard to install 
 | | PyTorch | Candle |
 |---|---|---|
 | Install size | ~2 GB | ~10 MB |
-| Build from source | C++ toolchain required | `pip install candle` |
+| Build from source | C++ toolchain required | `pip install candle-python` |
 | Ascend NPU | Community fork | First-class ACLNN kernels |
 | Apple MPS | Partial | Native Metal shaders |
 | Run existing `import torch` code | — | Zero-change drop-in |
@@ -37,18 +37,16 @@ PyTorch is powerful — but it's also **2GB+ of C++ binaries**, hard to install 
 
 ### Install
 
-For the current source workflow:
+```bash
+pip install candle-python
+```
+
+Or install from source:
 
 ```bash
 git clone https://github.com/candle-org/candle.git
 cd candle
 pip install -e ".[test]"
-```
-
-If you only need the base package without test dependencies:
-
-```bash
-pip install -e .
 ```
 
 Ascend NPU users must install CANN first and follow [docs/install-npu.md](docs/install-npu.md) before running device code.

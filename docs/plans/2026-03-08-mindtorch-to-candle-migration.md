@@ -176,7 +176,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
-name = "candle"
+name = "candle-python"
 version = "0.1.0"
 description = "A PyTorch-compatible deep learning framework"
 readme = "README.md"
@@ -215,7 +215,7 @@ lint = [
     "pylint>=2.17",
 ]
 all = [
-    "candle[test,lint]",
+    "candle-python[test,lint]",
 ]
 
 [project.urls]
