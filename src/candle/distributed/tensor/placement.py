@@ -31,6 +31,7 @@ class Replicate(Placement):
     """Tensor is replicated across all ranks in the mesh."""
 
 
+
 class Partial(Placement):
     """Tensor has pending reduction (e.g., gradient before reduce-scatter)."""
 
