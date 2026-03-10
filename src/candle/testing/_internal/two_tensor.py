@@ -4,4 +4,3 @@ import candle as torch
 
 class TwoTensor(torch.Tensor):
     """Minimal stub for TwoTensor test helper."""
-    pass

@@ -1,13 +1,17 @@
 """Stub for torch.testing._internal.common_cuda — CUDA-specific test helpers."""
 import contextlib
 
-from .common_utils import TEST_CUDA, TEST_MULTIGPU
+from .common_utils import TEST_CUDA as _TEST_CUDA
+from .common_utils import TEST_MULTIGPU as _TEST_MULTIGPU
 
-TEST_CUDA = TEST_CUDA
-TEST_MULTIGPU = TEST_MULTIGPU
+TEST_CUDA = _TEST_CUDA
+TEST_MULTIGPU = _TEST_MULTIGPU
 TEST_CUDNN = False
 
-_get_torch_cuda_version = lambda: (0, 0)
+
+def _get_torch_cuda_version():
+    return (0, 0)
+
 
 SM53OrLater = False
 SM60OrLater = False
@@ -31,7 +35,9 @@ def tf32_on_and_off(tf32_val=None):
     yield
 
 
-tf32_is_not_fp32 = lambda: False
+def tf32_is_not_fp32():
+    """Stub — candle has no TF32."""
+    return False
 
 
 def _create_scaling_case(*args, **kwargs):

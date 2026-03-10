@@ -177,7 +177,7 @@ def instantiate_device_type_tests(test_class, scope, except_for=None, only_for=N
                 # "cuda" matches both cuda and npu
                 if only_device == "cuda" and device not in ("cuda", "npu"):
                     continue
-                elif only_device != "cuda" and only_device != device:
+                if only_device != "cuda" and only_device != device:
                     continue
 
             # Check skip conditions

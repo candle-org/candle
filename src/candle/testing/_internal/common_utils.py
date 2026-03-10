@@ -94,9 +94,6 @@ class TestCase(unittest.TestCase):
     precision = 1e-5
     rel_tol = 0
 
-    def setUp(self):
-        super().setUp()
-
     def assertTensorsEqual(self, a, b, prec=None):
         if prec is None:
             prec = self.precision
@@ -253,7 +250,6 @@ def set_default_tensor_type(tensor_type):
 
 def do_test_empty_full(self, dtypes, layout, device):
     """Placeholder for empty/full test helper — tests will fail at runtime."""
-    pass
 
 
 class LazyVal:
