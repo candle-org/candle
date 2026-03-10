@@ -3,6 +3,7 @@ import os
 import unittest
 import functools
 import inspect
+from collections import namedtuple
 
 import candle as torch
 
@@ -63,6 +64,74 @@ def skipCUDAIf(condition, reason=""):
         fn._skip_cuda_if = (condition, reason)
         return fn
     return decorator
+
+
+def expectedFailureMeta(fn):
+    """No-op decorator — candle has no Meta device."""
+    return fn
+
+
+def largeTensorTest(size, device=None):
+    """No-op decorator — candle doesn't skip large tensor tests."""
+    def decorator(fn):
+        return fn
+    return decorator
+
+
+def precisionOverride(precisions):
+    """Decorator to override precision for specific dtypes."""
+    def decorator(fn):
+        fn._precision_overrides = precisions
+        return fn
+    return decorator
+
+
+def dtypesIfCUDA(*dtype_args):
+    """Like @dtypes but only for CUDA/NPU devices."""
+    def decorator(fn):
+        fn._dtypes_cuda = dtype_args
+        return fn
+    return decorator
+
+
+def dtypesIfCPU(*dtype_args):
+    """Like @dtypes but only for CPU device."""
+    def decorator(fn):
+        fn._dtypes_cpu = dtype_args
+        return fn
+    return decorator
+
+
+def skipMeta(fn):
+    """No-op decorator — candle has no Meta backend."""
+    return fn
+
+
+toleranceOverride = namedtuple("toleranceOverride", ["atol", "rtol"],
+                               defaults=[None, None])
+
+
+def tol(dtype, atol=0, rtol=0):
+    """Create a tolerance specification for a dtype."""
+    return toleranceOverride(atol=atol, rtol=rtol)
+
+
+def expectedFailureXLA(fn):
+    """No-op decorator — candle has no XLA backend."""
+    return fn
+
+
+def skipXLA(fn):
+    """No-op decorator — candle has no XLA backend."""
+    return fn
+
+
+PYTORCH_CUDA_MEMCHECK = False
+
+
+def get_all_device_types():
+    """Return list of available device type strings."""
+    return _get_available_devices()
 
 # ---------------------------------------------------------------------------
 # instantiate_device_type_tests
