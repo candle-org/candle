@@ -270,3 +270,146 @@ class TestComparisonOps:
         result = torch.eq(a, b)
         assert result.dtype.name == "bool"
         np.testing.assert_array_equal(result.cpu().numpy(), [True, False, True])
+
+
+# ---------------------------------------------------------------------------
+# Step 5: Phase 1 training ops
+# ---------------------------------------------------------------------------
+
+class TestPhase1Ops:
+    """Verify Phase 1 GPU kernels: leaky_relu, clamp, isinf/isnan/isfinite, softmax f16."""
+
+    # --- leaky_relu ---
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_leaky_relu_positive(self, dtype):
+        a = torch.tensor([1.0, 2.0, 3.0], dtype=dtype, device="mps")
+        result = torch.nn.functional.leaky_relu(a, 0.01)
+        np.testing.assert_allclose(result.cpu().numpy(), [1.0, 2.0, 3.0], rtol=1e-3)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_leaky_relu_negative(self, dtype):
+        a = torch.tensor([-1.0, -2.0, -3.0], dtype=dtype, device="mps")
+        result = torch.nn.functional.leaky_relu(a, 0.1)
+        np.testing.assert_allclose(result.cpu().numpy(), [-0.1, -0.2, -0.3], rtol=1e-3)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_leaky_relu_default_slope(self, dtype):
+        a = torch.tensor([1.0, -1.0, 0.0], dtype=dtype, device="mps")
+        result = torch.nn.functional.leaky_relu(a)
+        np.testing.assert_allclose(result.cpu().numpy(), [1.0, -0.01, 0.0], rtol=1e-3)
+
+    def test_leaky_relu_strided(self):
+        x = torch.tensor([[1.0, -2.0], [-3.0, 4.0]], device="mps")
+        xt = x.T
+        assert not xt.is_contiguous()
+        result = torch.nn.functional.leaky_relu(xt, 0.1)
+        expected = np.array([[1.0, -0.3], [-0.2, 4.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected, rtol=1e-3)
+
+    # --- clamp ---
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_clamp_both_bounds(self, dtype):
+        a = torch.tensor([-3.0, -1.0, 0.5, 2.0, 5.0], dtype=dtype, device="mps")
+        result = torch.clamp(a, -1.0, 3.0)
+        np.testing.assert_allclose(result.cpu().numpy(),
+                                   [-1.0, -1.0, 0.5, 2.0, 3.0], rtol=1e-3)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_clamp_min_only(self, dtype):
+        a = torch.tensor([-3.0, 0.0, 5.0], dtype=dtype, device="mps")
+        result = torch.clamp(a, 0.0)  # min_val positional
+        np.testing.assert_allclose(result.cpu().numpy(), [0.0, 0.0, 5.0], rtol=1e-3)
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_clamp_max_only(self, dtype):
+        a = torch.tensor([-3.0, 0.0, 5.0], dtype=dtype, device="mps")
+        result = torch.clamp(a, None, 1.0)  # min_val=None, max_val=1.0
+        np.testing.assert_allclose(result.cpu().numpy(), [-3.0, 0.0, 1.0], rtol=1e-3)
+
+    def test_clamp_strided(self):
+        x = torch.tensor([[-5.0, 3.0], [1.0, 8.0]], device="mps")
+        xt = x.T
+        result = torch.clamp(xt, 0.0, 5.0)
+        expected = np.array([[0.0, 1.0], [3.0, 5.0]])
+        np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+    def test_clamp_int32(self):
+        a = torch.tensor([-5, 0, 3, 10], dtype=torch.int32, device="mps")
+        result = torch.clamp(a, 0, 5)
+        np.testing.assert_array_equal(result.cpu().numpy(), [0, 0, 3, 5])
+
+    # --- clamp_min / clamp_max ---
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.int32])
+    def test_clamp_min_op(self, dtype):
+        if dtype == torch.float32:
+            a = torch.tensor([-3.0, 0.0, 5.0], dtype=dtype, device="mps")
+            result = torch.clamp_min(a, 0.0)
+            np.testing.assert_allclose(result.cpu().numpy(), [0.0, 0.0, 5.0])
+        else:
+            a = torch.tensor([-3, 0, 5], dtype=dtype, device="mps")
+            result = torch.clamp_min(a, 0)
+            np.testing.assert_array_equal(result.cpu().numpy(), [0, 0, 5])
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.int32])
+    def test_clamp_max_op(self, dtype):
+        if dtype == torch.float32:
+            a = torch.tensor([-3.0, 0.0, 5.0], dtype=dtype, device="mps")
+            result = torch.clamp_max(a, 1.0)
+            np.testing.assert_allclose(result.cpu().numpy(), [-3.0, 0.0, 1.0])
+        else:
+            a = torch.tensor([-3, 0, 5], dtype=dtype, device="mps")
+            result = torch.clamp_max(a, 1)
+            np.testing.assert_array_equal(result.cpu().numpy(), [-3, 0, 1])
+
+    # --- isinf / isnan / isfinite ---
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_isinf(self, dtype):
+        a = torch.tensor([1.0, float('inf'), float('-inf'), 0.0], dtype=dtype, device="mps")
+        result = torch.isinf(a)
+        assert result.dtype.name == "bool"
+        np.testing.assert_array_equal(result.cpu().numpy(), [False, True, True, False])
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_isnan(self, dtype):
+        a = torch.tensor([1.0, float('nan'), 0.0, float('nan')], dtype=dtype, device="mps")
+        result = torch.isnan(a)
+        assert result.dtype.name == "bool"
+        np.testing.assert_array_equal(result.cpu().numpy(), [False, True, False, True])
+
+    @pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
+    def test_isfinite(self, dtype):
+        a = torch.tensor([1.0, float('inf'), float('nan'), 0.0], dtype=dtype, device="mps")
+        result = torch.isfinite(a)
+        assert result.dtype.name == "bool"
+        np.testing.assert_array_equal(result.cpu().numpy(), [True, False, False, True])
+
+    def test_isinf_strided(self):
+        x = torch.tensor([[1.0, float('inf')], [float('-inf'), 0.0]], device="mps")
+        xt = x.T
+        assert not xt.is_contiguous()
+        result = torch.isinf(xt)
+        assert result.dtype.name == "bool"
+        expected = np.array([[False, True], [True, False]])
+        np.testing.assert_array_equal(result.cpu().numpy(), expected)
+
+    # --- softmax float16 ---
+
+    def test_softmax_f16(self):
+        a = torch.tensor([[1.0, 2.0, 3.0], [1.0, 1.0, 1.0]],
+                         dtype=torch.float16, device="mps")
+        result = torch.nn.functional.softmax(a, dim=-1)
+        assert result.dtype == torch.float16
+        expected = np.array([[0.0900, 0.2447, 0.6652],
+                             [0.3333, 0.3333, 0.3333]], dtype=np.float16)
+        np.testing.assert_allclose(result.cpu().numpy(), expected, rtol=5e-2)
+
+    def test_softmax_f32_still_works(self):
+        a = torch.tensor([[1.0, 2.0, 3.0]], dtype=torch.float32, device="mps")
+        result = torch.nn.functional.softmax(a, dim=-1)
+        assert result.dtype == torch.float32
+        expected = np.array([[0.0900, 0.2447, 0.6652]], dtype=np.float32)
+        np.testing.assert_allclose(result.cpu().numpy(), expected, rtol=1e-3)

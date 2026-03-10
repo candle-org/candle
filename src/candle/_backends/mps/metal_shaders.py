@@ -134,6 +134,68 @@ kernel void {name}_scalar_strided_{suffix}(
 """
 
 # ---------------------------------------------------------------------------
+# Templates: unary predicate kernels (float → bool/uchar)
+# ---------------------------------------------------------------------------
+
+_UNARY_PREDICATE_TEMPLATE = """
+kernel void {name}_{suffix}(device const {type}* a [[buffer(0)]],
+                              device uchar* out      [[buffer(1)]],
+                              constant uint& N       [[buffer(2)]],
+                              uint id [[thread_position_in_grid]]) {{
+    if (id < N) out[id] = {expr} ? 1 : 0;
+}}
+"""
+
+_UNARY_PREDICATE_STRIDED_TEMPLATE = """
+kernel void {name}_strided_{suffix}(
+    device const {type}* a   [[buffer(0)]],
+    device uchar* out        [[buffer(1)]],
+    constant uint& N         [[buffer(2)]],
+    constant uint* shape     [[buffer(3)]],
+    constant int*  strides_a [[buffer(4)]],
+    constant uint& ndim      [[buffer(5)]],
+    uint id [[thread_position_in_grid]]) {{
+    if (id < N) {{
+        uint off_a = index_to_offset(id, shape, strides_a, ndim);
+        out[id] = {expr_strided} ? 1 : 0;
+    }}
+}}
+"""
+
+# ---------------------------------------------------------------------------
+# Templates: clamp with 2 scalars (min + max)
+# ---------------------------------------------------------------------------
+
+_CLAMP_TEMPLATE = """
+kernel void clamp_{suffix}(device const {type}* a    [[buffer(0)]],
+                             constant {type}& min_val [[buffer(1)]],
+                             constant {type}& max_val [[buffer(2)]],
+                             device {type}* out       [[buffer(3)]],
+                             constant uint& N         [[buffer(4)]],
+                             uint id [[thread_position_in_grid]]) {{
+    if (id < N) out[id] = clamp(a[id], min_val, max_val);
+}}
+"""
+
+_CLAMP_STRIDED_TEMPLATE = """
+kernel void clamp_strided_{suffix}(
+    device const {type}* a    [[buffer(0)]],
+    constant {type}& min_val  [[buffer(1)]],
+    constant {type}& max_val  [[buffer(2)]],
+    device {type}* out        [[buffer(3)]],
+    constant uint& N          [[buffer(4)]],
+    constant uint* shape      [[buffer(5)]],
+    constant int*  strides_a  [[buffer(6)]],
+    constant uint& ndim       [[buffer(7)]],
+    uint id [[thread_position_in_grid]]) {{
+    if (id < N) {{
+        uint off_a = index_to_offset(id, shape, strides_a, ndim);
+        out[id] = clamp(a[off_a], min_val, max_val);
+    }}
+}}
+"""
+
+# ---------------------------------------------------------------------------
 # Templates: comparison kernels (typed input, uchar output)
 # ---------------------------------------------------------------------------
 
@@ -233,6 +295,33 @@ def _gen_comparison(name, op, types=None):
             name=name, suffix=suffix, type=t, op=op))
         parts.append(_COMPARISON_SCALAR_TEMPLATE.format(
             name=name, suffix=suffix, type=t, op=op))
+    return "".join(parts)
+
+
+def _gen_unary_predicate(name, expr, types=None):
+    """Generate unary predicate kernels (typed input → uchar output)."""
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_UNARY_PREDICATE_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, expr=expr))
+        strided_expr = expr.replace("a[id]", "a[off_a]")
+        parts.append(_UNARY_PREDICATE_STRIDED_TEMPLATE.format(
+            name=name, suffix=suffix, type=t, expr_strided=strided_expr))
+    return "".join(parts)
+
+
+def _gen_clamp(types=None):
+    """Generate clamp kernels (2-scalar: min + max) for given types."""
+    if types is None:
+        types = ("float", "half", "int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_CLAMP_TEMPLATE.format(suffix=suffix, type=t))
+        parts.append(_CLAMP_STRIDED_TEMPLATE.format(suffix=suffix, type=t))
     return "".join(parts)
 
 
@@ -498,6 +587,39 @@ def _build_msl_source():
             parts.append(_UNARY_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=e))
             parts.append(_UNARY_STRIDED_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=e))
 
+    # Leaky ReLU via binary-scalar template (float/half)
+    for t in _FLOAT_TYPES:
+        suffix = _SUFFIX[t]
+        expr = f"(a[id] > ({t})0) ? a[id] : scalar * a[id]"
+        parts.append(_BINARY_SCALAR_TEMPLATE.format(
+            name="leaky_relu", suffix=suffix, type=t, expr=expr))
+        strided_expr = expr.replace("a[id]", "a[off_a]")
+        parts.append(_BINARY_SCALAR_STRIDED_TEMPLATE.format(
+            name="leaky_relu", suffix=suffix, type=t, expr_strided=strided_expr))
+
+    # clamp_min / clamp_max via binary-scalar template (float, half, int, long)
+    _CLAMP_SCALAR_TYPES = ("float", "half", "int", "long")
+    for t in _CLAMP_SCALAR_TYPES:
+        suffix = _SUFFIX[t]
+        # clamp_min: max(a, scalar)
+        parts.append(_BINARY_SCALAR_TEMPLATE.format(
+            name="clamp_min", suffix=suffix, type=t, expr="max(a[id], scalar)"))
+        parts.append(_BINARY_SCALAR_STRIDED_TEMPLATE.format(
+            name="clamp_min", suffix=suffix, type=t, expr_strided="max(a[off_a], scalar)"))
+        # clamp_max: min(a, scalar)
+        parts.append(_BINARY_SCALAR_TEMPLATE.format(
+            name="clamp_max", suffix=suffix, type=t, expr="min(a[id], scalar)"))
+        parts.append(_BINARY_SCALAR_STRIDED_TEMPLATE.format(
+            name="clamp_max", suffix=suffix, type=t, expr_strided="min(a[off_a], scalar)"))
+
+    # Clamp with 2 scalars (min + max)
+    parts.append(_gen_clamp())
+
+    # Unary predicate ops (float → bool): isinf, isnan, isfinite
+    parts.append(_gen_unary_predicate("isinf", "isinf(a[id])"))
+    parts.append(_gen_unary_predicate("isnan", "isnan(a[id])"))
+    parts.append(_gen_unary_predicate("isfinite", "isfinite(a[id])"))
+
     # Full-tensor reductions (multi-dtype)
     # sum: identity=0, combine=add
     parts.append(_gen_reduction(
@@ -640,6 +762,33 @@ kernel void softmax_f32(device const float* input [[buffer(0)]],
     }
 
     output[row * cols + col] = exp_val / sum_exp;
+}
+""")
+
+    # Softmax float16 (compute in float32 for numerical stability)
+    parts.append("""
+kernel void softmax_f16(device const half* input [[buffer(0)]],
+                        device half* output       [[buffer(1)]],
+                        constant uint& rows       [[buffer(2)]],
+                        constant uint& cols       [[buffer(3)]],
+                        uint2 pos [[thread_position_in_grid]]) {
+    uint row = pos.y;
+    uint col = pos.x;
+    if (row >= rows || col >= cols) return;
+
+    float max_val = -INFINITY;
+    for (uint c = 0; c < cols; c++) {
+        max_val = max(max_val, (float)input[row * cols + c]);
+    }
+
+    float exp_val = exp((float)input[row * cols + col] - max_val);
+
+    float sum_exp = 0.0f;
+    for (uint c = 0; c < cols; c++) {
+        sum_exp += exp((float)input[row * cols + c] - max_val);
+    }
+
+    output[row * cols + col] = (half)(exp_val / sum_exp);
 }
 """)
 

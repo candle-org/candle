@@ -558,6 +558,81 @@ class MetalKernelDispatcher:
                                     numel, scalar_fmt=scalar_fmt)
 
     # ------------------------------------------------------------------
+    # Dispatch: clamp with 2 scalars  (a, min, max → out)
+    # ------------------------------------------------------------------
+
+    def dispatch_clamp(self, kernel_name, a_buf, scalar1, scalar2, out_buf,
+                       numel, scalar_fmt="f"):
+        """Encode clamp kernel: out = clamp(a, min_val, max_val)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        s1_bytes = struct.pack(scalar_fmt, scalar1)
+        s2_bytes = struct.pack(scalar_fmt, scalar2)
+        scalar_size = len(s1_bytes)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(a_buf, 0, 0)
+            enc.setBytes_length_atIndex_(s1_bytes, scalar_size, 1)
+            enc.setBytes_length_atIndex_(s2_bytes, scalar_size, 2)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 4)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_clamp_ctypes(enc, pipeline, a_buf,
+                                 s1_bytes, s2_bytes, scalar_size,
+                                 out_buf, numel, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    def dispatch_clamp_strided(self, kernel_name, a_buf, scalar1, scalar2,
+                               out_buf, numel, shape_array, strides_a_array,
+                               ndim, scalar_fmt="f"):
+        """Encode strided clamp kernel: out = clamp(a[strided], min, max)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        s1_bytes = struct.pack(scalar_fmt, scalar1)
+        s2_bytes = struct.pack(scalar_fmt, scalar2)
+        scalar_size = len(s1_bytes)
+        shape_bytes = struct.pack(f"{ndim}I", *shape_array)
+        strides_bytes = struct.pack(f"{ndim}i", *strides_a_array)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(a_buf, 0, 0)
+            enc.setBytes_length_atIndex_(s1_bytes, scalar_size, 1)
+            enc.setBytes_length_atIndex_(s2_bytes, scalar_size, 2)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 4)
+            enc.setBytes_length_atIndex_(shape_bytes, len(shape_bytes), 5)
+            enc.setBytes_length_atIndex_(strides_bytes, len(strides_bytes), 6)
+            enc.setBytes_length_atIndex_(struct.pack("I", ndim), 4, 7)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_clamp_strided_ctypes(
+                enc, pipeline, a_buf, s1_bytes, s2_bytes, scalar_size,
+                out_buf, numel, shape_bytes, strides_bytes, ndim,
+                groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
     # Dispatch: axis reduction  (input → reduced output along dim)
     # ------------------------------------------------------------------
 
@@ -899,5 +974,36 @@ def _encode_reduce_dim_ctypes(enc, pipeline, a_buf, out_buf,
     _ctypes_set_bytes(enc, struct.pack("I", outer_size), 4, 2)
     _ctypes_set_bytes(enc, struct.pack("I", reduce_size), 4, 3)
     _ctypes_set_bytes(enc, struct.pack("I", inner_size), 4, 4)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_clamp_ctypes(enc, pipeline, a_buf, s1_bytes, s2_bytes,
+                          scalar_size, out_buf, numel, groups, tpg):
+    """Encode a clamp (2-scalar) kernel dispatch via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, a_buf, 0, 0)
+    _ctypes_set_bytes(enc, s1_bytes, scalar_size, 1)
+    _ctypes_set_bytes(enc, s2_bytes, scalar_size, 2)
+    _ctypes_set_buffer(enc, out_buf, 0, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 4)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_clamp_strided_ctypes(enc, pipeline, a_buf, s1_bytes, s2_bytes,
+                                  scalar_size, out_buf, numel,
+                                  shape_bytes, strides_bytes, ndim,
+                                  groups, tpg):
+    """Encode a strided clamp (2-scalar) kernel dispatch via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, a_buf, 0, 0)
+    _ctypes_set_bytes(enc, s1_bytes, scalar_size, 1)
+    _ctypes_set_bytes(enc, s2_bytes, scalar_size, 2)
+    _ctypes_set_buffer(enc, out_buf, 0, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 4)
+    _ctypes_set_bytes(enc, shape_bytes, len(shape_bytes), 5)
+    _ctypes_set_bytes(enc, strides_bytes, len(strides_bytes), 6)
+    _ctypes_set_bytes(enc, struct.pack("I", ndim), 4, 7)
     _ctypes_dispatch_threadgroups(enc, groups, tpg)
     _ctypes_end_encoding(enc)

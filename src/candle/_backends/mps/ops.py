@@ -118,6 +118,24 @@ def _dispatch_unary_gpu(a, kernel_base):
     return _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
 
 
+def _dispatch_unary_predicate_gpu(a, kernel_base):
+    """Dispatch a unary predicate GPU kernel (float → bool), contiguous or strided."""
+    d = _get_dispatcher()
+    sfx = _kernel_suffix(a.dtype)
+    numel = a.numel()
+    out_buf = _alloc_output_buf(numel, bool_dtype)
+    if a.is_contiguous():
+        d.dispatch_unary(f"{kernel_base}_{sfx}", _metal_buf(a), out_buf, numel)
+    else:
+        d.dispatch_unary_strided(
+            f"{kernel_base}_strided_{sfx}", _metal_buf(a), out_buf, numel,
+            list(a.shape), list(a.stride), len(a.shape))
+    from ..._tensor import _compute_strides
+    out_shape = tuple(a.shape)
+    out_stride = _compute_strides(out_shape)
+    return _from_metal_buffer(out_buf, out_shape, out_stride, bool_dtype, a.device)
+
+
 def _scalar_value(val, dtype):
     """Convert a scalar to the appropriate Python type for the given dtype."""
     if dtype in (int32_dtype, int64_dtype, bool_dtype):
@@ -1588,16 +1606,22 @@ def signbit(a):
 
 
 def isnan(a):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return _dispatch_unary_predicate_gpu(a, "isnan")
     arr = np.isnan(_to_numpy(a))
     return _from_numpy(arr, bool_dtype, a.device)
 
 
 def isinf(a):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return _dispatch_unary_predicate_gpu(a, "isinf")
     arr = np.isinf(_to_numpy(a))
     return _from_numpy(arr, bool_dtype, a.device)
 
 
 def isfinite(a):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return _dispatch_unary_predicate_gpu(a, "isfinite")
     arr = np.isfinite(_to_numpy(a))
     return _from_numpy(arr, bool_dtype, a.device)
 
@@ -1649,6 +1673,24 @@ def silu(a):
 
 
 def leaky_relu(a, negative_slope=0.01):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        out_buf = _alloc_output_buf(numel, a.dtype)
+        scalar = float(negative_slope)
+        if a.is_contiguous():
+            d.dispatch_binary_scalar(f"leaky_relu_scalar_{sfx}", _metal_buf(a),
+                                     scalar, out_buf, numel,
+                                     scalar_fmt=_scalar_fmt(a.dtype))
+        else:
+            d.dispatch_binary_scalar_strided(
+                f"leaky_relu_scalar_strided_{sfx}", _metal_buf(a), scalar,
+                out_buf, numel, list(a.shape), list(a.stride),
+                len(a.shape), scalar_fmt=_scalar_fmt(a.dtype))
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
+                                  a.dtype, a.device)
     arr = _to_numpy(a)
     out = np.where(arr > 0, arr, negative_slope * arr)
     return _from_numpy(out, a.dtype, a.device)
@@ -1674,18 +1716,82 @@ def prelu(a, weight):
 
 
 def clamp(a, min_val=None, max_val=None):
-    arr = _to_numpy(a)
-    out = np.clip(arr, min_val, max_val)
-    return _from_numpy(out, a.dtype, a.device)
+    if min_val is not None and max_val is not None:
+        if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
+            d = _get_dispatcher()
+            sfx = _kernel_suffix(a.dtype)
+            numel = a.numel()
+            out_buf = _alloc_output_buf(numel, a.dtype)
+            s_min = _scalar_value(min_val, a.dtype)
+            s_max = _scalar_value(max_val, a.dtype)
+            fmt = _scalar_fmt(a.dtype)
+            if a.is_contiguous():
+                d.dispatch_clamp(f"clamp_{sfx}", _metal_buf(a),
+                                 s_min, s_max, out_buf, numel,
+                                 scalar_fmt=fmt)
+            else:
+                d.dispatch_clamp_strided(
+                    f"clamp_strided_{sfx}", _metal_buf(a),
+                    s_min, s_max, out_buf, numel,
+                    list(a.shape), list(a.stride), len(a.shape),
+                    scalar_fmt=fmt)
+            from ..._tensor import _compute_strides
+            return _from_metal_buffer(out_buf, a.shape,
+                                      _compute_strides(a.shape),
+                                      a.dtype, a.device)
+        arr = _to_numpy(a)
+        out = np.clip(arr, min_val, max_val)
+        return _from_numpy(out, a.dtype, a.device)
+    if min_val is not None:
+        return clamp_min(a, min_val)
+    if max_val is not None:
+        return clamp_max(a, max_val)
+    return a
 
 
 def clamp_min(a, min_val):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        out_buf = _alloc_output_buf(numel, a.dtype)
+        scalar = _scalar_value(min_val, a.dtype)
+        if a.is_contiguous():
+            d.dispatch_binary_scalar(f"clamp_min_scalar_{sfx}", _metal_buf(a),
+                                     scalar, out_buf, numel,
+                                     scalar_fmt=_scalar_fmt(a.dtype))
+        else:
+            d.dispatch_binary_scalar_strided(
+                f"clamp_min_scalar_strided_{sfx}", _metal_buf(a), scalar,
+                out_buf, numel, list(a.shape), list(a.stride),
+                len(a.shape), scalar_fmt=_scalar_fmt(a.dtype))
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
+                                  a.dtype, a.device)
     arr = _to_numpy(a)
     out = np.maximum(arr, min_val)
     return _from_numpy(out, a.dtype, a.device)
 
 
 def clamp_max(a, max_val):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        numel = a.numel()
+        out_buf = _alloc_output_buf(numel, a.dtype)
+        scalar = _scalar_value(max_val, a.dtype)
+        if a.is_contiguous():
+            d.dispatch_binary_scalar(f"clamp_max_scalar_{sfx}", _metal_buf(a),
+                                     scalar, out_buf, numel,
+                                     scalar_fmt=_scalar_fmt(a.dtype))
+        else:
+            d.dispatch_binary_scalar_strided(
+                f"clamp_max_scalar_strided_{sfx}", _metal_buf(a), scalar,
+                out_buf, numel, list(a.shape), list(a.stride),
+                len(a.shape), scalar_fmt=_scalar_fmt(a.dtype))
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
+                                  a.dtype, a.device)
     arr = _to_numpy(a)
     out = np.minimum(arr, max_val)
     return _from_numpy(out, a.dtype, a.device)
@@ -2158,17 +2264,18 @@ def pad(a, pad_widths, mode='constant', value=0):
 
 
 def softmax(a, dim):
-    # GPU path: softmax over last dim for 2D contiguous float32
+    # GPU path: softmax over last dim for 2D+ contiguous float32/float16
     ndim = len(a.shape)
     actual_dim = dim if dim >= 0 else dim + ndim
-    if (_can_use_gpu(a) and a.dtype == float32_dtype
+    if (_can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype)
             and actual_dim == ndim - 1 and ndim >= 1):
         d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
         numel = a.numel()
         cols = a.shape[-1]
         rows = numel // cols
         out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_softmax_2d("softmax_f32", _metal_buf(a), out_buf,
+        d.dispatch_softmax_2d(f"softmax_{sfx}", _metal_buf(a), out_buf,
                               rows, cols)
         return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
     arr = _to_numpy(a)
