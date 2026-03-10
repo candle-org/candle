@@ -29,7 +29,6 @@ class DispatchKey(IntEnum):
 DISPATCH_KEY_PRIORITY = [
     DispatchKey.BackendSelect,
     DispatchKey.Pipeline,
-    DispatchKey.Python,
     DispatchKey.Functionalize,
     DispatchKey.ADInplaceOrView,
     DispatchKey.AutogradOther,
@@ -39,6 +38,7 @@ DISPATCH_KEY_PRIORITY = [
     DispatchKey.AutogradXPU,
     DispatchKey.AutogradMeta,
     DispatchKey.Autograd,
+    DispatchKey.Python,
     DispatchKey.Meta,
     DispatchKey.NPU,
     DispatchKey.CUDA,
@@ -184,6 +184,7 @@ class DispatchKeySet:
         has_cpu = False
         requires_grad = False
         saw_device = False
+        has_dispatch_subclass = False
         for tensor in tensors:
             if not hasattr(tensor, "device"):
                 continue
@@ -202,6 +203,16 @@ class DispatchKeySet:
                 has_cpu = True
             if getattr(tensor, "requires_grad", False):
                 requires_grad = True
+            # Check if any tensor is a subclass with a custom __torch_dispatch__
+            if not has_dispatch_subclass:
+                tensor_cls = type(tensor)
+                td = getattr(tensor_cls, "__torch_dispatch__", None)
+                if td is not None:
+                    # Lazy import to avoid circular imports
+                    from .._tensor import Tensor as _BaseTensor
+                    base_td = getattr(_BaseTensor, "__torch_dispatch__", None)
+                    if td is not base_td:
+                        has_dispatch_subclass = True
         if (not saw_device) and device is not None:
             dev_type = device.type if hasattr(device, "type") else device
             if dev_type == "meta":
@@ -244,4 +255,6 @@ class DispatchKeySet:
             mask |= int(DispatchKey.Autocast)
         if pipeline_enabled and not has_meta and not has_cuda:
             mask |= int(DispatchKey.Pipeline)
+        if has_dispatch_subclass:
+            mask |= int(DispatchKey.Python)
         return cls(mask)

@@ -354,6 +354,41 @@ def _wrap_dispatch_error(exc, op_name, dispatch_device):
     return RuntimeError(msg)
 
 
+def _collect_torch_dispatch_types(tensors):
+    """Collect tensor subclass types with custom __torch_dispatch__."""
+    from .._tensor import Tensor as _BaseTensor
+    base_td = getattr(_BaseTensor, "__torch_dispatch__", None)
+    seen = set()
+    types = []
+    for tensor in tensors:
+        cls = type(tensor)
+        if cls in seen:
+            continue
+        seen.add(cls)
+        td = getattr(cls, "__torch_dispatch__", None)
+        if td is not None and td is not base_td:
+            types.append(cls)
+    # Sort by MRO depth (most derived first)
+    types.sort(key=lambda c: len(c.__mro__), reverse=True)
+    return types
+
+
+def _dispatch_torch_dispatch(func_name, tensors, args, kwargs):
+    """Invoke __torch_dispatch__ on tensor subclasses.
+
+    Returns the result from the first subclass that returns non-NotImplemented,
+    or NotImplemented if all subclasses decline.
+    """
+    types = _collect_torch_dispatch_types(tensors)
+    if not types:
+        return NotImplemented
+    for cls in types:
+        result = cls.__torch_dispatch__(func_name, types, args, kwargs)
+        if result is not NotImplemented:
+            return result
+    return NotImplemented
+
+
 def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
     tensors = _extract_tensors(args, kwargs)
     _validate_tensor_devices(tensors)
@@ -400,6 +435,14 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
                 dispatch_op_exit(token)
         _bump_versions(entry.schema_obj, args, impl_kwargs)
         return result
+
+    # __torch_dispatch__ subclass protocol: fires after autograd, before backend
+    if keyset.has(DispatchKey.Python):
+        result = _dispatch_torch_dispatch(alias_name, tensors, args, kwargs)
+        if result is not NotImplemented:
+            return result
+        # All subclasses returned NotImplemented; fall through to backend kernel
+
     if keyset.has(DispatchKey.Autocast):
         device_type = dispatch_device.type if hasattr(dispatch_device, "type") else dispatch_device
         casted_args, casted_kwargs = apply_autocast_policy(alias_name, args, kwargs, device_type)
