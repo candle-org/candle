@@ -445,6 +445,10 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
 
     if keyset.has(DispatchKey.Autocast):
         device_type = dispatch_device.type if hasattr(dispatch_device, "type") else dispatch_device
+        if device_type is None:
+            tensors = _extract_tensors(args, kwargs)
+            if tensors:
+                device_type = getattr(tensors[0].device, "type", None)
         casted_args, casted_kwargs = apply_autocast_policy(alias_name, args, kwargs, device_type)
         return redispatch(alias_name, keyset.without(DispatchKey.Autocast), *casted_args, **casted_kwargs)
 
@@ -488,6 +492,10 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
 
 def dispatch(name, dispatch_device, *args, **kwargs):
     tensors = _extract_tensors(args, kwargs)
+    # Infer autocast device from tensors when dispatch_device is not specified
+    autocast_device_type = getattr(dispatch_device, "type", dispatch_device)
+    if autocast_device_type is None and tensors:
+        autocast_device_type = getattr(tensors[0].device, "type", None)
     pipe = current_pipeline()
     keyset = DispatchKeySet.from_tensors(
         tensors,
@@ -495,7 +503,7 @@ def dispatch(name, dispatch_device, *args, **kwargs):
         pipeline_enabled=pipe is not None,
         functionalize_enabled=is_functionalize_enabled(),
         device=dispatch_device,
-        autocast_enabled=is_autocast_enabled(getattr(dispatch_device, "type", dispatch_device)),
+        autocast_enabled=is_autocast_enabled(autocast_device_type),
     )
     return dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs)
 

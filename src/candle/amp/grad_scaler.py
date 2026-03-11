@@ -59,7 +59,11 @@ class GradScaler:
             return outputs
         from .._creation import tensor
         self._lazy_init_scale_growth_tracker()
-        return outputs * tensor(self._scale)
+        device = getattr(outputs, "device", None)
+        scale_t = tensor(self._scale)
+        if device is not None and getattr(device, "type", None) != "cpu":
+            scale_t = scale_t.to(device)
+        return outputs * scale_t
 
     def _params_for_optimizer(self, optimizer):
         if hasattr(optimizer, "param_groups"):
