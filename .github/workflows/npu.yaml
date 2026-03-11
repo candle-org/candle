@@ -54,7 +54,15 @@ jobs:
         "$JOB_CONDA_ENV/bin/python" -m pip install -e .
     - name: Show runner NPU mapping
       run: |
-        source "$ASCEND_ENV_SCRIPT"
+        setup_ascend_env() {
+          unset ASCEND_TOOLKIT_HOME ASCEND_OPP_PATH ASCEND_AICPU_PATH TOOLCHAIN_HOME ASCEND_HOME_PATH
+          export PYTHONPATH=
+          export LD_LIBRARY_PATH=
+          source "$ASCEND_ENV_SCRIPT"
+          export PYTHONPATH="${ASCEND_TOOLKIT_HOME}/python/site-packages:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe:"
+          export LD_LIBRARY_PATH="${ASCEND_TOOLKIT_HOME}/tools/aml/lib64:${ASCEND_TOOLKIT_HOME}/tools/aml/lib64/plugin:${ASCEND_TOOLKIT_HOME}/lib64:${ASCEND_TOOLKIT_HOME}/lib64/plugin/opskernel:${ASCEND_TOOLKIT_HOME}/lib64/plugin/nnengine:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver"
+        }
+        setup_ascend_env
         # Run test-facing commands in a minimal env so runner-local Python state does not leak into pytest.
         clean_env() {
           local cmd
@@ -77,10 +85,18 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('Process groups:', os.getgroups()); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
+        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('Process groups:', os.getgroups()); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('ASCEND_TOOLKIT_HOME=', os.environ.get('ASCEND_TOOLKIT_HOME')); print('ASCEND_OPP_PATH=', os.environ.get('ASCEND_OPP_PATH')); print('PYTHONPATH=', os.environ.get('PYTHONPATH')); print('LD_LIBRARY_PATH=', os.environ.get('LD_LIBRARY_PATH')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
     - name: Assert NPU availability
       run: |
-        source "$ASCEND_ENV_SCRIPT"
+        setup_ascend_env() {
+          unset ASCEND_TOOLKIT_HOME ASCEND_OPP_PATH ASCEND_AICPU_PATH TOOLCHAIN_HOME ASCEND_HOME_PATH
+          export PYTHONPATH=
+          export LD_LIBRARY_PATH=
+          source "$ASCEND_ENV_SCRIPT"
+          export PYTHONPATH="${ASCEND_TOOLKIT_HOME}/python/site-packages:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe:"
+          export LD_LIBRARY_PATH="${ASCEND_TOOLKIT_HOME}/tools/aml/lib64:${ASCEND_TOOLKIT_HOME}/tools/aml/lib64/plugin:${ASCEND_TOOLKIT_HOME}/lib64:${ASCEND_TOOLKIT_HOME}/lib64/plugin/opskernel:${ASCEND_TOOLKIT_HOME}/lib64/plugin/nnengine:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver"
+        }
+        setup_ascend_env
         clean_env() {
           local cmd
           printf -v cmd '%q ' \
@@ -105,7 +121,15 @@ jobs:
         clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in NPU Suite (6-7)'; assert count >= 2, f'expected >=2 visible NPUs, found {count}'"
     - name: Run NPU tests
       run: |
-        source "$ASCEND_ENV_SCRIPT"
+        setup_ascend_env() {
+          unset ASCEND_TOOLKIT_HOME ASCEND_OPP_PATH ASCEND_AICPU_PATH TOOLCHAIN_HOME ASCEND_HOME_PATH
+          export PYTHONPATH=
+          export LD_LIBRARY_PATH=
+          source "$ASCEND_ENV_SCRIPT"
+          export PYTHONPATH="${ASCEND_TOOLKIT_HOME}/python/site-packages:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe:"
+          export LD_LIBRARY_PATH="${ASCEND_TOOLKIT_HOME}/tools/aml/lib64:${ASCEND_TOOLKIT_HOME}/tools/aml/lib64/plugin:${ASCEND_TOOLKIT_HOME}/lib64:${ASCEND_TOOLKIT_HOME}/lib64/plugin/opskernel:${ASCEND_TOOLKIT_HOME}/lib64/plugin/nnengine:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver"
+        }
+        setup_ascend_env
         clean_env() {
           local cmd
           printf -v cmd '%q ' \
@@ -156,7 +180,15 @@ jobs:
         "$JOB_CONDA_ENV/bin/python" -m pip install -e .
     - name: Show runner NPU mapping
       run: |
-        source "$ASCEND_ENV_SCRIPT"
+        setup_ascend_env() {
+          unset ASCEND_TOOLKIT_HOME ASCEND_OPP_PATH ASCEND_AICPU_PATH TOOLCHAIN_HOME ASCEND_HOME_PATH
+          export PYTHONPATH=
+          export LD_LIBRARY_PATH=
+          source "$ASCEND_ENV_SCRIPT"
+          export PYTHONPATH="${ASCEND_TOOLKIT_HOME}/python/site-packages:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe:"
+          export LD_LIBRARY_PATH="${ASCEND_TOOLKIT_HOME}/tools/aml/lib64:${ASCEND_TOOLKIT_HOME}/tools/aml/lib64/plugin:${ASCEND_TOOLKIT_HOME}/lib64:${ASCEND_TOOLKIT_HOME}/lib64/plugin/opskernel:${ASCEND_TOOLKIT_HOME}/lib64/plugin/nnengine:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver"
+        }
+        setup_ascend_env
         clean_env() {
           local cmd
           printf -v cmd '%q ' \
@@ -178,10 +210,18 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('Process groups:', os.getgroups()); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
+        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('Process groups:', os.getgroups()); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('ASCEND_TOOLKIT_HOME=', os.environ.get('ASCEND_TOOLKIT_HOME')); print('ASCEND_OPP_PATH=', os.environ.get('ASCEND_OPP_PATH')); print('PYTHONPATH=', os.environ.get('PYTHONPATH')); print('LD_LIBRARY_PATH=', os.environ.get('LD_LIBRARY_PATH')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
     - name: Assert NPU availability
       run: |
-        source "$ASCEND_ENV_SCRIPT"
+        setup_ascend_env() {
+          unset ASCEND_TOOLKIT_HOME ASCEND_OPP_PATH ASCEND_AICPU_PATH TOOLCHAIN_HOME ASCEND_HOME_PATH
+          export PYTHONPATH=
+          export LD_LIBRARY_PATH=
+          source "$ASCEND_ENV_SCRIPT"
+          export PYTHONPATH="${ASCEND_TOOLKIT_HOME}/python/site-packages:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe:"
+          export LD_LIBRARY_PATH="${ASCEND_TOOLKIT_HOME}/tools/aml/lib64:${ASCEND_TOOLKIT_HOME}/tools/aml/lib64/plugin:${ASCEND_TOOLKIT_HOME}/lib64:${ASCEND_TOOLKIT_HOME}/lib64/plugin/opskernel:${ASCEND_TOOLKIT_HOME}/lib64/plugin/nnengine:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver"
+        }
+        setup_ascend_env
         clean_env() {
           local cmd
           printf -v cmd '%q ' \
@@ -203,10 +243,18 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in Distributed Suite (4-5)'; assert count >= 2, f'expected >=2 visible NPUs, found {count}'"
+        clean_env python -c "import os, candle as torch; print('ASCEND_TOOLKIT_HOME=', os.environ.get('ASCEND_TOOLKIT_HOME')); print('ASCEND_OPP_PATH=', os.environ.get('ASCEND_OPP_PATH')); print('PYTHONPATH=', os.environ.get('PYTHONPATH')); print('LD_LIBRARY_PATH=', os.environ.get('LD_LIBRARY_PATH')); count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in Distributed Suite (4-5)'; assert count >= 2, f'expected >=2 visible NPUs, found {count}'"
     - name: Run distributed baseline suite
       run: |
-        source "$ASCEND_ENV_SCRIPT"
+        setup_ascend_env() {
+          unset ASCEND_TOOLKIT_HOME ASCEND_OPP_PATH ASCEND_AICPU_PATH TOOLCHAIN_HOME ASCEND_HOME_PATH
+          export PYTHONPATH=
+          export LD_LIBRARY_PATH=
+          source "$ASCEND_ENV_SCRIPT"
+          export PYTHONPATH="${ASCEND_TOOLKIT_HOME}/python/site-packages:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe:"
+          export LD_LIBRARY_PATH="${ASCEND_TOOLKIT_HOME}/tools/aml/lib64:${ASCEND_TOOLKIT_HOME}/tools/aml/lib64/plugin:${ASCEND_TOOLKIT_HOME}/lib64:${ASCEND_TOOLKIT_HOME}/lib64/plugin/opskernel:${ASCEND_TOOLKIT_HOME}/lib64/plugin/nnengine:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver"
+        }
+        setup_ascend_env
         clean_env() {
           local cmd
           printf -v cmd '%q ' \
@@ -232,7 +280,15 @@ jobs:
     - name: Run 2-card HCCL all_to_all coverage
       run: |
         set -o pipefail
-        source "$ASCEND_ENV_SCRIPT"
+        setup_ascend_env() {
+          unset ASCEND_TOOLKIT_HOME ASCEND_OPP_PATH ASCEND_AICPU_PATH TOOLCHAIN_HOME ASCEND_HOME_PATH
+          export PYTHONPATH=
+          export LD_LIBRARY_PATH=
+          source "$ASCEND_ENV_SCRIPT"
+          export PYTHONPATH="${ASCEND_TOOLKIT_HOME}/python/site-packages:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe:"
+          export LD_LIBRARY_PATH="${ASCEND_TOOLKIT_HOME}/tools/aml/lib64:${ASCEND_TOOLKIT_HOME}/tools/aml/lib64/plugin:${ASCEND_TOOLKIT_HOME}/lib64:${ASCEND_TOOLKIT_HOME}/lib64/plugin/opskernel:${ASCEND_TOOLKIT_HOME}/lib64/plugin/nnengine:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver"
+        }
+        setup_ascend_env
         clean_env() {
           local cmd
           printf -v cmd '%q ' \
@@ -292,7 +348,15 @@ jobs:
         "$JOB_CONDA_ENV/bin/python" -m pip install -e .
     - name: Show runner NPU mapping
       run: |
-        source "$ASCEND_ENV_SCRIPT"
+        setup_ascend_env() {
+          unset ASCEND_TOOLKIT_HOME ASCEND_OPP_PATH ASCEND_AICPU_PATH TOOLCHAIN_HOME ASCEND_HOME_PATH
+          export PYTHONPATH=
+          export LD_LIBRARY_PATH=
+          source "$ASCEND_ENV_SCRIPT"
+          export PYTHONPATH="${ASCEND_TOOLKIT_HOME}/python/site-packages:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe:"
+          export LD_LIBRARY_PATH="${ASCEND_TOOLKIT_HOME}/tools/aml/lib64:${ASCEND_TOOLKIT_HOME}/tools/aml/lib64/plugin:${ASCEND_TOOLKIT_HOME}/lib64:${ASCEND_TOOLKIT_HOME}/lib64/plugin/opskernel:${ASCEND_TOOLKIT_HOME}/lib64/plugin/nnengine:${ASCEND_TOOLKIT_HOME}/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/aarch64:/usr/local/Ascend/driver/lib64:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver"
+        }
+        setup_ascend_env
         clean_env() {
           local cmd
           printf -v cmd '%q ' \
@@ -314,7 +378,7 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('Process groups:', os.getgroups()); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
+        clean_env python -c "import os, sys, candle as torch; print('Python executable:', sys.executable); print('Process groups:', os.getgroups()); print('ASCEND_RT_VISIBLE_DEVICES=', os.environ.get('ASCEND_RT_VISIBLE_DEVICES')); print('ASCEND_VISIBLE_DEVICES=', os.environ.get('ASCEND_VISIBLE_DEVICES')); print('ASCEND_TOOLKIT_HOME=', os.environ.get('ASCEND_TOOLKIT_HOME')); print('ASCEND_OPP_PATH=', os.environ.get('ASCEND_OPP_PATH')); print('PYTHONPATH=', os.environ.get('PYTHONPATH')); print('LD_LIBRARY_PATH=', os.environ.get('LD_LIBRARY_PATH')); print('NPU available:', torch.npu.is_available()); print('NPU device count:', torch.npu.device_count())"
     - name: Assert NPU availability
       run: |
         source "$ASCEND_ENV_SCRIPT"
@@ -339,7 +403,7 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in HCCL 4-Card Suite (0-3)'; assert count >= 4, f'expected >=4 visible NPUs, found {count}'"
+        clean_env python -c "import os, candle as torch; print('ASCEND_TOOLKIT_HOME=', os.environ.get('ASCEND_TOOLKIT_HOME')); print('ASCEND_OPP_PATH=', os.environ.get('ASCEND_OPP_PATH')); print('PYTHONPATH=', os.environ.get('PYTHONPATH')); print('LD_LIBRARY_PATH=', os.environ.get('LD_LIBRARY_PATH')); count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in HCCL 4-Card Suite (0-3)'; assert count >= 4, f'expected >=4 visible NPUs, found {count}'"
     - name: Run 4-card HCCL all_to_all coverage
       run: |
         set -o pipefail

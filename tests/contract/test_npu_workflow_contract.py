@@ -7,7 +7,7 @@ def test_npu_workflow_partitions_suites_by_runner_pool():
     assert 'name: NPU' in payload
     assert 'workflow_dispatch:' in payload
     assert 'CONDA_EXE: /home/lvyufeng/miniconda3/bin/conda' in payload
-    assert 'ASCEND_ENV_SCRIPT: /usr/local/Ascend/ascend-toolkit/set_env.sh' in payload
+    assert 'ASCEND_ENV_SCRIPT: /usr/local/Ascend/ascend-toolkit/8.3.RC2/aarch64-linux/script/set_env.sh' in payload
     assert 'ASCEND_REQUIRED_GROUP: HwHiAiUser' in payload
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'" in payload
     assert "PYTHONNOUSERSITE: '1'" in payload
