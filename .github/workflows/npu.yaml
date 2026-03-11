@@ -86,6 +86,8 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            CANN_ROOT_OVERRIDE="$CANN_ROOT_OVERRIDE" \
+            CANN_OPP_OVERRIDE="$CANN_OPP_OVERRIDE" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -121,6 +123,8 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            CANN_ROOT_OVERRIDE="$CANN_ROOT_OVERRIDE" \
+            CANN_OPP_OVERRIDE="$CANN_OPP_OVERRIDE" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -156,9 +160,13 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            CANN_ROOT_OVERRIDE="$CANN_ROOT_OVERRIDE" \
+            CANN_OPP_OVERRIDE="$CANN_OPP_OVERRIDE" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
+        clean_env python -c "import os; print('HOME=', os.environ.get('HOME')); print('HOME writable=', os.access(os.environ.get('HOME', ''), os.W_OK)); print('ASCEND_CACHE_PATH=', os.environ.get('ASCEND_CACHE_PATH')); print('TBE_CACHE_PATH=', os.environ.get('TBE_CACHE_PATH')); print('ASCEND_GLOBAL_LOG_LEVEL=', os.environ.get('ASCEND_GLOBAL_LOG_LEVEL'))"
+        clean_env pytest tests/npu/test_ops_npu.py::test_npu_matmul_batched_broadcast -v --tb=short
         clean_env pytest tests/npu/ -v --tb=short --ignore=tests/npu/test_pipeline_npu_bench_smoke.py
 
   test-distributed-2card:
@@ -217,6 +225,8 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            CANN_ROOT_OVERRIDE="$CANN_ROOT_OVERRIDE" \
+            CANN_OPP_OVERRIDE="$CANN_OPP_OVERRIDE" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -252,6 +262,8 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            CANN_ROOT_OVERRIDE="$CANN_ROOT_OVERRIDE" \
+            CANN_OPP_OVERRIDE="$CANN_OPP_OVERRIDE" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -287,6 +299,8 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            CANN_ROOT_OVERRIDE="$CANN_ROOT_OVERRIDE" \
+            CANN_OPP_OVERRIDE="$CANN_OPP_OVERRIDE" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -323,6 +337,8 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            CANN_ROOT_OVERRIDE="$CANN_ROOT_OVERRIDE" \
+            CANN_OPP_OVERRIDE="$CANN_OPP_OVERRIDE" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -393,6 +409,8 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            CANN_ROOT_OVERRIDE="$CANN_ROOT_OVERRIDE" \
+            CANN_OPP_OVERRIDE="$CANN_OPP_OVERRIDE" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }

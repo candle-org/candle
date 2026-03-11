@@ -24,6 +24,8 @@ def test_npu_workflow_partitions_suites_by_runner_pool():
     assert 'PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:' in payload
     assert 'PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD"' in payload
     assert 'PYTHONNOUSERSITE="$PYTHONNOUSERSITE"' in payload
+    assert 'CANN_ROOT_OVERRIDE="$CANN_ROOT_OVERRIDE"' in payload
+    assert 'CANN_OPP_OVERRIDE="$CANN_OPP_OVERRIDE"' in payload
     assert "print('Python executable:', sys.executable)" in payload
     assert "print('Process groups:', os.getgroups())" in payload
     assert 'Assert NPU availability' in payload
