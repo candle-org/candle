@@ -2,6 +2,7 @@
 import os
 import sys
 import unittest
+import math
 import functools
 import contextlib
 import tempfile
@@ -104,12 +105,15 @@ class TestCase(unittest.TestCase):
             rtol=self.rel_tol,
         )
 
-    def assertEqual(self, x, y, msg=None, *, atol=None, rtol=None):
+    def assertEqual(self, x, y, msg=None, *, atol=None, rtol=None, equal_nan=False):
         if isinstance(x, torch.Tensor) and isinstance(y, torch.Tensor):
             _atol = atol if atol is not None else self.precision
             _rtol = rtol if rtol is not None else self.rel_tol
             torch.testing.assert_close(x, y, atol=_atol, rtol=_rtol, msg=msg)
         else:
+            if equal_nan and isinstance(x, float) and isinstance(y, float):
+                if math.isnan(x) and math.isnan(y):
+                    return
             super().assertEqual(x, y, msg=msg)
 
 

@@ -14,6 +14,7 @@ class DType:
         self._is_floating_point = is_floating_point
         self._is_complex = is_complex
         self._is_signed = is_signed
+        self._is_quantized = False
 
     @property
     def is_floating_point(self):
@@ -27,6 +28,10 @@ class DType:
     def is_signed(self):
         return self._is_signed
 
+    @property
+    def is_quantized(self):
+        return self._is_quantized
+
     def __repr__(self):
         return f"torch.{self.name}"
 
@@ -37,6 +42,16 @@ class DType:
 
     def __hash__(self):
         return hash(self.name)
+
+
+class _QuantizedDType(DType):
+    def __init__(self, name, numpy_dtype, itemsize, is_signed):
+        super().__init__(name, numpy_dtype, itemsize, is_signed=is_signed)
+        self._is_quantized = True
+
+    @property
+    def is_signed(self):
+        raise RuntimeError("not supported for quantized")
 
 
 # Floating point types
@@ -59,10 +74,17 @@ uint16 = DType("uint16", np.uint16, 2, is_signed=False)
 uint32 = DType("uint32", np.uint32, 4, is_signed=False)
 uint64 = DType("uint64", np.uint64, 8, is_signed=False)
 
+# Quantized (placeholder dtypes for compatibility)
+quint8 = _QuantizedDType("quint8", np.uint8, 1, is_signed=False)
+qint8 = _QuantizedDType("qint8", np.int8, 1, is_signed=True)
+qint32 = _QuantizedDType("qint32", np.int32, 4, is_signed=True)
+quint4x2 = _QuantizedDType("quint4x2", np.uint8, 1, is_signed=False)
+
 # Boolean
 bool = DType("bool", np.bool_, 1, is_signed=False)
 
 # Complex types
+complex32 = DType("complex32", np.complex64, 8, is_complex=True)
 complex64 = DType("complex64", np.complex64, 8, is_complex=True)
 complex128 = DType("complex128", np.complex128, 16, is_complex=True)
 
@@ -94,7 +116,12 @@ _NUMPY_DTYPE_MAP = {
     uint16: np.uint16,
     uint32: np.uint32,
     uint64: np.uint64,
+    quint8: np.uint8,
+    qint8: np.int8,
+    qint32: np.int32,
+    quint4x2: np.uint8,
     bool: np.bool_,
+    complex32: np.complex64,
     complex64: np.complex64,
     complex128: np.complex128,
 }
@@ -134,9 +161,14 @@ _NAME_MAP = {
     "uint16": uint16,
     "uint32": uint32,
     "uint64": uint64,
+    "quint8": quint8,
+    "qint8": qint8,
+    "qint32": qint32,
+    "quint4x2": quint4x2,
     "bool": bool,
     "complex64": complex64, "cfloat": complex64,
     "complex128": complex128, "cdouble": complex128,
+    "complex32": complex32,
 }
 
 
