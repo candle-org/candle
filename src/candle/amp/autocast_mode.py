@@ -53,10 +53,19 @@ def _npu_available():
     return bool(getattr(npu_api, "is_available", lambda: False)())
 
 
+def _mps_available():
+    try:
+        from .. import mps as mps_api
+    except Exception:
+        return False
+    return bool(getattr(mps_api, "is_available", lambda: False)())
+
+
 _DEVICE_TYPE_AVAILABILITY = {
     "cpu": lambda: True,
     "cuda": _cuda_available,
     "npu": _npu_available,
+    "mps": _mps_available,
 }
 
 

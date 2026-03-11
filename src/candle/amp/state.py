@@ -71,7 +71,7 @@ def _normalize_device_type(device_type):
 
 def is_autocast_available(device_type):
     dev = _normalize_device_type(device_type)
-    return dev in {"cpu", "npu", "cuda"}
+    return dev in {"cpu", "npu", "cuda", "mps"}
 
 
 def is_autocast_enabled(device_type=None):
