@@ -431,6 +431,73 @@ def test_max_unpool1d_invalid_index_raises():
         F.max_unpool1d(pooled, bad_indices, kernel_size=2, stride=2, output_size=(1, 1, 2))
 
 
+def test_max_pool2d_with_indices_flattening_matches_torch():
+    import torch as torch_ref
+
+    x = torch.tensor([[[[1.0, 3.0], [2.0, 4.0]]]], device='cpu')
+    x_ref = torch_ref.tensor(x.numpy())
+    pooled, indices = F.max_pool2d_with_indices(x, kernel_size=2, stride=2)
+    ref_pooled, ref_indices = torch_ref.nn.functional.max_pool2d(
+        x_ref,
+        kernel_size=2,
+        stride=2,
+        return_indices=True,
+    )
+    ref_pooled_c = torch.tensor(ref_pooled.numpy())
+    ref_indices_c = torch.tensor(ref_indices.numpy(), dtype=torch.int64)
+    assert torch.allclose(pooled, ref_pooled_c, atol=1e-6)
+    assert torch.equal(indices, ref_indices_c)
+
+
+
+def test_max_unpool1d_infers_output_size_when_none_matches_torch():
+    import torch as torch_ref
+
+    x = torch.tensor([[[1.0, 3.0, 2.0, 4.0]]], device='cpu')
+    x_ref = torch_ref.tensor(x.numpy())
+    pooled, indices = F.max_pool1d_with_indices(x, kernel_size=2, stride=2)
+    out = F.max_unpool1d(pooled, indices, kernel_size=2, stride=2)
+    ref_pooled, ref_indices = torch_ref.nn.functional.max_pool1d(
+        x_ref,
+        kernel_size=2,
+        stride=2,
+        return_indices=True,
+    )
+    ref_out = torch_ref.nn.functional.max_unpool1d(
+        ref_pooled,
+        ref_indices,
+        kernel_size=2,
+        stride=2,
+    )
+    ref_out_c = torch.tensor(ref_out.numpy())
+    assert out.shape == ref_out_c.shape
+    assert torch.allclose(out, ref_out_c, atol=1e-6)
+
+
+
+def test_max_pool1d_padding_too_large_matches_torch():
+    import torch as torch_ref
+
+    x = torch.tensor([[[1.0, 2.0, 3.0]]], device='cpu')
+    x_ref = torch_ref.tensor(x.numpy())
+    with pytest.raises(RuntimeError):
+        torch_ref.nn.functional.max_pool1d(x_ref, kernel_size=3, stride=1, padding=2)
+    with pytest.raises(RuntimeError):
+        F.max_pool1d(x, kernel_size=3, stride=1, padding=2)
+
+
+
+def test_max_pool2d_padding_too_large_matches_torch():
+    import torch as torch_ref
+
+    x = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]]]], device='cpu')
+    x_ref = torch_ref.tensor(x.numpy())
+    with pytest.raises(RuntimeError):
+        torch_ref.nn.functional.max_pool2d(x_ref, kernel_size=2, stride=1, padding=2)
+    with pytest.raises(RuntimeError):
+        F.max_pool2d(x, kernel_size=2, stride=1, padding=2)
+
+
 def test_max_pool3d_with_indices_returns_tuple():
     x = torch.tensor([[[[[1.0, 3.0], [2.0, 4.0]], [[5.0, 7.0], [6.0, 8.0]]]]], device='cpu')
     out, idx = F.max_pool3d_with_indices(x, kernel_size=2, stride=2)

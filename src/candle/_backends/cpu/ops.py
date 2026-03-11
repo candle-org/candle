@@ -2077,6 +2077,17 @@ def max_pool2d(input, kernel_size, stride, padding=0, dilation=1, ceil_mode=Fals
     sH, sW = (stride, stride) if isinstance(stride, int) else tuple(stride)
     pH, pW = (padding, padding) if isinstance(padding, int) else tuple(padding)
     dH, dW = (dilation, dilation) if isinstance(dilation, int) else tuple(dilation)
+
+    if pH > kH // 2 or pW > kW // 2:
+        if dH > 1 or dW > 1:
+            raise RuntimeError(
+                f"pad should be at most half of effective kernel size, but got pad={max(pH, pW)}, "
+                f"kernel_size={max(kH, kW)} and dilation={max(dH, dW)}"
+            )
+        raise RuntimeError(
+            f"pad should be smaller than or equal to half of kernel size, but got padW = {pW}, "
+            f"padH = {pH}, kW = {kW}, kH = {kH}"
+        )
     N, C, H, W = inp.shape
     ekH = (kH - 1) * dH + 1
     ekW = (kW - 1) * dW + 1
@@ -4013,6 +4024,9 @@ def max_pool1d(input, kernel_size, stride, padding, dilation, ceil_mode=False, r
     sW = stride[0]
     pW = padding[0]
     dW = dilation[0]
+
+    if pW > kW // 2:
+        raise RuntimeError(f"max_pool1d() padding should be at most half of kernel size, but got padding={pW} and kernel_size={kW}")
 
     if input.ndim == 3:
         N, C, W = a.shape
