@@ -21,7 +21,7 @@ permissions:
 env:
   CONDA_EXE: /home/lvyufeng/miniconda3/bin/conda
   CONDA_ENV_PREFIX: /tmp/candle-npu-ci
-  ASCEND_ENV_SCRIPT: /usr/local/Ascend/ascend-toolkit/set_env.sh
+  ASCEND_ENV_SCRIPT: /usr/local/Ascend/ascend-toolkit/8.3.RC2/aarch64-linux/script/set_env.sh
   ASCEND_REQUIRED_GROUP: HwHiAiUser
   PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
   PYTHONNOUSERSITE: '1'
@@ -48,6 +48,7 @@ jobs:
       run: |
         "$JOB_CONDA_ENV/bin/python" -m pip install --upgrade pip
         "$JOB_CONDA_ENV/bin/python" -m pip install -r requirements/requirements-test.txt
+        "$JOB_CONDA_ENV/bin/python" -m pip install "psutil<7" "sympy<2" decorator attrs
     - name: Install candle
       run: |
         "$JOB_CONDA_ENV/bin/python" -m pip install -e .
@@ -149,6 +150,7 @@ jobs:
       run: |
         "$JOB_CONDA_ENV/bin/python" -m pip install --upgrade pip
         "$JOB_CONDA_ENV/bin/python" -m pip install -r requirements/requirements-test.txt
+        "$JOB_CONDA_ENV/bin/python" -m pip install "psutil<7" "sympy<2" decorator attrs
     - name: Install candle
       run: |
         "$JOB_CONDA_ENV/bin/python" -m pip install -e .
@@ -284,6 +286,7 @@ jobs:
       run: |
         "$JOB_CONDA_ENV/bin/python" -m pip install --upgrade pip
         "$JOB_CONDA_ENV/bin/python" -m pip install -r requirements/requirements-test.txt
+        "$JOB_CONDA_ENV/bin/python" -m pip install "psutil<7" "sympy<2" decorator attrs
     - name: Install candle
       run: |
         "$JOB_CONDA_ENV/bin/python" -m pip install -e .
