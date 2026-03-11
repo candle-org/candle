@@ -8,13 +8,9 @@ from __future__ import annotations
 
 import contextlib
 import re
-from typing import Any, Callable, Dict, Iterator, Optional, Set, Tuple, TYPE_CHECKING
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 from candle.fx.node import Node, _map_arg, _find_nodes_in_arg
-
-
-if TYPE_CHECKING:
-    from candle.fx.graph import Graph
 
 
 class _Sentinel:

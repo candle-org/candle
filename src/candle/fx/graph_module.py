@@ -77,7 +77,7 @@ class GraphModule(Module):
         globals_dict = self._collect_globals()
         # Compile and exec
         local_ns: Dict[str, Any] = {}
-        exec(compile(code, "<graph>", "exec"), globals_dict, local_ns)  # noqa: S102
+        exec(compile(code, "<graph>", "exec"), globals_dict, local_ns)  # pylint: disable=exec-used
         forward_fn = local_ns["forward"]
         # Bind as a method on this instance
         self.forward = forward_fn.__get__(self, type(self))
