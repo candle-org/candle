@@ -64,6 +64,31 @@ def memory_allocated(device=None):
     return 0
 
 
+# --- RNG ---
+
+_default_generator = None
+
+
+def _get_default_generator():
+    """Get or create the default MPS generator."""
+    global _default_generator
+    if _default_generator is None:
+        from ._random import Generator
+        _default_generator = Generator('mps')
+    return _default_generator
+
+
+def manual_seed(seed: int):
+    """Set the seed for generating random numbers on the MPS device."""
+    gen = _get_default_generator()
+    gen.manual_seed(seed)
+
+
+def manual_seed_all(seed: int):
+    """Set the seed for all MPS devices (only one exists)."""
+    manual_seed(seed)
+
+
 __all__ = [
     "is_available",
     "synchronize",
@@ -73,4 +98,7 @@ __all__ = [
     "get_device_properties",
     "empty_cache",
     "memory_allocated",
+    "manual_seed",
+    "manual_seed_all",
+    "_get_default_generator",
 ]

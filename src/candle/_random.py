@@ -32,6 +32,14 @@ def manual_seed(seed: int):
     except Exception:
         pass
 
+    # Propagate to MPS
+    try:
+        from . import mps as _mps
+        if _mps.is_available():
+            _mps.manual_seed(seed)
+    except Exception:
+        pass
+
     return default_generator
 
 
@@ -47,6 +55,13 @@ def seed():
         from . import npu
         if npu.is_available():
             npu.manual_seed_all(s)
+    except Exception:
+        pass
+    # Propagate to MPS
+    try:
+        from . import mps as _mps
+        if _mps.is_available():
+            _mps.manual_seed(s)
     except Exception:
         pass
     return s
@@ -95,7 +110,7 @@ class Generator:
 
         if self.device.type == 'cpu':
             self._rng = np.random.RandomState(self._seed & 0xffffffff)
-        elif self.device.type == 'npu':
+        elif self.device.type in ('npu', 'mps'):
             self._rng = None
             self._offset = 0
         else:
@@ -114,7 +129,7 @@ class Generator:
 
         if self.device.type == 'cpu':
             self._rng = np.random.RandomState(seed & 0xffffffff)
-        elif self.device.type == 'npu':
+        elif self.device.type in ('npu', 'mps'):
             self._offset = 0
         return self
 
@@ -138,8 +153,8 @@ class Generator:
             state_bytes = state[1].view(np.uint8)
             pos = np.array([state[2]], dtype=np.int32).view(np.uint8)
             return tensor(np.concatenate([state_bytes, pos]), dtype=uint8)
-        elif self.device.type == 'npu':
-            # NPU state: seed (uint64) + offset (int64) = 16 bytes
+        elif self.device.type in ('npu', 'mps'):
+            # NPU/MPS state: seed (uint64) + offset (int64) = 16 bytes
             buf = np.zeros(16, dtype=np.uint8)
             buf[:8] = np.array([self._seed], dtype=np.uint64).view(np.uint8)
             buf[8:] = np.array([self._offset], dtype=np.int64).view(np.uint8)
@@ -156,24 +171,23 @@ class Generator:
             pos = raw[624 * 4:624 * 4 + 4].view(np.int32)[0]
             self._rng = np.random.RandomState()
             self._rng.set_state(('MT19937', state_array, int(pos), 0, 0.0))
-        elif self.device.type == 'npu':
+        elif self.device.type in ('npu', 'mps'):
             self._seed = int(raw[:8].view(np.uint64)[0])
             self._offset = int(raw[8:16].view(np.int64)[0])
 
     def philox_engine_inputs(self, increment=10):
-        """Get (seed, offset) for NPU ACLNN kernels and advance offset.
+        """Get (seed, offset) for Philox-based GPU kernels and advance offset.
 
-        This matches torch_npu's NPUGeneratorImpl::philox_engine_inputs().
-        The increment represents Philox rounds of separation between ops.
+        Works for both NPU (ACLNN) and MPS (Metal) generators.
 
         Args:
-            increment: Number of Philox rounds to advance. Default: 10.
+            increment: Number of Philox elements to advance. Default: 10.
 
         Returns:
             tuple: (seed, offset) as integers.
         """
-        if self.device.type != 'npu':
-            raise RuntimeError("philox_engine_inputs only for NPU generators")
+        if self.device.type not in ('npu', 'mps'):
+            raise RuntimeError("philox_engine_inputs only for NPU/MPS generators")
         seed = self._seed
         offset = self._offset
         self._offset += increment

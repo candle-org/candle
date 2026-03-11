@@ -764,9 +764,221 @@ kernel void relu_inplace_f16(device half* a [[buffer(0)]],
 """
 
 
+# ---------------------------------------------------------------------------
+# Philox 4x32-10 PRNG utility (shared across all RNG kernels)
+# ---------------------------------------------------------------------------
+
+_PHILOX_UTILITY = """
+// Philox 4x32-10 counter-based PRNG
+// Each call produces 4 independent uint32 random values.
+
+constant uint PHILOX_M0 = 0xD2511F53u;
+constant uint PHILOX_M1 = 0xCD9E8D57u;
+constant uint PHILOX_W0 = 0x9E3779B9u;
+constant uint PHILOX_W1 = 0xBB67AE85u;
+
+static inline uint4 philox4x32_round(uint4 ctr, uint2 key) {
+    ulong p0 = (ulong)PHILOX_M0 * (ulong)ctr.x;
+    ulong p1 = (ulong)PHILOX_M1 * (ulong)ctr.z;
+    return uint4(
+        (uint)(p1 >> 32) ^ ctr.y ^ key.x,
+        (uint)p1,
+        (uint)(p0 >> 32) ^ ctr.w ^ key.y,
+        (uint)p0
+    );
+}
+
+static inline uint4 philox4x32_10(uint4 ctr, uint2 key) {
+    for (int i = 0; i < 10; i++) {
+        ctr = philox4x32_round(ctr, key);
+        key.x += PHILOX_W0;
+        key.y += PHILOX_W1;
+    }
+    return ctr;
+}
+
+static inline float uint_to_uniform_f32(uint x) {
+    return (float)(x >> 8) * 5.9604644775390625e-08f;  // 1.0 / (1 << 24)
+}
+"""
+
+# ---------------------------------------------------------------------------
+# Templates: Philox RNG kernels
+# ---------------------------------------------------------------------------
+
+_PHILOX_UNIFORM_TEMPLATE = """
+kernel void philox_uniform_{suffix}(device {type}* output  [[buffer(0)]],
+                                     constant uint& seed_lo [[buffer(1)]],
+                                     constant uint& seed_hi [[buffer(2)]],
+                                     constant uint& offset  [[buffer(3)]],
+                                     constant {type}& low   [[buffer(4)]],
+                                     constant {type}& high  [[buffer(5)]],
+                                     constant uint& N       [[buffer(6)]],
+                                     uint gid [[thread_position_in_grid]]) {{
+    uint base = gid * 4;
+    if (base >= N) return;
+    uint4 ctr = uint4(gid, 0, offset, 0);
+    uint2 key = uint2(seed_lo, seed_hi);
+    uint4 r = philox4x32_10(ctr, key);
+    {type} range = high - low;
+    if (base < N) output[base] = ({type})(low + ({type})uint_to_uniform_f32(r.x) * range);
+    if (base + 1u < N) output[base + 1u] = ({type})(low + ({type})uint_to_uniform_f32(r.y) * range);
+    if (base + 2u < N) output[base + 2u] = ({type})(low + ({type})uint_to_uniform_f32(r.z) * range);
+    if (base + 3u < N) output[base + 3u] = ({type})(low + ({type})uint_to_uniform_f32(r.w) * range);
+}}
+"""
+
+_PHILOX_NORMAL_TEMPLATE = """
+kernel void philox_normal_{suffix}(device {type}* output  [[buffer(0)]],
+                                    constant uint& seed_lo [[buffer(1)]],
+                                    constant uint& seed_hi [[buffer(2)]],
+                                    constant uint& offset  [[buffer(3)]],
+                                    constant float& mean   [[buffer(4)]],
+                                    constant float& stddev [[buffer(5)]],
+                                    constant uint& N       [[buffer(6)]],
+                                    uint gid [[thread_position_in_grid]]) {{
+    uint base = gid * 4;
+    if (base >= N) return;
+    uint4 ctr = uint4(gid, 0, offset, 0);
+    uint2 key = uint2(seed_lo, seed_hi);
+    uint4 r = philox4x32_10(ctr, key);
+    float u1 = max(uint_to_uniform_f32(r.x), 1.17549435e-38f);
+    float u2 = uint_to_uniform_f32(r.y);
+    float u3 = max(uint_to_uniform_f32(r.z), 1.17549435e-38f);
+    float u4 = uint_to_uniform_f32(r.w);
+    float mag1 = sqrt(-2.0f * log(u1));
+    float mag2 = sqrt(-2.0f * log(u3));
+    float two_pi = 6.283185307179586f;
+    if (base < N) output[base] = ({type})(mean + stddev * mag1 * cos(two_pi * u2));
+    if (base + 1u < N) output[base + 1u] = ({type})(mean + stddev * mag1 * sin(two_pi * u2));
+    if (base + 2u < N) output[base + 2u] = ({type})(mean + stddev * mag2 * cos(two_pi * u4));
+    if (base + 3u < N) output[base + 3u] = ({type})(mean + stddev * mag2 * sin(two_pi * u4));
+}}
+"""
+
+_PHILOX_BERNOULLI_TEMPLATE = """
+kernel void philox_bernoulli_{suffix}(device {type}* output  [[buffer(0)]],
+                                       constant float& prob   [[buffer(1)]],
+                                       constant uint& seed_lo [[buffer(2)]],
+                                       constant uint& seed_hi [[buffer(3)]],
+                                       constant uint& offset  [[buffer(4)]],
+                                       constant uint& N       [[buffer(5)]],
+                                       uint gid [[thread_position_in_grid]]) {{
+    uint base = gid * 4;
+    if (base >= N) return;
+    uint4 ctr = uint4(gid, 0, offset, 0);
+    uint2 key = uint2(seed_lo, seed_hi);
+    uint4 r = philox4x32_10(ctr, key);
+    if (base < N) output[base] = (uint_to_uniform_f32(r.x) < prob) ? ({type})1 : ({type})0;
+    if (base + 1u < N) output[base + 1u] = (uint_to_uniform_f32(r.y) < prob) ? ({type})1 : ({type})0;
+    if (base + 2u < N) output[base + 2u] = (uint_to_uniform_f32(r.z) < prob) ? ({type})1 : ({type})0;
+    if (base + 3u < N) output[base + 3u] = (uint_to_uniform_f32(r.w) < prob) ? ({type})1 : ({type})0;
+}}
+"""
+
+_PHILOX_RANDINT_TEMPLATE = """
+kernel void philox_randint_{suffix}(device {type}* output  [[buffer(0)]],
+                                     constant {type}& low   [[buffer(1)]],
+                                     constant {type}& high  [[buffer(2)]],
+                                     constant uint& seed_lo [[buffer(3)]],
+                                     constant uint& seed_hi [[buffer(4)]],
+                                     constant uint& offset  [[buffer(5)]],
+                                     constant uint& N       [[buffer(6)]],
+                                     uint gid [[thread_position_in_grid]]) {{
+    uint base = gid * 4;
+    if (base >= N) return;
+    uint4 ctr = uint4(gid, 0, offset, 0);
+    uint2 key = uint2(seed_lo, seed_hi);
+    uint4 r = philox4x32_10(ctr, key);
+    uint range = (uint)(high - low);
+    if (base < N) output[base] = ({type})((int)low + (int)(r.x % range));
+    if (base + 1u < N) output[base + 1u] = ({type})((int)low + (int)(r.y % range));
+    if (base + 2u < N) output[base + 2u] = ({type})((int)low + (int)(r.z % range));
+    if (base + 3u < N) output[base + 3u] = ({type})((int)low + (int)(r.w % range));
+}}
+"""
+
+_PHILOX_DROPOUT_TEMPLATE = """
+kernel void philox_dropout_{suffix}(device const {type}* input [[buffer(0)]],
+                                     device {type}* output      [[buffer(1)]],
+                                     constant float& prob       [[buffer(2)]],
+                                     constant float& scale      [[buffer(3)]],
+                                     constant uint& seed_lo     [[buffer(4)]],
+                                     constant uint& seed_hi     [[buffer(5)]],
+                                     constant uint& offset      [[buffer(6)]],
+                                     constant uint& N           [[buffer(7)]],
+                                     uint gid [[thread_position_in_grid]]) {{
+    uint base = gid * 4;
+    if (base >= N) return;
+    uint4 ctr = uint4(gid, 0, offset, 0);
+    uint2 key = uint2(seed_lo, seed_hi);
+    uint4 r = philox4x32_10(ctr, key);
+    if (base < N) output[base] = (uint_to_uniform_f32(r.x) >= prob) ? ({type})((float)input[base] * scale) : ({type})0;
+    if (base + 1u < N) output[base + 1u] = (uint_to_uniform_f32(r.y) >= prob) ? ({type})((float)input[base + 1u] * scale) : ({type})0;
+    if (base + 2u < N) output[base + 2u] = (uint_to_uniform_f32(r.z) >= prob) ? ({type})((float)input[base + 2u] * scale) : ({type})0;
+    if (base + 3u < N) output[base + 3u] = (uint_to_uniform_f32(r.w) >= prob) ? ({type})((float)input[base + 3u] * scale) : ({type})0;
+}}
+"""
+
+
+def _gen_philox_uniform(types=None):
+    """Generate Philox uniform kernels."""
+    if types is None:
+        types = ("float", "half")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_PHILOX_UNIFORM_TEMPLATE.format(suffix=suffix, type=t))
+    return "".join(parts)
+
+
+def _gen_philox_normal(types=None):
+    """Generate Philox normal (Box-Muller) kernels."""
+    if types is None:
+        types = ("float", "half")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_PHILOX_NORMAL_TEMPLATE.format(suffix=suffix, type=t))
+    return "".join(parts)
+
+
+def _gen_philox_bernoulli(types=None):
+    """Generate Philox bernoulli kernels."""
+    if types is None:
+        types = ("float", "half")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_PHILOX_BERNOULLI_TEMPLATE.format(suffix=suffix, type=t))
+    return "".join(parts)
+
+
+def _gen_philox_randint(types=None):
+    """Generate Philox randint kernels."""
+    if types is None:
+        types = ("int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_PHILOX_RANDINT_TEMPLATE.format(suffix=suffix, type=t))
+    return "".join(parts)
+
+
+def _gen_philox_dropout(types=None):
+    """Generate Philox fused dropout kernels."""
+    if types is None:
+        types = ("float", "half")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_PHILOX_DROPOUT_TEMPLATE.format(suffix=suffix, type=t))
+    return "".join(parts)
+
+
 def _build_msl_source():
     """Assemble the complete MSL source string."""
-    parts = [_HEADER, _STRIDED_INDEX_HELPER]
+    parts = [_HEADER, _STRIDED_INDEX_HELPER, _PHILOX_UTILITY]
 
     # Binary ops (all dtypes)
     for name, expr in _BINARY_OPS:
@@ -949,6 +1161,13 @@ def _build_msl_source():
     parts.append(_gen_index_select())
     parts.append(_gen_gather())
     parts.append(_gen_cat_copy())
+
+    # Philox RNG kernels
+    parts.append(_gen_philox_uniform())
+    parts.append(_gen_philox_normal())
+    parts.append(_gen_philox_bernoulli())
+    parts.append(_gen_philox_randint())
+    parts.append(_gen_philox_dropout())
 
     # Comparison ops
     for name, op in _COMPARISON_OPS:

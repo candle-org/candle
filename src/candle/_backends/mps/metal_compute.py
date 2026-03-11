@@ -837,6 +837,161 @@ class MetalKernelDispatcher:
         rt.commit_and_wait(cmd)
 
     # ------------------------------------------------------------------
+    # Dispatch: Philox RNG fill  (seed, offset → output)
+    # ------------------------------------------------------------------
+
+    def dispatch_philox_fill(self, kernel_name, out_buf, seed_lo, seed_hi,
+                             offset, param1, param2, numel,
+                             param_fmt="f"):
+        """Encode Philox RNG fill kernel (1 buf + 2 seed uint + 1 offset uint
+        + 2 params + 1 N uint). Works for uniform (low/high),
+        normal (mean/std)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        threads = (numel + 3) // 4  # each thread produces 4 values
+        groups = (threads + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        p1_bytes = struct.pack(param_fmt, param1)
+        p2_bytes = struct.pack(param_fmt, param2)
+        p_size = len(p1_bytes)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 0)
+            enc.setBytes_length_atIndex_(struct.pack("I", seed_lo), 4, 1)
+            enc.setBytes_length_atIndex_(struct.pack("I", seed_hi), 4, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", offset), 4, 3)
+            enc.setBytes_length_atIndex_(p1_bytes, p_size, 4)
+            enc.setBytes_length_atIndex_(p2_bytes, p_size, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 6)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_philox_fill_ctypes(enc, pipeline, out_buf,
+                                       seed_lo, seed_hi, offset,
+                                       p1_bytes, p2_bytes, p_size,
+                                       numel, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: Philox bernoulli  (prob, seed, offset → output)
+    # ------------------------------------------------------------------
+
+    def dispatch_philox_bernoulli(self, kernel_name, out_buf, prob,
+                                  seed_lo, seed_hi, offset, numel):
+        """Encode Philox bernoulli kernel (1 buf + prob + 2 seed + offset + N)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        threads = (numel + 3) // 4
+        groups = (threads + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 0)
+            enc.setBytes_length_atIndex_(struct.pack("f", prob), 4, 1)
+            enc.setBytes_length_atIndex_(struct.pack("I", seed_lo), 4, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", seed_hi), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", offset), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 5)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_philox_bernoulli_ctypes(enc, pipeline, out_buf, prob,
+                                            seed_lo, seed_hi, offset,
+                                            numel, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: Philox randint  (low, high, seed, offset → output)
+    # ------------------------------------------------------------------
+
+    def dispatch_philox_randint(self, kernel_name, out_buf, low, high,
+                                seed_lo, seed_hi, offset, numel,
+                                int_fmt="i"):
+        """Encode Philox randint kernel."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        threads = (numel + 3) // 4
+        groups = (threads + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        lo_bytes = struct.pack(int_fmt, low)
+        hi_bytes = struct.pack(int_fmt, high)
+        i_size = len(lo_bytes)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 0)
+            enc.setBytes_length_atIndex_(lo_bytes, i_size, 1)
+            enc.setBytes_length_atIndex_(hi_bytes, i_size, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", seed_lo), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", seed_hi), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", offset), 4, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 6)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_philox_randint_ctypes(enc, pipeline, out_buf,
+                                          lo_bytes, hi_bytes, i_size,
+                                          seed_lo, seed_hi, offset,
+                                          numel, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: Philox dropout  (input → output, fused mask+scale)
+    # ------------------------------------------------------------------
+
+    def dispatch_philox_dropout(self, kernel_name, a_buf, out_buf,
+                                prob, scale, seed_lo, seed_hi, offset,
+                                numel):
+        """Encode fused Philox dropout kernel."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        threads = (numel + 3) // 4
+        groups = (threads + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(a_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(out_buf, 0, 1)
+            enc.setBytes_length_atIndex_(struct.pack("f", prob), 4, 2)
+            enc.setBytes_length_atIndex_(struct.pack("f", scale), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", seed_lo), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", seed_hi), 4, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", offset), 4, 6)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 7)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_philox_dropout_ctypes(enc, pipeline, a_buf, out_buf,
+                                          prob, scale, seed_lo, seed_hi,
+                                          offset, numel, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
     # Dispatch: axis reduction  (input → reduced output along dim)
     # ------------------------------------------------------------------
 
@@ -1214,8 +1369,72 @@ def _encode_clamp_strided_ctypes(enc, pipeline, a_buf, s1_bytes, s2_bytes,
 
 
 # ---------------------------------------------------------------------------
-# Phase 3: shape & index ctypes encoders
+# Philox RNG ctypes encoders
 # ---------------------------------------------------------------------------
+
+def _encode_philox_fill_ctypes(enc, pipeline, out_buf, seed_lo, seed_hi,
+                                offset, p1_bytes, p2_bytes, p_size,
+                                numel, groups, tpg):
+    """Encode Philox fill (uniform/normal) kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, out_buf, 0, 0)
+    _ctypes_set_bytes(enc, struct.pack("I", seed_lo), 4, 1)
+    _ctypes_set_bytes(enc, struct.pack("I", seed_hi), 4, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", offset), 4, 3)
+    _ctypes_set_bytes(enc, p1_bytes, p_size, 4)
+    _ctypes_set_bytes(enc, p2_bytes, p_size, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 6)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_philox_bernoulli_ctypes(enc, pipeline, out_buf, prob,
+                                     seed_lo, seed_hi, offset,
+                                     numel, groups, tpg):
+    """Encode Philox bernoulli kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, out_buf, 0, 0)
+    _ctypes_set_bytes(enc, struct.pack("f", prob), 4, 1)
+    _ctypes_set_bytes(enc, struct.pack("I", seed_lo), 4, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", seed_hi), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", offset), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 5)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_philox_randint_ctypes(enc, pipeline, out_buf,
+                                   lo_bytes, hi_bytes, i_size,
+                                   seed_lo, seed_hi, offset,
+                                   numel, groups, tpg):
+    """Encode Philox randint kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, out_buf, 0, 0)
+    _ctypes_set_bytes(enc, lo_bytes, i_size, 1)
+    _ctypes_set_bytes(enc, hi_bytes, i_size, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", seed_lo), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", seed_hi), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", offset), 4, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 6)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_philox_dropout_ctypes(enc, pipeline, a_buf, out_buf,
+                                   prob, scale, seed_lo, seed_hi,
+                                   offset, numel, groups, tpg):
+    """Encode fused Philox dropout kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, a_buf, 0, 0)
+    _ctypes_set_buffer(enc, out_buf, 0, 1)
+    _ctypes_set_bytes(enc, struct.pack("f", prob), 4, 2)
+    _ctypes_set_bytes(enc, struct.pack("f", scale), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", seed_lo), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", seed_hi), 4, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", offset), 4, 6)
+    _ctypes_set_bytes(enc, struct.pack("I", numel), 4, 7)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
 
 def _encode_where_ctypes(enc, pipeline, cond_buf, x_buf, y_buf, out_buf,
                           numel, groups, tpg):

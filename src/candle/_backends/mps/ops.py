@@ -1452,6 +1452,19 @@ def zero_(a):
 
 
 def uniform_(a, low=0.0, high=1.0, generator=None):
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype in (float32_dtype, float16_dtype):
+        from ...mps import _get_default_generator
+        gen = generator if (generator is not None and hasattr(generator, 'device') and generator.device.type == 'mps') else _get_default_generator()
+        numel = a.numel()
+        increment = (numel + 3) // 4
+        seed, offset = gen.philox_engine_inputs(increment)
+        seed_lo, seed_hi = seed & 0xffffffff, (seed >> 32) & 0xffffffff
+        sfx = _kernel_suffix(a.dtype)
+        fmt = _scalar_fmt(a.dtype)
+        _get_dispatcher().dispatch_philox_fill(
+            f"philox_uniform_{sfx}", _metal_buf(a),
+            seed_lo, seed_hi, offset, low, high, numel, param_fmt=fmt)
+        return a
     from ..._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = _to_numpy(a)
@@ -1460,6 +1473,19 @@ def uniform_(a, low=0.0, high=1.0, generator=None):
 
 
 def normal_(a, mean=0.0, std=1.0, generator=None):
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype in (float32_dtype, float16_dtype):
+        from ...mps import _get_default_generator
+        gen = generator if (generator is not None and hasattr(generator, 'device') and generator.device.type == 'mps') else _get_default_generator()
+        numel = a.numel()
+        increment = (numel + 3) // 4
+        seed, offset = gen.philox_engine_inputs(increment)
+        seed_lo, seed_hi = seed & 0xffffffff, (seed >> 32) & 0xffffffff
+        sfx = _kernel_suffix(a.dtype)
+        fmt = _scalar_fmt(a.dtype)
+        _get_dispatcher().dispatch_philox_fill(
+            f"philox_normal_{sfx}", _metal_buf(a),
+            seed_lo, seed_hi, offset, mean, std, numel, param_fmt=fmt)
+        return a
     from ..._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = _to_numpy(a)
@@ -1468,6 +1494,19 @@ def normal_(a, mean=0.0, std=1.0, generator=None):
 
 
 def bernoulli_(a, p=0.5, generator=None):
+    is_scalar_p = not hasattr(p, '_numpy_view') and not hasattr(p, 'numpy')
+    if is_scalar_p and _can_use_gpu(a) and a.is_contiguous() and a.dtype in (float32_dtype, float16_dtype):
+        from ...mps import _get_default_generator
+        gen = generator if (generator is not None and hasattr(generator, 'device') and generator.device.type == 'mps') else _get_default_generator()
+        numel = a.numel()
+        increment = (numel + 3) // 4
+        seed, offset = gen.philox_engine_inputs(increment)
+        seed_lo, seed_hi = seed & 0xffffffff, (seed >> 32) & 0xffffffff
+        sfx = _kernel_suffix(a.dtype)
+        _get_dispatcher().dispatch_philox_bernoulli(
+            f"philox_bernoulli_{sfx}", _metal_buf(a), float(p),
+            seed_lo, seed_hi, offset, numel)
+        return a
     from ..._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = _to_numpy(a)
@@ -2437,6 +2476,23 @@ def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
 def dropout(a, p=0.5, training=True):
     if not training or p == 0:
         return a
+    if p == 1.0:
+        return _from_numpy(np.zeros(_to_numpy(a).shape, dtype=_to_numpy(a).dtype), a.dtype, a.device)
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype in (float32_dtype, float16_dtype):
+        from ...mps import _get_default_generator
+        gen = _get_default_generator()
+        numel = a.numel()
+        increment = (numel + 3) // 4
+        seed, offset = gen.philox_engine_inputs(increment)
+        seed_lo, seed_hi = seed & 0xffffffff, (seed >> 32) & 0xffffffff
+        sfx = _kernel_suffix(a.dtype)
+        scale = 1.0 / (1.0 - p)
+        out_buf = _alloc_output_buf(numel, a.dtype)
+        _get_dispatcher().dispatch_philox_dropout(
+            f"philox_dropout_{sfx}", _metal_buf(a), out_buf,
+            float(p), float(scale), seed_lo, seed_hi, offset, numel)
+        stride = tuple(a.stride())
+        return _from_metal_buffer(out_buf, tuple(a.shape), stride, a.dtype, a.device)
     from ..._random import _get_cpu_rng
     rng = _get_cpu_rng()
     arr = _to_numpy(a)
