@@ -124,7 +124,11 @@ def add(a, b):
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     out_dtype = _binary_out_dtype(a, b)
-    out = np.add(a_np, b_np).astype(to_numpy_dtype(out_dtype), copy=False)
+    try:
+        out = np.add(a_np, b_np)
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from exc
+    out = out.astype(to_numpy_dtype(out_dtype), copy=False)
     return _from_numpy(out, out_dtype, a.device)
 
 
