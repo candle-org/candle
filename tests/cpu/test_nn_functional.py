@@ -555,6 +555,47 @@ def test_leaky_relu_inplace_wrapper_exists_and_mutates():
     assert torch.allclose(x, expected, atol=1e-6)
 
 
+
+def _assert_inplace_leaf_requires_grad_raises(fn, *args, **kwargs):
+    x = torch.tensor([-1.0, 0.0, 2.0], device='cpu')
+    x.requires_grad = True
+    with pytest.raises(RuntimeError):
+        fn(x, *args, **kwargs)
+
+
+def test_inplace_activation_non_leaf_requires_grad_allowed():
+    base = torch.tensor([-1.0, 0.0, 2.0], device='cpu')
+    base.requires_grad = True
+    x = base * 1.0
+    out = F.relu_(x)
+    assert out is x
+    assert torch.allclose(x, torch.tensor([0.0, 0.0, 2.0], device='cpu'), atol=1e-6)
+
+
+def test_inplace_activation_leaf_requires_grad_errors():
+    _assert_inplace_leaf_requires_grad_raises(F.relu_)
+    _assert_inplace_leaf_requires_grad_raises(F.elu_)
+    _assert_inplace_leaf_requires_grad_raises(F.hardtanh_, -0.5, 0.5)
+    _assert_inplace_leaf_requires_grad_raises(F.rrelu_, training=False)
+    _assert_inplace_leaf_requires_grad_raises(F.threshold_, 0.5, 3.0)
+    _assert_inplace_leaf_requires_grad_raises(F.selu_)
+    _assert_inplace_leaf_requires_grad_raises(F.celu_, 0.75)
+    _assert_inplace_leaf_requires_grad_raises(F.leaky_relu_, negative_slope=0.1)
+
+
+def test_rrelu_training_true_backward_uses_forward_slope():
+    # When training=True, backward should use the same random slope as forward.
+    torch.manual_seed(123)
+    x = torch.tensor([-2.0, -1.0, 0.0, 2.0], device='cpu')
+    x.requires_grad = True
+    out = F.rrelu(x, lower=0.1, upper=0.2, training=True)
+    out.sum().backward()
+    # For negative inputs, grad should match out / input (slope from forward).
+    neg_mask = x < 0
+    slopes = out[neg_mask].detach() / x[neg_mask].detach()
+    assert torch.allclose(x.grad[neg_mask], slopes, atol=1e-6)
+
+
 def test_upsample_alias_matches_interpolate_nearest_2d():
     x = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]]]], device='cpu')
     out = F.upsample(x, size=(4, 4), mode='nearest')

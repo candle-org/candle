@@ -121,6 +121,30 @@ def _autograd_unary_args(name, backward_impl, *, cpu_only=False, save_input=True
     return wrapper
 
 
+def _autograd_rrelu():
+    def wrapper(a, *args, **kwargs):
+        active_keyset = current_dispatch_keyset()
+        raw_keyset = _strip_autograd_keys(active_keyset)
+        out = redispatch("rrelu", raw_keyset, a, *args, **kwargs)
+        if GradMode.enabled and a.requires_grad:
+            slope = getattr(out, "_rrelu_slope", None)
+            node_holder = {}
+
+            def _backward(grad):
+                saved_a = node_holder["node"].saved_tensors()[0]
+                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
+                return _rrelu_backward(grad, a, saved_a, backward_keyset, args, kwargs, slope=slope)
+
+            node = Node(_backward, (a,))
+            node_holder["node"] = node
+            node.save_for_backward(a)
+            out.grad_fn = node
+            out.requires_grad = True
+        return out
+
+    return wrapper
+
+
 def _autograd_norm(name, backward_impl):
     """Autograd wrapper for normalization ops (layer_norm, batch_norm, rms_norm).
 
@@ -2600,7 +2624,7 @@ def _softshrink_backward(grad, _a, saved_a, keyset, args, kwargs):
         return (redispatch("mul", keyset, grad, mask),)
 
 
-def _rrelu_backward(grad, _a, saved_a, keyset, args, kwargs):
+def _rrelu_backward(grad, _a, saved_a, keyset, args, kwargs, slope=None):
     """Backward for rrelu: grad * (1 if x>=0 else slope). Slope saved on forward output."""
     with _grad_context(keyset):
         ones = saved_a._ones_like()
@@ -2609,8 +2633,9 @@ def _rrelu_backward(grad, _a, saved_a, keyset, args, kwargs):
             redispatch("ge", keyset, saved_a, zero), ones,
             redispatch("mul", keyset, ones, zero))
         neg_mask = redispatch("add", keyset, ones, redispatch("neg", keyset, pos_mask))
-        # Slope was saved during forward pass on _rrelu_slope attribute
-        slope = getattr(saved_a, '_rrelu_slope', None)
+        # Prefer slope captured from forward output; fall back to saved input attr.
+        if slope is None:
+            slope = getattr(saved_a, '_rrelu_slope', None)
         if slope is not None:
             factor = redispatch("add", keyset, pos_mask,
                 redispatch("mul", keyset, neg_mask, slope))
@@ -7378,7 +7403,7 @@ for _entry in (
     # Round 6 — Activation backward
     ("hardshrink", lambda: _autograd_unary_args("hardshrink", _hardshrink_backward)),
     ("softshrink", lambda: _autograd_unary_args("softshrink", _softshrink_backward)),
-    ("rrelu", lambda: _autograd_unary_args("rrelu", _rrelu_backward)),
+    ("rrelu", lambda: _autograd_rrelu()),
     # Round 6 — Zero backward (non-differentiable ops)
     ("ceil", lambda: _autograd_unary("ceil", _zero_backward, save_input=False)),
     ("floor", lambda: _autograd_unary("floor", _zero_backward, save_input=False)),
