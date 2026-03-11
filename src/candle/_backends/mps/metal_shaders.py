@@ -548,6 +548,76 @@ def _gen_cat_copy(types=None):
 
 
 # ---------------------------------------------------------------------------
+# Conv2d Metal compute shader
+# ---------------------------------------------------------------------------
+
+_CONV2D_TEMPLATE = """
+kernel void conv2d_{suffix}(
+    device const {type}* input   [[buffer(0)]],
+    device const {type}* weight  [[buffer(1)]],
+    device const {type}* bias    [[buffer(2)]],
+    device {type}* output        [[buffer(3)]],
+    constant uint* p             [[buffer(4)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    // p: [N, C_in, H_in, W_in, C_out, kH, kW, H_out, W_out,
+    //     sH, sW, pH, pW, dH, dW, has_bias, total]
+    uint total = p[16];
+    if (gid >= total) return;
+
+    uint W_out = p[8]; uint H_out = p[7]; uint C_out = p[4];
+    uint ow = gid % W_out;
+    uint tmp = gid / W_out;
+    uint oh = tmp % H_out;
+    tmp /= H_out;
+    uint co = tmp % C_out;
+    uint n = tmp / C_out;
+
+    uint C_in = p[1]; uint H_in = p[2]; uint W_in = p[3];
+    uint kH = p[5]; uint kW = p[6];
+    uint sH = p[9]; uint sW = p[10];
+    uint pH = p[11]; uint pW = p[12];
+    uint dH = p[13]; uint dW = p[14];
+
+    float acc = 0.0f;
+    for (uint ci = 0; ci < C_in; ci++) {{
+        for (uint kh = 0; kh < kH; kh++) {{
+            for (uint kw = 0; kw < kW; kw++) {{
+                int ih = (int)(oh * sH + kh * dH) - (int)pH;
+                int iw = (int)(ow * sW + kw * dW) - (int)pW;
+                if (ih >= 0 && ih < (int)H_in && iw >= 0 && iw < (int)W_in) {{
+                    uint in_idx = n * (C_in * H_in * W_in)
+                                + ci * (H_in * W_in)
+                                + (uint)ih * W_in + (uint)iw;
+                    uint w_idx = co * (C_in * kH * kW)
+                               + ci * (kH * kW)
+                               + kh * kW + kw;
+                    acc += (float)input[in_idx] * (float)weight[w_idx];
+                }}
+            }}
+        }}
+    }}
+
+    if (p[15] != 0u) {{
+        acc += (float)bias[co];
+    }}
+    output[gid] = ({type})acc;
+}}
+"""
+
+
+def _gen_conv2d(types=None):
+    """Generate conv2d kernels (float/half only)."""
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_CONV2D_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Build the full MSL source
 # ---------------------------------------------------------------------------
 
@@ -1161,6 +1231,9 @@ def _build_msl_source():
     parts.append(_gen_index_select())
     parts.append(_gen_gather())
     parts.append(_gen_cat_copy())
+
+    # Conv2d compute kernel
+    parts.append(_gen_conv2d())
 
     # Philox RNG kernels
     parts.append(_gen_philox_uniform())

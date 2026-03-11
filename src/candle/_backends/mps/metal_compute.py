@@ -837,6 +837,44 @@ class MetalKernelDispatcher:
         rt.commit_and_wait(cmd)
 
     # ------------------------------------------------------------------
+    # Dispatch: conv2d  (input, weight, bias, output + packed params)
+    # ------------------------------------------------------------------
+
+    def dispatch_conv2d(self, kernel_name, input_buf, weight_buf, bias_buf,
+                        output_buf, N, C_in, H_in, W_in, C_out, kH, kW,
+                        H_out, W_out, sH, sW, pH, pW, dH, dW,
+                        has_bias, numel):
+        """Encode conv2d kernel (4 bufs + 17 packed uint params)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        params = struct.pack("17I", N, C_in, H_in, W_in, C_out, kH, kW,
+                             H_out, W_out, sH, sW, pH, pW, dH, dW,
+                             has_bias, numel)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(weight_buf, 0, 1)
+            enc.setBuffer_offset_atIndex_(bias_buf, 0, 2)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 3)
+            enc.setBytes_length_atIndex_(params, len(params), 4)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_conv2d_ctypes(enc, pipeline, input_buf, weight_buf,
+                                  bias_buf, output_buf, params,
+                                  groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
     # Dispatch: Philox RNG fill  (seed, offset → output)
     # ------------------------------------------------------------------
 
@@ -1519,5 +1557,18 @@ def _encode_cat_copy_ctypes(enc, pipeline, src_buf, dst_buf,
     _ctypes_set_bytes(enc, struct.pack("I", inner_size), 4, 4)
     _ctypes_set_bytes(enc, struct.pack("I", dst_dim), 4, 5)
     _ctypes_set_bytes(enc, struct.pack("I", offset), 4, 6)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_conv2d_ctypes(enc, pipeline, input_buf, weight_buf, bias_buf,
+                           output_buf, params, groups, tpg):
+    """Encode conv2d kernel (4 bufs + packed params) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, weight_buf, 0, 1)
+    _ctypes_set_buffer(enc, bias_buf, 0, 2)
+    _ctypes_set_buffer(enc, output_buf, 0, 3)
+    _ctypes_set_bytes(enc, params, len(params), 4)
     _ctypes_dispatch_threadgroups(enc, groups, tpg)
     _ctypes_end_encoding(enc)

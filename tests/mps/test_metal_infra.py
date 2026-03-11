@@ -819,3 +819,144 @@ class TestPhase3ShapeIndex:
         result = torch.stack([a, b], dim=0)
         expected = np.array([[[1, 2], [3, 4]], [[5, 6], [7, 8]]], dtype=np.float32)
         np.testing.assert_allclose(result.cpu().numpy(), expected)
+
+
+# ---------------------------------------------------------------------------
+# Conv2d GPU kernel tests
+# ---------------------------------------------------------------------------
+
+class TestConv2dGPU:
+    """Verify conv2d Metal compute shader correctness."""
+
+    def _conv2d_ref(self, x_np, w_np, b_np=None, stride=1, padding=0, dilation=1):
+        """CPU reference conv2d via candle's numpy path."""
+        x = torch.tensor(x_np)
+        w = torch.tensor(w_np)
+        b = torch.tensor(b_np) if b_np is not None else None
+        return torch.nn.functional.conv2d(
+            x, w, bias=b, stride=stride, padding=padding, dilation=dilation
+        ).numpy()
+
+    def test_basic_f32(self):
+        np.random.seed(0)
+        x = torch.tensor(np.random.randn(1, 3, 8, 8).astype(np.float32), device="mps")
+        w = torch.tensor(np.random.randn(4, 3, 3, 3).astype(np.float32), device="mps")
+        out = torch.nn.functional.conv2d(x, w)
+        ref = self._conv2d_ref(x.cpu().numpy(), w.cpu().numpy())
+        assert out.shape == (1, 4, 6, 6)
+        assert out.device.type == "mps"
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_basic_f16(self):
+        np.random.seed(1)
+        x = torch.tensor(np.random.randn(1, 3, 8, 8).astype(np.float32), device="mps")
+        w = torch.tensor(np.random.randn(4, 3, 3, 3).astype(np.float32), device="mps")
+        # f32 reference
+        ref_f32 = torch.nn.functional.conv2d(x, w)
+        # f16 GPU
+        out = torch.nn.functional.conv2d(x.to(torch.float16), w.to(torch.float16))
+        assert out.dtype == torch.float16
+        np.testing.assert_allclose(
+            out.to(torch.float32).cpu().numpy(), ref_f32.cpu().numpy(), atol=0.05)
+
+    def test_with_bias(self):
+        np.random.seed(2)
+        x_np = np.random.randn(2, 3, 6, 6).astype(np.float32)
+        w_np = np.random.randn(8, 3, 3, 3).astype(np.float32)
+        b_np = np.random.randn(8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.nn.functional.conv2d(x, w, bias=b)
+        ref = self._conv2d_ref(x_np, w_np, b_np)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_padding(self):
+        np.random.seed(3)
+        x_np = np.random.randn(1, 1, 5, 5).astype(np.float32)
+        w_np = np.random.randn(1, 1, 3, 3).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        out = torch.nn.functional.conv2d(x, w, padding=1)
+        ref = self._conv2d_ref(x_np, w_np, padding=1)
+        assert out.shape == (1, 1, 5, 5)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_stride(self):
+        np.random.seed(4)
+        x_np = np.random.randn(1, 2, 8, 8).astype(np.float32)
+        w_np = np.random.randn(4, 2, 3, 3).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        out = torch.nn.functional.conv2d(x, w, stride=2)
+        ref = self._conv2d_ref(x_np, w_np, stride=2)
+        assert out.shape == (1, 4, 3, 3)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_dilation(self):
+        np.random.seed(5)
+        x_np = np.random.randn(1, 1, 8, 8).astype(np.float32)
+        w_np = np.random.randn(2, 1, 3, 3).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        out = torch.nn.functional.conv2d(x, w, dilation=2)
+        ref = self._conv2d_ref(x_np, w_np, dilation=2)
+        assert out.shape == (1, 2, 4, 4)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_stride_padding_combined(self):
+        np.random.seed(6)
+        x_np = np.random.randn(2, 4, 16, 16).astype(np.float32)
+        w_np = np.random.randn(8, 4, 3, 3).astype(np.float32)
+        b_np = np.random.randn(8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.nn.functional.conv2d(x, w, bias=b, stride=2, padding=1)
+        ref = self._conv2d_ref(x_np, w_np, b_np, stride=2, padding=1)
+        assert out.shape == (2, 8, 8, 8)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_1x1_conv(self):
+        """1x1 convolution (pointwise)."""
+        np.random.seed(7)
+        x_np = np.random.randn(1, 16, 4, 4).astype(np.float32)
+        w_np = np.random.randn(32, 16, 1, 1).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        out = torch.nn.functional.conv2d(x, w)
+        ref = self._conv2d_ref(x_np, w_np)
+        assert out.shape == (1, 32, 4, 4)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_large_kernel(self):
+        """Conv with 5x5 kernel."""
+        np.random.seed(8)
+        x_np = np.random.randn(1, 3, 16, 16).astype(np.float32)
+        w_np = np.random.randn(8, 3, 5, 5).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        out = torch.nn.functional.conv2d(x, w, padding=2)
+        ref = self._conv2d_ref(x_np, w_np, padding=2)
+        assert out.shape == (1, 8, 16, 16)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_batched(self):
+        """Batched conv2d with N > 1."""
+        np.random.seed(9)
+        x_np = np.random.randn(4, 3, 8, 8).astype(np.float32)
+        w_np = np.random.randn(16, 3, 3, 3).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        out = torch.nn.functional.conv2d(x, w)
+        ref = self._conv2d_ref(x_np, w_np)
+        assert out.shape == (4, 16, 6, 6)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_nn_conv2d_module(self):
+        """Test nn.Conv2d module on MPS."""
+        layer = torch.nn.Conv2d(3, 16, kernel_size=3, padding=1).to("mps")
+        x = torch.randn(2, 3, 8, 8, device="mps")
+        out = layer(x)
+        assert out.shape == (2, 16, 8, 8)
+        assert out.device.type == "mps"

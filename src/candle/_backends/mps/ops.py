@@ -2958,14 +2958,38 @@ def rms_norm(input, normalized_shape, weight=None, eps=1e-6):
 
 
 def conv2d(input, weight, bias=None, stride=(1, 1), padding=(0, 0), dilation=(1, 1), groups=1):
-    """Conv2d forward using numpy. Input: (N,C,H,W), Weight: (O,C/g,kH,kW)."""
+    """Conv2d forward. Input: (N,C,H,W), Weight: (O,C/g,kH,kW).
+
+    GPU path via MPSCNNConvolution for float32/float16, contiguous, groups=1.
+    Falls back to numpy otherwise.
+    """
+    # GPU path: float32/float16, contiguous, groups=1
+    if (groups == 1 and _can_use_gpu(input) and _can_use_gpu(weight) and
+        input.dtype in (float32_dtype, float16_dtype) and
+        input.is_contiguous() and weight.is_contiguous()):
+        N, C_in, H_in, W_in = input.shape
+        C_out, C_in_w, kH, kW = weight.shape
+        if C_in == C_in_w:
+            sH, sW = stride if isinstance(stride, tuple) else (stride, stride)
+            pH, pW = padding if isinstance(padding, tuple) else (padding, padding)
+            dH, dW = dilation if isinstance(dilation, tuple) else (dilation, dilation)
+
+            # Check output dimensions are valid
+            H_out = (H_in + 2 * pH - (kH - 1) * dH - 1) // sH + 1
+            W_out = (W_in + 2 * pW - (kW - 1) * dW - 1) // sW + 1
+            if H_out > 0 and W_out > 0:
+                return _conv2d_gpu(input, weight, bias,
+                                   sH, sW, pH, pW, dH, dW,
+                                   N, C_in, H_in, W_in, C_out, kH, kW, H_out, W_out)
+
+    # NumPy fallback
     inp = _to_numpy(input)
     w = _to_numpy(weight)
     N, C_in, H, W = inp.shape
     C_out, C_in_g, kH, kW = w.shape
-    sH, sW = stride
-    pH, pW = padding
-    dH, dW = dilation
+    sH, sW = stride if isinstance(stride, tuple) else (stride, stride)
+    pH, pW = padding if isinstance(padding, tuple) else (padding, padding)
+    dH, dW = dilation if isinstance(dilation, tuple) else (dilation, dilation)
 
     # Effective kernel size with dilation
     ekH = (kH - 1) * dH + 1
@@ -3005,6 +3029,41 @@ def conv2d(input, weight, bias=None, stride=(1, 1), padding=(0, 0), dilation=(1,
         out += b[np.newaxis, :, np.newaxis, np.newaxis]
 
     return _from_numpy(np.ascontiguousarray(out.astype(inp.dtype)), input.dtype, input.device)
+
+
+def _conv2d_gpu(input, weight, bias, sH, sW, pH, pW, dH, dW,
+                N, C_in, H_in, W_in, C_out, kH, kW, H_out, W_out):
+    """GPU conv2d via Metal compute shader."""
+    d = _get_dispatcher()
+    sfx = _kernel_suffix(input.dtype)
+    numel = N * C_out * H_out * W_out
+
+    input_buf = _metal_buf(input)
+    weight_buf = _metal_buf(weight)
+    out_buf = _alloc_output_buf(numel, input.dtype)
+
+    # Bias: need a valid buffer even when None (Metal requires all bindings)
+    has_bias = 0
+    if bias is not None and _can_use_gpu(bias):
+        bias_buf = _metal_buf(bias)
+        has_bias = 1
+    else:
+        from .runtime import get_runtime
+        bias_buf = get_runtime().create_buffer(4)  # dummy 4 bytes
+
+    d.dispatch_conv2d(
+        f"conv2d_{sfx}", input_buf, weight_buf, bias_buf, out_buf,
+        N, C_in, H_in, W_in, C_out, kH, kW,
+        H_out, W_out, sH, sW, pH, pW, dH, dW,
+        has_bias, numel)
+
+    out_shape = (N, C_out, H_out, W_out)
+    out_stride = tuple()
+    s = 1
+    for dim in reversed(out_shape):
+        out_stride = (s,) + out_stride
+        s *= dim
+    return _from_metal_buffer(out_buf, out_shape, out_stride, input.dtype, input.device)
 
 
 def conv1d(input, weight, bias=None, stride=(1,), padding=(0,), dilation=(1,), groups=1):
