@@ -623,7 +623,6 @@ def test_native_channel_shuffle_wrapper_exists_matches_channel_shuffle():
     # Compare against torch reference on CPU using detached numpy values.
     import torch as torch_ref
     x_ref = torch_ref.tensor(x.numpy())
-    x_ref = torch_ref.tensor(x.numpy())
     ref = torch_ref.nn.functional.native_channel_shuffle(x_ref, groups=2)
 
     assert out.shape == x.shape
@@ -666,7 +665,6 @@ def test_conv_tbc_wrapper_exists():
 def test_multi_head_attention_forward_wrapper_exists_basic_need_weights_true():
     # Basic parity check against torch reference on CPU.
     import torch as torch_ref
-    x_ref = torch_ref.tensor(x.numpy())
     import torch.nn.functional as F_ref
 
     torch_ref.manual_seed(0)
@@ -755,7 +753,6 @@ def test_multi_head_attention_forward_wrapper_exists_basic_need_weights_true():
 def test_multi_head_attention_forward_attn_mask_bool_and_key_padding_mask_bool():
     # Verify boolean mask semantics match torch: True means masked out.
     import torch as torch_ref
-    x_ref = torch_ref.tensor(x.numpy())
     import torch.nn.functional as F_ref
 
     torch_ref.manual_seed(0)
@@ -843,7 +840,6 @@ def test_multi_head_attention_forward_attn_mask_bool_and_key_padding_mask_bool()
 
 def test_multi_head_attention_forward_wrapper_need_weights_false_returns_none_weights():
     import torch as torch_ref
-    x_ref = torch_ref.tensor(x.numpy())
     import torch.nn.functional as F_ref
 
     torch_ref.manual_seed(0)
