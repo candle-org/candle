@@ -66,8 +66,7 @@ class Module:
 
     def register_parameter(self, name, param):
         self._parameters[name] = param
-        if param is not None:
-            super().__setattr__(name, param)
+        super().__setattr__(name, param)
 
     def parameters(self, recurse=True):
         for name, param in self.named_parameters(recurse=recurse):
