@@ -4,6 +4,7 @@ import os
 import numpy as np
 
 from .acl_loader import ensure_acl
+from . import cann_discovery
 
 acl = None
 
@@ -248,10 +249,25 @@ _RUNTIMES = {}
 _MODEL_DIR = None
 _SOC_PROFILE = None
 
-_CANDIDATE_MODEL_DIRS = (
-    "/usr/local/Ascend/ascend-toolkit/latest/opp",
-    "/home/lvyufeng/lvyufeng/acl_engine",
-)
+
+def _get_candidate_model_dirs():
+    """Get candidate model directories from auto-discovery and fallbacks."""
+    dirs = []
+
+    # First, try OPP directory from auto-discovered CANN
+    opp_dir = cann_discovery.get_opp_dir()
+    if opp_dir is not None:
+        dirs.append(opp_dir)
+
+    # Fallback paths for older installations
+    legacy_paths = (
+        "/usr/local/Ascend/ascend-toolkit/latest/opp",
+    )
+    for p in legacy_paths:
+        if os.path.isdir(p) and p not in dirs:
+            dirs.append(p)
+
+    return dirs
 
 
 
@@ -285,7 +301,7 @@ def _probe_model_dirs():
     global _MODEL_DIR
     get_runtime(0)
     selected = None
-    for path in _CANDIDATE_MODEL_DIRS:
+    for path in _get_candidate_model_dirs():
         if not os.path.isdir(path):
             continue
         if selected is None:

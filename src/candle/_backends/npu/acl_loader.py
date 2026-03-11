@@ -4,27 +4,12 @@ import os
 import sys
 import threading
 
+from . import cann_discovery
+
 
 _ACL_READY = False
 _ACL_MODULE = None
 _ACL_LOCK = threading.Lock()
-
-_CANDIDATE_LIB_DIRS = (
-    "/usr/local/Ascend/ascend-toolkit/latest/lib64",
-    "/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64",
-    "/usr/local/Ascend/ascend-toolkit/latest/opp/lib64",
-    "/usr/local/Ascend/latest/lib64",
-    "/usr/local/Ascend/driver/lib64/driver",
-)
-
-
-_CANDIDATE_PYTHON_DIRS = (
-    "/usr/local/Ascend/ascend-toolkit/latest/python/site-packages",
-    "/usr/local/Ascend/latest/python/site-packages",
-)
-
-_LATEST_TOOLKIT_ROOT = "/usr/local/Ascend/ascend-toolkit/latest"
-_LATEST_OPP_DIR = "/usr/local/Ascend/ascend-toolkit/latest/opp"
 
 _PRELOAD_LIBS = (
     "libascend_protobuf.so",
@@ -33,12 +18,7 @@ _PRELOAD_LIBS = (
 
 
 def _existing_dirs():
-    return [path for path in _CANDIDATE_LIB_DIRS if os.path.isdir(path)]
-
-
-
-def _existing_python_dirs():
-    return [path for path in _CANDIDATE_PYTHON_DIRS if os.path.isdir(path)]
+    return cann_discovery.get_lib_dirs()
 
 
 def _append_python_path(paths):
@@ -47,14 +27,15 @@ def _append_python_path(paths):
             sys.path.insert(0, path)
 
 
-def _align_ascend_env_to_latest():
-    # Some shells inject stale paths like ".../laster".
-    # Force a single coherent latest toolkit view for ACL/ACLNN.
-    if os.path.isdir(_LATEST_TOOLKIT_ROOT):
-        os.environ["ASCEND_TOOLKIT_HOME"] = _LATEST_TOOLKIT_ROOT
-        os.environ["ASCEND_HOME_PATH"] = _LATEST_TOOLKIT_ROOT
-    if os.path.isdir(_LATEST_OPP_DIR):
-        os.environ["ASCEND_OPP_PATH"] = _LATEST_OPP_DIR
+def _align_ascend_env():
+    # Set environment variables to point to the detected CANN installation
+    cann_root = cann_discovery.get_cann_root()
+    if cann_root is not None:
+        os.environ["ASCEND_TOOLKIT_HOME"] = cann_root
+        os.environ["ASCEND_HOME_PATH"] = cann_root
+        opp_dir = cann_discovery.get_opp_dir()
+        if opp_dir is not None:
+            os.environ["ASCEND_OPP_PATH"] = opp_dir
 
 
 def _sanitize_ld_library_path(value):
@@ -125,14 +106,14 @@ def ensure_acl():
     with _ACL_LOCK:
         if _ACL_READY:
             return _ACL_MODULE
-        _align_ascend_env_to_latest()
+        _align_ascend_env()
         paths = _existing_dirs()
         _prepend_ld_library_path(paths)
         _preload_libs(paths)
         try:
             _ACL_MODULE = _import_acl()
         except ModuleNotFoundError:
-            _append_python_path(_existing_python_dirs())
+            _append_python_path(cann_discovery.get_python_dirs())
             _ACL_MODULE = _import_acl()
         _ACL_READY = True
         return _ACL_MODULE
