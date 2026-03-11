@@ -1,12 +1,16 @@
 __version__ = "0.1.0"
 
+import os
+import math
+
 from ._dtype import (
     DType,
     float8_e4m3fn, float8_e5m2, float8_e8m0fnu,
     float16, float32, float64, bfloat16,
     int8, int16, int32, int64, uint8, uint16, uint32, uint64,
     bool,
-    complex64, complex128,
+    complex32, complex64, complex128,
+    quint8, qint8, qint32, quint4x2,
     # aliases
     half, double, short, long, byte, cfloat, cdouble,
     # info classes
@@ -19,6 +23,58 @@ from ._dtype import DType as Dtype  # schema/type alias compatibility
 from ._device import device as Device, _default_device, get_default_device, set_default_device
 from ._device import device
 from ._tensor import Tensor
+
+# Torch-level numeric constants
+import builtins as _builtins
+inf = _builtins.float("inf")
+nan = _builtins.float("nan")
+
+# math constants
+e = _builtins.float(math.e)
+pi = _builtins.float(math.pi)
+
+_vitals = {}
+# Default dtype handling (torch.get_default_dtype / set_default_dtype)
+_DEFAULT_DTYPE = float32
+
+def set_default_dtype(dtype):
+    if not isinstance(dtype, DType):
+        raise TypeError("dtype must be a candle DType")
+    global _DEFAULT_DTYPE
+    _DEFAULT_DTYPE = dtype
+
+
+def get_default_dtype():
+    return _DEFAULT_DTYPE
+
+
+# Vitals (minimal compatibility)
+def vitals_enabled():
+    return os.environ.get("TORCH_VITAL", "").upper() == "ON"
+
+
+def set_vital(category, name, value):
+    if not vitals_enabled():
+        return False
+    _vitals.setdefault(category, {})[name] = value
+    return True
+
+
+def read_vitals():
+    if not vitals_enabled():
+        return ""
+    lines = []
+    if "Dataloader" in _vitals:
+        lines.append("Dataloader.enabled\t\t True")
+    lines.append("CUDA.used\t\t true")
+    for category, entries in _vitals.items():
+        for key, val in entries.items():
+            lines.append(str(val))
+    return "\n".join(lines)
+
+
+def quantize_per_tensor(*_args, **_kwargs):
+    raise RuntimeError("quantized tensors are not supported")
 
 # Tensor type aliases for torch API compatibility
 FloatTensor = Tensor
@@ -94,6 +150,7 @@ from ._backends import cpu
 from ._autograd.grad_mode import is_grad_enabled, set_grad_enabled, no_grad, enable_grad, inference_mode
 from . import _autograd as autograd
 from ._backends import autograd as _autograd_kernels
+from . import backends
 from . import cuda
 from . import npu
 from . import mps
@@ -103,6 +160,8 @@ from . import onnx
 from . import futures
 from . import amp
 from . import compiler
+from . import _dynamo
+from . import quasirandom
 from .ops import ops
 from . import library
 from . import optim
@@ -168,6 +227,7 @@ __all__ = [
     "Device",
     "device",
     "cuda",
+    "backends",
     "Tensor",
     "Size",
     "FloatTensor", "DoubleTensor", "HalfTensor", "BFloat16Tensor",
@@ -176,12 +236,26 @@ __all__ = [
     "DType",
     "dtype",
     "Dtype",
+    # constants
+    "inf",
+    "nan",
+    "e",
+    "pi",
+    # default dtype
+    "set_default_dtype",
+    "get_default_dtype",
+    "vitals_enabled",
+    "set_vital",
+    "read_vitals",
+    # quantization stubs
+    "quantize_per_tensor",
     # dtypes
     "float8_e4m3fn", "float8_e5m2", "float8_e8m0fnu",
     "float16", "float32", "float64", "bfloat16",
     "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
     "bool",
-    "complex64", "complex128",
+    "complex32", "complex64", "complex128",
+    "quint8", "qint8", "qint32", "quint4x2",
     # dtype aliases
     "half", "float", "double",
     "short", "int", "long", "byte",
@@ -387,6 +461,8 @@ __all__ = [
     "ops",
     "library",
     "compiler",
+    "_dynamo",
+    "quasirandom",
     "optim",
     "nn",
     "jit",

@@ -3,6 +3,6 @@ import contextlib
 
 
 @contextlib.contextmanager
-def bf32_on_and_off():
+def bf32_on_and_off(_=None):
     """No-op context manager — candle has no MKLDNN bf32 toggle."""
     yield

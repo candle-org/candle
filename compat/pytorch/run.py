@@ -66,7 +66,7 @@ def setup_pytorch(ref: str):
             "git", "clone",
             "--depth", "1",
             "--branch", ref,
-            "https://github.com/pytorch/pytorch.git",
+            "https://gitee.com/mirrors/pytorch",
             str(PYTORCH_DIR),
         ],
         check=True,
