@@ -4,10 +4,9 @@ import os
 import struct
 
 from .acl_loader import ensure_acl
+from . import cann_discovery
 
 acl = None
-
-
 
 
 def _launch_blocking_enabled():
@@ -22,25 +21,14 @@ def _maybe_sync(runtime):
         runtime.synchronize()
 
 
-_LIB_DIRS = (
-    "/usr/local/Ascend/ascend-toolkit/latest/aarch64-linux/lib64",
-    "/usr/local/Ascend/latest/aarch64-linux/lib64",
-    "/usr/local/Ascend/ascend-toolkit/8.3.RC2/aarch64-linux/lib64",
-)
+def _get_lib_dirs():
+    """Get ACLNN library directories from auto-discovery."""
+    return cann_discovery.get_lib_dirs()
 
-_BASE_LIBS = (
-    "libnnopbase.so",
-)
 
-_PRELOAD_LIBS = (
-    "libopapi.so",
-)
-
-_LIBS = (
-    "libaclnn_ops_infer.so",
-    "libaclnn_math.so",
-    "libopapi.so",
-)
+def _get_lib_names():
+    """Get library names appropriate for the detected CANN version."""
+    return cann_discovery.get_aclnn_lib_names()
 
 _LIB_HANDLES = None
 _BINDINGS = None
@@ -4114,10 +4102,12 @@ def _load_libs():
     global _LIB_HANDLES
     if _LIB_HANDLES is not None:
         return _LIB_HANDLES
+    lib_dirs = _get_lib_dirs()
+    base_libs, preload_libs, main_libs = _get_lib_names()
     libs = []
-    for lib_name in _BASE_LIBS:
+    for lib_name in base_libs:
         lib_path = None
-        for base in _LIB_DIRS:
+        for base in lib_dirs:
             candidate = os.path.join(base, lib_name)
             if os.path.exists(candidate):
                 lib_path = candidate
@@ -4125,18 +4115,18 @@ def _load_libs():
         if lib_path is None:
             raise FileNotFoundError(f"ACLNN base library not found: {lib_name}")
         libs.append(ctypes.CDLL(lib_path))
-    for lib_name in _PRELOAD_LIBS:
+    for lib_name in preload_libs:
         lib_path = None
-        for base in _LIB_DIRS:
+        for base in lib_dirs:
             candidate = os.path.join(base, lib_name)
             if os.path.exists(candidate):
                 lib_path = candidate
                 break
         if lib_path is not None:
             ctypes.CDLL(lib_path, mode=ctypes.RTLD_GLOBAL)
-    for lib_name in _LIBS:
+    for lib_name in main_libs:
         lib_path = None
-        for base in _LIB_DIRS:
+        for base in lib_dirs:
             candidate = os.path.join(base, lib_name)
             if os.path.exists(candidate):
                 lib_path = candidate
