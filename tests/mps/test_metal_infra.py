@@ -960,3 +960,221 @@ class TestConv2dGPU:
         out = layer(x)
         assert out.shape == (2, 16, 8, 8)
         assert out.device.type == "mps"
+
+
+# ---------------------------------------------------------------------------
+# Normalization GPU kernels
+# ---------------------------------------------------------------------------
+
+class TestNormGPU:
+    """Verify layer_norm, rms_norm, batch_norm Metal GPU kernels."""
+
+    # --- layer_norm ---
+
+    def test_layer_norm_basic_f32(self):
+        np.random.seed(0)
+        x_np = np.random.randn(4, 8).astype(np.float32)
+        w_np = np.random.randn(8).astype(np.float32)
+        b_np = np.random.randn(8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.nn.functional.layer_norm(x, [8], weight=w, bias=b)
+        assert out.device.type == "mps"
+        # CPU reference
+        mean = x_np.mean(axis=-1, keepdims=True)
+        var = x_np.var(axis=-1, keepdims=True)
+        ref = (x_np - mean) / np.sqrt(var + 1e-5) * w_np + b_np
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_layer_norm_no_affine(self):
+        np.random.seed(1)
+        x_np = np.random.randn(4, 16).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.layer_norm(x, [16])
+        assert out.device.type == "mps"
+        mean = x_np.mean(axis=-1, keepdims=True)
+        var = x_np.var(axis=-1, keepdims=True)
+        ref = (x_np - mean) / np.sqrt(var + 1e-5)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_layer_norm_2d_normalized_shape(self):
+        np.random.seed(2)
+        x_np = np.random.randn(2, 4, 8).astype(np.float32)
+        w_np = np.ones((4, 8), dtype=np.float32)
+        b_np = np.zeros((4, 8), dtype=np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.nn.functional.layer_norm(x, [4, 8], weight=w, bias=b)
+        assert out.device.type == "mps"
+        mean = x_np.reshape(2, -1).mean(axis=-1, keepdims=True).reshape(2, 1, 1)
+        var = x_np.reshape(2, -1).var(axis=-1, keepdims=True).reshape(2, 1, 1)
+        ref = (x_np - mean) / np.sqrt(var + 1e-5)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_layer_norm_f16(self):
+        np.random.seed(3)
+        x_np = np.random.randn(4, 8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps").to(torch.float16)
+        out = torch.nn.functional.layer_norm(x, [8])
+        assert out.device.type == "mps"
+        assert out.dtype == torch.float16
+        # f32 reference
+        mean = x_np.mean(axis=-1, keepdims=True)
+        var = x_np.var(axis=-1, keepdims=True)
+        ref = (x_np - mean) / np.sqrt(var + 1e-5)
+        np.testing.assert_allclose(out.cpu().numpy(), ref.astype(np.float16), atol=0.05)
+
+    def test_layer_norm_large(self):
+        np.random.seed(4)
+        x_np = np.random.randn(4, 128, 768).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.layer_norm(x, [768])
+        assert out.device.type == "mps"
+        assert out.shape == (4, 128, 768)
+        mean = x_np.mean(axis=-1, keepdims=True)
+        var = x_np.var(axis=-1, keepdims=True)
+        ref = (x_np - mean) / np.sqrt(var + 1e-5)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-4)
+
+    # --- rms_norm ---
+
+    def test_rms_norm_with_weight(self):
+        np.random.seed(10)
+        x_np = np.random.randn(4, 8).astype(np.float32)
+        w_np = np.random.randn(8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        out = torch.nn.functional.rms_norm(x, [8], weight=w)
+        assert out.device.type == "mps"
+        rms = np.sqrt(np.mean(x_np ** 2, axis=-1, keepdims=True) + 1e-6)
+        ref = x_np / rms * w_np
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_rms_norm_no_weight(self):
+        np.random.seed(11)
+        x_np = np.random.randn(4, 16).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.rms_norm(x, [16])
+        assert out.device.type == "mps"
+        rms = np.sqrt(np.mean(x_np ** 2, axis=-1, keepdims=True) + 1e-6)
+        ref = x_np / rms
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_rms_norm_f16(self):
+        np.random.seed(12)
+        x_np = np.random.randn(4, 8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps").to(torch.float16)
+        out = torch.nn.functional.rms_norm(x, [8])
+        assert out.device.type == "mps"
+        assert out.dtype == torch.float16
+        rms = np.sqrt(np.mean(x_np ** 2, axis=-1, keepdims=True) + 1e-6)
+        ref = x_np / rms
+        np.testing.assert_allclose(out.cpu().numpy(), ref.astype(np.float16), atol=0.05)
+
+    def test_rms_norm_large(self):
+        np.random.seed(13)
+        x_np = np.random.randn(4, 128, 768).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.rms_norm(x, [768])
+        assert out.device.type == "mps"
+        assert out.shape == (4, 128, 768)
+        rms = np.sqrt(np.mean(x_np ** 2, axis=-1, keepdims=True) + 1e-6)
+        ref = x_np / rms
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-4)
+
+    # --- batch_norm ---
+
+    def test_batch_norm_eval_f32(self):
+        np.random.seed(20)
+        x_np = np.random.randn(2, 4, 8, 8).astype(np.float32)
+        rm_np = np.random.randn(4).astype(np.float32)
+        rv_np = np.abs(np.random.randn(4)).astype(np.float32) + 0.5
+        w_np = np.random.randn(4).astype(np.float32)
+        b_np = np.random.randn(4).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        rm = torch.tensor(rm_np, device="mps")
+        rv = torch.tensor(rv_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.nn.functional.batch_norm(x, rm, rv, w, b, training=False)
+        assert out.device.type == "mps"
+        ref = (x_np - rm_np[None, :, None, None]) / \
+              np.sqrt(rv_np[None, :, None, None] + 1e-5) * \
+              w_np[None, :, None, None] + b_np[None, :, None, None]
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_batch_norm_eval_no_affine(self):
+        np.random.seed(21)
+        x_np = np.random.randn(2, 4, 6, 6).astype(np.float32)
+        rm_np = np.zeros(4, dtype=np.float32)
+        rv_np = np.ones(4, dtype=np.float32)
+        x = torch.tensor(x_np, device="mps")
+        rm = torch.tensor(rm_np, device="mps")
+        rv = torch.tensor(rv_np, device="mps")
+        out = torch.nn.functional.batch_norm(x, rm, rv, training=False)
+        assert out.device.type == "mps"
+        ref = (x_np - rm_np[None, :, None, None]) / \
+              np.sqrt(rv_np[None, :, None, None] + 1e-5)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_batch_norm_training(self):
+        np.random.seed(22)
+        x_np = np.random.randn(4, 8, 4, 4).astype(np.float32)
+        rm_np = np.zeros(8, dtype=np.float32)
+        rv_np = np.ones(8, dtype=np.float32)
+        x = torch.tensor(x_np, device="mps")
+        rm = torch.tensor(rm_np.copy(), device="mps")
+        rv = torch.tensor(rv_np.copy(), device="mps")
+        out = torch.nn.functional.batch_norm(x, rm, rv, training=True, momentum=0.1)
+        assert out.device.type == "mps"
+        assert out.shape == x.shape
+        # Verify output is roughly normalized (mean ~0, std ~1 per channel)
+        out_np = out.cpu().numpy()
+        channel_means = out_np.mean(axis=(0, 2, 3))
+        np.testing.assert_allclose(channel_means, np.zeros(8), atol=1e-4)
+
+    def test_batch_norm_training_updates_running_stats(self):
+        np.random.seed(23)
+        x_np = np.random.randn(4, 4, 4, 4).astype(np.float32)
+        rm_np = np.zeros(4, dtype=np.float32)
+        rv_np = np.ones(4, dtype=np.float32)
+        x = torch.tensor(x_np, device="mps")
+        rm = torch.tensor(rm_np.copy(), device="mps")
+        rv = torch.tensor(rv_np.copy(), device="mps")
+        torch.nn.functional.batch_norm(x, rm, rv, training=True, momentum=0.1)
+        # running_mean should no longer be all zeros
+        rm_updated = rm.cpu().numpy()
+        assert not np.allclose(rm_updated, np.zeros(4)), \
+            "running_mean should be updated during training"
+
+    def test_batch_norm_1d(self):
+        """batch_norm on (N, C) input (no spatial dims)."""
+        np.random.seed(24)
+        x_np = np.random.randn(8, 4).astype(np.float32)
+        rm_np = np.zeros(4, dtype=np.float32)
+        rv_np = np.ones(4, dtype=np.float32)
+        x = torch.tensor(x_np, device="mps")
+        rm = torch.tensor(rm_np, device="mps")
+        rv = torch.tensor(rv_np, device="mps")
+        out = torch.nn.functional.batch_norm(x, rm, rv, training=False)
+        assert out.device.type == "mps"
+        ref = (x_np - rm_np[None, :]) / np.sqrt(rv_np[None, :] + 1e-5)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_batch_norm_f16(self):
+        np.random.seed(25)
+        x_np = np.random.randn(2, 4, 4, 4).astype(np.float32)
+        rm_np = np.zeros(4, dtype=np.float32)
+        rv_np = np.ones(4, dtype=np.float32)
+        x = torch.tensor(x_np, device="mps").to(torch.float16)
+        rm = torch.tensor(rm_np, device="mps")
+        rv = torch.tensor(rv_np, device="mps")
+        out = torch.nn.functional.batch_norm(x, rm, rv, training=False)
+        assert out.device.type == "mps"
+        assert out.dtype == torch.float16
+        ref = (x_np - rm_np[None, :, None, None]) / \
+              np.sqrt(rv_np[None, :, None, None] + 1e-5)
+        np.testing.assert_allclose(out.cpu().numpy(), ref.astype(np.float16),
+                                   atol=0.05)

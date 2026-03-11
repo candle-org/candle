@@ -875,6 +875,159 @@ class MetalKernelDispatcher:
         rt.commit_and_wait(cmd)
 
     # ------------------------------------------------------------------
+    # Dispatch: layer_norm  (input, weight, bias → output)
+    # ------------------------------------------------------------------
+
+    def dispatch_layer_norm(self, kernel_name, input_buf, weight_buf, bias_buf,
+                            output_buf, outer_size, inner_size, eps,
+                            has_weight, has_bias):
+        """Encode layer_norm kernel (4 bufs + 5 setBytes)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        numel = outer_size * inner_size
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(weight_buf, 0, 1)
+            enc.setBuffer_offset_atIndex_(bias_buf, 0, 2)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", outer_size), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", inner_size), 4, 5)
+            enc.setBytes_length_atIndex_(struct.pack("f", eps), 4, 6)
+            enc.setBytes_length_atIndex_(struct.pack("I", has_weight), 4, 7)
+            enc.setBytes_length_atIndex_(struct.pack("I", has_bias), 4, 8)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_layer_norm_ctypes(enc, pipeline, input_buf, weight_buf,
+                                      bias_buf, output_buf, outer_size,
+                                      inner_size, eps, has_weight, has_bias,
+                                      groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: rms_norm  (input, weight → output)
+    # ------------------------------------------------------------------
+
+    def dispatch_rms_norm(self, kernel_name, input_buf, weight_buf,
+                          output_buf, outer_size, inner_size, eps,
+                          has_weight):
+        """Encode rms_norm kernel (3 bufs + 4 setBytes)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        numel = outer_size * inner_size
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(weight_buf, 0, 1)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", outer_size), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", inner_size), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("f", eps), 4, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", has_weight), 4, 6)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_rms_norm_ctypes(enc, pipeline, input_buf, weight_buf,
+                                    output_buf, outer_size, inner_size,
+                                    eps, has_weight, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: batch_norm_stats  (input → mean, var)
+    # ------------------------------------------------------------------
+
+    def dispatch_batch_norm_stats(self, kernel_name, input_buf, mean_buf,
+                                  var_buf, N, C, spatial_size):
+        """Encode batch_norm_stats kernel (3 bufs + 3 setBytes)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (C + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(mean_buf, 0, 1)
+            enc.setBuffer_offset_atIndex_(var_buf, 0, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", N), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", C), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", spatial_size), 4, 5)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_batch_norm_stats_ctypes(enc, pipeline, input_buf,
+                                            mean_buf, var_buf,
+                                            N, C, spatial_size,
+                                            groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: batch_norm_apply  (input, mean, var, weight, bias → output)
+    # ------------------------------------------------------------------
+
+    def dispatch_batch_norm_apply(self, kernel_name, input_buf, mean_buf,
+                                  var_buf, weight_buf, bias_buf, output_buf,
+                                  C, spatial_size, eps, has_weight, has_bias,
+                                  total):
+        """Encode batch_norm_apply kernel (6 bufs + 6 setBytes)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (total + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(mean_buf, 0, 1)
+            enc.setBuffer_offset_atIndex_(var_buf, 0, 2)
+            enc.setBuffer_offset_atIndex_(weight_buf, 0, 3)
+            enc.setBuffer_offset_atIndex_(bias_buf, 0, 4)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", C), 4, 6)
+            enc.setBytes_length_atIndex_(struct.pack("I", spatial_size), 4, 7)
+            enc.setBytes_length_atIndex_(struct.pack("f", eps), 4, 8)
+            enc.setBytes_length_atIndex_(struct.pack("I", has_weight), 4, 9)
+            enc.setBytes_length_atIndex_(struct.pack("I", has_bias), 4, 10)
+            enc.setBytes_length_atIndex_(struct.pack("I", total), 4, 11)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_batch_norm_apply_ctypes(enc, pipeline, input_buf,
+                                            mean_buf, var_buf, weight_buf,
+                                            bias_buf, output_buf,
+                                            C, spatial_size, eps,
+                                            has_weight, has_bias, total,
+                                            groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
     # Dispatch: Philox RNG fill  (seed, offset → output)
     # ------------------------------------------------------------------
 
@@ -1570,5 +1723,77 @@ def _encode_conv2d_ctypes(enc, pipeline, input_buf, weight_buf, bias_buf,
     _ctypes_set_buffer(enc, bias_buf, 0, 2)
     _ctypes_set_buffer(enc, output_buf, 0, 3)
     _ctypes_set_bytes(enc, params, len(params), 4)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_layer_norm_ctypes(enc, pipeline, input_buf, weight_buf, bias_buf,
+                               output_buf, outer_size, inner_size, eps,
+                               has_weight, has_bias, groups, tpg):
+    """Encode layer_norm kernel (4 bufs + 5 setBytes) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, weight_buf, 0, 1)
+    _ctypes_set_buffer(enc, bias_buf, 0, 2)
+    _ctypes_set_buffer(enc, output_buf, 0, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", outer_size), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", inner_size), 4, 5)
+    _ctypes_set_bytes(enc, struct.pack("f", eps), 4, 6)
+    _ctypes_set_bytes(enc, struct.pack("I", has_weight), 4, 7)
+    _ctypes_set_bytes(enc, struct.pack("I", has_bias), 4, 8)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_rms_norm_ctypes(enc, pipeline, input_buf, weight_buf,
+                             output_buf, outer_size, inner_size, eps,
+                             has_weight, groups, tpg):
+    """Encode rms_norm kernel (3 bufs + 4 setBytes) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, weight_buf, 0, 1)
+    _ctypes_set_buffer(enc, output_buf, 0, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", outer_size), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", inner_size), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("f", eps), 4, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", has_weight), 4, 6)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_batch_norm_stats_ctypes(enc, pipeline, input_buf, mean_buf,
+                                     var_buf, N, C, spatial_size,
+                                     groups, tpg):
+    """Encode batch_norm_stats kernel (3 bufs + 3 setBytes) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, mean_buf, 0, 1)
+    _ctypes_set_buffer(enc, var_buf, 0, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", N), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", C), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", spatial_size), 4, 5)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_batch_norm_apply_ctypes(enc, pipeline, input_buf, mean_buf,
+                                     var_buf, weight_buf, bias_buf,
+                                     output_buf, C, spatial_size, eps,
+                                     has_weight, has_bias, total,
+                                     groups, tpg):
+    """Encode batch_norm_apply kernel (6 bufs + 6 setBytes) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, mean_buf, 0, 1)
+    _ctypes_set_buffer(enc, var_buf, 0, 2)
+    _ctypes_set_buffer(enc, weight_buf, 0, 3)
+    _ctypes_set_buffer(enc, bias_buf, 0, 4)
+    _ctypes_set_buffer(enc, output_buf, 0, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", C), 4, 6)
+    _ctypes_set_bytes(enc, struct.pack("I", spatial_size), 4, 7)
+    _ctypes_set_bytes(enc, struct.pack("f", eps), 4, 8)
+    _ctypes_set_bytes(enc, struct.pack("I", has_weight), 4, 9)
+    _ctypes_set_bytes(enc, struct.pack("I", has_bias), 4, 10)
+    _ctypes_set_bytes(enc, struct.pack("I", total), 4, 11)
     _ctypes_dispatch_threadgroups(enc, groups, tpg)
     _ctypes_end_encoding(enc)

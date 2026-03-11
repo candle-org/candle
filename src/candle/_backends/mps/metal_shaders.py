@@ -618,6 +618,218 @@ def _gen_conv2d(types=None):
 
 
 # ---------------------------------------------------------------------------
+# Normalization Metal compute shaders
+# ---------------------------------------------------------------------------
+
+_LAYER_NORM_TEMPLATE = """
+kernel void layer_norm_{suffix}(
+    device const {type}* input   [[buffer(0)]],
+    device const {type}* weight  [[buffer(1)]],
+    device const {type}* bias    [[buffer(2)]],
+    device {type}* output        [[buffer(3)]],
+    constant uint& outer_size    [[buffer(4)]],
+    constant uint& inner_size    [[buffer(5)]],
+    constant float& eps          [[buffer(6)]],
+    constant uint& has_weight    [[buffer(7)]],
+    constant uint& has_bias      [[buffer(8)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    uint total = outer_size * inner_size;
+    if (gid >= total) return;
+
+    uint row = gid / inner_size;
+    uint col = gid % inner_size;
+    uint base = row * inner_size;
+
+    // Pass 1: mean
+    float sum_val = 0.0f;
+    for (uint i = 0; i < inner_size; i++) {{
+        sum_val += (float)input[base + i];
+    }}
+    float mean = sum_val / (float)inner_size;
+
+    // Pass 2: variance
+    float sum_sq = 0.0f;
+    for (uint i = 0; i < inner_size; i++) {{
+        float diff = (float)input[base + i] - mean;
+        sum_sq += diff * diff;
+    }}
+    float var = sum_sq / (float)inner_size;
+
+    float x = (float)input[gid];
+    float norm = (x - mean) / sqrt(var + eps);
+
+    if (has_weight != 0u) {{
+        norm = norm * (float)weight[col];
+    }}
+    if (has_bias != 0u) {{
+        norm = norm + (float)bias[col];
+    }}
+    output[gid] = ({type})norm;
+}}
+"""
+
+
+_RMS_NORM_TEMPLATE = """
+kernel void rms_norm_{suffix}(
+    device const {type}* input   [[buffer(0)]],
+    device const {type}* weight  [[buffer(1)]],
+    device {type}* output        [[buffer(2)]],
+    constant uint& outer_size    [[buffer(3)]],
+    constant uint& inner_size    [[buffer(4)]],
+    constant float& eps          [[buffer(5)]],
+    constant uint& has_weight    [[buffer(6)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    uint total = outer_size * inner_size;
+    if (gid >= total) return;
+
+    uint row = gid / inner_size;
+    uint col = gid % inner_size;
+    uint base = row * inner_size;
+
+    // Compute mean(x^2)
+    float sum_sq = 0.0f;
+    for (uint i = 0; i < inner_size; i++) {{
+        float v = (float)input[base + i];
+        sum_sq += v * v;
+    }}
+    float rms = sqrt(sum_sq / (float)inner_size + eps);
+
+    float x = (float)input[gid];
+    float norm = x / rms;
+
+    if (has_weight != 0u) {{
+        norm = norm * (float)weight[col];
+    }}
+    output[gid] = ({type})norm;
+}}
+"""
+
+
+_BATCH_NORM_STATS_TEMPLATE = """
+kernel void batch_norm_stats_{suffix}(
+    device const {type}* input  [[buffer(0)]],
+    device float* mean_out      [[buffer(1)]],
+    device float* var_out       [[buffer(2)]],
+    constant uint& N            [[buffer(3)]],
+    constant uint& C            [[buffer(4)]],
+    constant uint& spatial_size [[buffer(5)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    // One thread per channel
+    if (gid >= C) return;
+    uint c = gid;
+    uint count = N * spatial_size;
+
+    // Pass 1: mean
+    float sum_val = 0.0f;
+    for (uint n = 0; n < N; n++) {{
+        for (uint s = 0; s < spatial_size; s++) {{
+            uint idx = n * (C * spatial_size) + c * spatial_size + s;
+            sum_val += (float)input[idx];
+        }}
+    }}
+    float mean = sum_val / (float)count;
+
+    // Pass 2: variance
+    float sum_sq = 0.0f;
+    for (uint n = 0; n < N; n++) {{
+        for (uint s = 0; s < spatial_size; s++) {{
+            uint idx = n * (C * spatial_size) + c * spatial_size + s;
+            float diff = (float)input[idx] - mean;
+            sum_sq += diff * diff;
+        }}
+    }}
+    float var = sum_sq / (float)count;
+
+    mean_out[c] = mean;
+    var_out[c] = var;
+}}
+"""
+
+
+_BATCH_NORM_APPLY_TEMPLATE = """
+kernel void batch_norm_apply_{suffix}(
+    device const {type}* input  [[buffer(0)]],
+    device const float* mean    [[buffer(1)]],
+    device const float* var     [[buffer(2)]],
+    device const {type}* weight [[buffer(3)]],
+    device const {type}* bias   [[buffer(4)]],
+    device {type}* output       [[buffer(5)]],
+    constant uint& C            [[buffer(6)]],
+    constant uint& spatial_size [[buffer(7)]],
+    constant float& eps         [[buffer(8)]],
+    constant uint& has_weight   [[buffer(9)]],
+    constant uint& has_bias     [[buffer(10)]],
+    constant uint& total        [[buffer(11)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    if (gid >= total) return;
+
+    uint c = (gid / spatial_size) % C;
+    float m = mean[c];
+    float v = var[c];
+
+    float x = (float)input[gid];
+    float norm = (x - m) / sqrt(v + eps);
+
+    if (has_weight != 0u) {{
+        norm = norm * (float)weight[c];
+    }}
+    if (has_bias != 0u) {{
+        norm = norm + (float)bias[c];
+    }}
+    output[gid] = ({type})norm;
+}}
+"""
+
+
+def _gen_layer_norm(types=None):
+    """Generate layer_norm kernels (float/half only)."""
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_LAYER_NORM_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+def _gen_rms_norm(types=None):
+    """Generate rms_norm kernels (float/half only)."""
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_RMS_NORM_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+def _gen_batch_norm_stats(types=None):
+    """Generate batch_norm_stats kernels (float/half only)."""
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_BATCH_NORM_STATS_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+def _gen_batch_norm_apply(types=None):
+    """Generate batch_norm_apply kernels (float/half only)."""
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_BATCH_NORM_APPLY_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Build the full MSL source
 # ---------------------------------------------------------------------------
 
@@ -1234,6 +1446,12 @@ def _build_msl_source():
 
     # Conv2d compute kernel
     parts.append(_gen_conv2d())
+
+    # Normalization kernels
+    parts.append(_gen_layer_norm())
+    parts.append(_gen_rms_norm())
+    parts.append(_gen_batch_norm_stats())
+    parts.append(_gen_batch_norm_apply())
 
     # Philox RNG kernels
     parts.append(_gen_philox_uniform())

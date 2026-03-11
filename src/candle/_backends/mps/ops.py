@@ -2423,19 +2423,104 @@ def setitem(tensor, key, value):
 
 def batch_norm(input, running_mean, running_var, weight=None, bias=None,
                training=False, momentum=0.1, eps=1e-5):
+    ndim = len(input.shape)
+
+    # GPU path: f32/f16, contiguous, ndim >= 2
+    if (_can_use_gpu(input) and input.is_contiguous()
+            and input.dtype in (float32_dtype, float16_dtype) and ndim >= 2):
+        N = input.shape[0]
+        C = input.shape[1]
+        spatial_size = 1
+        for i in range(2, ndim):
+            spatial_size *= input.shape[i]
+        total = input.numel()
+
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(input.dtype)
+        from .runtime import get_runtime, buffer_contents
+        rt = get_runtime()
+
+        if training:
+            # Compute stats on GPU
+            mean_buf = rt.create_buffer(C * 4)  # float32 stats
+            var_buf = rt.create_buffer(C * 4)
+            d.dispatch_batch_norm_stats(
+                f"batch_norm_stats_{sfx}", _metal_buf(input),
+                mean_buf, var_buf, N, C, spatial_size)
+
+            # Read stats back to update running_mean/running_var on CPU
+            mean_ptr = buffer_contents(mean_buf)
+            var_ptr = buffer_contents(var_buf)
+            mean_np = np.frombuffer(
+                (ctypes.c_uint8 * (C * 4)).from_address(mean_ptr),
+                dtype=np.float32, count=C).copy()
+            var_np = np.frombuffer(
+                (ctypes.c_uint8 * (C * 4)).from_address(var_ptr),
+                dtype=np.float32, count=C).copy()
+
+            if running_mean is not None:
+                rm_np = running_mean._storage.data.ravel().astype(np.float32)
+                new_rm = ((1 - momentum) * rm_np + momentum * mean_np).astype(
+                    running_mean._storage.data.dtype)
+                running_mean._storage.data[:] = new_rm
+            if running_var is not None:
+                rv_np = running_var._storage.data.ravel().astype(np.float32)
+                new_rv = ((1 - momentum) * rv_np + momentum * var_np).astype(
+                    running_var._storage.data.dtype)
+                running_var._storage.data[:] = new_rv
+        else:
+            # Eval mode: use running stats
+            rm_np = _to_numpy(running_mean).astype(np.float32)
+            rv_np = _to_numpy(running_var).astype(np.float32)
+            mean_buf = rt.create_buffer(C * 4)
+            var_buf = rt.create_buffer(C * 4)
+            mean_ptr = buffer_contents(mean_buf)
+            var_ptr = buffer_contents(var_buf)
+            ctypes.memmove(mean_ptr, rm_np.ctypes.data, C * 4)
+            ctypes.memmove(var_ptr, rv_np.ctypes.data, C * 4)
+
+        # Apply normalization
+        out_buf = _alloc_output_buf(total, input.dtype)
+
+        has_weight = 0
+        if weight is not None and _can_use_gpu(weight):
+            weight_buf = _metal_buf(weight)
+            has_weight = 1
+        else:
+            weight_buf = rt.create_buffer(4)
+
+        has_bias = 0
+        if bias is not None and _can_use_gpu(bias):
+            bias_buf = _metal_buf(bias)
+            has_bias = 1
+        else:
+            bias_buf = rt.create_buffer(4)
+
+        d.dispatch_batch_norm_apply(
+            f"batch_norm_apply_{sfx}", _metal_buf(input), mean_buf,
+            var_buf, weight_buf, bias_buf, out_buf,
+            C, spatial_size, float(eps), has_weight, has_bias, total)
+
+        from ..._tensor import _compute_strides
+        out_shape = tuple(input.shape)
+        out_stride = _compute_strides(out_shape)
+        return _from_metal_buffer(out_buf, out_shape, out_stride, input.dtype, input.device)
+
+    # Numpy fallback
     arr = _to_numpy(input)
-    ndim = len(arr.shape)
 
     if training:
         axes = (0,) + tuple(range(2, ndim))
         mean = arr.mean(axis=axes)
         var = arr.var(axis=axes)
         if running_mean is not None:
-            rm = _to_numpy(running_mean)
-            rm[:] = (1 - momentum) * rm + momentum * mean
+            rm = running_mean._storage.data.ravel()
+            new_rm = (1 - momentum) * rm + momentum * mean
+            running_mean._storage.data[:] = new_rm.astype(rm.dtype)
         if running_var is not None:
-            rv = _to_numpy(running_var)
-            rv[:] = (1 - momentum) * rv + momentum * var
+            rv = running_var._storage.data.ravel()
+            new_rv = (1 - momentum) * rv + momentum * var
+            running_var._storage.data[:] = new_rv.astype(rv.dtype)
     else:
         mean = _to_numpy(running_mean)
         var = _to_numpy(running_var)
@@ -2606,13 +2691,50 @@ def embedding(weight, indices, padding_idx=None, scale_grad_by_freq=False, spars
 
 
 def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
-    arr = _to_numpy(input)
     norm_shape = tuple(normalized_shape)
     if len(norm_shape) == 0:
         raise ValueError("normalized_shape must be non-empty")
-    if tuple(arr.shape[-len(norm_shape):]) != norm_shape:
+    if tuple(input.shape[-len(norm_shape):]) != norm_shape:
         raise ValueError("normalized_shape mismatch")
 
+    # GPU path: f32/f16, contiguous
+    if (_can_use_gpu(input) and input.is_contiguous()
+            and input.dtype in (float32_dtype, float16_dtype)):
+        inner_size = 1
+        for s in norm_shape:
+            inner_size *= s
+        outer_size = input.numel() // inner_size
+
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(input.dtype)
+        out_buf = _alloc_output_buf(input.numel(), input.dtype)
+
+        from .runtime import get_runtime
+        has_weight = 0
+        if weight is not None and _can_use_gpu(weight):
+            weight_buf = _metal_buf(weight)
+            has_weight = 1
+        else:
+            weight_buf = get_runtime().create_buffer(4)
+
+        has_bias = 0
+        if bias is not None and _can_use_gpu(bias):
+            bias_buf = _metal_buf(bias)
+            has_bias = 1
+        else:
+            bias_buf = get_runtime().create_buffer(4)
+
+        d.dispatch_layer_norm(
+            f"layer_norm_{sfx}", _metal_buf(input), weight_buf, bias_buf,
+            out_buf, outer_size, inner_size, float(eps), has_weight, has_bias)
+
+        from ..._tensor import _compute_strides
+        out_shape = tuple(input.shape)
+        out_stride = _compute_strides(out_shape)
+        return _from_metal_buffer(out_buf, out_shape, out_stride, input.dtype, input.device)
+
+    # Numpy fallback
+    arr = _to_numpy(input)
     axis = tuple(range(arr.ndim - len(norm_shape), arr.ndim))
     mean = arr.mean(axis=axis, keepdims=True)
     var = arr.var(axis=axis, keepdims=True)
@@ -2947,8 +3069,39 @@ def floor_divide(a, b):
 
 
 def rms_norm(input, normalized_shape, weight=None, eps=1e-6):
-    arr = _to_numpy(input)
     norm_shape = tuple(normalized_shape)
+    inner_size = 1
+    for s in norm_shape:
+        inner_size *= s
+
+    # GPU path: f32/f16, contiguous
+    if (_can_use_gpu(input) and input.is_contiguous()
+            and input.dtype in (float32_dtype, float16_dtype)):
+        outer_size = input.numel() // inner_size
+
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(input.dtype)
+        out_buf = _alloc_output_buf(input.numel(), input.dtype)
+
+        from .runtime import get_runtime
+        has_weight = 0
+        if weight is not None and _can_use_gpu(weight):
+            weight_buf = _metal_buf(weight)
+            has_weight = 1
+        else:
+            weight_buf = get_runtime().create_buffer(4)
+
+        d.dispatch_rms_norm(
+            f"rms_norm_{sfx}", _metal_buf(input), weight_buf,
+            out_buf, outer_size, inner_size, float(eps), has_weight)
+
+        from ..._tensor import _compute_strides
+        out_shape = tuple(input.shape)
+        out_stride = _compute_strides(out_shape)
+        return _from_metal_buffer(out_buf, out_shape, out_stride, input.dtype, input.device)
+
+    # Numpy fallback
+    arr = _to_numpy(input)
     axis = tuple(range(arr.ndim - len(norm_shape), arr.ndim))
     variance = np.mean(arr ** 2, axis=axis, keepdims=True)
     out = arr / np.sqrt(variance + eps)
