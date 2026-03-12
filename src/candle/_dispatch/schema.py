@@ -168,6 +168,36 @@ class OpSchema:
             name_sig = f"!int!, !{t1}!" if isinstance(dim0, int) and not isinstance(dim0, bool) else f"!{t0}!, !int!"
             return int_sig, name_sig
 
+        def _torch_dtype_label(value):
+            dtype_name = getattr(value, "name", str(value))
+            if dtype_name == "int64":
+                return "Long"
+            if dtype_name == "int32":
+                return "Int"
+            if dtype_name == "int16":
+                return "Short"
+            if dtype_name == "int8":
+                return "Char"
+            if dtype_name == "bool":
+                return "Bool"
+            return dtype_name
+
+        def _validate_unary_requires_float(op_name, value):
+            if not hasattr(value, "dtype"):
+                return
+            dtype = value.dtype
+            if getattr(dtype, "is_floating_point", False) or getattr(dtype, "is_complex", False):
+                return
+            dtype_label = _torch_dtype_label(dtype)
+            if op_name == "gelu":
+                raise NotImplementedError(f"\"GeluKernelImpl\" not implemented for '{dtype_label}'")
+            if op_name == "silu":
+                raise NotImplementedError(f"\"silu_cpu\" not implemented for '{dtype_label}'")
+            if op_name == "mish":
+                raise NotImplementedError(f"\"mish_cpu\" not implemented for '{dtype_label}'")
+            if op_name == "frac":
+                raise NotImplementedError(f"\"frac_cpu\" not implemented for '{dtype_label}'")
+
         def _validate_sum_mean_dim(value, input_tensor):
             # Match torch call-site validation for sum/mean(dim=...).
             if value is None:
@@ -683,6 +713,9 @@ class OpSchema:
                 continue
             value = bound[param.name]
             ptype = getattr(param, "type_name", None)
+            if op_short_name in {"gelu", "silu", "mish", "frac"} and param.name == "input":
+                _validate_unary_requires_float(op_short_name, value)
+                continue
             if op_short_name == "sum" and param.name == "dim":
                 input_tensor = bound.get("input")
                 _validate_sum_mean_dim(value, input_tensor)

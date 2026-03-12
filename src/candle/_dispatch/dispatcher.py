@@ -350,7 +350,9 @@ def _wrap_dispatch_error(exc, op_name, dispatch_device):
     context = _format_dispatch_context(op_name, dispatch_device)
     msg = f"{exc} [{context}]"
     exc_type = type(exc)
-    if isinstance(exc, (ValueError, IndexError, TypeError, RuntimeError)):
+    if isinstance(exc, (ValueError, IndexError, TypeError, RuntimeError, NotImplementedError)):
+        if isinstance(exc, NotImplementedError):
+            return exc
         try:
             return exc_type(msg)
         except Exception:
