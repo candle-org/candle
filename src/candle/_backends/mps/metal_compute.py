@@ -1028,6 +1028,221 @@ class MetalKernelDispatcher:
         rt.commit_and_wait(cmd)
 
     # ------------------------------------------------------------------
+    # Dispatch: group_norm  (input, weight, bias → output)
+    # ------------------------------------------------------------------
+
+    def dispatch_group_norm(self, kernel_name, input_buf, weight_buf, bias_buf,
+                            output_buf, N, C, spatial_size, num_groups, eps,
+                            has_weight, has_bias, total):
+        """Encode group_norm kernel (4 bufs + 8 setBytes)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (total + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(weight_buf, 0, 1)
+            enc.setBuffer_offset_atIndex_(bias_buf, 0, 2)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", N), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", C), 4, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", spatial_size), 4, 6)
+            enc.setBytes_length_atIndex_(struct.pack("I", num_groups), 4, 7)
+            enc.setBytes_length_atIndex_(struct.pack("f", eps), 4, 8)
+            enc.setBytes_length_atIndex_(struct.pack("I", has_weight), 4, 9)
+            enc.setBytes_length_atIndex_(struct.pack("I", has_bias), 4, 10)
+            enc.setBytes_length_atIndex_(struct.pack("I", total), 4, 11)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_group_norm_ctypes(enc, pipeline, input_buf, weight_buf,
+                                      bias_buf, output_buf, N, C,
+                                      spatial_size, num_groups, eps,
+                                      has_weight, has_bias, total,
+                                      groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: max_pool2d  (input → output, packed params)
+    # ------------------------------------------------------------------
+
+    def dispatch_pool2d(self, kernel_name, input_buf, output_buf, params_packed, numel):
+        """Encode pool2d kernel (2 bufs + packed uint params)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 1)
+            enc.setBytes_length_atIndex_(params_packed, len(params_packed), 2)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_pool2d_ctypes(enc, pipeline, input_buf, output_buf,
+                                  params_packed, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: cumsum  (input → output, sequential prefix sum per row)
+    # ------------------------------------------------------------------
+
+    def dispatch_cumsum(self, kernel_name, input_buf, output_buf,
+                        outer_size, dim_size, inner_size):
+        """Encode cumsum kernel (2 bufs + 3 setBytes)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        numel = outer_size * inner_size
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 1)
+            enc.setBytes_length_atIndex_(struct.pack("I", outer_size), 4, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", dim_size), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", inner_size), 4, 4)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_cumsum_ctypes(enc, pipeline, input_buf, output_buf,
+                                  outer_size, dim_size, inner_size,
+                                  groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: adaptive_avg_pool2d
+    # ------------------------------------------------------------------
+
+    def dispatch_adaptive_avg_pool2d(self, kernel_name, input_buf, output_buf,
+                                     N, C, H_in, W_in, oH, oW, total):
+        """Encode adaptive_avg_pool2d kernel (2 bufs + 7 setBytes)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (total + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 1)
+            enc.setBytes_length_atIndex_(struct.pack("I", N), 4, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", C), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", H_in), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", W_in), 4, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", oH), 4, 6)
+            enc.setBytes_length_atIndex_(struct.pack("I", oW), 4, 7)
+            enc.setBytes_length_atIndex_(struct.pack("I", total), 4, 8)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_adaptive_avg_pool2d_ctypes(enc, pipeline, input_buf,
+                                               output_buf, N, C, H_in, W_in,
+                                               oH, oW, total, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: upsample_nearest2d / upsample_bilinear2d
+    # ------------------------------------------------------------------
+
+    def dispatch_upsample(self, kernel_name, input_buf, output_buf,
+                          N, C, H_in, W_in, H_out, W_out, extra_uint, total):
+        """Encode upsample kernel (2 bufs + setBytes). extra_uint is align_corners for bilinear."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (total + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 1)
+            enc.setBytes_length_atIndex_(struct.pack("I", N), 4, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", C), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", H_in), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", W_in), 4, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", H_out), 4, 6)
+            enc.setBytes_length_atIndex_(struct.pack("I", W_out), 4, 7)
+            enc.setBytes_length_atIndex_(struct.pack("I", extra_uint), 4, 8)
+            enc.setBytes_length_atIndex_(struct.pack("I", total), 4, 9)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_upsample_ctypes(enc, pipeline, input_buf, output_buf,
+                                    N, C, H_in, W_in, H_out, W_out,
+                                    extra_uint, total, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: pad_constant
+    # ------------------------------------------------------------------
+
+    def dispatch_pad_constant(self, kernel_name, input_buf, output_buf,
+                              in_shape_packed, pad_before_packed,
+                              out_shape_packed, fill_val_bytes, fill_val_size,
+                              ndim, total):
+        """Encode pad_constant kernel (2 bufs + packed shapes + fill + ndim + total)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (total + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 1)
+            enc.setBytes_length_atIndex_(in_shape_packed, len(in_shape_packed), 2)
+            enc.setBytes_length_atIndex_(pad_before_packed, len(pad_before_packed), 3)
+            enc.setBytes_length_atIndex_(out_shape_packed, len(out_shape_packed), 4)
+            enc.setBytes_length_atIndex_(fill_val_bytes, fill_val_size, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", ndim), 4, 6)
+            enc.setBytes_length_atIndex_(struct.pack("I", total), 4, 7)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_pad_constant_ctypes(enc, pipeline, input_buf, output_buf,
+                                        in_shape_packed, pad_before_packed,
+                                        out_shape_packed, fill_val_bytes,
+                                        fill_val_size, ndim, total,
+                                        groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
     # Dispatch: Philox RNG fill  (seed, offset → output)
     # ------------------------------------------------------------------
 
@@ -1795,5 +2010,105 @@ def _encode_batch_norm_apply_ctypes(enc, pipeline, input_buf, mean_buf,
     _ctypes_set_bytes(enc, struct.pack("I", has_weight), 4, 9)
     _ctypes_set_bytes(enc, struct.pack("I", has_bias), 4, 10)
     _ctypes_set_bytes(enc, struct.pack("I", total), 4, 11)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_group_norm_ctypes(enc, pipeline, input_buf, weight_buf, bias_buf,
+                               output_buf, N, C, spatial_size, num_groups,
+                               eps, has_weight, has_bias, total, groups, tpg):
+    """Encode group_norm kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, weight_buf, 0, 1)
+    _ctypes_set_buffer(enc, bias_buf, 0, 2)
+    _ctypes_set_buffer(enc, output_buf, 0, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", N), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", C), 4, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", spatial_size), 4, 6)
+    _ctypes_set_bytes(enc, struct.pack("I", num_groups), 4, 7)
+    _ctypes_set_bytes(enc, struct.pack("f", eps), 4, 8)
+    _ctypes_set_bytes(enc, struct.pack("I", has_weight), 4, 9)
+    _ctypes_set_bytes(enc, struct.pack("I", has_bias), 4, 10)
+    _ctypes_set_bytes(enc, struct.pack("I", total), 4, 11)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_pool2d_ctypes(enc, pipeline, input_buf, output_buf,
+                           params_packed, groups, tpg):
+    """Encode pool2d kernel (2 bufs + packed params) via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, output_buf, 0, 1)
+    _ctypes_set_bytes(enc, params_packed, len(params_packed), 2)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_cumsum_ctypes(enc, pipeline, input_buf, output_buf,
+                           outer_size, dim_size, inner_size, groups, tpg):
+    """Encode cumsum kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, output_buf, 0, 1)
+    _ctypes_set_bytes(enc, struct.pack("I", outer_size), 4, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", dim_size), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", inner_size), 4, 4)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_adaptive_avg_pool2d_ctypes(enc, pipeline, input_buf, output_buf,
+                                        N, C, H_in, W_in, oH, oW, total,
+                                        groups, tpg):
+    """Encode adaptive_avg_pool2d kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, output_buf, 0, 1)
+    _ctypes_set_bytes(enc, struct.pack("I", N), 4, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", C), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", H_in), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", W_in), 4, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", oH), 4, 6)
+    _ctypes_set_bytes(enc, struct.pack("I", oW), 4, 7)
+    _ctypes_set_bytes(enc, struct.pack("I", total), 4, 8)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_upsample_ctypes(enc, pipeline, input_buf, output_buf,
+                              N, C, H_in, W_in, H_out, W_out,
+                              extra_uint, total, groups, tpg):
+    """Encode upsample kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, output_buf, 0, 1)
+    _ctypes_set_bytes(enc, struct.pack("I", N), 4, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", C), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", H_in), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", W_in), 4, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", H_out), 4, 6)
+    _ctypes_set_bytes(enc, struct.pack("I", W_out), 4, 7)
+    _ctypes_set_bytes(enc, struct.pack("I", extra_uint), 4, 8)
+    _ctypes_set_bytes(enc, struct.pack("I", total), 4, 9)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_pad_constant_ctypes(enc, pipeline, input_buf, output_buf,
+                                 in_shape_packed, pad_before_packed,
+                                 out_shape_packed, fill_val_bytes,
+                                 fill_val_size, ndim, total, groups, tpg):
+    """Encode pad_constant kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, output_buf, 0, 1)
+    _ctypes_set_bytes(enc, in_shape_packed, len(in_shape_packed), 2)
+    _ctypes_set_bytes(enc, pad_before_packed, len(pad_before_packed), 3)
+    _ctypes_set_bytes(enc, out_shape_packed, len(out_shape_packed), 4)
+    _ctypes_set_bytes(enc, fill_val_bytes, fill_val_size, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", ndim), 4, 6)
+    _ctypes_set_bytes(enc, struct.pack("I", total), 4, 7)
     _ctypes_dispatch_threadgroups(enc, groups, tpg)
     _ctypes_end_encoding(enc)
