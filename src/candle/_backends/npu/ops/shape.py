@@ -1582,14 +1582,29 @@ def cartesian_prod(*tensors):
         if t.dtype != first.dtype:
             raise RuntimeError("meshgrid expects all tensors to have the same dtype")
 
-    raise RuntimeError("NPU cartesian_prod is not implemented without CPU fallback")
+    if len(tensors) == 1:
+        return tensors[0].unsqueeze(1)
+
+    sizes = [int(t.shape[0]) for t in tensors]
+    columns = []
+    for i, t in enumerate(tensors):
+        repeat_inner = 1
+        for s in sizes[i + 1:]:
+            repeat_inner *= s
+        repeat_outer = 1
+        for s in sizes[:i]:
+            repeat_outer *= s
+        col = t.unsqueeze(1).repeat(1, repeat_inner).reshape(-1).repeat(repeat_outer)
+        columns.append(col)
+
+    return stack(columns, dim=1)
 
 
 def block_diag(*tensors):
     tensors = _normalize_tensor_sequence_args(tensors)
 
     if len(tensors) == 0:
-        raise RuntimeError("NPU block_diag is not implemented without CPU fallback")
+        raise RuntimeError("block_diag expects at least one tensor")
 
     first = tensors[0]
     for t in tensors:
@@ -1600,7 +1615,36 @@ def block_diag(*tensors):
         if t.dtype != first.dtype:
             raise ValueError("block_diag expects tensors with the same dtype")
 
-    raise RuntimeError("NPU block_diag is not implemented without CPU fallback")
+    from ..creation import full_create
+
+    total_rows = sum(int(t.shape[0]) for t in tensors)
+    total_cols = sum(int(t.shape[1]) for t in tensors)
+    out = full_create((total_rows, total_cols), 0.0, dtype=first.dtype, device=first.device)
+
+    runtime = npu_runtime.get_runtime((first.device.index or 0))
+    dst_base = int(_unwrap_storage(out).data_ptr())
+    itemsize = _dtype_itemsize(first.dtype)
+
+    row_off = 0
+    col_off = 0
+    for t in tensors:
+        src = contiguous(t) if not t.is_contiguous() else t
+        nrows = int(src.shape[0])
+        ncols = int(src.shape[1])
+        src_base = int(_unwrap_storage(src).data_ptr())
+        for r in range(nrows):
+            dst_offset = ((row_off + r) * total_cols + col_off) * itemsize
+            src_offset = r * ncols * itemsize
+            npu_runtime.memcpy_d2d(
+                dst_base + dst_offset,
+                ncols * itemsize,
+                src_base + src_offset,
+                runtime=runtime,
+            )
+        row_off += nrows
+        col_off += ncols
+
+    return out
 
 
 def broadcast_to_op(a, shape):
@@ -1989,6 +2033,7 @@ def pad_sequence(seqs, batch_first=False, padding_value=0.0, padding_side="right
         out_shape = (max_len, batch) + trailing
     out = full_create(out_shape, padding_value, dtype=first.dtype, device=first.device)
 
+    runtime = npu_runtime.get_runtime((first.device.index or 0))
     itemsize = _dtype_itemsize(first.dtype)
     dst_base = int(_unwrap_storage(out).data_ptr())
     out_stride = out.stride
@@ -2189,33 +2234,9 @@ def gather(a, dim, index):
             raise ValueError("index shape mismatch")
     _validate_index_bounds(index, a.shape[dim], allow_negative=False, name="gather")
 
-    if _use_soc_fallback("gather"):
-        return _gather_310b_fallback(a, dim, index)
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    out_shape = index.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(a.dtype), runtime=runtime)
-    aclnn.gather(
-        _unwrap_storage(a).data_ptr(),
-        _unwrap_storage(index).data_ptr(),
-        out_ptr,
-        a.shape,
-        a.stride,
-        a.dtype,
-        index.shape,
-        index.stride,
-        index.dtype,
-        out_shape,
-        out_stride,
-        a.dtype,
-        dim,
-        runtime,
-        stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    # Always use scatter-based fallback because aclnnGather is poisoned by
+    # aclnnMaxDim (used by argmax/argmin/topk/argsort/sort) on this SoC.
+    return _gather_310b_fallback(a, dim, index)
 
 
 def index_select(a, dim, index):

@@ -20,80 +20,13 @@ from .reduce import maximum, mean, norm_
 
 
 def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
-    """Compute layer normalization using aclnnLayerNorm."""
-    if _use_soc_fallback("layer_norm"):
-        return _layer_norm_310b_fallback(input, normalized_shape, weight=weight, bias=bias, eps=eps)
+    """Compute layer normalization using composite fallback.
 
-    runtime = npu_runtime.get_runtime((input.device.index or 0))
-    stream = npu_state.current_stream((input.device.index or 0))
-
-    if not aclnn.layer_norm_symbols_ok():
-        raise RuntimeError("aclnnLayerNorm not available")
-
-    # Compute stats shape (all dims except normalized dims)
-    if isinstance(normalized_shape, int):
-        normalized_shape = (normalized_shape,)
-
-    num_normalized_dims = len(normalized_shape)
-    # Stats (mean/rstd) must have same rank as input, with normalized dims replaced by 1
-    if num_normalized_dims > 0:
-        stats_shape = tuple(
-            s if i < len(input.shape) - num_normalized_dims else 1
-            for i, s in enumerate(input.shape)
-        )
-    else:
-        stats_shape = input.shape
-    stats_stride = npu_runtime._contiguous_stride(stats_shape)
-    stats_numel = _numel(stats_shape)
-
-    out_shape = input.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_numel = _numel(out_shape)
-    itemsize = _dtype_itemsize(input.dtype)
-
-    out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
-    # Allocate mean/rstd for backward pass (layer_norm backward needs them)
-    stats_numel_val = max(stats_numel, 1)
-    float_dtype = input.dtype  # same dtype for stats
-    mean_ptr = npu_runtime._alloc_device(stats_numel_val * 4, runtime=runtime)  # float32
-    rstd_ptr = npu_runtime._alloc_device(stats_numel_val * 4, runtime=runtime)  # float32
-    # Wrap in Storage to prevent early deallocation
-    mean_storage = npu_typed_storage_from_ptr(mean_ptr, stats_numel_val, float_dtype, device=input.device)
-    rstd_storage = npu_typed_storage_from_ptr(rstd_ptr, stats_numel_val, float_dtype, device=input.device)
-
-    weight_ptr = _unwrap_storage(weight).data_ptr() if weight is not None else None
-    bias_ptr = _unwrap_storage(bias).data_ptr() if bias is not None else None
-
-    aclnn.layer_norm(
-        _unwrap_storage(input).data_ptr(),
-        weight_ptr,
-        bias_ptr,
-        out_ptr,
-        mean_ptr,
-        rstd_ptr,
-        input.shape, input.stride,
-        weight.shape if weight is not None else (),
-        weight.stride if weight is not None else (),
-        bias.shape if bias is not None else (),
-        bias.stride if bias is not None else (),
-        out_shape, out_stride,
-        stats_shape, stats_stride,
-        normalized_shape,
-        eps,
-        input.dtype,
-        runtime, stream=stream.stream
-    )
-
-    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, input.dtype, device=input.device)
-    out = _wrap_tensor(out_storage, out_shape, out_stride)
-    # Attach mean/rstd for backward pass
-    out._backward_data = {
-        "mean_ptr": mean_ptr, "rstd_ptr": rstd_ptr,
-        "mean_storage": mean_storage, "rstd_storage": rstd_storage,
-        "stats_shape": stats_shape, "stats_stride": stats_stride,
-        "normalized_shape": tuple(normalized_shape),
-    }
-    return out
+    Always uses the composite path because aclnnLayerNorm silently corrupts
+    ACLNN internal state on float16, causing subsequent aclnn calls
+    (cast, sub, etc.) to fail with 561000/561103.
+    """
+    return _layer_norm_310b_fallback(input, normalized_shape, weight=weight, bias=bias, eps=eps)
 
 
 def _layer_norm_310b_fallback(input, normalized_shape, weight=None, bias=None, eps=1e-5):

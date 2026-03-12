@@ -453,11 +453,12 @@ def trunc(a):
 
 
 def frac(a):
-    try:
-        return _unary_op(a, aclnn.frac, "frac")
-    except RuntimeError as exc:
-        if "561103" not in str(exc):
-            raise
+    """Fractional part via composite path (x - trunc(x)).
+
+    Always uses the composite fallback because aclnnFrac silently corrupts
+    ACLNN internal state on certain SoC/dtype combinations, causing
+    subsequent aclnn calls to fail with 561103.
+    """
     out = trunc(a)
     return add(a, neg(out))
 

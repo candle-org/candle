@@ -470,18 +470,19 @@ def any_(a, dim=None, keepdim=False):
         runtime,
         stream=stream.stream,
     )
-    cast_ptr = npu_runtime._alloc_device(_numel(a.shape) * _dtype_itemsize(int32_dtype), runtime=runtime)
+    # Cast bool→float32 (not int32) to avoid poisoning aclnn.cast state
+    cast_ptr = npu_runtime._alloc_device(_numel(a.shape) * _dtype_itemsize(float_dtype), runtime=runtime)
     aclnn.cast(
         mask_ptr,
         cast_ptr,
         a.shape,
         a.stride,
         bool_dtype,
-        int32_dtype,
+        float_dtype,
         runtime,
         stream=stream.stream,
     )
-    count_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(int32_dtype), runtime=runtime)
+    count_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(float_dtype), runtime=runtime)
     dims_payload = {
         "dims": dims if dim is not None else None,
         "out_shape": out_shape,
@@ -492,7 +493,7 @@ def any_(a, dim=None, keepdim=False):
         count_ptr,
         a.shape,
         a.stride,
-        int32_dtype,
+        float_dtype,
         dims_payload,
         keepdim,
         runtime,
@@ -504,7 +505,7 @@ def any_(a, dim=None, keepdim=False):
         out_ptr,
         out_shape,
         out_stride,
-        int32_dtype,
+        float_dtype,
         runtime,
         stream=stream.stream,
     )
