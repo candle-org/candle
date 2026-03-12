@@ -92,14 +92,12 @@ class FSDPState:
 
 
 def _has_parent_fsdp(module):
-    # TODO: Implement proper parent detection for multi-level FSDP nesting.
-    # nn.Module has no parent reference, so detection requires either:
-    #   (a) walking the root module tree, or
-    #   (b) marking parent status during bottom-up fully_shard() calls.
-    # For the MVP, all modules are treated as root. This is correct when
-    # fully_shard() is called on a single module or on a flat set of modules,
-    # but will need fixing for nested FSDP wrapping (e.g. per-layer sharding).
-    return False
+    """Check if any ancestor module in the FSDP tree is also FSDP-managed.
+
+    Relies on the ``_fsdp_has_parent`` flag set during ``fully_shard()``
+    bottom-up traversal.
+    """
+    return getattr(module, '_fsdp_has_parent', False)
 
 
 def _extract_tensors_from_output(output):

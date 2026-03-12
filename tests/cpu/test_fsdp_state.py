@@ -53,3 +53,53 @@ def test_fsdp_state_post_forward_reshards():
     x = torch.randn(2, 8)
     out = m(x)
     assert isinstance(m.weight, DTensor), "Expected weight to be resharded to DTensor after forward"
+
+
+def test_fsdp_nested_parent_detection():
+    """fully_shard() should correctly detect parent/child FSDP relationships."""
+    from candle.distributed._composable.fsdp import fully_shard
+
+    class MockMesh:
+        def __init__(self):
+            self.device_type = "cpu"
+            self._mesh_shape = (1,)
+            self.mesh_dim_names = ("shard",)
+            self._dim_groups = [None]
+        def get_group(self, dim=0): return None
+        def size(self, dim=0): return 1
+        @property
+        def ndim(self): return 1
+
+    class ThreeLayer(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc1 = nn.Linear(8, 8)
+            self.fc2 = nn.Linear(8, 8)
+            self.head = nn.Linear(8, 1)  # root-owned param
+        def forward(self, x):
+            return self.head(self.fc2(self.fc1(x)))
+
+    model = ThreeLayer()
+    mesh = MockMesh()
+
+    # Bottom-up: shard children first, then root
+    fully_shard(model.fc1, mesh=mesh)
+    fully_shard(model.fc2, mesh=mesh)
+    fully_shard(model, mesh=mesh)  # root has head's params
+
+    # Children should have _fsdp_has_parent set
+    assert getattr(model.fc1, '_fsdp_has_parent', False), "fc1 should have _fsdp_has_parent"
+    assert getattr(model.fc2, '_fsdp_has_parent', False), "fc2 should have _fsdp_has_parent"
+
+    # Root should NOT have _fsdp_has_parent
+    assert not getattr(model, '_fsdp_has_parent', False)
+
+    # Trigger lazy init via forward
+    x = torch.randn(2, 8)
+    out = model(x)
+
+    # Root should be detected as root
+    assert model._fsdp_state._is_root is True
+    # Children should be detected as non-root
+    assert model.fc1._fsdp_state._is_root is False
+    assert model.fc2._fsdp_state._is_root is False
