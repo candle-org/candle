@@ -16,7 +16,9 @@ _FALLBACK_OPS = {
     "910a": frozenset({
         "amax", "amin", "argmax", "argmin",
     }),
-    "910b": frozenset(),
+    "910b": frozenset({
+        "amax", "amin", "argmax", "argmin",
+    }),
     "310b": frozenset({
         "atan2", "where", "flip", "argsort", "sort", "topk",
         "diag", "lerp", "remainder", "isclose", "softplus",

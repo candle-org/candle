@@ -2,8 +2,9 @@ from candle._backends.npu import ops_soc
 
 
 def test_soc_policy_profile_mapping_contains_expected_profiles():
-    assert ops_soc.fallback_ops("910a") == frozenset()
-    assert ops_soc.fallback_ops("910b") == frozenset()
+    _reduce_fallbacks = frozenset({"amax", "amin", "argmax", "argmin"})
+    assert ops_soc.fallback_ops("910a") == _reduce_fallbacks
+    assert ops_soc.fallback_ops("910b") == _reduce_fallbacks
     assert ops_soc.fallback_ops("310p") == frozenset()
     assert "uniform_" in ops_soc.fallback_ops("310b")
 
