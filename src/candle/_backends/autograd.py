@@ -85,8 +85,8 @@ def _autograd_binary(name, backward_impl, *, save_inputs=True):
             node_holder["node"] = node
             if save_inputs:
                 node.save_for_backward(a, b)
-                node._saved_fields["self"] = node._saved_tensors[0]
-                node._saved_fields["other"] = node._saved_tensors[1]
+                node._saved_fields["self"] = node._saved_tensors_list[0]
+                node._saved_fields["other"] = node._saved_tensors_list[1]
             out.grad_fn = node
             out.requires_grad = True
         return out
