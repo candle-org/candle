@@ -5,6 +5,16 @@ import threading
 _STATE = threading.local()
 
 
+class GradientEdge:
+    def __init__(self, node, output_nr):
+        self.node = node
+        self.output_nr = output_nr
+
+
+def get_gradient_edge(tensor):
+    return GradientEdge(tensor.grad_fn, tensor.output_nr)
+
+
 def _stack():
     stack = getattr(_STATE, "hooks", None)
     if stack is None:
@@ -32,4 +42,4 @@ def saved_tensors_hooks(pack_hook, unpack_hook):
         stack.pop()
 
 
-__all__ = ['saved_tensors_hooks']
+__all__ = ["saved_tensors_hooks", "GradientEdge", "get_gradient_edge"]

@@ -1,7 +1,7 @@
 import inspect
 
 from .grad_mode import is_grad_enabled
-from .node import Node
+from .node import Node, InputMetadata
 
 
 class FunctionCtx:
@@ -110,6 +110,7 @@ class Function(metaclass=FunctionMeta):
 
         # Create Node
         node = Node(_backward, input_tensors)
+        node._input_metadata = [InputMetadata(t) for t in input_tensors]
 
         # Wire saved tensors through Node
         if ctx._to_save is not None:

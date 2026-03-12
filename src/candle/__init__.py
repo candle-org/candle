@@ -150,8 +150,8 @@ from ._dispatch import (
     get_pipeline_config,
 )
 from ._backends import cpu
-from ._autograd.grad_mode import is_grad_enabled, set_grad_enabled, no_grad, enable_grad, inference_mode
-from . import _autograd as autograd
+from .autograd.grad_mode import is_grad_enabled, set_grad_enabled, no_grad, enable_grad, inference_mode
+from . import autograd
 from ._backends import autograd as _autograd_kernels
 from . import backends
 from . import cuda

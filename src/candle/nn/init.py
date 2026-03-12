@@ -18,25 +18,25 @@ import warnings
 # ---------------------------------------------------------------------------
 
 def _no_grad_uniform_(tensor, a, b, generator=None):
-    from .._autograd.grad_mode import no_grad
+    from ..autograd.grad_mode import no_grad
     with no_grad():
         return tensor.uniform_(a, b, generator=generator)
 
 
 def _no_grad_normal_(tensor, mean, std, generator=None):
-    from .._autograd.grad_mode import no_grad
+    from ..autograd.grad_mode import no_grad
     with no_grad():
         return tensor.normal_(mean, std, generator=generator)
 
 
 def _no_grad_fill_(tensor, val):
-    from .._autograd.grad_mode import no_grad
+    from ..autograd.grad_mode import no_grad
     with no_grad():
         return tensor.fill_(val)
 
 
 def _no_grad_zero_(tensor):
-    from .._autograd.grad_mode import no_grad
+    from ..autograd.grad_mode import no_grad
     with no_grad():
         return tensor.zero_()
 
@@ -210,7 +210,7 @@ def eye_(tensor):
     if 0 in tensor.shape:
         warnings.warn("Initializing zero-element tensors is a no-op")
         return tensor
-    from .._autograd.grad_mode import no_grad
+    from ..autograd.grad_mode import no_grad
     with no_grad():
         from .._creation import eye as _eye
         _eye(tensor.shape[0], tensor.shape[1],
@@ -242,7 +242,7 @@ def dirac_(tensor, groups=1):
     out_chans_per_grp = sizes[0] // groups
     min_dim = min(out_chans_per_grp, sizes[1])
 
-    from .._autograd.grad_mode import no_grad
+    from ..autograd.grad_mode import no_grad
     import numpy as np
     with no_grad():
         arr = np.zeros(sizes, dtype=np.float32)
@@ -392,7 +392,7 @@ def orthogonal_(tensor, gain=1.0, *, generator=None):
     if rows < cols:
         q = q.t()
 
-    from .._autograd.grad_mode import no_grad
+    from ..autograd.grad_mode import no_grad
     with no_grad():
         tensor.view_as(q).copy_(q)
         tensor.mul_(gain)
@@ -419,7 +419,7 @@ def sparse_(tensor, sparsity, std=0.01, *, generator=None):
         warnings.warn("Initializing zero-element tensors is a no-op")
         return tensor
 
-    from .._autograd.grad_mode import no_grad
+    from ..autograd.grad_mode import no_grad
     import numpy as np
 
     rows, cols = tensor.shape
@@ -465,7 +465,7 @@ def trunc_normal_(tensor, mean=0.0, std=1.0, a=-2.0, b=2.0, *, generator=None):
         warnings.warn("Initializing zero-element tensors is a no-op")
         return tensor
 
-    from .._autograd.grad_mode import no_grad
+    from ..autograd.grad_mode import no_grad
 
     with no_grad():
         # Method based on https://people.sc.fsu.edu/~jburkardt/presentations/truncated_normal.pdf

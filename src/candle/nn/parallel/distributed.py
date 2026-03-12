@@ -106,7 +106,7 @@ class _Reducer:
         self._bucket_pending = [len(b) for b in self.buckets]
         if self._gradient_as_bucket_view and self._bucket_buffers:
             # Zero out bucket buffers; views will reflect zeroed buffer
-            from ..._autograd.grad_mode import no_grad
+            from ...autograd.grad_mode import no_grad
             with no_grad():
                 for buf in self._bucket_buffers:
                     buf.zero_()
@@ -115,7 +115,7 @@ class _Reducer:
     def _init_bucket_views(self):
         """Initialize bucket buffers and views for gradient_as_bucket_view mode."""
         from ..._functional import zeros
-        from ..._autograd.grad_mode import no_grad
+        from ...autograd.grad_mode import no_grad
 
         with no_grad():
             for bucket_idx, bucket in enumerate(self.buckets):
@@ -153,7 +153,7 @@ class _Reducer:
             bucket_idx = self._param_to_bucket[param_idx]
 
             if self._gradient_as_bucket_view:
-                from ..._autograd.grad_mode import no_grad
+                from ...autograd.grad_mode import no_grad
                 # Copy grad data into the pre-allocated view
                 view = self._bucket_views[param_idx]
                 with no_grad():
@@ -172,7 +172,7 @@ class _Reducer:
     def _reduce_bucket(self, bucket_idx):
         from ... import distributed as dist
         from ..._functional import mul
-        from ..._autograd.grad_mode import no_grad
+        from ...autograd.grad_mode import no_grad
 
         bucket = self.buckets[bucket_idx]
         grads = self._bucket_grads[bucket_idx]
@@ -260,7 +260,7 @@ class _Reducer:
     def _find_unused_params(self, outputs):
         """Mark unused parameters' buckets as ready with zero gradients."""
         from ..._functional import zeros_like
-        from ..._autograd.grad_mode import no_grad
+        from ...autograd.grad_mode import no_grad
 
         # If static_graph and we have cached unused params, use the cache
         if self._static_graph and self._cached_unused_param_indices is not None:

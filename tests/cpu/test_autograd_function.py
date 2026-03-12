@@ -1,8 +1,8 @@
 import pytest
 import numpy as np
 import candle as torch
-from candle._autograd import Function
-from candle._autograd.engine import backward, grad
+from candle.autograd import Function
+from candle.autograd.engine import backward, grad
 
 
 # ---------------------------------------------------------------------------
@@ -229,3 +229,13 @@ def test_autograd_grad():
     assert _allclose(dx, [2.0])
     # x.grad should NOT be set (autograd.grad doesn't accumulate by default)
     assert x.grad is None
+
+def test_autograd_resize_apply_roundtrip_shape():
+    import candle.autograd as autograd
+    import candle
+
+    x = candle.rand(2, requires_grad=True)
+    y = autograd._functions.Resize.apply(x, (2,))
+    assert y.shape == (2,)
+    y.sum().backward()
+    assert x.grad.shape == (2,)

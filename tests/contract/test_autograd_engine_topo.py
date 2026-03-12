@@ -39,7 +39,7 @@ def test_saved_tensors_hooks_unpacked_once_per_node():
         counters["unpack"] += 1
         return t
 
-    from candle._autograd.graph import saved_tensors_hooks
+    from candle.autograd.graph import saved_tensors_hooks
 
     with saved_tensors_hooks(pack, unpack):
         b = a * a

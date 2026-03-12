@@ -1,8 +1,8 @@
 from contextlib import nullcontext
 
-from .._autograd.grad_mode import GradMode, no_grad
-from .._autograd.node import Node
-from .._autograd.utils import reduce_grad
+from ..autograd.grad_mode import GradMode, no_grad
+from ..autograd.node import Node
+from ..autograd.utils import reduce_grad
 from .._dispatch.dispatcher import current_dispatch_keyset, redispatch
 from .._dispatch.keys import DispatchKey
 from .._dispatch.registry import registry
@@ -27,7 +27,7 @@ def _strip_autograd_keys(keyset):
 
 
 def _grad_context(_keyset=None):
-    from .._autograd.engine import is_create_graph_enabled
+    from ..autograd.engine import is_create_graph_enabled
 
     if is_create_graph_enabled():
         return nullcontext()
@@ -35,7 +35,7 @@ def _grad_context(_keyset=None):
 
 
 def _backward_dispatch_keyset(raw_keyset, autograd_keyset):
-    from .._autograd.engine import is_create_graph_enabled
+    from ..autograd.engine import is_create_graph_enabled
 
     if is_create_graph_enabled() and autograd_keyset is not None:
         return autograd_keyset
@@ -85,6 +85,8 @@ def _autograd_binary(name, backward_impl, *, save_inputs=True):
             node_holder["node"] = node
             if save_inputs:
                 node.save_for_backward(a, b)
+                node._saved_fields["self"] = node._saved_tensors[0]
+                node._saved_fields["other"] = node._saved_tensors[1]
             out.grad_fn = node
             out.requires_grad = True
         return out

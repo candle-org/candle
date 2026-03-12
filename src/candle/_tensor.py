@@ -73,8 +73,8 @@ from ._functional import as_strided_scatter as as_strided_scatter_dispatch
 from ._functional import tile as tile_dispatch, flip as flip_dispatch, roll as roll_dispatch, rot90 as rot90_dispatch
 from ._functional import reciprocal as reciprocal_dispatch, addmm as addmm_dispatch
 from ._functional import log1p as log1p_dispatch, expm1 as expm1_dispatch
-from ._autograd.engine import backward as _backward
-from ._autograd.version_counter import VersionCounter
+from .autograd.engine import backward as _backward
+from .autograd.version_counter import VersionCounter
 from ._printing import format_tensor
 
 
@@ -182,6 +182,10 @@ class Tensor:
         self._bump_version()
 
     @property
+    def output_nr(self):
+        return 0
+
+    @property
     def is_cuda(self):
         """Returns True if the tensor is stored on a CUDA GPU."""
         return self.device.type == "cuda"
@@ -223,6 +227,31 @@ class Tensor:
     @classmethod
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
         return NotImplemented
+
+    def _fw_get(self, level):
+        tangents = getattr(self, "_fw_tangents", None)
+        if not tangents:
+            return None
+        return tangents.get(level)
+
+    def _fw_set(self, level, tangent):
+        tangents = getattr(self, "_fw_tangents", None)
+        if tangents is None:
+            tangents = {}
+            self._fw_tangents = tangents
+        tangents[level] = tangent
+
+    def _fw_clear(self, level):
+        tangents = getattr(self, "_fw_tangents", None)
+        if not tangents:
+            return
+        tangents.pop(level, None)
+        if not tangents:
+            self._fw_tangents = {}
+
+    def _fw_has(self, level):
+        tangents = getattr(self, "_fw_tangents", None)
+        return bool(tangents) and level in tangents
     def storage(self):
         return self._storage
 
@@ -535,7 +564,7 @@ class Tensor:
         return self._base is not None
 
     def _check_inplace(self):
-        from ._autograd.grad_mode import is_grad_enabled
+        from .autograd.grad_mode import is_grad_enabled
 
         if not is_grad_enabled():
             return

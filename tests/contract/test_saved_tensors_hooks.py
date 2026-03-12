@@ -1,7 +1,7 @@
 import pytest
 
 import candle as torch
-from candle._autograd.graph import saved_tensors_hooks
+from candle.autograd.graph import saved_tensors_hooks
 
 
 def test_saved_tensors_hooks_pack_unpack_counts():

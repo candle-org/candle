@@ -1,5 +1,5 @@
 from ._dispatch.dispatcher import dispatch
-from ._autograd.grad_mode import GradMode, no_grad
+from .autograd.grad_mode import GradMode, no_grad
 from ._device import device as Device, get_default_device
 from ._dtype import to_numpy_dtype
 

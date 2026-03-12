@@ -6,7 +6,8 @@ from .keys import DispatchKey, DispatchKeySet, apply_tls_masks
 from .functionalize import functionalize_op, is_functionalize_enabled, should_functionalize
 import threading
 
-from .._autograd.grad_mode import is_grad_enabled
+from ..autograd.grad_mode import is_grad_enabled
+from ..autograd import forward_ad
 from ..amp.state import is_autocast_enabled
 from ..amp.policy import apply_autocast_policy
 from ..profiler.profiler import is_profiler_enabled, dispatch_op_enter, dispatch_op_exit
@@ -437,6 +438,39 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
             if token is not None:
                 dispatch_op_exit(token)
         _bump_versions(entry.schema_obj, args, impl_kwargs)
+
+        level = forward_ad._current_level()
+        if level >= 0:
+            tangents = [forward_ad.get_tangent(t, level) for t in tensors]
+            if any(t is not None for t in tangents):
+                jvp = forward_ad.get_jvp(alias_name)
+                if jvp is None:
+                    raise RuntimeError(f"no forward-mode rule registered for op {alias_name}")
+                inner_keyset = keyset.without({DispatchKey.Autograd, DispatchKey.AutogradCPU, DispatchKey.AutogradCUDA, DispatchKey.AutogradNPU, DispatchKey.AutogradMeta, DispatchKey.AutogradXPU, DispatchKey.AutogradOther})
+                jvp_key = key
+                if jvp_key in inner_keyset:
+                    inner_keyset = inner_keyset.without(jvp_key)
+
+                def _eval_jvp():
+                    _push_dispatch_context(inner_keyset, jvp_key)
+                    try:
+                        return jvp(*args, **impl_kwargs, _tangents=tangents)
+                    finally:
+                        _pop_dispatch_context()
+
+                try:
+                    with forward_ad.temporarily_disable(level):
+                        out_tangent = _eval_jvp()
+                except Exception:
+                    out_tangent = _eval_jvp()
+                if isinstance(result, (tuple, list)):
+                    for out, t in zip(result, out_tangent):
+                        if hasattr(out, "_fw_set"):
+                            out._fw_set(level, t)
+                else:
+                    if hasattr(result, "_fw_set"):
+                        result._fw_set(level, out_tangent)
+
         return result
 
     # __torch_dispatch__ subclass protocol: fires after autograd, before backend

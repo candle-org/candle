@@ -4,6 +4,11 @@ import sys
 
 import pytest
 
+_ROOT = os.path.dirname(os.path.dirname(__file__))
+_SRC = os.path.join(_ROOT, "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
 # macOS defaults to "spawn" which cannot pickle locally-defined classes used in
 # multi-process DataLoader tests.  Switch to "fork" so that worker processes
 # inherit the parent address space (PyTorch's own test suite does the same).
