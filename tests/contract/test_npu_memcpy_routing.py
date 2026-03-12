@@ -6,7 +6,7 @@ def test_npu_memcpy_calls_use_runtime_helpers():
     disallowed = [
         repo_root / "src/candle/_dispatch/functionalize.py",
         repo_root / "src/candle/_storage.py",
-        repo_root / "src/candle/_backends/npu/ops.py",
+        repo_root / "src/candle/_backends/npu/ops/shape.py",
         repo_root / "src/candle/distributed/_process_group.py",
         repo_root / "src/candle/distributed/__init__.py",
     ]
