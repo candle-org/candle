@@ -3955,8 +3955,15 @@ def contiguous(a):
 
 def getitem(tensor, key):
     """NPU tensor indexing — full support for basic and advanced indexing."""
+    from ..._tensor import Tensor
     if not isinstance(key, tuple):
         key = (key,)
+
+    for item in key:
+        if isinstance(item, Tensor) and item.dtype == bool_dtype:
+            raise RuntimeError("NPU boolean mask indexing is not supported")
+        if isinstance(item, Tensor) and item.dtype.is_floating_point and item.shape == tensor.shape:
+            raise RuntimeError("NPU boolean mask indexing is not supported")
 
     if _is_basic_index_key(key):
         view = _npu_basic_getitem_view(tensor, key)
@@ -3968,8 +3975,15 @@ def getitem(tensor, key):
 
 def setitem(tensor, key, value):
     """NPU tensor index assignment — full support for basic and advanced indexing."""
+    from ..._tensor import Tensor
     if not isinstance(key, tuple):
         key = (key,)
+
+    for item in key:
+        if isinstance(item, Tensor) and item.dtype == bool_dtype:
+            raise RuntimeError("NPU boolean mask indexing is not supported")
+        if isinstance(item, Tensor) and item.dtype.is_floating_point and item.shape == tensor.shape:
+            raise RuntimeError("NPU boolean mask indexing is not supported")
 
     if _is_basic_index_key(key):
         view = _npu_basic_getitem_view(tensor, key)
@@ -4529,7 +4543,10 @@ def _npu_advanced_getitem(tensor, key):
         if cur_dim < 0:
             continue
         adv_current_dims.append(cur_dim)
-        idx_tensor = _to_npu_index_tensor(dim_actions[i][1], prepared.device)
+        item = dim_actions[i][1]
+        idx_tensor = _to_npu_index_tensor(item, prepared.device)
+        if isinstance(idx_tensor, tuple):
+            raise RuntimeError("NPU boolean mask indexing is not supported")
         adv_index_tensors.append(idx_tensor)
 
     if not adv_index_tensors:
@@ -11358,4 +11375,3 @@ def upsample_nearest1d_op(a, output_size, scales=None):
     a_4d = view_backend.reshape(a, (N, C, 1, W))
     out_4d = dispatch("upsample_nearest2d", "npu", a_4d, [1, oW], None, scales)
     return view_backend.reshape(out_4d, (N, C, oW))
-
