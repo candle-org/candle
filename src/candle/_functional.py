@@ -911,6 +911,18 @@ def expand(a, *sizes):
     return dispatch("expand", a.device.type, a, sizes)
 
 
+def sum_to_size(a, *size):
+    if len(size) == 1:
+        arg = size[0]
+        if isinstance(arg, (tuple, list)):
+            size = tuple(arg)
+        else:
+            size = arg
+    else:
+        size = tuple(size)
+    return dispatch("sum_to_size", a.device.type, a, size)
+
+
 def slice(input, dim, start=0, end=9223372036854775807, step=1):
     return dispatch("slice", input.device.type, input, dim, start, end, step)
 

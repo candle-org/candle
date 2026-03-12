@@ -47,6 +47,41 @@ def infer_unary_bool(a, *args, **kwargs):
     return TensorSpec(shape=tuple(a.shape), stride=_contiguous_stride(a.shape), dtype=bool_dtype)
 
 
+def infer_sum_to_size(a, size):
+    if isinstance(size, list):
+        size = tuple(size)
+    elif isinstance(size, int):
+        size = (size,)
+
+    target = tuple(int(v) for v in size)
+    input_shape = tuple(a.shape)
+
+    if len(target) > len(input_shape) or any(dim <= 0 for dim in target):
+        raise RuntimeError(f"size {{{list(target)}}} is not expandable to size {{{list(input_shape)}}}.")
+
+    ndiff = len(input_shape) - len(target)
+    padded_target = (1,) * ndiff + target
+
+    for tgt, src in zip(padded_target, input_shape):
+        if tgt != 1 and tgt != src:
+            raise RuntimeError(f"size {{{list(target)}}} is not expandable to size {{{list(input_shape)}}}.")
+
+    needs_reduce = ndiff > 0
+    if not needs_reduce:
+        for tgt, src in zip(target, input_shape):
+            if tgt == 1 and src != 1:
+                needs_reduce = True
+                break
+
+    if needs_reduce and not (a.dtype.is_floating_point or a.dtype.is_complex):
+        out_dtype = int64_dtype
+    else:
+        out_dtype = a.dtype
+
+    return TensorSpec(shape=target, stride=_contiguous_stride(target), dtype=out_dtype)
+
+
+
 def infer_sum(a, dim=None, keepdim=False):
     shape = list(a.shape)
     if isinstance(dim, (list, tuple)) and len(dim) == 0:

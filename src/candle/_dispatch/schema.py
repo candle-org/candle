@@ -620,6 +620,49 @@ class OpSchema:
                     raise RuntimeError("permute(): duplicate dims are not allowed.")
                 seen.add(norm)
 
+        def _validate_sum_to_size_size(value):
+            # Match torch.sum_to_size type errors for size argument.
+            if isinstance(value, bool):
+                raise TypeError(
+                    f"{op_short_name}(): argument 'size' (position 1) must be tuple of ints, not bool"
+                )
+            if isinstance(value, int):
+                return
+            if isinstance(value, float):
+                raise TypeError(
+                    f"{op_short_name}(): argument 'size' (position 1) must be tuple of ints, not float"
+                )
+            if isinstance(value, str):
+                raise TypeError(
+                    f"{op_short_name}(): argument 'size' (position 1) must be tuple of ints, not str"
+                )
+            if value is None:
+                raise TypeError(
+                    f"{op_short_name}(): argument 'size' (position 1) must be tuple of ints, not NoneType"
+                )
+            if isinstance(value, (list, tuple)):
+                if not value:
+                    return
+                first = value[0]
+                if not isinstance(first, int) or isinstance(first, bool):
+                    first_type = type(first).__name__
+                    raise TypeError(
+                        f"{op_short_name}(): argument 'size' (position 1) must be tuple of ints, "
+                        f"but found element of type {first_type} at pos 0"
+                    )
+                for idx, item in enumerate(value[1:], start=1):
+                    if not isinstance(item, int):
+                        item_type = type(item).__name__
+                        raise TypeError(
+                            f"{op_short_name}(): argument 'size' failed to unpack the object at pos {idx + 1} "
+                            f"with error \"type must be tuple of ints,but got {item_type}\""
+                        )
+                return
+            other_type = type(value).__name__
+            raise TypeError(
+                f"{op_short_name}(): argument 'size' (position 1) must be tuple of ints, not {other_type}"
+            )
+
         def _validate_transpose_dims(dim0, dim1):
             valid0 = isinstance(dim0, int) and not isinstance(dim0, bool)
             valid1 = isinstance(dim1, int) and not isinstance(dim1, bool)
@@ -684,6 +727,9 @@ class OpSchema:
             if op_short_name == "permute" and param.name == "dims":
                 input_tensor = bound.get("input")
                 _validate_permute_dims(value, input_tensor)
+                continue
+            if op_short_name == "sum_to_size" and param.name == "size":
+                _validate_sum_to_size_size(value)
                 continue
             if op_short_name == "topk" and param.name == "k":
                 _validate_topk_k(value)

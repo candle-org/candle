@@ -377,6 +377,7 @@ def register_schemas():
     registry.register_schema("narrow", "narrow(Tensor(a) input, int dim, int start, int length) -> Tensor(a)")
     registry.register_schema("select", "select(Tensor(a) input, int dim, int index) -> Tensor(a)")
     registry.register_schema("expand", "expand(Tensor(a) input, int[] sizes) -> Tensor(a)")
+    registry.register_schema("sum_to_size", "sum_to_size(Tensor input, int[] size) -> Tensor")
     registry.register_schema("unfold", "unfold(Tensor(a) input, int dimension, int size, int step) -> Tensor(a)")
     registry.register_schema("slice", "slice(Tensor(a) input, int dim, int start=0, int end=9223372036854775807, int step=1) -> Tensor(a)")
     registry.register_schema("slice_copy", "slice_copy(Tensor input, int dim, int start=0, int end=9223372036854775807, int step=1) -> Tensor")
