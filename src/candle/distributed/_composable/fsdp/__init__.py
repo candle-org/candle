@@ -6,6 +6,8 @@ Usage (bottom-up):
     fully_shard(model.decoder, mesh=mesh)
     fully_shard(model, mesh=mesh)  # root
 """
+from contextlib import contextmanager
+
 from ._fsdp_common import FSDPMeshInfo
 from ._fsdp_param import FSDPParam
 from ._fsdp_param_group import FSDPParamGroup
@@ -27,6 +29,29 @@ class FSDPModule:
 
     def set_modules_to_backward_prefetch(self, modules):
         pass  # MVP no-op
+
+    @contextmanager
+    def no_sync(self):
+        """Skip gradient reduce-scatter for gradient accumulation.
+
+        Gradients are accumulated on the unsharded params. The final
+        backward (outside no_sync) will reduce-scatter the accumulated
+        gradients.
+        """
+        # Collect all FSDP states in the subtree
+        states = []
+        for mod in self.modules():
+            st = getattr(mod, '_fsdp_state', None)
+            if st is not None:
+                states.append(st)
+        old_values = [st._sync_gradients for st in states]
+        for st in states:
+            st._sync_gradients = False
+        try:
+            yield
+        finally:
+            for st, old in zip(states, old_values):
+                st._sync_gradients = old
 
 
 class _MockMeshInfo:

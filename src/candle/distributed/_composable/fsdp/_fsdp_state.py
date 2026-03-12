@@ -15,6 +15,7 @@ class FSDPState:
         self._grad_count = 0
         self._pending_grads = {}
         self._used_fsdp_params = set()
+        self._sync_gradients = True  # False inside no_sync()
         self._total_managed_params = sum(
             1 for fp in param_group.fsdp_params
             if fp._sharded_param.requires_grad
@@ -109,10 +110,20 @@ class FSDPState:
 
     def _post_backward_all(self):
         """Reduce-scatter captured gradients and reshard."""
-        for fsdp_param, grad in self._pending_grads.values():
-            fsdp_param.reduce_scatter_grad(grad)
+        if self._sync_gradients:
+            for fsdp_param, grad in self._pending_grads.values():
+                fsdp_param.reduce_scatter_grad(grad)
+        else:
+            # no_sync mode: accumulate grads on unsharded params directly
+            for fsdp_param, grad in self._pending_grads.values():
+                unsharded = fsdp_param._unsharded_param
+                if unsharded is not None and unsharded.grad is not None:
+                    unsharded.grad = unsharded.grad + grad
+                elif unsharded is not None:
+                    unsharded.grad = grad
         self._pending_grads.clear()
         self.param_group.reshard()
+
     def _lazy_init_root(self):
         self._is_root = not _has_parent_fsdp(self.module)
         # Root-level initialization: in a full FSDP tree, fully_shard()

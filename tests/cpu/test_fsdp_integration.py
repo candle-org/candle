@@ -178,3 +178,35 @@ def test_fsdp_unused_parameter():
 
     # Both modules should be resharded
     assert isinstance(model.unused.weight, DTensor), "unused.weight should be resharded"
+
+
+def test_fsdp_no_sync():
+    """no_sync() should skip reduce-scatter and accumulate gradients."""
+    from candle.distributed._composable.fsdp import fully_shard
+
+    model = SimpleMLP(8)
+    mesh = MockMesh()
+    fully_shard(model.fc1, mesh=mesh)
+    fully_shard(model.fc2, mesh=mesh)
+    fully_shard(model, mesh=mesh)
+
+    # Accumulation step inside no_sync
+    with model.no_sync():
+        x1 = torch.randn(4, 8, requires_grad=True)
+        out1 = model(x1)
+        loss1 = out1.sum()
+        loss1.backward()
+
+    # After no_sync backward, params should still be resharded
+    assert isinstance(model.fc1.weight, DTensor), "fc1.weight should be resharded after no_sync"
+
+    # Sync step (outside no_sync) — reduce-scatter happens
+    x2 = torch.randn(4, 8, requires_grad=True)
+    out2 = model(x2)
+    loss2 = out2.sum()
+    loss2.backward()
+
+    # Gradients should exist on sharded params
+    for name, param in model.named_parameters():
+        local = param.to_local() if isinstance(param, DTensor) else param
+        assert local.grad is not None, f"No gradient for {name} after sync step"
