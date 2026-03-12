@@ -18,5 +18,6 @@ This document tracks native kernel bugs and their on-device composite workaround
 
 <!--
 Entry template:
+| `getitem` (bool mask) | npu | ACLNN index fails for bool-mask advanced indexing (aclnnIndexGetWorkspaceSize 161001). | Fail explicitly; no CPU fallback. | CANN 8.3 / Candle `0.1.x` | open |
 | `aten.op_name` | mps/cuda/npu | Brief error description | `op_a` + `op_b` composite | macOS XX.X / CANN X.X / CUDA XX.X | open/resolved |
 -->
