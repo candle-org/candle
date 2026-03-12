@@ -21,18 +21,31 @@ class InputMetadata:
         self.is_cpp_nested_tensor = False
 
 
+_RAW_SAVED_FIELD_PREFIX = "_raw_saved_"
+
+
 class SavedTensor:
     def __init__(self, tensor):
         self._tensor_ref = tensor
         self._saved_version = tensor._version_counter.value
         self._released = False
-        hooks = current_saved_tensors_hooks()
-        self._hooks = hooks
-        if hooks is None:
+        self._hooks = current_saved_tensors_hooks()
+        if self._hooks is None:
             self._packed = None
         else:
-            pack, _ = hooks
+            pack, _ = self._hooks
             self._packed = pack(tensor)
+
+    def register_hooks(self, *args):
+        if len(args) != 2:
+            raise TypeError("incompatible function arguments")
+        pack, unpack = args
+        if not callable(pack) or not callable(unpack):
+            raise TypeError("incompatible function arguments")
+        if self._hooks is not None:
+            raise RuntimeError("SavedTensor hooks have already been set")
+        self._hooks = (pack, unpack)
+        self._packed = pack(self._tensor_ref)
 
     def release(self):
         self._released = True
@@ -65,6 +78,7 @@ class Node:
         self.backward = backward
         self.inputs = inputs
         self._saved_tensors = []
+        self._saved_fields = {}
 
     def save_for_backward(self, *tensors):
         saved = []
@@ -81,3 +95,10 @@ class Node:
     def release_saved_tensors(self):
         for saved in self._saved_tensors:
             saved.release()
+
+    def __getattr__(self, name):
+        if name.startswith(_RAW_SAVED_FIELD_PREFIX):
+            key = name[len(_RAW_SAVED_FIELD_PREFIX):]
+            if key in self._saved_fields:
+                return self._saved_fields[key]
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")

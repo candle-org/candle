@@ -49,3 +49,13 @@ def test_saved_tensor_hooks_pack_raises():
         with pytest.raises(RuntimeError):
             y = torch.mul(x, x)
             y.sum().backward()
+
+
+def test_saved_tensor_register_hooks_requires_callables():
+    x = torch.tensor([1.0], requires_grad=True)
+    y = x * x
+    raw = y.grad_fn._raw_saved_self
+    with pytest.raises(TypeError):
+        raw.register_hooks(lambda x: x)
+    with pytest.raises(TypeError):
+        raw.register_hooks(1, 1)
