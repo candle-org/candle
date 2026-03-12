@@ -2537,6 +2537,31 @@ def batch_norm(input, running_mean, running_var, weight=None, bias=None,
 
 
 def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
+    # GPU path: float32/float16, contiguous, ndim >= 2
+    if (_can_use_gpu(input) and input.is_contiguous()
+            and input.dtype in (float32_dtype, float16_dtype)
+            and len(input.shape) >= 2
+            and input.shape[1] % num_groups == 0):
+        N, C = input.shape[0], input.shape[1]
+        spatial_size = 1
+        for d in input.shape[2:]:
+            spatial_size *= d
+        total = N * C * spatial_size
+        sfx = _kernel_suffix(input.dtype)
+        d = _get_dispatcher()
+        from .runtime import get_runtime
+        rt = get_runtime()
+        out_buf = _alloc_output_buf(total, input.dtype)
+        has_w = 1 if weight is not None else 0
+        has_b = 1 if bias is not None else 0
+        w_buf = _metal_buf(weight) if weight is not None else rt.create_buffer(4)
+        b_buf = _metal_buf(bias) if bias is not None else rt.create_buffer(4)
+        d.dispatch_group_norm(
+            f"group_norm_{sfx}", _metal_buf(input), w_buf, b_buf, out_buf,
+            N, C, spatial_size, num_groups, float(eps), has_w, has_b, total)
+        return _from_metal_buffer(out_buf, tuple(input.shape),
+                                  tuple(input.stride()), input.dtype, input.device)
+
     arr = _to_numpy(input)
     N, C = arr.shape[:2]
     spatial = arr.shape[2:]
@@ -2654,6 +2679,13 @@ def softmax(a, dim):
 
 
 def log_softmax(a, dim):
+    # GPU composite: log(softmax(x)) = x - max - log(sum(exp(x - max)))
+    ndim = len(a.shape)
+    actual_dim = dim if dim >= 0 else dim + ndim
+    if (_can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype)
+            and actual_dim == ndim - 1 and ndim >= 1):
+        s = softmax(a, dim)
+        return log(s)
     arr = _to_numpy(a)
     max_arr = np.max(arr, axis=dim, keepdims=True)
     exp_arr = np.exp(arr - max_arr)
@@ -2682,6 +2714,32 @@ def one_hot(a, num_classes=-1):
 
 
 def embedding(weight, indices, padding_idx=None, scale_grad_by_freq=False, sparse=False):
+    # GPU path: reuse index_select on dim=0
+    if (_can_use_gpu(weight) and weight.is_contiguous()
+            and weight.dtype in (float32_dtype, float16_dtype)):
+        idx_np = _ensure_integer_indices(_to_numpy(indices), "indices").astype(np.int64, copy=False)
+        if idx_np.size and (idx_np.min() < 0 or idx_np.max() >= weight.shape[0]):
+            raise IndexError("index out of range in self")
+        flat_idx = idx_np.reshape(-1)
+        flat_idx_i32 = flat_idx.astype(np.int32)
+        idx_tensor = _from_numpy(flat_idx_i32, int32_dtype, weight.device)
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(weight.dtype)
+        vocab, dim = weight.shape[0], weight.shape[1]
+        out_numel = len(flat_idx) * dim
+        out_buf = _alloc_output_buf(out_numel, weight.dtype)
+        d.dispatch_index_gather(f"index_select_{sfx}", _metal_buf(weight),
+                                _metal_buf(idx_tensor), out_buf,
+                                1, len(flat_idx), dim,
+                                vocab, out_numel)
+        out_shape = tuple(indices.shape) + (dim,) if hasattr(indices, 'shape') else (len(flat_idx), dim)
+        out_shape = tuple(idx_np.shape) + (weight.shape[1],)
+        s = 1
+        out_stride = ()
+        for d_ in reversed(out_shape):
+            out_stride = (s,) + out_stride
+            s *= d_
+        return _from_metal_buffer(out_buf, out_shape, out_stride, weight.dtype, weight.device)
     weight_arr = _to_numpy(weight)
     idx = _ensure_integer_indices(_to_numpy(indices), "indices").astype(np.int64, copy=False)
     if idx.size and (idx.min() < 0 or idx.max() >= weight_arr.shape[0]):
@@ -3221,17 +3279,17 @@ def _conv2d_gpu(input, weight, bias, sH, sW, pH, pW, dH, dW,
 
 def conv1d(input, weight, bias=None, stride=(1,), padding=(0,), dilation=(1,), groups=1):
     """Conv1d via conv2d: unsqueeze spatial dim."""
-    inp = _to_numpy(input)   # (N, C, L)
-    w = _to_numpy(weight)    # (O, C/g, kL)
-    # Add H=1 dimension
-    inp4d = inp[:, :, np.newaxis, :]  # (N, C, 1, L)
-    w4d = w[:, :, np.newaxis, :]      # (O, C/g, 1, kL)
-    inp_t = _from_numpy(np.ascontiguousarray(inp4d), input.dtype, input.device)
-    w_t = _from_numpy(np.ascontiguousarray(w4d), weight.dtype, weight.device)
-    out = conv2d(inp_t, w_t, bias, stride=(1, stride[0]),
+    from ..._tensor import Tensor
+    # Unsqueeze to 4D and delegate to conv2d (which has GPU path)
+    inp_shape = input.shape
+    w_shape = weight.shape
+    # Build 4D tensors staying on device
+    inp4d = input.unsqueeze(2)  # (N, C, 1, L)
+    w4d = weight.unsqueeze(2)   # (O, C/g, 1, kL)
+    out = conv2d(inp4d, w4d, bias, stride=(1, stride[0]),
                  padding=(0, padding[0]), dilation=(1, dilation[0]), groups=groups)
-    out_np = _to_numpy(out)[:, :, 0, :]  # (N, C_out, L_out)
-    return _from_numpy(np.ascontiguousarray(out_np), input.dtype, input.device)
+    # Squeeze H=1 dim
+    return out.squeeze(2)
 
 
 def conv_transpose2d(input, weight, bias=None, stride=(1, 1), padding=(0, 0),
@@ -3304,13 +3362,17 @@ def conv_transpose1d(input, weight, bias=None, stride=(1,), padding=(0,),
 
 
 def max_pool2d(input, kernel_size, stride, padding=0, dilation=1, ceil_mode=False, return_indices=False):
-    """MaxPool2d using numpy."""
-    inp = _to_numpy(input)  # (N, C, H, W)
+    """MaxPool2d with GPU path for float32/float16."""
     kH, kW = (kernel_size, kernel_size) if isinstance(kernel_size, int) else tuple(kernel_size)
     sH, sW = (stride, stride) if isinstance(stride, int) else tuple(stride)
     pH, pW = (padding, padding) if isinstance(padding, int) else tuple(padding)
     dH, dW = (dilation, dilation) if isinstance(dilation, int) else tuple(dilation)
-    N, C, H, W = inp.shape
+
+    if len(input.shape) == 4:
+        N, C, H, W = input.shape
+    else:
+        N, C, H, W = 1, input.shape[0], input.shape[1], input.shape[2]
+
     ekH = (kH - 1) * dH + 1
     ekW = (kW - 1) * dW + 1
     if ceil_mode:
@@ -3319,6 +3381,36 @@ def max_pool2d(input, kernel_size, stride, padding=0, dilation=1, ceil_mode=Fals
     else:
         H_out = (H + 2 * pH - ekH) // sH + 1
         W_out = (W + 2 * pW - ekW) // sW + 1
+
+    # GPU path
+    if (_can_use_gpu(input) and input.is_contiguous()
+            and input.dtype in (float32_dtype, float16_dtype)
+            and not return_indices and len(input.shape) == 4
+            and H_out > 0 and W_out > 0):
+        import struct
+        total = N * C * H_out * W_out
+        sfx = _kernel_suffix(input.dtype)
+        d = _get_dispatcher()
+        out_buf = _alloc_output_buf(total, input.dtype)
+        # params: N, C, H_in, W_in, H_out, W_out, kH, kW, sH, sW, pH, pW, dH, dW, total
+        params = struct.pack("15I", N, C, H, W, H_out, W_out, kH, kW,
+                             sH, sW, pH, pW, dH, dW, total)
+        d.dispatch_pool2d(f"max_pool2d_{sfx}", _metal_buf(input), out_buf,
+                          params, total)
+        out_shape = (N, C, H_out, W_out)
+        s = 1
+        out_stride = ()
+        for dim in reversed(out_shape):
+            out_stride = (s,) + out_stride
+            s *= dim
+        return _from_metal_buffer(out_buf, out_shape, out_stride, input.dtype, input.device)
+
+    # NumPy fallback
+    inp = _to_numpy(input)
+    if len(inp.shape) == 4:
+        N, C, H, W = inp.shape
+    else:
+        N, C, H, W = 1, inp.shape[0], inp.shape[1], inp.shape[2]
 
     if pH > 0 or pW > 0:
         inp = np.pad(inp, ((0, 0), (0, 0), (pH, pH), (pW, pW)),
@@ -3339,18 +3431,53 @@ def max_pool2d(input, kernel_size, stride, padding=0, dilation=1, ceil_mode=Fals
 
 def avg_pool2d(input, kernel_size, stride, padding=0, ceil_mode=False,
                count_include_pad=True, divisor_override=None):
-    """AvgPool2d using numpy."""
-    inp = _to_numpy(input)  # (N, C, H, W)
+    """AvgPool2d with GPU path for float32/float16."""
     kH, kW = (kernel_size, kernel_size) if isinstance(kernel_size, int) else tuple(kernel_size)
     sH, sW = (stride, stride) if isinstance(stride, int) else tuple(stride)
     pH, pW = (padding, padding) if isinstance(padding, int) else tuple(padding)
-    N, C, H, W = inp.shape
+
+    if len(input.shape) == 4:
+        N, C, H, W = input.shape
+    else:
+        N, C, H, W = 1, input.shape[0], input.shape[1], input.shape[2]
+
     if ceil_mode:
         H_out = math.ceil((H + 2 * pH - kH) / sH) + 1
         W_out = math.ceil((W + 2 * pW - kW) / sW) + 1
     else:
         H_out = (H + 2 * pH - kH) // sH + 1
         W_out = (W + 2 * pW - kW) // sW + 1
+
+    # GPU path: count_include_pad only, no divisor_override
+    if (_can_use_gpu(input) and input.is_contiguous()
+            and input.dtype in (float32_dtype, float16_dtype)
+            and len(input.shape) == 4 and count_include_pad
+            and divisor_override is None
+            and H_out > 0 and W_out > 0):
+        import struct
+        total = N * C * H_out * W_out
+        sfx = _kernel_suffix(input.dtype)
+        d = _get_dispatcher()
+        out_buf = _alloc_output_buf(total, input.dtype)
+        # params: N, C, H_in, W_in, H_out, W_out, kH, kW, sH, sW, pH, pW, count_include_pad, total
+        params = struct.pack("14I", N, C, H, W, H_out, W_out, kH, kW,
+                             sH, sW, pH, pW, 1, total)
+        d.dispatch_pool2d(f"avg_pool2d_{sfx}", _metal_buf(input), out_buf,
+                          params, total)
+        out_shape = (N, C, H_out, W_out)
+        s = 1
+        out_stride = ()
+        for dim in reversed(out_shape):
+            out_stride = (s,) + out_stride
+            s *= dim
+        return _from_metal_buffer(out_buf, out_shape, out_stride, input.dtype, input.device)
+
+    # NumPy fallback
+    inp = _to_numpy(input)
+    if len(inp.shape) == 4:
+        N, C, H, W = inp.shape
+    else:
+        N, C, H, W = 1, inp.shape[0], inp.shape[1], inp.shape[2]
 
     if pH > 0 or pW > 0:
         inp = np.pad(inp, ((0, 0), (0, 0), (pH, pH), (pW, pW)), mode='constant')
@@ -3368,7 +3495,6 @@ def avg_pool2d(input, kernel_size, stride, padding=0, ceil_mode=False,
             elif count_include_pad:
                 out[:, :, oh, ow] = window.sum(axis=(-2, -1)) / (kH * kW)
             else:
-                # Only count non-padded elements
                 actual_h = min(h_end, H + pH) - max(h_start, pH)
                 actual_w = min(w_end, W + pW) - max(w_start, pW)
                 count = max(actual_h * actual_w, 1)
