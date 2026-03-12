@@ -911,6 +911,34 @@ def expand(a, *sizes):
     return dispatch("expand", a.device.type, a, sizes)
 
 
+def slice(input, dim, start=0, end=9223372036854775807, step=1):
+    return dispatch("slice", input.device.type, input, dim, start, end, step)
+
+
+def slice_copy(input, dim, start=0, end=9223372036854775807, step=1):
+    return dispatch("slice_copy", input.device.type, input, dim, start, end, step)
+
+
+def slice_scatter(input, src, dim, start=0, end=9223372036854775807, step=1):
+    return dispatch("slice_scatter", input.device.type, input, src, dim, start, end, step)
+
+
+def expand_copy(input, sizes):
+    return dispatch("expand_copy", input.device.type, input, sizes)
+
+
+def as_strided_(self, size, stride, storage_offset=None):
+    return dispatch("as_strided_", self.device.type, self, size, stride, storage_offset)
+
+
+def as_strided_copy(input, size, stride, storage_offset=None):
+    return dispatch("as_strided_copy", input.device.type, input, size, stride, storage_offset)
+
+
+def as_strided_scatter(input, src, size, stride, storage_offset=None):
+    return dispatch("as_strided_scatter", input.device.type, input, src, size, stride, storage_offset)
+
+
 def masked_fill(a, mask, value):
     return dispatch("masked_fill", a.device.type, a, mask, value)
 

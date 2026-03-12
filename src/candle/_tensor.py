@@ -64,6 +64,11 @@ from ._functional import squeeze as squeeze_dispatch, unsqueeze as unsqueeze_dis
 from ._functional import var as var_dispatch, norm as norm_dispatch, prod as prod_dispatch
 from ._functional import mm as mm_dispatch, bmm as bmm_dispatch
 from ._functional import floor_divide as floor_divide_dispatch
+from ._functional import slice as slice_dispatch, slice_copy as slice_copy_dispatch, slice_scatter as slice_scatter_dispatch
+from ._functional import expand_copy as expand_copy_dispatch
+from ._functional import as_strided_ as as_strided__dispatch
+from ._functional import as_strided_copy as as_strided_copy_dispatch
+from ._functional import as_strided_scatter as as_strided_scatter_dispatch
 from ._functional import tile as tile_dispatch, flip as flip_dispatch, roll as roll_dispatch, rot90 as rot90_dispatch
 from ._functional import reciprocal as reciprocal_dispatch, addmm as addmm_dispatch
 from ._functional import log1p as log1p_dispatch, expm1 as expm1_dispatch
@@ -1526,6 +1531,9 @@ class Tensor:
     def expand(self, *sizes):
         return expand_dispatch(self, *sizes)
 
+    def expand_copy(self, *sizes):
+        return expand_copy_dispatch(self, sizes)
+
     def expand_as(self, other):
         return expand_dispatch(self, *other.shape)
 
@@ -1534,6 +1542,15 @@ class Tensor:
 
     def masked_select(self, mask):
         return masked_select_dispatch(self, mask)
+
+    def slice(self, dim, start=0, end=9223372036854775807, step=1):
+        return slice_dispatch(self, dim, start, end, step)
+
+    def slice_copy(self, dim, start=0, end=9223372036854775807, step=1):
+        return slice_copy_dispatch(self, dim, start, end, step)
+
+    def slice_scatter(self, src, dim, start=0, end=9223372036854775807, step=1):
+        return slice_scatter_dispatch(self, src, dim, start, end, step)
 
     def gather(self, dim, index):
         return gather_dispatch(self, dim, index)
@@ -1554,6 +1571,16 @@ class Tensor:
 
     def take(self, index):
         return take_dispatch(self, index)
+
+    def as_strided_(self, size, stride, storage_offset=None):
+        self._check_inplace()
+        return as_strided__dispatch(self, size, stride, storage_offset)
+
+    def as_strided_copy(self, size, stride, storage_offset=None):
+        return as_strided_copy_dispatch(self, size, stride, storage_offset)
+
+    def as_strided_scatter(self, src, size, stride, storage_offset=None):
+        return as_strided_scatter_dispatch(self, src, size, stride, storage_offset)
 
     def masked_fill(self, mask, value):
         return masked_fill_dispatch(self, mask, value)

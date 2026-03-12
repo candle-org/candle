@@ -353,6 +353,56 @@ def _getitem_backward(grad, a, _saved_a, keyset, args, _kwargs):
     return (grad_input,)
 
 
+def _slice_backward(grad, a, _saved_a, keyset, args, _kwargs):
+    dim, start, end, step = args
+    if step <= 0:
+        raise RuntimeError("slice step must be positive")
+    key = [slice(None)] * a.dim()
+    key[int(dim)] = slice(int(start), int(end), int(step))
+    with _grad_context(keyset):
+        grad_input = redispatch("zeros", keyset, a.shape, dtype=a.dtype, device=a.device)
+        redispatch("setitem", keyset, grad_input, tuple(key), grad)
+    return (grad_input,)
+
+
+def _as_strided_scatter_backward(grad, a, _saved_a, keyset, args, _kwargs):
+    src, size, stride, storage_offset = args
+    offset = a.offset if storage_offset is None else int(storage_offset)
+    size = tuple(int(s) for s in size)
+    stride = tuple(int(s) for s in stride)
+    if any(s < 0 for s in stride):
+        raise RuntimeError(
+            f"as_strided: Negative strides are not supported at the moment, got strides: {list(stride)}"
+        )
+    if offset < 0:
+        raise RuntimeError(f"Tensor: invalid storage offset {offset}")
+    if not size:
+        required = offset
+    else:
+        max_index = offset
+        for dim, st in zip(size, stride):
+            if dim <= 0:
+                continue
+            max_index += (dim - 1) * st
+        required = max_index + 1
+    storage_size = a.storage().size()
+    if required > storage_size:
+        itemsize = a.element_size()
+        raise RuntimeError(
+            f"setStorage: sizes {list(size)}, strides {list(stride)}, storage offset {offset}, "
+            f"and itemsize {itemsize} requiring a storage size of {required * itemsize} are out of bounds "
+            f"for storage of size {storage_size * itemsize}"
+        )
+
+    with _grad_context(keyset):
+        base_grad = redispatch("zeros", keyset, a.shape, dtype=a.dtype, device=a.device)
+        grad_view = grad.as_strided(size, stride, offset)
+        base_view = base_grad.as_strided(size, stride, offset)
+        base_view._numpy_view()[...] = grad_view._numpy_view()
+        grad_src = redispatch("contiguous", keyset, grad_view)
+    return (base_grad, grad_src)
+
+
 def _inplace_binary_backward(grad, a, _saved_a, args, _keyset):
     b = args[0]
     grad_a = reduce_grad(grad, a.shape) if getattr(a, "requires_grad", False) else None
@@ -7172,6 +7222,8 @@ for _entry in (
     ("unsqueeze", lambda: _autograd_view("unsqueeze", _unsqueeze_backward)),
     ("expand", lambda: _autograd_view("expand", _expand_backward)),
     ("permute", lambda: _autograd_view("permute", _permute_backward)),
+    ("slice", lambda: _autograd_unary_args("slice", _slice_backward, save_input=False)),
+    ("as_strided_scatter", lambda: _autograd_unary_args("as_strided_scatter", _as_strided_scatter_backward, save_input=False), False),
     ("getitem", lambda: _autograd_unary_args("getitem", _getitem_backward, save_input=False), False),
     ("narrow", lambda: _autograd_unary_args("narrow", _narrow_backward, save_input=False)),
     ("select", lambda: _autograd_unary_args("select", _select_backward, save_input=False)),

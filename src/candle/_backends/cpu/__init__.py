@@ -192,6 +192,13 @@ from .ops import (
     scatter_add_,
     masked_scatter_,
     unfold,
+    slice_op,
+    slice_copy,
+    slice_scatter,
+    expand_copy,
+    as_strided_,
+    as_strided_copy,
+    as_strided_scatter,
     embedding,
     var_,
     norm_,
@@ -454,6 +461,13 @@ registry.register("scatter_", "cpu", scatter_)
 registry.register("scatter_add_", "cpu", scatter_add_)
 registry.register("masked_scatter_", "cpu", masked_scatter_)
 registry.register("unfold", "cpu", unfold)
+registry.register("slice", "cpu", slice_op)
+registry.register("slice_copy", "cpu", slice_copy)
+registry.register("slice_scatter", "cpu", slice_scatter)
+registry.register("expand_copy", "cpu", expand_copy)
+registry.register("as_strided_", "cpu", as_strided_)
+registry.register("as_strided_copy", "cpu", as_strided_copy)
+registry.register("as_strided_scatter", "cpu", as_strided_scatter)
 
 registry.register("var", "cpu", var_, meta=meta_infer.infer_sum)
 registry.register("norm", "cpu", norm_, meta=meta_infer.infer_sum)
