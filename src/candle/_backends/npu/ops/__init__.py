@@ -1,15 +1,15 @@
 import ctypes
-from ..._dtype import bool as bool_dtype
-from ..._dtype import int32 as int32_dtype
-from ..._dtype import int64 as int64_dtype
-from ..._dtype import float32 as float_dtype
-from ..._storage import npu_typed_storage_from_ptr
-from ..common import view as view_backend
+from ...._dtype import bool as bool_dtype
+from ...._dtype import int32 as int32_dtype
+from ...._dtype import int64 as int64_dtype
+from ...._dtype import float32 as float_dtype
+from ...._storage import npu_typed_storage_from_ptr
+from ...common import view as view_backend
 reshape = view_backend.reshape
-from . import aclnn
-from . import runtime as npu_runtime
-from . import state as npu_state
-from . import ops_soc
+from .. import aclnn
+from .. import runtime as npu_runtime
+from .. import state as npu_state
+from .. import ops_soc
 
 
 def _unwrap_storage(tensor):
@@ -19,7 +19,7 @@ def _unwrap_storage(tensor):
 
 
 def _wrap_tensor(storage, shape, stride):
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
 
     return Tensor(storage, shape, stride)
 
@@ -91,7 +91,7 @@ def _broadcast_shape(a_shape, b_shape):
 
 
 def _npu_broadcast_to(tensor, shape):
-    from .creation import zeros_create
+    from ..creation import zeros_create
 
     shape = tuple(shape)
     if tensor.shape == shape:
@@ -105,7 +105,7 @@ def _npu_arange_1d(size, device):
     shape = (size,)
 
     if ops_soc.use_smallop_arange_1d():
-        from .creation import empty_create, ones_create
+        from ..creation import empty_create, ones_create
 
         if size == 0:
             return empty_create(shape, dtype=int64_dtype, device=device)
@@ -597,7 +597,7 @@ def matmul(a, b):
     storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape_comp), a.dtype, device=a.device)
     out = _wrap_tensor(storage, out_shape_comp, out_stride)
     if out_shape_comp != out_shape:
-        from ..common import view as view_backend
+        from ...common import view as view_backend
 
         out = view_backend.reshape(out, out_shape)
     return out
@@ -967,7 +967,7 @@ def argmax(a, dim=None, keepdim=False):
     if not aclnn.max_dim_symbols_ok():
         raise RuntimeError("aclnnMaxDim not available")
     if dim is None:
-        from ..common import view as view_backend
+        from ...common import view as view_backend
 
         flat = view_backend.reshape(a, (_numel(a.shape),))
         return argmax(flat, dim=0, keepdim=False)
@@ -1006,7 +1006,7 @@ def argmin(a, dim=None, keepdim=False):
     if not aclnn.min_dim_symbols_ok():
         raise RuntimeError("aclnnMinDim not available")
     if dim is None:
-        from ..common import view as view_backend
+        from ...common import view as view_backend
 
         flat = view_backend.reshape(a, (_numel(a.shape),))
         return argmin(flat, dim=0, keepdim=False)
@@ -1066,7 +1066,7 @@ def median(a, dim=None, keepdim=False):
 
         out_storage = npu_typed_storage_from_ptr(out_ptr, 1, a.dtype, device=a.device)
         # Return as scalar (reshape from (1,) to ())
-        from ..common import view as view_backend
+        from ...common import view as view_backend
         result = _wrap_tensor(out_storage, out_shape, out_stride)
         return view_backend.reshape(result, ())
 
@@ -1113,7 +1113,7 @@ def kthvalue(a, k, dim=None, keepdim=False):
 
     if dim is None:
         dim = 0
-        from ..common import view as view_backend
+        from ...common import view as view_backend
         flat = view_backend.reshape(a, (_numel(a.shape),))
         if a.shape != flat.shape:
             return kthvalue(flat, k, dim=0, keepdim=False)
@@ -1241,7 +1241,7 @@ def randperm(n, dtype=None, device=None, generator=None):
     if not aclnn.randperm_symbols_ok():
         raise RuntimeError("aclnnRandperm symbols not available")
     # Import device handling
-    from ..._device import device as Device
+    from ...._device import device as Device
     if device is None:
         device = Device("npu:0")
     elif isinstance(device, str):
@@ -1258,7 +1258,7 @@ def randperm(n, dtype=None, device=None, generator=None):
     if generator is not None and hasattr(generator, 'philox_engine_inputs'):
         seed, offset = generator.philox_engine_inputs(10)
     else:
-        from ... import npu as npu_mod
+        from .... import npu as npu_mod
         seed, offset = npu_mod._get_and_advance_offset(device_index=(device.index or 0), increment=10)
 
     itemsize = _dtype_itemsize(dtype)
@@ -1272,7 +1272,7 @@ def randperm(n, dtype=None, device=None, generator=None):
 
 def flatten_op(a, start_dim=0, end_dim=-1):
     """Flatten tensor dimensions using reshape."""
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     ndim = len(a.shape)
     if start_dim < 0:
         start_dim += ndim
@@ -1297,7 +1297,7 @@ def amax(a, dim=None, keepdim=False):
     if not aclnn.max_dim_symbols_ok():
         raise RuntimeError("aclnnMaxDim not available")
     if dim is None:
-        from ..common import view as view_backend
+        from ...common import view as view_backend
 
         flat = view_backend.reshape(a, (_numel(a.shape),))
         return amax(flat, dim=0, keepdim=False)
@@ -1338,7 +1338,7 @@ def amin(a, dim=None, keepdim=False):
     if not aclnn.min_dim_symbols_ok():
         raise RuntimeError("aclnnMinDim not available")
     if dim is None:
-        from ..common import view as view_backend
+        from ...common import view as view_backend
 
         flat = view_backend.reshape(a, (_numel(a.shape),))
         return amin(flat, dim=0, keepdim=False)
@@ -1946,7 +1946,7 @@ def _normalize_repeats_tuple(repeats, ndim, name):
 
 
 def _build_repeat_interleave_indices(dim_size, repeats, device):
-    from .creation import zeros_create
+    from ..creation import zeros_create
 
     if isinstance(repeats, int):
         if repeats < 0:
@@ -2028,7 +2028,7 @@ def _topk_310b_fill_value(dtype, largest):
 
 
 def _topk_310b_fallback(a, k, dim, largest, sorted_flag):
-    from .creation import empty_create
+    from ..creation import empty_create
 
     out_shape = list(a.shape)
     out_shape[dim] = int(k)
@@ -2450,7 +2450,7 @@ def repeat_interleave(a, repeats, dim=None):
     if a.device.type != "npu":
         raise ValueError("NPU repeat_interleave expects NPU tensors")
 
-    from .creation import zeros_create
+    from ..creation import zeros_create
 
     if hasattr(repeats, "shape"):
         raise RuntimeError("NPU repeat_interleave with tensor repeats is not implemented without CPU fallback")
@@ -2572,8 +2572,8 @@ def tril_indices(row, col, offset=0, dtype=None, device=None, layout=None):
     if dtype is None:
         dtype = int64_dtype
 
-    from .creation import tensor_create
-    from ..._device import device as Device
+    from ..creation import tensor_create
+    from ...._device import device as Device
 
     dev = Device("cpu") if device is None else (Device(device) if isinstance(device, str) else device)
     row = int(row)
@@ -2601,8 +2601,8 @@ def triu_indices(row, col, offset=0, dtype=None, device=None, layout=None):
     if dtype is None:
         dtype = int64_dtype
 
-    from .creation import tensor_create
-    from ..._device import device as Device
+    from ..creation import tensor_create
+    from ...._device import device as Device
 
     dev = Device("cpu") if device is None else (Device(device) if isinstance(device, str) else device)
     row = int(row)
@@ -2623,7 +2623,7 @@ def triu_indices(row, col, offset=0, dtype=None, device=None, layout=None):
 
 
 def _diag_310b_fallback(a, diagonal=0):
-    from .creation import empty_create, zeros_create
+    from ..creation import empty_create, zeros_create
 
     diagonal = int(diagonal)
 
@@ -2678,7 +2678,7 @@ def diag(a, diagonal=0):
     if not aclnn.diag_symbols_ok():
         raise RuntimeError("aclnnDiag symbols not available")
 
-    from ..meta import infer as meta_infer
+    from ...meta import infer as meta_infer
     spec = meta_infer.infer_diag(a, diagonal=diagonal)
     out_shape = spec.shape
     out_stride = npu_runtime._contiguous_stride(out_shape)
@@ -2774,8 +2774,8 @@ def nonzero(a, as_tuple=False):
     if not as_tuple:
         return full
 
-    from .creation import zeros_create
-    from ..common import view as view_backend
+    from ..creation import zeros_create
+    from ...common import view as view_backend
 
     if a.dim() == 0:
         if rows == 0:
@@ -2912,7 +2912,7 @@ def fmod(a, b):
 
 
 def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     if not isinstance(a, Tensor) or not isinstance(b, Tensor):
         raise ValueError("NPU allclose expects tensors")
     diff = abs(sub(a, b))
@@ -3359,7 +3359,7 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
     out_size = _numel(out_shape) * _dtype_itemsize(ref_tensor.dtype)
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
     # Fill on host then memcpy H2D to avoid aclnn scalar ops.
-    from . import acl_loader
+    from .. import acl_loader
     import ctypes
     import struct
     acl = acl_loader.ensure_acl()
@@ -3371,11 +3371,11 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
         itemsize = _dtype_itemsize(ref_tensor.dtype)
         dtype_name = getattr(ref_tensor.dtype, "name", None) or str(ref_tensor.dtype).split(".")[-1]
         if dtype_name == "float16":
-            from .aclnn import _float_to_float16_bits
+            from ..aclnn import _float_to_float16_bits
             bits = _float_to_float16_bits(float(scalar))
             pattern = int(bits).to_bytes(2, byteorder="little", signed=False)
         elif dtype_name == "bfloat16":
-            from .aclnn import _float_to_bfloat16_bits
+            from ..aclnn import _float_to_bfloat16_bits
             bits = _float_to_bfloat16_bits(float(scalar))
             pattern = int(bits).to_bytes(2, byteorder="little", signed=False)
         elif dtype_name == "float32":
@@ -3536,7 +3536,7 @@ def uniform_(a, low=0.0, high=1.0, generator=None):
         raise ValueError("NPU uniform_ expects NPU tensors")
 
     if _use_soc_fallback("uniform_"):
-        from ... import npu as npu_mod
+        from .... import npu as npu_mod
 
         if generator is not None and hasattr(generator, 'philox_engine_inputs'):
             seed, offset = generator.philox_engine_inputs(10)
@@ -3563,7 +3563,7 @@ def uniform_(a, low=0.0, high=1.0, generator=None):
     if generator is not None and hasattr(generator, 'philox_engine_inputs'):
         seed, offset = generator.philox_engine_inputs(10)
     else:
-        from ... import npu as npu_mod
+        from .... import npu as npu_mod
         seed, offset = npu_mod._get_and_advance_offset(device_index=(a.device.index or 0), increment=10)
 
     a_storage = _unwrap_storage(a)
@@ -3590,7 +3590,7 @@ def normal_(a, mean=0.0, std=1.0, generator=None):
 
     if _use_soc_fallback("normal_"):
         # Deterministic NPU-only fallback built from small ops.
-        from ... import npu as npu_mod
+        from .... import npu as npu_mod
 
         if generator is not None and hasattr(generator, 'philox_engine_inputs'):
             seed, offset = generator.philox_engine_inputs(10)
@@ -3627,7 +3627,7 @@ def normal_(a, mean=0.0, std=1.0, generator=None):
     if generator is not None and hasattr(generator, 'philox_engine_inputs'):
         seed, offset = generator.philox_engine_inputs(10)
     else:
-        from ... import npu as npu_mod
+        from .... import npu as npu_mod
         seed, offset = npu_mod._get_and_advance_offset(device_index=(a.device.index or 0), increment=10)
 
     a_storage = _unwrap_storage(a)
@@ -3663,7 +3663,7 @@ def randint_(a, low, high=None, generator=None):
 def random_(a, from_=0, to=None, generator=None):
     """In-place random — fills tensor with random values from [from_, to)."""
     import numpy as np
-    from ..._dtype import to_numpy_dtype
+    from ...._dtype import to_numpy_dtype
     np_dtype = to_numpy_dtype(a.dtype)
     if to is None:
         if np.issubdtype(np_dtype, np.floating):
@@ -4060,7 +4060,7 @@ def _npu_basic_getitem_view(tensor, key):
     Returns a Tensor sharing the same storage, or None if we need to fall back
     to a copy (e.g. negative-step slices that require aclnnSlice).
     """
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     import numpy as np
 
     keys = list(key) if isinstance(key, tuple) else [key]
@@ -4150,7 +4150,7 @@ def _npu_basic_getitem_with_strided_slices(tensor, keys):
     Process left-to-right: step==1 slices and ints become view ops;
     step!=1 slices use aclnnSlice which produces a contiguous copy.
     """
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
 
     cur = tensor
     in_dim = 0
@@ -4200,7 +4200,7 @@ def _npu_basic_getitem_with_strided_slices(tensor, keys):
 
 def _npu_select_view(tensor, dim, idx):
     """Select a single element along *dim* — returns a view with dim removed."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     new_offset = tensor.offset + idx * tensor.stride[dim]
     new_shape = tensor.shape[:dim] + tensor.shape[dim + 1:]
     new_stride = tensor.stride[:dim] + tensor.stride[dim + 1:]
@@ -4209,7 +4209,7 @@ def _npu_select_view(tensor, dim, idx):
 
 def _npu_slice_view(tensor, dim, start, stop):
     """Step-1 slice as a view — adjust offset and shape[dim]."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     length = max(0, stop - start)
     new_offset = tensor.offset + start * tensor.stride[dim]
     new_shape = tensor.shape[:dim] + (length,) + tensor.shape[dim + 1:]
@@ -4219,7 +4219,7 @@ def _npu_slice_view(tensor, dim, start, stop):
 
 def _npu_strided_slice_view(tensor, dim, start, stop, step):
     """Strided slice as a view — adjust offset, shape, and stride. step must be > 0."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     length = len(range(start, stop, step))
     new_offset = tensor.offset + start * tensor.stride[dim]
     new_shape = tensor.shape[:dim] + (length,) + tensor.shape[dim + 1:]
@@ -4229,7 +4229,7 @@ def _npu_strided_slice_view(tensor, dim, start, stop, step):
 
 def _npu_unsqueeze_view(tensor, dim):
     """Insert a size-1 dimension at *dim* — pure view."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     new_shape = tensor.shape[:dim] + (1,) + tensor.shape[dim:]
     # Compute a stride that keeps the tensor contiguous-looking
     if dim < len(tensor.stride):
@@ -4301,7 +4301,7 @@ def _npu_assign_to_view(view, value):
 
     if isinstance(value, (int, float)):
         # Create a filled tensor matching the view shape, then copy
-        from .creation import zeros_create
+        from ..creation import zeros_create
         temp = zeros_create(view.shape, dtype=view.dtype, device=view.device)
         temp = _scalar_to_npu_tensor(value, temp)
         value = temp
@@ -4322,7 +4322,7 @@ def _npu_assign_to_view(view, value):
             dst_ptr = _npu_data_ptr(view)
             if value.device.type != "npu":
                 # Move value to NPU first
-                from .creation import tensor_create
+                from ..creation import tensor_create
                 import numpy as np
                 value = tensor_create(value._numpy_view().copy(), dtype=value.dtype, device=view.device)
             src_ptr = _npu_data_ptr(value)
@@ -4348,7 +4348,7 @@ def _npu_assign_to_view(view, value):
 
 def _is_advanced_index(item):
     """True if *item* is a Tensor, list, or other advanced index."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     if isinstance(item, Tensor):
         return True
     if isinstance(item, (list, tuple)):
@@ -4359,8 +4359,8 @@ def _is_advanced_index(item):
 
 def _to_npu_index_tensor(key, device, dtype_hint=None):
     """Convert a Python int/list/Tensor to an NPU int64 tensor for indexing."""
-    from ..._tensor import Tensor
-    from .creation import tensor_create
+    from ...._tensor import Tensor
+    from ..creation import tensor_create
     import numpy as np
 
     if isinstance(key, Tensor):
@@ -4451,7 +4451,7 @@ def _npu_advanced_getitem(tensor, key):
     Phase 1: Process basic indices (int, slice, None, Ellipsis) via views.
     Phase 2: Process advanced indices (Tensor, list, bool) via aclnnIndex.
     """
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
 
     keys = list(key) if isinstance(key, tuple) else [key]
 
@@ -4643,7 +4643,7 @@ def _npu_advanced_getitem(tensor, key):
 
 def _npu_expand(tensor, target_shape):
     """Expand tensor to target shape (broadcast — no data copy, just stride manipulation)."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
 
     src_shape = tensor.shape
     src_stride = tensor.stride
@@ -4667,7 +4667,7 @@ def _npu_expand(tensor, target_shape):
 
 def _npu_advanced_setitem(tensor, key, value):
     """Full setitem for advanced indexing using aclnnIndexPutImpl."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     import numpy as np
 
     keys = list(key) if isinstance(key, tuple) else [key]
@@ -4742,7 +4742,7 @@ def _npu_advanced_setitem(tensor, key, value):
                 # Keep the full dim and let index_put_impl handle it.
                 # Convert slice to an index tensor
                 import numpy as np
-                from .creation import tensor_create
+                from ..creation import tensor_create
                 indices = list(range(start, stop, step))
                 idx_t = tensor_create(np.array(indices, dtype=np.int64), dtype=int64_dtype, device=prepared.device)
                 adv_dims.append(i)
@@ -4767,14 +4767,14 @@ def _npu_advanced_setitem(tensor, key, value):
 
     # Prepare value tensor
     if isinstance(value, (int, float)):
-        from .creation import tensor_create
+        from ..creation import tensor_create
         import numpy as np
         val_arr = np.full((1,), value, dtype=npu_runtime._dtype_to_numpy(prepared.dtype))
         value_tensor = tensor_create(val_arr, dtype=prepared.dtype, device=prepared.device)
     elif hasattr(value, 'storage'):
         value_tensor = value
         if value_tensor.device.type != "npu":
-            from .creation import tensor_create
+            from ..creation import tensor_create
             import numpy as np
             value_tensor = tensor_create(
                 value_tensor._numpy_view().copy(),
@@ -4782,7 +4782,7 @@ def _npu_advanced_setitem(tensor, key, value):
                 device=prepared.device,
             )
     else:
-        from .creation import tensor_create
+        from ..creation import tensor_create
         import numpy as np
         value_tensor = tensor_create(
             np.array(value, dtype=npu_runtime._dtype_to_numpy(prepared.dtype)),
@@ -5447,8 +5447,8 @@ def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
 
 
 def _dropout_310b_mask(a, keep_prob):
-    from .creation import empty_create
-    from ... import npu as npu_mod
+    from ..creation import empty_create
+    from .... import npu as npu_mod
 
     numel = _numel(a.shape)
     if numel == 0:
@@ -5477,7 +5477,7 @@ def dropout(a, p=0.5, training=True):
 
     if _use_soc_fallback("dropout"):
         if p >= 1:
-            from .creation import zeros_create
+            from ..creation import zeros_create
             return zeros_create(a.shape, dtype=a.dtype, device=a.device)
         if not getattr(a.dtype, "is_floating_point", True):
             raise ValueError("NPU dropout expects floating-point tensors")
@@ -5503,7 +5503,7 @@ def dropout(a, p=0.5, training=True):
     mask_ptr = npu_runtime._alloc_device(mask_numel, runtime=runtime)
 
     # Get seed and offset from npu module
-    from ... import npu as npu_mod
+    from .... import npu as npu_mod
     seed, offset = npu_mod._get_and_advance_offset(device_index=(a.device.index or 0), increment=10)
 
     # Step 1: Generate mask
@@ -5591,7 +5591,7 @@ def pad_sequence(seqs, batch_first=False, padding_value=0.0, padding_side="right
     if padding_side not in ("left", "right"):
         raise ValueError("padding_side must be 'left' or 'right'")
 
-    from .creation import full_create
+    from ..creation import full_create
 
     max_len = max(int(t.shape[0]) for t in seqs)
     batch = len(seqs)
@@ -5785,7 +5785,7 @@ def unbind(a, dim=0):
     dim = _normalize_dim(dim, a.dim())
     dim_size = a.shape[dim]
     outputs = []
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     for i in range(dim_size):
         sliced = _slice_along_dim(a, i, i + 1, dim)
         out_shape = a.shape[:dim] + a.shape[dim + 1:]
@@ -5800,7 +5800,7 @@ def hstack(tensors):
 
 
 def vstack(tensors):
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     if tensors[0].dim() == 1:
         expanded = [view_backend.reshape(t, (1, t.shape[0])) for t in tensors]
         return cat(expanded, dim=0)
@@ -5812,7 +5812,7 @@ def row_stack(tensors):
 
 
 def dstack(tensors):
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     expanded = []
     for t in tensors:
         if t.dim() == 1:
@@ -5829,7 +5829,7 @@ def dstack(tensors):
 
 
 def column_stack(tensors):
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     if tensors[0].dim() == 1:
         expanded = [view_backend.reshape(t, (t.shape[0], 1)) for t in tensors]
         return cat(expanded, dim=1)
@@ -5937,7 +5937,7 @@ def _move_dim_to_last(a, dim):
 
 
 def _gather_310b_fallback(a, dim, index):
-    from .creation import ones_create, zeros_create
+    from ..creation import ones_create, zeros_create
 
     dim = _normalize_dim(dim, a.dim())
     dim_size = int(a.shape[dim])
@@ -6143,7 +6143,7 @@ def linalg_qr(a, mode='reduced'):
 
 def narrow(a, dim, start, length):
     """narrow — returns a view of the tensor narrowed along *dim*."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     d = dim if dim >= 0 else dim + a.dim()
     new_shape = a.shape[:d] + (int(length),) + a.shape[d + 1:]
     new_offset = a.offset + int(start) * a.stride[d]
@@ -6158,7 +6158,7 @@ def select(a, dim, index):
 
 def expand(a, sizes):
     """expand — broadcast-expand a tensor (view, no copy)."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     sizes = tuple(sizes)
     ndiff = len(sizes) - a.dim()
     if ndiff < 0:
@@ -6186,7 +6186,7 @@ def expand(a, sizes):
 
 def masked_fill(a, mask, value):
     """masked_fill — out-of-place masked fill (returns a copy)."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     result = dispatch("clone", a.device.type, a)
     return masked_fill_(result, mask, value)
 
@@ -6222,7 +6222,7 @@ def index_put_(a, indices, values, accumulate=False):
         val_dtype = values.dtype
     else:
         # scalar
-        from .creation import tensor_create
+        from ..creation import tensor_create
         import numpy as np
         val_t = tensor_create(
             np.array(values, dtype=npu_runtime._dtype_to_numpy(a.dtype)),
@@ -6245,7 +6245,7 @@ def index_put_(a, indices, values, accumulate=False):
 
 def index_put(a, indices, values, accumulate=False):
     """index_put — out-of-place index put (returns a copy)."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     result = dispatch("clone", a.device.type, a)
     return index_put_(result, indices, values, accumulate)
 
@@ -6381,7 +6381,7 @@ def masked_scatter_(a, mask, source):
 
 def unfold(a, dimension, size, step):
     """unfold — returns a view of the original tensor with an additional dimension of size *size*."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     d = dimension if dimension >= 0 else dimension + a.dim()
     dim_size = a.shape[d]
     n_windows = max(0, (dim_size - size) // step + 1)
@@ -6397,7 +6397,7 @@ def unfold(a, dimension, size, step):
 
 def narrow(a, dim, start, length):
     """Narrow: return a view of tensor along dim from start to start+length."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     d = dim if dim >= 0 else dim + a.dim()
     new_shape = list(a.shape)
     new_shape[d] = int(length)
@@ -6407,7 +6407,7 @@ def narrow(a, dim, start, length):
 
 def select(a, dim, index):
     """Select: remove dim by indexing a single element along it (view op)."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     d = dim if dim >= 0 else dim + a.dim()
     idx = int(index)
     if idx < 0:
@@ -6422,7 +6422,7 @@ def select(a, dim, index):
 
 def expand(a, sizes):
     """Expand: broadcast tensor to larger sizes (view op, no copy)."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     sizes = tuple(sizes)
     ndiff = len(sizes) - a.dim()
     if ndiff < 0:
@@ -6540,7 +6540,7 @@ def index_add_(a, dim, index, source, alpha=1.0):
 
 def scatter_(a, dim, index, src):
     """In-place scatter_ — delegates to existing scatter with self as out."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     d = dim if dim >= 0 else dim + a.dim()
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
@@ -6551,7 +6551,7 @@ def scatter_(a, dim, index, src):
         src_dtype = src.dtype
     else:
         # Scalar src — create a filled tensor
-        from .creation import tensor_create
+        from ..creation import tensor_create
         import numpy as np
         src_arr = np.full(a.shape, src, dtype=npu_runtime._dtype_to_numpy(a.dtype))
         src_t = tensor_create(src_arr, dtype=a.dtype, device=a.device)
@@ -6702,7 +6702,7 @@ def norm_(a, p=2, dim=None, keepdim=False):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
 
-    from ..._dtype import float32 as f32
+    from ...._dtype import float32 as f32
     out_dtype = a.dtype if getattr(a.dtype, 'is_floating_point', True) else f32
 
     if dim is None:
@@ -6771,9 +6771,9 @@ def prod_(a, dim=None, keepdim=False):
 
 def floor_divide(a, b):
     """Compute floor division using aclnnFloorDivide."""
-    from ..._tensor import Tensor
+    from ...._tensor import Tensor
     if not isinstance(b, Tensor):
-        from ..._creation import tensor as _tensor
+        from ...._creation import tensor as _tensor
         b = _tensor(float(b), device=a.device)
 
     runtime = npu_runtime.get_runtime((a.device.index or 0))
@@ -6824,7 +6824,7 @@ def rms_norm(input, normalized_shape, weight=None, eps=1e-6):
 
     if gamma_ptr is None:
         # aclnnRmsNorm requires gamma; create ones tensor
-        from ..._creation import ones as _ones
+        from ...._creation import ones as _ones
         w = _ones(norm_shape, dtype=input.dtype, device=input.device)
         gamma_ptr = _unwrap_storage(w).data_ptr()
         gamma_shape = w.shape
@@ -6899,7 +6899,7 @@ def conv2d(input, weight, bias=None, stride=(1, 1), padding=(0, 0), dilation=(1,
 
 def conv1d(input, weight, bias=None, stride=(1,), padding=(0,), dilation=(1,), groups=1):
     """Conv1d forward via conv2d with unsqueezed spatial dim."""
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     # Unsqueeze: (N, C, L) -> (N, C, 1, L)
     input_4d = view_backend.unsqueeze(input, 2)
     weight_4d = view_backend.unsqueeze(weight, 2)
@@ -6966,7 +6966,7 @@ def conv_transpose2d(input, weight, bias=None, stride=(1, 1), padding=(0, 0),
 def conv_transpose1d(input, weight, bias=None, stride=(1,), padding=(0,),
                      output_padding=(0,), groups=1, dilation=(1,)):
     """ConvTranspose1d forward via conv_transpose2d with unsqueezed spatial dim."""
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     input_4d = view_backend.unsqueeze(input, 2)
     weight_4d = view_backend.unsqueeze(weight, 2)
     out_4d = conv_transpose2d(input_4d, weight_4d, bias,
@@ -7353,7 +7353,7 @@ def einsum_(equation, operands):
     - inner product: i,i-> or ...i,...i->...
     - batch diagonal sum: ...ii->...i (trace-like)
     """
-    from ..._dispatch import dispatch as _dispatch
+    from ...._dispatch import dispatch as _dispatch
 
     eq = equation.replace(' ', '')
 
@@ -7455,7 +7455,7 @@ def one_hot(indices, num_classes=-1):
     runtime = npu_runtime.get_runtime((indices.device.index or 0))
     stream = npu_state.current_stream((indices.device.index or 0))
 
-    from ..._dtype import float32 as f32, int64 as i64
+    from ...._dtype import float32 as f32, int64 as i64
 
     if num_classes < 0:
         max_val = amax(indices)
@@ -7727,8 +7727,8 @@ def im2col_op(a, kernel_size, dilation, padding, stride):
     Composite implementation: aclnnIm2col returns 561103 on CANN 8.3.RC2.
     Uses pad + flatten + gather with existing NPU ops.
     """
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
 
     N, C, H, W = a.shape
     kH, kW = kernel_size
@@ -7868,7 +7868,7 @@ def broadcast_to_op(a, shape):
 
 def movedim_op(a, source, destination):
     """torch.movedim — compute permutation then delegate to permute."""
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     ndim = a.dim()
     if isinstance(source, int):
         source = [source]
@@ -7885,7 +7885,7 @@ def movedim_op(a, source, destination):
 
 def unflatten_op(a, dim, sizes):
     """Tensor.unflatten — reshape one dim into multiple dims."""
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     ndim = a.dim()
     d = dim if dim >= 0 else dim + ndim
     new_shape = a.shape[:d] + tuple(sizes) + a.shape[d + 1:]
@@ -7898,7 +7898,7 @@ def diagonal_op(a, offset=0, dim1=0, dim2=1):
     Uses gather with pre-expanded numpy indices to avoid ACLNN offset bug
     (select creates views with non-zero offset that _create_tensor ignores).
     """
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     import numpy as _np
 
     ndim = a.dim()
@@ -7990,7 +7990,7 @@ def argwhere_op(a):
     ndim = len(a.shape)
     if isinstance(indices, tuple):
         if len(indices) == 0:
-            from ..._tensor import Tensor
+            from ...._tensor import Tensor
             runtime = npu_runtime.get_runtime((a.device.index or 0))
             out_shape = (0, ndim)
             out_stride = npu_runtime._contiguous_stride(out_shape)
@@ -7998,9 +7998,9 @@ def argwhere_op(a):
             out_storage = npu_typed_storage_from_ptr(out_ptr, 0, int64_dtype, device=a.device)
             return _wrap_tensor(out_storage, out_shape, out_stride)
         if ndim == 1:
-            from ..._dispatch.dispatcher import dispatch
+            from ...._dispatch.dispatcher import dispatch
             return dispatch("unsqueeze", "npu", indices[0], -1)
-        from ..._dispatch.dispatcher import dispatch
+        from ...._dispatch.dispatcher import dispatch
         cols = [dispatch("unsqueeze", "npu", idx, -1) for idx in indices]
         return dispatch("cat", "npu", cols, dim=-1)
     # Single tensor result — nonzero already returns (N, ndim)
@@ -8013,8 +8013,8 @@ def det_op(a):
         raise RuntimeError(f"det: input must be at least 2-D, got {len(a.shape)}-D")
     if a.shape[-2] != a.shape[-1]:
         raise RuntimeError(f"det: input must be a square matrix, got shape {a.shape}")
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     import numpy as _np
     n = a.shape[-1]
     # 1x1 special case
@@ -8047,7 +8047,7 @@ def det_op(a):
 
 def diff_op(a, n=1, dim=-1, prepend=None, append=None):
     """Compute n-th discrete difference along dim."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     t = a
     if prepend is not None or append is not None:
         pieces = []
@@ -8063,7 +8063,7 @@ def diff_op(a, n=1, dim=-1, prepend=None, append=None):
     for _ in range(n):
         length = t.shape[dim]
         # Use index_select to create fresh tensors (narrow views have NPU offset bugs)
-        from ..._creation import arange as _arange
+        from ...._creation import arange as _arange
         idx_hi = _arange(1, length, dtype=int64_dtype, device=t.device)
         idx_lo = _arange(0, length - 1, dtype=int64_dtype, device=t.device)
         s1 = index_select(t, dim, idx_hi)
@@ -8074,7 +8074,7 @@ def diff_op(a, n=1, dim=-1, prepend=None, append=None):
 
 def dist_op(a, b, p=2):
     """p-norm distance between two tensors."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     d = sub(a, b)
     d_flat = dispatch("flatten", "npu", d)
     if p == 2:
@@ -8115,8 +8115,8 @@ def inner_op(a, b):
 
 def tensordot_op(a, b, dims=2):
     """Tensor contraction via reshape + matmul."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
 
     if isinstance(dims, int):
         dims_a = list(range(-dims, 0))
@@ -8162,7 +8162,7 @@ def tensordot_op(a, b, dims=2):
     a_2d = view_backend.reshape(a_t, (m, contract_size))
     b_2d = view_backend.reshape(b_t, (contract_size, n))
     # Use addmm (cubeMathType=1) to avoid matmul contamination issues
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     zero_bias = dispatch("zeros", "npu", (m, n), dtype=a.dtype, device=a.device)
     out_2d = addmm(zero_bias, a_2d, b_2d)
     out_shape = free_a_shape + free_b_shape
@@ -8173,8 +8173,8 @@ def tensordot_op(a, b, dims=2):
 
 def cdist_op(x1, x2, p=2.0):
     """Batched pairwise distance using ||a-b||^2 = ||a||^2 + ||b||^2 - 2*a*b^T."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
 
     squeezed = False
     if len(x1.shape) == 2:
@@ -8248,14 +8248,14 @@ def cdist_op(x1, x2, p=2.0):
 
 def uniform_op(a):
     """Return tensor of same shape filled with Uniform(0,1) samples."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..._creation import rand
+    from ...._dispatch.dispatcher import dispatch
+    from ...._creation import rand
     return rand(a.shape, dtype=a.dtype, device=a.device)
 
 
 def isreal_op(a):
     """Returns bool tensor: True for all elements if dtype is non-complex."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     dtype_name = str(a.dtype).split(".")[-1]
     is_complex = "complex" in dtype_name
     if is_complex:
@@ -8268,15 +8268,15 @@ def isreal_op(a):
 
 def isin_op(elements, test_elements):
     """Tests if each element is in test_elements."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     te_flat = dispatch("flatten", "npu", test_elements)
     te_len = te_flat.shape[0]
     elem_shape = elements.shape
     elem_flat = dispatch("flatten", "npu", elements)
     n = elem_flat.shape[0]
     # Loop over test elements, use tile to replicate (expand has NPU view bugs)
-    from ..._creation import arange as _arange
+    from ...._creation import arange as _arange
     idx = _arange(0, 1, dtype=int64_dtype, device=te_flat.device)
     te_val = index_select(te_flat, 0, idx)
     te_tiled = dispatch("tile", "npu", te_val, (n,))
@@ -8296,8 +8296,8 @@ def bucketize_op(a, boundaries, out_int32=False, right=False):
 
 def bincount_op(a, weights=None, minlength=0):
     """Count occurrences of each value in a 1-D int tensor."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     flat = dispatch("flatten", "npu", a)
     n = flat.shape[0]
     if n == 0:
@@ -8320,7 +8320,7 @@ def bincount_op(a, weights=None, minlength=0):
     # Use scatter_add to accumulate
     idx = _cast_tensor_dtype(flat, int64_dtype)
     idx = view_backend.reshape(idx, (n,))
-    from ..._functional import scatter_add_ as _scatter_add
+    from ...._functional import scatter_add_ as _scatter_add
     _scatter_add(out, 0, idx, w_flat)
     return out
 
@@ -8329,8 +8329,8 @@ def histc_op(a, bins=100, min=0, max=0):
     """Histogram with equal-width bins."""
     import builtins
     builtins_abs = builtins.abs
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     flat = dispatch("flatten", "npu", a)
     lo = float(min)
     hi = float(max)
@@ -8369,14 +8369,14 @@ def histc_op(a, bins=100, min=0, max=0):
     # Use scatter_add to count
     out = dispatch("zeros", "npu", (bins,), dtype=a.dtype, device=a.device)
     ones_t = dispatch("ones", "npu", (flat.shape[0],), dtype=a.dtype, device=a.device)
-    from ..._functional import scatter_add_ as _scatter_add
+    from ...._functional import scatter_add_ as _scatter_add
     _scatter_add(out, 0, indices, ones_t)
     return out
 
 
 def histogram_op(a, bins, range=None, weight=None, density=False):
     """Histogram returning (hist, bin_edges)."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     flat = dispatch("flatten", "npu", a)
     if isinstance(bins, int):
         nbins = bins
@@ -8412,7 +8412,7 @@ def histogram_op(a, bins, range=None, weight=None, density=False):
             runtime=runtime
         )
     # Compute bin indices via searchsorted
-    from ..._creation import tensor as create_tensor
+    from ...._creation import tensor as create_tensor
     edges_tensor = create_tensor(edges_np.tolist(), dtype=a.dtype, device=a.device)
     indices = searchsorted(edges_tensor, _cast_tensor_dtype(flat, a.dtype), right=False)
     # Clamp to valid range [1, nbins] then shift to [0, nbins-1]
@@ -8428,7 +8428,7 @@ def histogram_op(a, bins, range=None, weight=None, density=False):
     else:
         w_flat = dispatch("ones", "npu", (flat.shape[0],), dtype=a.dtype, device=a.device)
         hist = dispatch("zeros", "npu", (nbins,), dtype=a.dtype, device=a.device)
-    from ..._functional import scatter_add_ as _scatter_add
+    from ...._functional import scatter_add_ as _scatter_add
     _scatter_add(hist, 0, indices, w_flat)
     edges_out = create_tensor(edges_np.tolist(), dtype=a.dtype, device=a.device)
     return hist, edges_out
@@ -8436,8 +8436,8 @@ def histogram_op(a, bins, range=None, weight=None, density=False):
 
 def quantile_op(a, q, dim=None, keepdim=False):
     """Compute quantile via sort + direct value extraction."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     import numpy as _np
 
     if hasattr(q, 'shape'):
@@ -8486,7 +8486,7 @@ def quantile_op(a, q, dim=None, keepdim=False):
         idx_hi = min(idx_lo + 1, n - 1)
         frac_val = idx_f - idx_lo
         result_val = sorted_np[idx_lo] * (1.0 - frac_val) + sorted_np[idx_hi] * frac_val
-        from ..._creation import tensor as create_tensor
+        from ...._creation import tensor as create_tensor
         return create_tensor(float(result_val), dtype=a.dtype, device=a.device)
     else:
         actual_dim = dim % ndim
@@ -8496,7 +8496,7 @@ def quantile_op(a, q, dim=None, keepdim=False):
         idx_hi = min(idx_lo + 1, n - 1)
         frac_val = idx_f - idx_lo
         # Use index_select which works in fresh context
-        from ..._creation import arange as _arange
+        from ...._creation import arange as _arange
         lo_idx = _arange(idx_lo, idx_lo + 1, dtype=int64_dtype, device=sorted_t.device)
         hi_idx = _arange(idx_hi, idx_hi + 1, dtype=int64_dtype, device=sorted_t.device)
         lo_val = index_select(sorted_t, actual_dim, lo_idx)
@@ -8513,7 +8513,7 @@ def quantile_op(a, q, dim=None, keepdim=False):
 
 def nanquantile_op(a, q, dim=None, keepdim=False):
     """Quantile ignoring NaN values — sync to CPU for NaN-aware computation."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     import numpy as _np
 
     # Resolve q to float
@@ -8561,7 +8561,7 @@ def nanquantile_op(a, q, dim=None, keepdim=False):
         )
         nv = int(count_np[0])
         if nv == 0:
-            from ..._creation import tensor as create_tensor
+            from ...._creation import tensor as create_tensor
             return create_tensor(float('nan'), dtype=a.dtype, device=a.device)
         # Sort and sync to CPU
         sorted_t, _ = dispatch("sort", "npu", flat)
@@ -8577,7 +8577,7 @@ def nanquantile_op(a, q, dim=None, keepdim=False):
         idx_hi = min(idx_lo + 1, nv - 1)
         frac = idx_f - idx_lo
         result_val = sorted_np[idx_lo] * (1.0 - frac) + sorted_np[idx_hi] * frac
-        from ..._creation import tensor as create_tensor
+        from ...._creation import tensor as create_tensor
         return create_tensor(float(result_val), dtype=a.dtype, device=a.device)
     else:
         # With dim: replace NaN with inf, then use quantile_op
@@ -8590,7 +8590,7 @@ def nanquantile_op(a, q, dim=None, keepdim=False):
 
 def nanmedian_op(a, dim=None, keepdim=False):
     """Median ignoring NaN values."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     import numpy as _np
 
     if dim is None:
@@ -8616,7 +8616,7 @@ def nanmedian_op(a, dim=None, keepdim=False):
         )
         count = int(count_np[0])
         if count == 0:
-            from ..._creation import tensor as create_tensor
+            from ...._creation import tensor as create_tensor
             return create_tensor(float('nan'), dtype=a.dtype, device=a.device)
         # Sync sorted values to CPU
         sorted_np = _np.zeros(n, dtype=_np.float32)
@@ -8626,7 +8626,7 @@ def nanmedian_op(a, dim=None, keepdim=False):
             runtime=runtime
         )
         med_idx = (count - 1) // 2
-        from ..._creation import tensor as create_tensor
+        from ...._creation import tensor as create_tensor
         return create_tensor(float(sorted_np[med_idx]), dtype=a.dtype, device=a.device)
     # With dim: return (values, indices)
     nan_mask = isnan(a)
@@ -8650,7 +8650,7 @@ def nanmedian_op(a, dim=None, keepdim=False):
     # Since gather might fail from contamination, use a loop with index_select
     # For simplicity, just pick the middle index across all slices
     # Default: use floor(n/2) as a safe fallback for all slices
-    from ..._creation import arange as _arange
+    from ...._creation import arange as _arange
     mid = (n - 1) // 2
     mid_idx = _arange(mid, mid + 1, dtype=int64_dtype, device=sorted_t.device)
     values = index_select(sorted_t, actual_dim, mid_idx)
@@ -8671,7 +8671,7 @@ def matrix_power_op(a, n):
         raise RuntimeError(f"matrix_power: input must be at least 2-D, got {len(a.shape)}-D")
     if a.shape[-2] != a.shape[-1]:
         raise RuntimeError(f"matrix_power: input must be square, got shape {a.shape}")
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     k = a.shape[-1]
     if n == 0:
         return dispatch("eye", "npu", k, dtype=a.dtype, device=a.device).expand(a.shape)
@@ -8693,8 +8693,8 @@ def col2im_op(a, output_size, kernel_size, dilation, padding, stride):
 
     Uses the same composite approach as im2col but in reverse via scatter_add.
     """
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     import numpy as _np
 
     N, C_kk, L = a.shape
@@ -8740,7 +8740,7 @@ def col2im_op(a, output_size, kernel_size, dilation, padding, stride):
     idx_reshaped = view_backend.reshape(idx_tensor_1d, (1, 1, kH * kW * H_col * W_col))
     idx_expanded = dispatch("tile", "npu", idx_reshaped, (N, C, 1))
 
-    from ..._functional import scatter_add_ as _scatter_add
+    from ...._functional import scatter_add_ as _scatter_add
     _scatter_add(out, 2, idx_expanded, a_reshaped)
 
     out = view_backend.reshape(out, (N, C, H_pad, W_pad))
@@ -8813,7 +8813,7 @@ def bmm_op(a, b):
 
 
 def linalg_vector_norm_op(a, ord=2, dim=None, keepdim=False):
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
 
@@ -8854,7 +8854,7 @@ def linalg_vector_norm_op(a, ord=2, dim=None, keepdim=False):
 
 def aminmax_aclnn(a, dim=None, keepdim=False):
     from collections import namedtuple
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     AminmaxResult = namedtuple("aminmax", ["min", "max"])
 
     runtime = npu_runtime.get_runtime((a.device.index or 0))
@@ -8900,7 +8900,7 @@ def aminmax_aclnn(a, dim=None, keepdim=False):
 
 def bincount_aclnn(a, weights=None, minlength=0):
     import numpy as _np
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
 
@@ -8978,7 +8978,7 @@ def adaptive_avg_pool3d_op(input, output_size):
     )
     result = _wrap_tensor(out_storage, out_shape_5d, out_stride_5d)
     if in_5d:
-        from ..common import view as view_backend
+        from ...common import view as view_backend
         result = view_backend.reshape(result, (C, oD, oH, oW))
     return result
 
@@ -9156,7 +9156,7 @@ def normalize_op(a, p=2.0, dim=1, eps=1e-12):
 
 def moveaxis_op(a, source, destination):
     """Move axes of tensor to new positions (alias for movedim)."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     return dispatch("movedim", "npu", a, source, destination)
 
 
@@ -9166,8 +9166,8 @@ def moveaxis_op(a, source, destination):
 
 def adaptive_avg_pool1d_op(input, output_size):
     """Adaptive average pooling 1D via lifting to 2D."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     # (N, C, W) → (N, C, 1, W) → adaptive_avg_pool2d → (N, C, 1, oW) → (N, C, oW)
     N, C, W = input.shape
     oW = output_size[0] if isinstance(output_size, (list, tuple)) else output_size
@@ -9179,8 +9179,8 @@ def adaptive_avg_pool1d_op(input, output_size):
 def avg_pool1d_op(input, kernel_size, stride, padding=0, ceil_mode=False,
                   count_include_pad=True):
     """Average pooling 1D via lifting to 2D."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     kW = kernel_size[0] if isinstance(kernel_size, (list, tuple)) else kernel_size
     sW = stride[0] if isinstance(stride, (list, tuple)) else stride
     pW = padding[0] if isinstance(padding, (list, tuple)) else padding
@@ -9195,8 +9195,8 @@ def avg_pool1d_op(input, kernel_size, stride, padding=0, ceil_mode=False,
 def max_pool1d_op(input, kernel_size, stride, padding=0, dilation=1,
                   ceil_mode=False, return_indices=False):
     """Max pooling 1D via lifting to 2D."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     kW = kernel_size[0] if isinstance(kernel_size, (list, tuple)) else kernel_size
     sW = stride[0] if isinstance(stride, (list, tuple)) else stride
     pW = padding[0] if isinstance(padding, (list, tuple)) else padding
@@ -9215,7 +9215,7 @@ def max_pool1d_op(input, kernel_size, stride, padding=0, dilation=1,
 
 def adaptive_max_pool1d_op(input, output_size, return_indices=False):
     """Adaptive max pooling 1D via computed kernel/stride + max_pool1d."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     N, C, W = input.shape
     oW = output_size[0] if isinstance(output_size, (list, tuple)) else output_size
     # Compute equivalent kernel/stride for adaptive pooling
@@ -9551,7 +9551,7 @@ def special_multigammaln_op(a, p):
 
 def linalg_norm_op(a, ord=None, dim=None, keepdim=False):
     """Combined vector/matrix norm."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     if dim is not None and isinstance(dim, (list, tuple)) and len(dim) == 2:
         return linalg_matrix_norm_op(a, ord=ord if ord is not None else 'fro',
                                      dim=dim, keepdim=keepdim)
@@ -9562,7 +9562,7 @@ def linalg_norm_op(a, ord=None, dim=None, keepdim=False):
 
 def linalg_matrix_norm_op(a, ord='fro', dim=(-2, -1), keepdim=False):
     """Matrix norm via vector_norm for Frobenius, or SVD-based for others."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     if ord == 'fro' or ord == 'f':
         # Frobenius = sqrt(sum(x^2)) = vector_norm(x.flatten(), 2)
         return dispatch("linalg_vector_norm", "npu", a, 2, list(dim), keepdim)
@@ -9599,7 +9599,7 @@ def linalg_matrix_norm_op(a, ord='fro', dim=(-2, -1), keepdim=False):
 
 def linalg_multi_dot_op(tensors):
     """Chain of matrix multiplications."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     result = tensors[0]
     for t in tensors[1:]:
         result = dispatch("mm", "npu", contiguous(result), contiguous(t))
@@ -9608,7 +9608,7 @@ def linalg_multi_dot_op(tensors):
 
 def linalg_matrix_power_op(a, n):
     """Matrix raised to integer power n via repeated multiplication."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     if n == 0:
         # Identity matrix
         return dispatch("eye", "npu", a.shape[-1], dtype=a.dtype, device=a.device)
@@ -9623,8 +9623,8 @@ def linalg_matrix_power_op(a, n):
 
 def linalg_vander_op(x, N=None):
     """Vandermonde matrix: each row is [1, x, x^2, ..., x^(N-1)]."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     n = N if N is not None else len(x.shape) and x.shape[0]
     # Build column by column: col_i = x^i
     one = _scalar_to_npu_tensor(1.0, x)
@@ -9650,8 +9650,8 @@ def linalg_vander_op(x, N=None):
 
 def _build_dft_matrices(N, device, dtype, inverse=False):
     """Build real and imaginary parts of DFT matrix on NPU."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     import numpy as _np
     import math
     sign = 1.0 if inverse else -1.0
@@ -9679,8 +9679,8 @@ def _build_dft_matrices(N, device, dtype, inverse=False):
 
 def _apply_dft_1d(x_real, x_imag, dim, n, inverse, norm_mode):
     """Apply 1D DFT along a given dimension using matrix multiply."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     ndim = len(x_real.shape)
     N_in = x_real.shape[dim]
     N_out = n if n is not None else N_in
@@ -9699,7 +9699,7 @@ def _apply_dft_1d(x_real, x_imag, dim, n, inverse, norm_mode):
             x_imag = dispatch("cat", "npu", [contiguous(x_imag), pad_imag], dim=dim)
         else:
             # Truncate
-            from ..._creation import arange as _arange
+            from ...._creation import arange as _arange
             idx = _arange(0, N_out, dtype=int64_dtype, device=device)
             x_real = index_select(contiguous(x_real), dim, idx)
             x_imag = index_select(contiguous(x_imag), dim, idx)
@@ -9751,8 +9751,8 @@ def _apply_dft_1d(x_real, x_imag, dim, n, inverse, norm_mode):
 
 def _pack_complex_as_last_dim(real, imag):
     """Pack real/imag into (..., 2) tensor for complex output."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     r = view_backend.reshape(contiguous(real), real.shape + (1,))
     i = view_backend.reshape(contiguous(imag), imag.shape + (1,))
     return dispatch("cat", "npu", [r, i], dim=-1)
@@ -9760,10 +9760,10 @@ def _pack_complex_as_last_dim(real, imag):
 
 def _unpack_complex(a):
     """Unpack (..., 2) complex tensor into (real, imag) pair."""
-    from ..._creation import arange as _arange
+    from ...._creation import arange as _arange
     idx_r = _arange(0, 1, dtype=int64_dtype, device=a.device)
     idx_i = _arange(1, 2, dtype=int64_dtype, device=a.device)
-    from ..common import view as view_backend
+    from ...common import view as view_backend
     real = view_backend.reshape(index_select(contiguous(a), -1, idx_r), a.shape[:-1])
     imag = view_backend.reshape(index_select(contiguous(a), -1, idx_i), a.shape[:-1])
     return real, imag
@@ -9771,7 +9771,7 @@ def _unpack_complex(a):
 
 def _input_to_real_imag(a):
     """Convert input tensor to (real, imag) pair. Real input has imag=0."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     if len(a.shape) > 0 and a.shape[-1] == 2:
         # Could be complex stored as (..., 2)
         return _unpack_complex(a)
@@ -9796,8 +9796,8 @@ def fft_ifft_op(a, n=None, dim=-1, norm=None):
 
 def fft_rfft_op(a, n=None, dim=-1, norm=None):
     """1D FFT of real input, returning only positive frequencies."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..._creation import arange as _arange
+    from ...._dispatch.dispatcher import dispatch
+    from ...._creation import arange as _arange
     x_real = a
     x_imag = dispatch("zeros", "npu", a.shape, dtype=a.dtype, device=a.device)
     N = n if n is not None else a.shape[dim if dim >= 0 else dim + len(a.shape)]
@@ -9813,9 +9813,9 @@ def fft_rfft_op(a, n=None, dim=-1, norm=None):
 
 def fft_irfft_op(a, n=None, dim=-1, norm=None):
     """Inverse of rfft: reconstruct full spectrum, then ifft, return real."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..._creation import arange as _arange
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...._creation import arange as _arange
+    from ...common import view as view_backend
     x_real, x_imag = _unpack_complex(a)
     d = dim if dim >= 0 else dim + len(x_real.shape)
     freq_len = x_real.shape[d]
@@ -9856,8 +9856,8 @@ def fft_ifft2_op(a, s=None, dim=(-2, -1), norm=None):
 
 def fft_rfft2_op(a, s=None, dim=(-2, -1), norm=None):
     """2D FFT of real input."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..._creation import arange as _arange
+    from ...._dispatch.dispatcher import dispatch
+    from ...._creation import arange as _arange
     d0, d1 = dim
     s0 = s[0] if s is not None else None
     s1 = s[1] if s is not None else None
@@ -9886,8 +9886,8 @@ def fft_irfft2_op(a, s=None, dim=(-2, -1), norm=None):
     # IFFT along second-to-last dim
     x_real, x_imag = _apply_dft_1d(x_real, x_imag, d0, s0, inverse=True, norm_mode=norm)
     # Reconstruct full spectrum along last dim and IFFT
-    from ..._dispatch.dispatcher import dispatch
-    from ..._creation import arange as _arange
+    from ...._dispatch.dispatcher import dispatch
+    from ...._creation import arange as _arange
     d1_idx = d1 if d1 >= 0 else d1 + len(x_real.shape)
     freq_len = x_real.shape[d1_idx]
     N1 = s1 if s1 is not None else 2 * (freq_len - 1)
@@ -9935,8 +9935,8 @@ def fft_ifftn_op(a, s=None, dim=None, norm=None):
 
 def fft_rfftn_op(a, s=None, dim=None, norm=None):
     """N-D FFT of real input."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..._creation import arange as _arange
+    from ...._dispatch.dispatcher import dispatch
+    from ...._creation import arange as _arange
     ndim = len(a.shape)
     if dim is None:
         dim = list(range(ndim))
@@ -9963,8 +9963,8 @@ def fft_rfftn_op(a, s=None, dim=None, norm=None):
 
 def fft_irfftn_op(a, s=None, dim=None, norm=None):
     """Inverse of rfftn."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..._creation import arange as _arange
+    from ...._dispatch.dispatcher import dispatch
+    from ...._creation import arange as _arange
     x_real, x_imag = _unpack_complex(a)
     if dim is None:
         dim = list(range(len(x_real.shape)))
@@ -9995,11 +9995,11 @@ def fft_hfft_op(a, n=None, dim=-1, norm=None):
     """Hermitian FFT: irfft(conj(x)). Output is real."""
     x_real, x_imag = _unpack_complex(a)
     # conj: negate imag
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     x_imag_neg = dispatch("neg", "npu", x_imag)
     # irfft
     d = dim if dim >= 0 else dim + len(x_real.shape)
-    from ..._creation import arange as _arange
+    from ...._creation import arange as _arange
     freq_len = x_real.shape[d]
     N = n if n is not None else 2 * (freq_len - 1)
     if freq_len < N:
@@ -10014,8 +10014,8 @@ def fft_hfft_op(a, n=None, dim=-1, norm=None):
 
 def fft_ihfft_op(a, n=None, dim=-1, norm=None):
     """Inverse Hermitian FFT: conj(rfft(x))."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..._creation import arange as _arange
+    from ...._dispatch.dispatcher import dispatch
+    from ...._creation import arange as _arange
     x_real = a
     x_imag = dispatch("zeros", "npu", a.shape, dtype=a.dtype, device=a.device)
     N = n if n is not None else a.shape[dim if dim >= 0 else dim + len(a.shape)]
@@ -10033,7 +10033,7 @@ def fft_ihfft_op(a, n=None, dim=-1, norm=None):
 
 def fft_fftshift_op(a, dim=None):
     """fftshift via roll — pure tensor op, no ACLNN needed."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     if dim is None:
         dim = list(range(len(a.shape)))
     elif isinstance(dim, int):
@@ -10048,7 +10048,7 @@ def fft_fftshift_op(a, dim=None):
 
 def fft_ifftshift_op(a, dim=None):
     """ifftshift via roll."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     if dim is None:
         dim = list(range(len(a.shape)))
     elif isinstance(dim, int):
@@ -10072,7 +10072,7 @@ def linalg_det_op(a):
 def linalg_slogdet_op(a):
     """Sign and log absolute value of determinant via QR."""
     from collections import namedtuple
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     if len(a.shape) < 2 or a.shape[-2] != a.shape[-1]:
         raise RuntimeError("linalg_slogdet: expected square matrix")
     q, r = dispatch("linalg_qr", "npu", a)
@@ -10088,7 +10088,7 @@ def linalg_slogdet_op(a):
 
 def linalg_cond_op(a, p=None):
     """Condition number: norm(a, p) * norm(inv(a), p)."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     if p is None:
         p = 2
     a_norm = dispatch("linalg_norm", "npu", a, ord=p, dim=(-2, -1))
@@ -10099,8 +10099,8 @@ def linalg_cond_op(a, p=None):
 
 def linalg_matrix_rank_op(a, atol=None, rtol=None, hermitian=False):
     """Matrix rank via QR: count nonzero diagonal elements of R."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     q, r = dispatch("linalg_qr", "npu", a)
     diag_r = diagonal_op(r, offset=0, dim1=-2, dim2=-1)
     abs_diag = dispatch("abs", "npu", diag_r)
@@ -10142,8 +10142,8 @@ def linalg_matrix_rank_op(a, atol=None, rtol=None, hermitian=False):
 def linalg_lstsq_op(a, b, rcond=None, driver=None):
     """Least-squares via QR: solve R @ x = Q^T @ b."""
     from collections import namedtuple
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     m, n = a.shape[-2], a.shape[-1]
     q, r = dispatch("linalg_qr", "npu", a)
     # Q^T @ b
@@ -10152,7 +10152,7 @@ def linalg_lstsq_op(a, b, rcond=None, driver=None):
     qtb = matmul(qt, contiguous(b))
     # Solve R[:n,:n] @ x = qtb[:n]
     if m >= n:
-        from ..._creation import arange as _arange
+        from ...._creation import arange as _arange
         idx = _arange(0, n, dtype=int64_dtype, device=a.device)
         r_sq = index_select(contiguous(r), -2, idx)
         qtb_n = index_select(contiguous(qtb), -2, idx)
@@ -10179,8 +10179,8 @@ def linalg_lstsq_op(a, b, rcond=None, driver=None):
 
 def linalg_tensorinv_op(a, ind=2):
     """Tensor inverse: reshape to 2D, invert, reshape back."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     old_shape = a.shape
     prod_front = 1
     for i in range(ind):
@@ -10198,8 +10198,8 @@ def linalg_tensorinv_op(a, ind=2):
 
 def linalg_tensorsolve_op(a, b, dims=None):
     """Tensor solve: reshape + solve + reshape."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     if dims is not None:
         perm = list(range(len(a.shape)))
         for d in sorted(dims):
@@ -10223,8 +10223,8 @@ def linalg_tensorsolve_op(a, b, dims=None):
 
 def linalg_matrix_exp_op(a):
     """Matrix exponential via Padé [6/6] approximation."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     n = a.shape[-1]
     # Padé coefficients for [6/6]
     b = [1.0, 1.0/2, 1.0/9, 1.0/72, 1.0/1008, 1.0/30240, 1.0/1235520]
@@ -10274,8 +10274,8 @@ def linalg_matrix_exp_op(a):
 
 def linalg_pinv_op(a, atol=None, rtol=None, hermitian=False):
     """Moore-Penrose pseudoinverse via QR: for m>=n, pinv = inv(R) @ Q^T."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     m, n = a.shape[-2], a.shape[-1]
     if m >= n:
         q, r = dispatch("linalg_qr", "npu", a)
@@ -10293,8 +10293,8 @@ def linalg_pinv_op(a, atol=None, rtol=None, hermitian=False):
 
 def linalg_householder_product_op(input_tensor, tau):
     """Computes Q from Householder reflectors: Q = prod(I - tau_i * v_i @ v_i^T)."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     m, n = input_tensor.shape[-2], input_tensor.shape[-1]
     k = tau.shape[-1]
     eye = dispatch("eye", "npu", m, dtype=input_tensor.dtype, device=input_tensor.device)
@@ -10302,15 +10302,15 @@ def linalg_householder_product_op(input_tensor, tau):
     for i in range(k):
         # Build v: v[j] = 0 for j<i, v[i]=1, v[j>i] = input[j,i]
         # Extract column i via index_select
-        from ..._creation import arange as _arange
+        from ...._creation import arange as _arange
         col_idx = _scalar_to_npu_tensor(i, _arange(0, 1, dtype=int64_dtype, device=input_tensor.device))
         col_idx = _cast_tensor_dtype(col_idx, int64_dtype)
-        from ..common import view as vb
+        from ...common import view as vb
         col_idx_r = vb.reshape(col_idx, (1,))
         vi = index_select(contiguous(input_tensor), -1, col_idx_r)  # (m, 1)
         vi = contiguous(vi)
         # Set v[j<i] = 0, v[i] = 1 via mask
-        from ..._creation import arange as _ar
+        from ...._creation import arange as _ar
         row_idx = _ar(0, m, dtype=int64_dtype, device=input_tensor.device)
         lt_mask = dispatch("lt", "npu", row_idx, _scalar_to_npu_tensor(i, row_idx))
         eq_mask = eq(row_idx, _scalar_to_npu_tensor(i, row_idx))
@@ -10336,7 +10336,7 @@ def linalg_householder_product_op(input_tensor, tau):
         Q = sub(Q, update)
     # Return first n columns
     if n < m:
-        from ..._creation import arange as _ar2
+        from ...._creation import arange as _ar2
         col_indices = _ar2(0, n, dtype=int64_dtype, device=Q.device)
         Q = index_select(contiguous(Q), -1, col_indices)
     return Q
@@ -10344,9 +10344,9 @@ def linalg_householder_product_op(input_tensor, tau):
 
 def linalg_cholesky_op(a, upper=False):
     """Cholesky decomposition via column-by-column algorithm on NPU."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
-    from ..._creation import arange as _arange
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
+    from ...._creation import arange as _arange
     if len(a.shape) < 2 or a.shape[-2] != a.shape[-1]:
         raise RuntimeError("linalg_cholesky: expected square matrix")
     n = a.shape[-1]
@@ -10415,8 +10415,8 @@ def linalg_cholesky_op(a, upper=False):
 
 def linalg_solve_op(a, b, left=True):
     """Solve A @ x = b via QR: x = R^-1 @ (Q^T @ b)."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     if not left:
         # X @ A = B => A^T @ X^T = B^T
         at = view_backend.permute(contiguous(a), list(range(len(a.shape) - 2)) + [-1, -2])
@@ -10433,8 +10433,8 @@ def linalg_solve_op(a, b, left=True):
 
 def linalg_solve_triangular_op(a, b, upper, left=True, unitriangular=False):
     """Solve triangular system via back/forward substitution using inv."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     if not left:
         at = view_backend.permute(contiguous(a), list(range(len(a.shape) - 2)) + [-1, -2])
         bt = view_backend.permute(contiguous(b), list(range(len(b.shape) - 2)) + [-1, -2])
@@ -10448,9 +10448,9 @@ def linalg_solve_triangular_op(a, b, upper, left=True, unitriangular=False):
 def linalg_lu_op(a, pivot=True):
     """LU decomposition via Doolittle algorithm."""
     from collections import namedtuple
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
-    from ..._creation import arange as _arange
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
+    from ...._creation import arange as _arange
     if len(a.shape) < 2:
         raise RuntimeError("linalg_lu: expected at least 2-D")
     m, n = a.shape[-2], a.shape[-1]
@@ -10497,7 +10497,7 @@ def linalg_lu_op(a, pivot=True):
     # This simplified version: L = I (no pivoting), U = row-echelon form
     L_eye = dispatch("eye", "npu", m, dtype=a.dtype, device=a.device)
     if mn < m:
-        from ..._creation import arange as _ar
+        from ...._creation import arange as _ar
         col_idx = _ar(0, mn, dtype=int64_dtype, device=a.device)
         L_eye = index_select(contiguous(L_eye), -1, col_idx)
     LUResult = namedtuple("LUResult", ["P", "L", "U"])
@@ -10507,7 +10507,7 @@ def linalg_lu_op(a, pivot=True):
 def linalg_lu_factor_op(a, pivot=True):
     """Compact LU factorization."""
     from collections import namedtuple
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     # Use QR as a proxy for LU decomposition on NPU
     # Store the compact form
     q, r = dispatch("linalg_qr", "npu", a)
@@ -10520,8 +10520,8 @@ def linalg_lu_factor_op(a, pivot=True):
 
 def linalg_lu_solve_op(LU, pivots, B, left=True, adjoint=False):
     """Solve using LU factors — delegate to QR-based solve."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     # LU is really R from QR, so solve R @ x = B
     r_inv = dispatch("linalg_inv", "npu", LU)
     if adjoint:
@@ -10536,8 +10536,8 @@ def linalg_lu_solve_op(LU, pivots, B, left=True, adjoint=False):
 
 def linalg_svd_op(a, full_matrices=True):
     """SVD via eigendecomposition of A^T @ A."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     m, n = a.shape[-2], a.shape[-1]
     at = view_backend.permute(contiguous(a), list(range(len(a.shape) - 2)) + [-1, -2])
     at = contiguous(at)
@@ -10582,8 +10582,8 @@ def linalg_svd_op(a, full_matrices=True):
 
 def _qr_iteration_symmetric(a, max_iters=50):
     """QR iteration for symmetric matrices to find eigenvalues and eigenvectors."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     n = a.shape[-1]
     eye = dispatch("eye", "npu", n, dtype=a.dtype, device=a.device)
     V = eye  # accumulated eigenvectors
@@ -10604,7 +10604,7 @@ def linalg_svdvals_op(a):
 
 def linalg_eig_op(a):
     """Eigenvalue decomposition via QR iteration."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     eigenvalues, V = _qr_iteration_symmetric(a)
     # For general (non-symmetric) matrices, eigenvalues may be complex
     # On NPU without complex dtype, return real eigenvalues and eigenvectors
@@ -10613,8 +10613,8 @@ def linalg_eig_op(a):
 
 def linalg_eigh_op(a, UPLO='L'):
     """Eigenvalue decomposition of symmetric matrix via QR iteration."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     # Symmetrize: use lower or upper triangle
     if UPLO == 'L':
         sym = tril(contiguous(a))
@@ -10663,7 +10663,7 @@ def _chebyshev_eval(x, coeffs, ref):
 
 def special_i0_op(a):
     """Modified Bessel function I0 via CEPHES Chebyshev polynomial approximation."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     abs_x = dispatch("abs", "npu", a)
     # Coefficients from CEPHES for |x| <= 8
     A = [1.0, 3.5156229, 3.0899424, 1.2067492, 0.2659732, 0.0360768, 0.0045813]
@@ -10691,7 +10691,7 @@ def special_i0_op(a):
 
 def special_i0e_op(a):
     """Exponentially scaled I0: i0(x) * exp(-|x|)."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     i0_val = special_i0_op(a)
     abs_x = dispatch("abs", "npu", a)
     neg_abs = dispatch("neg", "npu", abs_x)
@@ -10700,7 +10700,7 @@ def special_i0e_op(a):
 
 def special_i1_op(a):
     """Modified Bessel function I1 via CEPHES Chebyshev polynomial approximation."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     abs_x = dispatch("abs", "npu", a)
     # Coefficients for |x| <= 8
     A = [0.5, 0.87890594, 0.51498869, 0.15084934, 0.02658733, 0.00301532, 0.00032411]
@@ -10728,7 +10728,7 @@ def special_i1_op(a):
 
 def special_i1e_op(a):
     """Exponentially scaled I1: i1(x) * exp(-|x|)."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     i1_val = special_i1_op(a)
     abs_x = dispatch("abs", "npu", a)
     neg_abs = dispatch("neg", "npu", abs_x)
@@ -10737,7 +10737,7 @@ def special_i1e_op(a):
 
 def special_ndtri_op(a):
     """Inverse normal CDF via Beasley-Springer-Moro algorithm."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     import math
     # Rational approximation for the central region
     # Split into 3 regions based on p
@@ -10796,7 +10796,7 @@ def special_ndtri_op(a):
 
 def special_polygamma_op(n, a):
     """Polygamma function. n=0: digamma. n>=1: series approximation."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     if isinstance(n, int) and n == 0:
         return dispatch("digamma", "npu", a)
     # For n >= 1: psi^(n)(x) = (-1)^(n+1) * n! * sum_{k=0}^{N} 1/(x+k)^(n+1)
@@ -10815,7 +10815,7 @@ def special_polygamma_op(n, a):
 
 def special_zeta_op(a, q):
     """Hurwitz zeta function via Euler-Maclaurin summation."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     # zeta(s, q) = sum_{k=0}^{N} 1/(q+k)^s + correction
     N_terms = 30
     result = _scalar_to_npu_tensor(0.0, q)
@@ -10839,7 +10839,7 @@ def special_zeta_op(a, q):
 
 def special_gammainc_op(a, x):
     """Regularized lower incomplete gamma: P(a,x) via series expansion."""
-    from ..._dispatch.dispatcher import dispatch
+    from ...._dispatch.dispatcher import dispatch
     # P(a,x) = e^{-x} * x^a * sum_{k=0}^{N} x^k / Gamma(a+k+1)
     # Use: sum_{k=0}^{N} x^k / prod_{j=1}^{k}(a+j) / Gamma(a+1)
     N_terms = 50
@@ -10872,8 +10872,8 @@ def conv3d_op(input, weight, bias=None, stride=(1, 1, 1), padding=(0, 0, 0),
     - Reshape weight to 2D
     - Compute output via matmul
     """
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     import numpy as _np
 
     N, C_in, D, H, W = input.shape
@@ -10935,7 +10935,7 @@ def conv3d_op(input, weight, bias=None, stride=(1, 1, 1), padding=(0, 0, 0),
         batch_outs = []
         for n in range(N):
             # Extract input channels for this group: (C_in_g, D*H*W)
-            from ..._creation import arange as _arange
+            from ...._creation import arange as _arange
             cin_idx = _arange(c_in_start, c_in_start + C_in_g, dtype=int64_dtype, device=input.device)
             a_group = index_select(contiguous(a), 1, cin_idx)  # (1, C_in_g, D_pad, H_pad, W_pad) -> need single batch
             # Get single batch element
@@ -10997,8 +10997,8 @@ def conv_transpose3d_op(input, weight, bias, stride, padding, output_padding, gr
     the output at positions determined by stride/dilation. This is the
     adjoint of the forward convolution (vol2col + mm).
     """
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     import numpy as _np
 
     sD, sH, sW = stride
@@ -11040,7 +11040,7 @@ def conv_transpose3d_op(input, weight, bias, stride, padding, output_padding, gr
     result_flat = view_backend.reshape(contiguous(result), (N, C_out, spatial_out))
 
     for g in range(groups):
-        from ..._creation import arange as _arange
+        from ...._creation import arange as _arange
         cin_idx = _arange(g * c_in_per_g, (g + 1) * c_in_per_g, dtype=int64_dtype, device=input.device)
         w_g = index_select(contiguous(weight), 0, cin_idx)  # (c_in_per_g, C_out_per_g, kD, kH, kW)
         # Transpose to (C_out_per_g, c_in_per_g, kD, kH, kW)
@@ -11156,8 +11156,8 @@ def conv_transpose3d_op(input, weight, bias, stride, padding, output_padding, gr
 def avg_pool3d_op(input, kernel_size, stride, padding, ceil_mode=False,
                   count_include_pad=True):
     """Avg pool 3D via slice + mean over pooling windows on NPU."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     import math as _math
     import numpy as _np
 
@@ -11236,9 +11236,9 @@ def ctc_loss_op(log_probs, targets, input_lengths, target_lengths,
 
     Uses element-wise NPU ops for the forward pass computation.
     """
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
-    from ..._creation import arange as _arange
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
+    from ...._creation import arange as _arange
     import numpy as _np
 
     T, N, C = log_probs.shape
@@ -11253,7 +11253,7 @@ def ctc_loss_op(log_probs, targets, input_lengths, target_lengths,
         nbytes = _numel(tensor.shape) * _dtype_itemsize(tensor.dtype)
         if nbytes == 0:
             return []
-        from . import acl_loader
+        from .. import acl_loader
         acl = acl_loader.ensure_acl()
         host_ptr, ret = acl.rt.malloc_host(int(nbytes))
         if ret != 0:
@@ -11291,7 +11291,7 @@ def ctc_loss_op(log_probs, targets, input_lengths, target_lengths,
     # but the actual log_probs indexing uses NPU gather ops
     # For simplicity and correctness, sync log_probs to CPU
     lp_nbytes = _numel(log_probs.shape) * _dtype_itemsize(log_probs.dtype)
-    from . import acl_loader
+    from .. import acl_loader
     acl = acl_loader.ensure_acl()
     host_ptr2, ret = acl.rt.malloc_host(int(lp_nbytes))
     if ret != 0:
@@ -11368,8 +11368,8 @@ def ctc_loss_op(log_probs, targets, input_lengths, target_lengths,
 
 def upsample_nearest1d_op(a, output_size, scales=None):
     """Upsample nearest 1D via 2D upsample (ACLNN broken on 910B)."""
-    from ..._dispatch.dispatcher import dispatch
-    from ..common import view as view_backend
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
     N, C, W = a.shape
     oW = output_size[0] if isinstance(output_size, (list, tuple)) else output_size
     a_4d = view_backend.reshape(a, (N, C, 1, W))
