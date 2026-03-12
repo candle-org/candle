@@ -51,6 +51,42 @@ def test_fsdp_param_unshard_reshard():
     assert isinstance(module.weight, DTensor)
 
 
+def test_fsdp_param_padding_non_divisible():
+    """FSDPParam should pad parameters whose dim-0 is not divisible by world_size."""
+    from candle.distributed._composable.fsdp._fsdp_param import FSDPParam
+    # Simulate rank 0 of world_size=2 with dim-0 size 5 (not divisible by 2)
+    module = nn.Linear(3, 5, bias=False)  # weight shape: (5, 3)
+    orig_weight = module.weight.detach().clone()
+    mesh_info = MockMeshInfo(rank=0, world_size=2)
+    fp = FSDPParam(module.weight, module, "weight", mesh_info)
+    # Shard should have padded size: ceil(5/2) = 3
+    local_shard = module.weight.to_local()
+    assert local_shard.shape[0] == 3, f"Expected shard dim-0=3, got {local_shard.shape[0]}"
+    # Rank 0 gets first 3 rows of original
+    for i in range(3):
+        for j in range(3):
+            assert abs(float(local_shard[i, j]) - float(orig_weight[i, j])) < 1e-6
+    # Padding metadata should be stored
+    assert fp._padded_dim_size == 1  # 6 - 5 = 1
+
+
+def test_fsdp_param_padding_rank1():
+    """Rank 1 of world_size=2 with non-divisible dim should get correct shard."""
+    from candle.distributed._composable.fsdp._fsdp_param import FSDPParam
+    module = nn.Linear(3, 5, bias=False)  # weight shape: (5, 3)
+    orig_weight = module.weight.detach().clone()
+    mesh_info = MockMeshInfo(rank=1, world_size=2)
+    fp = FSDPParam(module.weight, module, "weight", mesh_info)
+    local_shard = module.weight.to_local()
+    # Rank 1 gets chunk [3:6] of padded tensor, so shard dim-0 = 3
+    assert local_shard.shape[0] == 3, f"Expected shard dim-0=3, got {local_shard.shape[0]}"
+    # First 2 rows should be orig_weight[3:5], last row should be zeros (padding)
+    for j in range(3):
+        assert abs(float(local_shard[0, j]) - float(orig_weight[3, j])) < 1e-6
+        assert abs(float(local_shard[1, j]) - float(orig_weight[4, j])) < 1e-6
+        assert abs(float(local_shard[2, j])) < 1e-6  # padding zeros
+
+
 def test_fsdp_param_group_lifecycle():
     """FSDPParamGroup should unshard/reshard all params together."""
     from candle.distributed._composable.fsdp._fsdp_param import FSDPParam

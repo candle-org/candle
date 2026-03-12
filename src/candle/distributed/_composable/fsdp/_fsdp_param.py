@@ -42,20 +42,29 @@ class FSDPParam:
         """Chunk *param* along ``self._shard_dim`` and wrap as DTensor."""
         rank = self._mesh_info.shard_mesh_rank
         world_size = self._mesh_info.shard_mesh_size
-        if world_size > 1 and param.shape[self._shard_dim] % world_size != 0:
-            raise ValueError(
-                f"FSDP requires parameter '{self._param_name}' dim "
-                f"{self._shard_dim} size ({param.shape[self._shard_dim]}) "
-                f"to be divisible by world_size ({world_size}). "
-                f"Padding support is not yet implemented."
-            )
         orig_requires_grad = param.requires_grad
         if world_size == 1:
+            self._padded_dim_size = 0  # no padding needed
             local_shard = param.detach()
         else:
-            chunks = _chunk_tensor(
-                param.detach(), world_size, dim=self._shard_dim
-            )
+            dim = self._shard_dim
+            dim_size = param.shape[dim]
+            chunk_size = (dim_size + world_size - 1) // world_size
+            padded_size = chunk_size * world_size
+            self._padded_dim_size = padded_size - dim_size  # 0 if already divisible
+
+            if self._padded_dim_size > 0:
+                from ...._creation import zeros
+                pad_shape = list(param.shape)
+                pad_shape[dim] = self._padded_dim_size
+                padded = _cat_tensors(
+                    [param.detach(), zeros(*pad_shape, dtype=param.dtype, device=param.device)],
+                    dim=dim,
+                )
+            else:
+                padded = param.detach()
+
+            chunks = _chunk_tensor(padded, world_size, dim=dim)
             local_shard = chunks[rank].contiguous()
         dt = DTensor.from_local(
             local_shard,
@@ -89,6 +98,11 @@ class FSDPParam:
             )
             pg = self._mesh_info.shard_process_group
             dist.all_gather_into_tensor(output, local_tensor, group=pg)
+            # Strip padding to restore original shape
+            if self._padded_dim_size > 0:
+                from ...._functional import narrow
+                orig_dim_size = self._orig_shape[self._shard_dim]
+                output = narrow(output, self._shard_dim, 0, orig_dim_size)
             self._unsharded_param = output
         self._unsharded_param.requires_grad = self._sharded_param.requires_grad
         self._set_param_on_module(self._unsharded_param)
@@ -98,7 +112,13 @@ class FSDPParam:
         """Unshard for single-rank testing (no collective needed)."""
         if self._sharded_state == ShardedState.UNSHARDED:
             return
-        self._unsharded_param = self._sharded_param.to_local()
+        local = self._sharded_param.to_local()
+        # Strip padding to restore original shape
+        if self._padded_dim_size > 0:
+            from ...._functional import narrow
+            orig_dim_size = self._orig_shape[self._shard_dim]
+            local = narrow(local, self._shard_dim, 0, orig_dim_size)
+        self._unsharded_param = local
         self._unsharded_param.requires_grad = self._sharded_param.requires_grad
         self._set_param_on_module(self._unsharded_param)
         self._sharded_state = ShardedState.UNSHARDED
@@ -135,6 +155,15 @@ class FSDPParam:
         if world_size == 1:
             self._sharded_param.to_local().grad = grad
             return
+        # Pad gradient if the original dim was not divisible by world_size
+        if self._padded_dim_size > 0:
+            from ...._creation import zeros
+            pad_shape = list(grad.shape)
+            pad_shape[self._shard_dim] = self._padded_dim_size
+            grad = _cat_tensors(
+                [grad, zeros(*pad_shape, dtype=grad.dtype, device=grad.device)],
+                dim=self._shard_dim,
+            )
         from ...._creation import empty
         shard_shape = self._sharded_param.to_local().shape
         reduced_grad = empty(
@@ -163,3 +192,9 @@ def _chunk_tensor(tensor, num_chunks, dim=0):
     size = tensor.shape[dim]
     chunk_size = (size + num_chunks - 1) // num_chunks
     return split(tensor, chunk_size, dim=dim)
+
+
+def _cat_tensors(tensors, dim=0):
+    """Concatenate *tensors* along *dim*."""
+    from ...._functional import cat
+    return cat(tensors, dim=dim)
