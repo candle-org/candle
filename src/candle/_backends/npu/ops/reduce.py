@@ -15,27 +15,12 @@ from ._helpers import (
 
 
 def _argmax_fallback(a, dim, keepdim):
-    """Composite argmax: compare each slice to amax, pick first match."""
-    from .math import eq as _eq, mul as _mul, _cast_tensor_dtype
-    mx = amax(a, dim=dim, keepdim=True)
-    mask = _eq(a, mx)
-    ndim = len(a.shape)
-    dim_size = a.shape[dim]
-    idx_shape = [1] * ndim
-    idx_shape[dim] = dim_size
-    import numpy as _np
-    from .creation import tensor_create
-    indices = tensor_create(_np.arange(dim_size, dtype=_np.int64).reshape(idx_shape),
-                            device=a.device)
-    big_val = dim_size + 1
-    masked = _mul(mask, indices)
-    inv_mask_val = _mul(_cast_tensor_dtype(
-        _eq(mask, tensor_create(_np.zeros(1, dtype=_np.float32), device=a.device)),
-        a.dtype), tensor_create(_np.array(big_val, dtype=_np.float32), device=a.device))
-    from .math import add as _add
-    pick = _add(masked, _cast_tensor_dtype(inv_mask_val, int64_dtype))
-    result = amin(pick, dim=dim, keepdim=keepdim)
-    return _cast_tensor_dtype(result, int64_dtype)
+    """argmax via topk(k=1, largest=True) — avoids broken aclnnMaxDim."""
+    _, indices = topk(a, k=1, dim=dim, largest=True, sorted=False)
+    if not keepdim:
+        out_shape = _reduce_out_shape(a.shape, (dim,), False)
+        indices = reshape(indices, out_shape)
+    return indices
 
 
 def argmax(a, dim=None, keepdim=False):
@@ -85,27 +70,12 @@ def argmax(a, dim=None, keepdim=False):
 
 
 def _argmin_fallback(a, dim, keepdim):
-    """Composite argmin: compare each slice to amin, pick first match."""
-    from .math import eq as _eq, mul as _mul, _cast_tensor_dtype
-    mn = amin(a, dim=dim, keepdim=True)
-    mask = _eq(a, mn)
-    ndim = len(a.shape)
-    dim_size = a.shape[dim]
-    idx_shape = [1] * ndim
-    idx_shape[dim] = dim_size
-    import numpy as _np
-    from .creation import tensor_create
-    indices = tensor_create(_np.arange(dim_size, dtype=_np.int64).reshape(idx_shape),
-                            device=a.device)
-    big_val = dim_size + 1
-    masked = _mul(mask, indices)
-    inv_mask_val = _mul(_cast_tensor_dtype(
-        _eq(mask, tensor_create(_np.zeros(1, dtype=_np.float32), device=a.device)),
-        a.dtype), tensor_create(_np.array(big_val, dtype=_np.float32), device=a.device))
-    from .math import add as _add
-    pick = _add(masked, _cast_tensor_dtype(inv_mask_val, int64_dtype))
-    result = amin(pick, dim=dim, keepdim=keepdim)
-    return _cast_tensor_dtype(result, int64_dtype)
+    """argmin via topk(k=1, largest=False) — avoids broken aclnnMinDim."""
+    _, indices = topk(a, k=1, dim=dim, largest=False, sorted=False)
+    if not keepdim:
+        out_shape = _reduce_out_shape(a.shape, (dim,), False)
+        indices = reshape(indices, out_shape)
+    return indices
 
 
 def argmin(a, dim=None, keepdim=False):
