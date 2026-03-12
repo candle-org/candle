@@ -55,6 +55,11 @@ class DTensor(Tensor):
             )
         if requires_grad is None:
             requires_grad = local_tensor.requires_grad
+        # Set _local_tensor before super().__init__ because the grad property
+        # setter (triggered by super().__init__ setting self.grad = None)
+        # needs _local_tensor to exist.
+        self._local_tensor = local_tensor
+        self._spec = spec
         super().__init__(
             local_tensor._storage,
             local_tensor.shape,
@@ -62,8 +67,6 @@ class DTensor(Tensor):
             local_tensor.offset,
             requires_grad=requires_grad,
         )
-        self._local_tensor = local_tensor
-        self._spec = spec
 
     @property
     def placements(self):
@@ -96,10 +99,25 @@ class DTensor(Tensor):
         """Extract the local tensor shard."""
         return self._local_tensor
 
+    @property
+    def grad(self):
+        """Proxy grad access to the local shard so optimizers see the reduced gradient."""
+        return self._local_tensor.grad
+
+    @grad.setter
+    def grad(self, value):
+        """Proxy grad assignment to the local shard."""
+        self._local_tensor.grad = value
+
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
         # Delegate everything to __torch_dispatch__ via the dispatch system.
         return NotImplemented
+
+    # Optimizer step ops that should operate directly on local shards
+    _SHARD_PASSTHROUGH_OPS = frozenset({
+        "_sgd_step", "_adam_step", "_adamw_step",
+    })
 
     @classmethod
     def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
@@ -119,14 +137,15 @@ class DTensor(Tensor):
             for v in kwargs.values():
                 _extract(v)
 
-        # Block direct compute on sharded DTensors
-        for spec in specs:
-            if spec.has_shard_placement():
-                raise RuntimeError(
-                    f"{func}: direct compute on sharded DTensor is "
-                    f"not supported. Ensure fully_shard() hooks unshard "
-                    f"parameters before forward."
-                )
+        # Block direct compute on sharded DTensors, except optimizer steps
+        if func not in cls._SHARD_PASSTHROUGH_OPS:
+            for spec in specs:
+                if spec.has_shard_placement():
+                    raise RuntimeError(
+                        f"{func}: direct compute on sharded DTensor is "
+                        f"not supported. Ensure fully_shard() hooks unshard "
+                        f"parameters before forward."
+                    )
 
         # For replicated DTensors, unwrap to local tensors and redispatch
         def _unwrap(val):

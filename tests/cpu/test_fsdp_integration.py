@@ -100,3 +100,43 @@ def test_fsdp_params_are_dtensor_between_iterations():
     # After backward, non-root params should be resharded
     assert isinstance(model.fc1.weight, DTensor), "fc1.weight should be resharded"
     assert isinstance(model.fc2.weight, DTensor), "fc2.weight should be resharded"
+
+
+def test_fsdp_optimizer_step():
+    """optimizer.step() should update sharded parameters via DTensor grad proxy."""
+    from candle.distributed._composable.fsdp import fully_shard
+    from candle.optim import SGD
+
+    model = SimpleMLP(8)
+    mesh = MockMesh()
+    fully_shard(model.fc1, mesh=mesh)
+    fully_shard(model.fc2, mesh=mesh)
+    fully_shard(model, mesh=mesh)
+
+    optimizer = SGD(model.parameters(), lr=0.1)
+
+    # Snapshot weights before step
+    w1_before = model.fc1.weight.to_local().detach().clone()
+    w2_before = model.fc2.weight.to_local().detach().clone()
+
+    # Forward + backward
+    x = torch.randn(4, 8, requires_grad=True)
+    out = model(x)
+    loss = out.sum()
+    loss.backward()
+
+    # Verify grads are accessible via DTensor.grad
+    for name, param in model.named_parameters():
+        assert isinstance(param, DTensor), f"{name} should be DTensor"
+        assert param.grad is not None, f"{name}.grad should not be None"
+
+    # Optimizer step
+    optimizer.step()
+
+    # Weights should have changed
+    w1_after = model.fc1.weight.to_local()
+    w2_after = model.fc2.weight.to_local()
+    w1_diff = float((w1_after - w1_before).abs().sum())
+    w2_diff = float((w2_after - w2_before).abs().sum())
+    assert w1_diff > 0, "fc1.weight should have been updated"
+    assert w2_diff > 0, "fc2.weight should have been updated"
