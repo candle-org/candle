@@ -181,6 +181,7 @@ from .ops import (
     narrow,
     select,
     expand,
+    sum_to_size,
     masked_fill,
     masked_fill_,
     index_put_,
@@ -450,6 +451,7 @@ registry.register("linalg_qr", "cpu", linalg_qr)
 registry.register("narrow", "cpu", narrow)
 registry.register("select", "cpu", select)
 registry.register("expand", "cpu", expand)
+registry.register("sum_to_size", "cpu", sum_to_size, meta=meta_infer.infer_sum_to_size)
 registry.register("masked_fill", "cpu", masked_fill, meta=meta_infer.infer_unary)
 registry.register("masked_fill_", "cpu", masked_fill_, meta=meta_infer.infer_unary)
 registry.register("index_put_", "cpu", index_put_)

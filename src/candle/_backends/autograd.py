@@ -347,6 +347,18 @@ def _sum_backward(grad, _a, saved_a, keyset):
         return (redispatch("mul", keyset, grad, ones),)
 
 
+def _sum_to_size_backward(grad, a, _saved_a, keyset, args, _kwargs):
+    target = args[0]
+    if isinstance(target, int):
+        target = (target,)
+    target = tuple(target)
+    with _grad_context(keyset):
+        reduced = reduce_grad(grad, target)
+        expanded = redispatch("expand", keyset, reduced, a.shape)
+        expanded = redispatch("contiguous", keyset, expanded)
+        return (expanded,)
+
+
 def _mean_backward(grad, _a, saved_a, keyset):
     with _grad_context(keyset):
         numel = saved_a.numel()
@@ -7250,6 +7262,7 @@ for _entry in (
     ("squeeze", lambda: _autograd_view("squeeze", _squeeze_backward)),
     ("unsqueeze", lambda: _autograd_view("unsqueeze", _unsqueeze_backward)),
     ("expand", lambda: _autograd_view("expand", _expand_backward)),
+    ("sum_to_size", lambda: _autograd_unary_args("sum_to_size", _sum_to_size_backward, save_input=False)),
     ("permute", lambda: _autograd_view("permute", _permute_backward)),
     ("slice", lambda: _autograd_unary_args("slice", _slice_backward, save_input=False)),
     ("as_strided_scatter", lambda: _autograd_binary_args("as_strided_scatter", _as_strided_scatter_backward, save_inputs=False), False),

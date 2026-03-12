@@ -343,6 +343,9 @@ def _format_dispatch_context(op_name, dispatch_device):
 
 
 def _wrap_dispatch_error(exc, op_name, dispatch_device):
+    # Keep PyTorch parity for specific ops where tests compare exact messages.
+    if op_name in {"sum_to_size"} and isinstance(exc, RuntimeError):
+        return exc
     context = _format_dispatch_context(op_name, dispatch_device)
     msg = f"{exc} [{context}]"
     exc_type = type(exc)

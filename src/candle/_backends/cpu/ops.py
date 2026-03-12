@@ -1739,6 +1739,61 @@ def expand(a, sizes):
     return Tensor(a.storage(), tuple(out_shape), tuple(out_stride), a.offset)
 
 
+def sum_to_size(a, size):
+    if isinstance(size, list):
+        size = tuple(size)
+    elif isinstance(size, int):
+        size = (size,)
+
+    target = tuple(int(v) for v in size)
+    input_shape = tuple(a.shape)
+
+    if target == input_shape:
+        return a
+
+    if len(target) > len(input_shape) or any(dim <= 0 for dim in target):
+        raise RuntimeError(f"size {{{list(target)}}} is not expandable to size {{{list(input_shape)}}}.")
+
+    ndiff = len(input_shape) - len(target)
+    padded_target = (1,) * ndiff + target
+
+    for tgt, src in zip(padded_target, input_shape):
+        if tgt != 1 and tgt != src:
+            raise RuntimeError(f"size {{{list(target)}}} is not expandable to size {{{list(input_shape)}}}.")
+
+    arr = _to_numpy(a)
+    needs_reduce = ndiff > 0
+
+    if not needs_reduce:
+        for tgt, src in zip(target, input_shape):
+            if tgt == 1 and src != 1:
+                needs_reduce = True
+                break
+
+    if not needs_reduce:
+        return a
+
+    if a.dtype.is_floating_point or a.dtype.is_complex:
+        out_dtype = a.dtype
+        acc_dtype = None
+    else:
+        out_dtype = int64_dtype
+        acc_dtype = np.int64
+
+    if acc_dtype is not None:
+        arr = arr.astype(acc_dtype, copy=False)
+
+    while arr.ndim > len(target):
+        arr = arr.sum(axis=0)
+
+    for axis, (tgt, src) in enumerate(zip(target, arr.shape)):
+        if tgt == 1 and src != 1:
+            arr = arr.sum(axis=axis, keepdims=True)
+
+    arr = np.array(arr)
+    return _from_numpy(arr.astype(to_numpy_dtype(out_dtype), copy=False), out_dtype, a.device)
+
+
 def slice_op(a, dim, start=0, end=9223372036854775807, step=1):
     if step <= 0:
         raise RuntimeError("slice step must be positive")

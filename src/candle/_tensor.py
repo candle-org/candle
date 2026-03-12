@@ -66,6 +66,7 @@ from ._functional import mm as mm_dispatch, bmm as bmm_dispatch
 from ._functional import floor_divide as floor_divide_dispatch
 from ._functional import slice as slice_dispatch, slice_copy as slice_copy_dispatch, slice_scatter as slice_scatter_dispatch
 from ._functional import expand_copy as expand_copy_dispatch
+from ._functional import sum_to_size as sum_to_size_dispatch
 from ._functional import as_strided_ as as_strided__dispatch
 from ._functional import as_strided_copy as as_strided_copy_dispatch
 from ._functional import as_strided_scatter as as_strided_scatter_dispatch
@@ -1533,6 +1534,9 @@ class Tensor:
 
     def expand_copy(self, *sizes):
         return expand_copy_dispatch(self, sizes)
+
+    def sum_to_size(self, *size):
+        return sum_to_size_dispatch(self, *size)
 
     def expand_as(self, other):
         return expand_dispatch(self, *other.shape)

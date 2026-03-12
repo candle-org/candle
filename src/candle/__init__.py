@@ -122,6 +122,7 @@ from ._functional import unique, searchsorted, kthvalue, median
 # Category A: Export existing functions
 from ._functional import eq, ne, lt, le, gt, ge
 from ._functional import select, expand, masked_fill, unfold
+from ._functional import sum_to_size
 from ._functional import slice, slice_copy, slice_scatter, expand_copy
 from ._functional import as_strided_, as_strided_copy, as_strided_scatter
 from ._functional import scatter_, scatter_add_
