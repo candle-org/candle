@@ -122,8 +122,8 @@ class TestResolveCandleName:
     def test_aliased_autograd(self):
         code = textwrap.dedent("""\
             import _candle_torch_compat as m
-            assert m._resolve_candle_name("torch.autograd") == "candle._autograd"
-            assert m._resolve_candle_name("torch.autograd.graph") == "candle._autograd.graph"
+            assert m._resolve_candle_name("torch.autograd") == "candle.autograd"
+            assert m._resolve_candle_name("torch.autograd.graph") == "candle.autograd.graph"
         """)
         _run(code, env_extra={"USE_CANDLE": "0"}, bootstrap=False)
 
@@ -202,8 +202,8 @@ class TestImportHook:
     def test_torch_autograd(self):
         code = textwrap.dedent("""\
             import torch.autograd
-            import candle._autograd
-            assert torch.autograd is candle._autograd
+            import candle.autograd
+            assert torch.autograd is candle.autograd
             print("OK")
         """)
         out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
