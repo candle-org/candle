@@ -5,7 +5,7 @@ import candle as torch
 from candle.library import custom_op, _infer_schema, CustomOpHandle
 from candle._dispatch.registry import registry
 from candle._dispatch.keys import DispatchKey
-from candle._autograd.engine import backward, grad
+from candle.autograd.engine import backward, grad
 from candle._tensor import Tensor
 
 

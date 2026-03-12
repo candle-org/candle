@@ -336,9 +336,9 @@ class CustomOpHandle:
         qualname = self._qualname
 
         def autograd_wrapper(*args, **kwargs):
-            from ._autograd.function import FunctionCtx
-            from ._autograd.node import Node
-            from ._autograd.grad_mode import is_grad_enabled
+            from .autograd.function import FunctionCtx
+            from .autograd.node import Node
+            from .autograd.grad_mode import is_grad_enabled
             from ._dispatch.dispatcher import redispatch, current_dispatch_keyset
             from ._tensor import Tensor
 

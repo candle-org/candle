@@ -67,8 +67,8 @@ from ._functional import floor_divide as floor_divide_dispatch
 from ._functional import tile as tile_dispatch, flip as flip_dispatch, roll as roll_dispatch, rot90 as rot90_dispatch
 from ._functional import reciprocal as reciprocal_dispatch, addmm as addmm_dispatch
 from ._functional import log1p as log1p_dispatch, expm1 as expm1_dispatch
-from ._autograd.engine import backward as _backward
-from ._autograd.version_counter import VersionCounter
+from .autograd.engine import backward as _backward
+from .autograd.version_counter import VersionCounter
 from ._printing import format_tensor
 
 
@@ -529,7 +529,7 @@ class Tensor:
         return self._base is not None
 
     def _check_inplace(self):
-        from ._autograd.grad_mode import is_grad_enabled
+        from .autograd.grad_mode import is_grad_enabled
 
         if not is_grad_enabled():
             return

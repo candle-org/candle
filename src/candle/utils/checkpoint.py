@@ -1,6 +1,6 @@
-from .._autograd.grad_mode import no_grad, enable_grad
-from .._autograd.engine import _run_backward
-from .._autograd.node import Node
+from ..autograd.grad_mode import no_grad, enable_grad
+from ..autograd.engine import _run_backward
+from ..autograd.node import Node
 
 
 def checkpoint(function, *args, use_reentrant=True, preserve_rng_state=True, **kwargs):

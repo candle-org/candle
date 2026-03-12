@@ -6,7 +6,7 @@ from .keys import DispatchKey, DispatchKeySet, apply_tls_masks
 from .functionalize import functionalize_op, is_functionalize_enabled, should_functionalize
 import threading
 
-from .._autograd.grad_mode import is_grad_enabled
+from ..autograd.grad_mode import is_grad_enabled
 from ..amp.state import is_autocast_enabled
 from ..amp.policy import apply_autocast_policy
 from ..profiler.profiler import is_profiler_enabled, dispatch_op_enter, dispatch_op_exit
