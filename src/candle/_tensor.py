@@ -176,6 +176,10 @@ class Tensor:
         self._bump_version()
 
     @property
+    def output_nr(self):
+        return 0
+
+    @property
     def is_cuda(self):
         """Returns True if the tensor is stored on a CUDA GPU."""
         return self.device.type == "cuda"

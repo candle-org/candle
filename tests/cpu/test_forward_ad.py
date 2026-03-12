@@ -53,3 +53,11 @@ def test_forward_ad_add_jvp():
         _, tz = forward_ad.unpack_dual(z)
         assert tz is not None
         assert (tz == tx + ty).all()
+
+
+def test_gradient_edge_roundtrip():
+    x = candle.rand(2, requires_grad=True)
+    out = x.clone()
+    edge = candle.autograd.graph.get_gradient_edge(x)
+    assert edge.node is x.grad_fn
+    assert edge.output_nr == x.output_nr
