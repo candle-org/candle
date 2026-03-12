@@ -671,6 +671,27 @@ def nonzero(a, as_tuple=False):
 
 
 def cumsum(a, dim=0):
+    # GPU path: float32/float16, contiguous
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)):
+        ndim = len(a.shape)
+        if dim < 0:
+            dim = ndim + dim
+        outer_size = 1
+        for i in range(dim):
+            outer_size *= a.shape[i]
+        dim_size = a.shape[dim]
+        inner_size = 1
+        for i in range(dim + 1, ndim):
+            inner_size *= a.shape[i]
+        sfx = _kernel_suffix(a.dtype)
+        d = _get_dispatcher()
+        numel = outer_size * dim_size * inner_size
+        out_buf = _alloc_output_buf(numel, a.dtype)
+        d.dispatch_cumsum(f"cumsum_{sfx}", _metal_buf(a), out_buf,
+                          outer_size, dim_size, inner_size)
+        return _from_metal_buffer(out_buf, tuple(a.shape),
+                                  tuple(a.stride()), a.dtype, a.device)
     return _from_numpy(np.cumsum(_to_numpy(a), axis=dim), a.dtype, a.device)
 
 
@@ -2611,8 +2632,7 @@ def dropout(a, p=0.5, training=True):
 
 
 def pad(a, pad_widths, mode='constant', value=0):
-    arr = _to_numpy(a)
-    ndim = len(arr.shape)
+    ndim = len(a.shape)
 
     if len(pad_widths) % 2 != 0:
         raise ValueError("Padding length must be divisible by 2")
@@ -2622,11 +2642,53 @@ def pad(a, pad_widths, mode='constant', value=0):
         raise ValueError("Padding length too large for input dimensions")
 
     pads = [(0, 0)] * ndim
-    # PyTorch pad format: (left, right, top, bottom, front, back, ...)
-    # Applied to last dims first.
     for i in range(n_pairs):
         dim = ndim - 1 - i
         pads[dim] = (int(pad_widths[2 * i]), int(pad_widths[2 * i + 1]))
+
+    # GPU path: constant mode, no negative padding, contiguous float/half
+    has_negative = any(l < 0 or r < 0 for l, r in pads)
+    if (mode == 'constant' and not has_negative
+            and _can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)
+            and ndim <= 8):
+        import struct
+        out_shape = []
+        pad_before = []
+        for d in range(ndim):
+            left, right = pads[d]
+            out_shape.append(a.shape[d] + left + right)
+            pad_before.append(left)
+        total = 1
+        for s in out_shape:
+            total *= s
+        if total > 0:
+            sfx = _kernel_suffix(a.dtype)
+            d = _get_dispatcher()
+            out_buf = _alloc_output_buf(total, a.dtype)
+            in_shape_packed = struct.pack(f"{ndim}I", *a.shape)
+            pad_before_packed = struct.pack(f"{ndim}i", *pad_before)
+            out_shape_packed = struct.pack(f"{ndim}I", *out_shape)
+            if a.dtype == float32_dtype:
+                fill_bytes = struct.pack("f", float(value))
+                fill_size = 4
+            else:
+                import numpy as np
+                fill_bytes = np.float16(value).tobytes()
+                fill_size = 2
+            d.dispatch_pad_constant(
+                f"pad_constant_{sfx}", _metal_buf(a), out_buf,
+                in_shape_packed, pad_before_packed, out_shape_packed,
+                fill_bytes, fill_size, ndim, total)
+            out_shape_t = tuple(out_shape)
+            s = 1
+            out_stride = ()
+            for dim in reversed(out_shape_t):
+                out_stride = (s,) + out_stride
+                s *= dim
+            return _from_metal_buffer(out_buf, out_shape_t, out_stride, a.dtype, a.device)
+
+    arr = _to_numpy(a)
 
     # Negative padding crops first, then positive padding extends.
     slices = [slice(None)] * ndim
@@ -3504,13 +3566,32 @@ def avg_pool2d(input, kernel_size, stride, padding=0, ceil_mode=False,
 
 
 def adaptive_avg_pool2d(input, output_size):
-    """AdaptiveAvgPool2d using numpy."""
-    inp = _to_numpy(input)  # (N, C, H, W)
-    N, C, H, W = inp.shape
+    """AdaptiveAvgPool2d with GPU path."""
     if isinstance(output_size, int):
         oH = oW = output_size
     else:
         oH, oW = output_size
+    # GPU path
+    if (_can_use_gpu(input) and input.is_contiguous()
+            and input.dtype in (float32_dtype, float16_dtype)
+            and len(input.shape) == 4):
+        N, C, H, W = input.shape
+        total = N * C * oH * oW
+        sfx = _kernel_suffix(input.dtype)
+        d = _get_dispatcher()
+        out_buf = _alloc_output_buf(total, input.dtype)
+        d.dispatch_adaptive_avg_pool2d(
+            f"adaptive_avg_pool2d_{sfx}", _metal_buf(input), out_buf,
+            N, C, H, W, oH, oW, total)
+        out_shape = (N, C, oH, oW)
+        s = 1
+        out_stride = ()
+        for dim in reversed(out_shape):
+            out_stride = (s,) + out_stride
+            s *= dim
+        return _from_metal_buffer(out_buf, out_shape, out_stride, input.dtype, input.device)
+    inp = _to_numpy(input)  # (N, C, H, W)
+    N, C, H, W = inp.shape
     out = np.zeros((N, C, oH, oW), dtype=inp.dtype)
     for oh in range(oH):
         h_start = oh * H // oH
@@ -3998,13 +4079,22 @@ def argwhere(a):
 
 def baddbmm(input, batch1, batch2, beta=1, alpha=1):
     """Batch matrix-matrix product: beta * input + alpha * (batch1 @ batch2)."""
+    if batch1.ndim != 3 or batch2.ndim != 3:
+        raise RuntimeError("baddbmm: batch1 and batch2 must be 3-D tensors")
+    # GPU composite: bmm(GPU) then scale+add(GPU)
+    if (_can_use_gpu(batch1) and _can_use_gpu(batch2)
+            and batch1.dtype in (float32_dtype, float16_dtype)):
+        bmm_result = matmul(batch1, batch2)
+        if alpha != 1:
+            bmm_result = mul(bmm_result, alpha)
+        if beta == 0:
+            return bmm_result
+        if beta != 1:
+            input = mul(input, beta)
+        return add(input, bmm_result)
     input_np = _to_numpy(input)
     batch1_np = _to_numpy(batch1)
     batch2_np = _to_numpy(batch2)
-
-    if batch1_np.ndim != 3 or batch2_np.ndim != 3:
-        raise RuntimeError("baddbmm: batch1 and batch2 must be 3-D tensors")
-
     bmm_result = batch1_np @ batch2_np
     out = beta * input_np + alpha * bmm_result
     return _from_numpy(np.ascontiguousarray(out), input.dtype, input.device)
@@ -5315,9 +5405,26 @@ def upsample_linear1d(a, output_size, align_corners=False, scales=None):
 
 
 def upsample_nearest2d(a, output_size):
-    """Nearest-neighbor 2D upsampling. Input: (N, C, H_in, W_in) -> (N, C, H_out, W_out)."""
-    arr = _to_numpy(a)
+    """Nearest-neighbor 2D upsampling with GPU path."""
     H_out, W_out = output_size
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)
+            and len(a.shape) == 4):
+        N, C, H_in, W_in = a.shape
+        total = N * C * H_out * W_out
+        sfx = _kernel_suffix(a.dtype)
+        d = _get_dispatcher()
+        out_buf = _alloc_output_buf(total, a.dtype)
+        d.dispatch_upsample(f"upsample_nearest2d_{sfx}", _metal_buf(a), out_buf,
+                            N, C, H_in, W_in, H_out, W_out, 0, total)
+        out_shape = (N, C, H_out, W_out)
+        s = 1
+        out_stride = ()
+        for dim in reversed(out_shape):
+            out_stride = (s,) + out_stride
+            s *= dim
+        return _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
+    arr = _to_numpy(a)
     H_in, W_in = arr.shape[2], arr.shape[3]
     h_idx = (np.arange(H_out, dtype=np.float64) * H_in / H_out).astype(np.intp)
     w_idx = (np.arange(W_out, dtype=np.float64) * W_in / W_out).astype(np.intp)
@@ -5328,7 +5435,26 @@ def upsample_nearest2d(a, output_size):
 
 
 def upsample_bilinear2d(a, output_size, align_corners=False, scales_h=None, scales_w=None):
-    """Bilinear 2D upsampling. Input: (N, C, H_in, W_in) -> (N, C, H_out, W_out)."""
+    """Bilinear 2D upsampling with GPU path."""
+    H_out, W_out = output_size
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)
+            and len(a.shape) == 4):
+        N, C, H_in, W_in = a.shape
+        total = N * C * H_out * W_out
+        sfx = _kernel_suffix(a.dtype)
+        d = _get_dispatcher()
+        out_buf = _alloc_output_buf(total, a.dtype)
+        ac = 1 if align_corners else 0
+        d.dispatch_upsample(f"upsample_bilinear2d_{sfx}", _metal_buf(a), out_buf,
+                            N, C, H_in, W_in, H_out, W_out, ac, total)
+        out_shape = (N, C, H_out, W_out)
+        s = 1
+        out_stride = ()
+        for dim in reversed(out_shape):
+            out_stride = (s,) + out_stride
+            s *= dim
+        return _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
     arr = _to_numpy(a).astype(np.float64)
     H_out, W_out = output_size
     H_in, W_in = arr.shape[2], arr.shape[3]
@@ -5660,6 +5786,18 @@ def adaptive_avg_pool3d(input, output_size):
 
 def addmm(input, mat1, mat2, beta=1, alpha=1):
     """addmm: beta * input + alpha * (mat1 @ mat2)."""
+    # GPU composite path: matmul(GPU) then scale+add(GPU)
+    if (_can_use_gpu(mat1) and _can_use_gpu(mat2)
+            and len(mat1.shape) == 2 and len(mat2.shape) == 2
+            and mat1.dtype in (float32_dtype, float16_dtype)):
+        mm_result = matmul(mat1, mat2)
+        if alpha != 1:
+            mm_result = mul(mm_result, alpha)
+        if beta == 0:
+            return mm_result
+        if beta != 1:
+            input = mul(input, beta)
+        return add(input, mm_result)
     inp = _to_numpy(input)
     m1 = np.ascontiguousarray(_to_numpy(mat1))
     m2 = np.ascontiguousarray(_to_numpy(mat2))

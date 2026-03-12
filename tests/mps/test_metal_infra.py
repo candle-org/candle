@@ -1178,3 +1178,210 @@ class TestNormGPU:
               np.sqrt(rv_np[None, :, None, None] + 1e-5)
         np.testing.assert_allclose(out.cpu().numpy(), ref.astype(np.float16),
                                    atol=0.05)
+
+
+class TestP1GPUOps:
+    """Tests for P1 GPU-accelerated ops: cumsum, pad, adaptive_avg_pool2d,
+    upsample_nearest2d, upsample_bilinear2d, addmm."""
+
+    # ---- cumsum ----
+
+    def test_cumsum_dim0_f32(self):
+        np.random.seed(50)
+        x_np = np.random.randn(5, 4).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.cumsum(x, dim=0)
+        assert out.device.type == "mps"
+        np.testing.assert_allclose(out.cpu().numpy(), np.cumsum(x_np, axis=0), atol=1e-5)
+
+    def test_cumsum_dim1_f32(self):
+        np.random.seed(51)
+        x_np = np.random.randn(3, 8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.cumsum(x, dim=1)
+        assert out.device.type == "mps"
+        np.testing.assert_allclose(out.cpu().numpy(), np.cumsum(x_np, axis=1), atol=1e-5)
+
+    def test_cumsum_3d(self):
+        np.random.seed(52)
+        x_np = np.random.randn(2, 3, 4).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.cumsum(x, dim=2)
+        assert out.device.type == "mps"
+        np.testing.assert_allclose(out.cpu().numpy(), np.cumsum(x_np, axis=2), atol=1e-5)
+
+    def test_cumsum_negative_dim(self):
+        np.random.seed(53)
+        x_np = np.random.randn(4, 6).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.cumsum(x, dim=-1)
+        assert out.device.type == "mps"
+        np.testing.assert_allclose(out.cpu().numpy(), np.cumsum(x_np, axis=-1), atol=1e-5)
+
+    def test_cumsum_f16(self):
+        np.random.seed(54)
+        x_np = np.random.randn(4, 8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps").to(torch.float16)
+        out = torch.cumsum(x, dim=1)
+        assert out.dtype == torch.float16
+        ref = np.cumsum(x_np.astype(np.float16), axis=1)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=0.05)
+
+    # ---- pad (constant) ----
+
+    def test_pad_1d_f32(self):
+        np.random.seed(55)
+        x_np = np.random.randn(2, 3, 8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.pad(x, (2, 3))
+        assert out.device.type == "mps"
+        assert out.shape == (2, 3, 13)
+        ref = np.pad(x_np, ((0, 0), (0, 0), (2, 3)), constant_values=0)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-6)
+
+    def test_pad_2d_f32(self):
+        np.random.seed(56)
+        x_np = np.random.randn(1, 3, 4, 4).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.pad(x, (1, 1, 1, 1))
+        assert out.shape == (1, 3, 6, 6)
+        ref = np.pad(x_np, ((0, 0), (0, 0), (1, 1), (1, 1)), constant_values=0)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-6)
+
+    def test_pad_with_value(self):
+        np.random.seed(57)
+        x_np = np.random.randn(2, 4).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.pad(x, (1, 2), value=-1.0)
+        assert out.shape == (2, 7)
+        ref = np.pad(x_np, ((0, 0), (1, 2)), constant_values=-1.0)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-6)
+
+    def test_pad_f16(self):
+        np.random.seed(58)
+        x_np = np.random.randn(2, 3, 4).astype(np.float32)
+        x = torch.tensor(x_np, device="mps").to(torch.float16)
+        out = torch.nn.functional.pad(x, (1, 1))
+        assert out.dtype == torch.float16
+        assert out.shape == (2, 3, 6)
+
+    # ---- adaptive_avg_pool2d ----
+
+    def test_adaptive_avg_pool2d_basic(self):
+        np.random.seed(60)
+        x_np = np.random.randn(1, 3, 8, 8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.adaptive_avg_pool2d(x, (4, 4))
+        assert out.device.type == "mps"
+        assert out.shape == (1, 3, 4, 4)
+        # Manual reference: each 2x2 block averaged
+        ref = x_np.reshape(1, 3, 4, 2, 4, 2).mean(axis=(3, 5))
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_adaptive_avg_pool2d_1x1(self):
+        np.random.seed(61)
+        x_np = np.random.randn(2, 4, 6, 6).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.adaptive_avg_pool2d(x, (1, 1))
+        assert out.shape == (2, 4, 1, 1)
+        ref = x_np.mean(axis=(2, 3), keepdims=True)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_adaptive_avg_pool2d_f16(self):
+        np.random.seed(62)
+        x_np = np.random.randn(1, 2, 8, 8).astype(np.float32)
+        x = torch.tensor(x_np, device="mps").to(torch.float16)
+        out = torch.nn.functional.adaptive_avg_pool2d(x, (4, 4))
+        assert out.dtype == torch.float16
+        assert out.shape == (1, 2, 4, 4)
+
+    # ---- upsample_nearest2d ----
+
+    def test_upsample_nearest2d_basic(self):
+        np.random.seed(65)
+        x_np = np.random.randn(1, 2, 3, 3).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.interpolate(x, size=(6, 6), mode='nearest')
+        assert out.device.type == "mps"
+        assert out.shape == (1, 2, 6, 6)
+        # Each pixel repeated 2x2
+        ref = x_np.repeat(2, axis=2).repeat(2, axis=3)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-6)
+
+    def test_upsample_nearest2d_f16(self):
+        np.random.seed(66)
+        x_np = np.random.randn(1, 1, 4, 4).astype(np.float32)
+        x = torch.tensor(x_np, device="mps").to(torch.float16)
+        out = torch.nn.functional.interpolate(x, size=(8, 8), mode='nearest')
+        assert out.dtype == torch.float16
+        assert out.shape == (1, 1, 8, 8)
+
+    # ---- upsample_bilinear2d ----
+
+    def test_upsample_bilinear2d_basic(self):
+        np.random.seed(70)
+        x_np = np.random.randn(1, 1, 2, 2).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.interpolate(x, size=(4, 4), mode='bilinear',
+                                              align_corners=False)
+        assert out.device.type == "mps"
+        assert out.shape == (1, 1, 4, 4)
+
+    def test_upsample_bilinear2d_align_corners(self):
+        np.random.seed(71)
+        x_np = np.random.randn(1, 2, 3, 3).astype(np.float32)
+        x = torch.tensor(x_np, device="mps")
+        out = torch.nn.functional.interpolate(x, size=(6, 6), mode='bilinear',
+                                              align_corners=True)
+        assert out.shape == (1, 2, 6, 6)
+        # Corner values should be preserved
+        np.testing.assert_allclose(out.cpu().numpy()[:, :, 0, 0], x_np[:, :, 0, 0], atol=1e-5)
+        np.testing.assert_allclose(out.cpu().numpy()[:, :, -1, -1], x_np[:, :, -1, -1], atol=1e-5)
+
+    def test_upsample_bilinear2d_f16(self):
+        np.random.seed(72)
+        x_np = np.random.randn(1, 1, 4, 4).astype(np.float32)
+        x = torch.tensor(x_np, device="mps").to(torch.float16)
+        out = torch.nn.functional.interpolate(x, size=(8, 8), mode='bilinear',
+                                              align_corners=False)
+        assert out.dtype == torch.float16
+        assert out.shape == (1, 1, 8, 8)
+
+    # ---- addmm ----
+
+    def test_addmm_basic(self):
+        np.random.seed(75)
+        m1_np = np.random.randn(4, 8).astype(np.float32)
+        m2_np = np.random.randn(8, 3).astype(np.float32)
+        inp_np = np.random.randn(4, 3).astype(np.float32)
+        m1 = torch.tensor(m1_np, device="mps")
+        m2 = torch.tensor(m2_np, device="mps")
+        inp = torch.tensor(inp_np, device="mps")
+        out = torch.addmm(inp, m1, m2)
+        assert out.device.type == "mps"
+        ref = inp_np + m1_np @ m2_np
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-4)
+
+    def test_addmm_alpha_beta(self):
+        np.random.seed(76)
+        m1_np = np.random.randn(3, 5).astype(np.float32)
+        m2_np = np.random.randn(5, 4).astype(np.float32)
+        inp_np = np.random.randn(3, 4).astype(np.float32)
+        m1 = torch.tensor(m1_np, device="mps")
+        m2 = torch.tensor(m2_np, device="mps")
+        inp = torch.tensor(inp_np, device="mps")
+        out = torch.addmm(inp, m1, m2, beta=0.5, alpha=2.0)
+        ref = 0.5 * inp_np + 2.0 * (m1_np @ m2_np)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-4)
+
+    def test_addmm_beta_zero(self):
+        np.random.seed(77)
+        m1_np = np.random.randn(4, 4).astype(np.float32)
+        m2_np = np.random.randn(4, 4).astype(np.float32)
+        inp_np = np.full((4, 4), float('nan'), dtype=np.float32)
+        m1 = torch.tensor(m1_np, device="mps")
+        m2 = torch.tensor(m2_np, device="mps")
+        inp = torch.tensor(inp_np, device="mps")
+        out = torch.addmm(inp, m1, m2, beta=0)
+        ref = m1_np @ m2_np
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-4)

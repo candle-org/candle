@@ -1031,8 +1031,281 @@ def _gen_avg_pool2d(types=None):
 
 
 # ---------------------------------------------------------------------------
-# Build the full MSL source
+# Cumsum Metal compute shader (per-row sequential prefix sum)
 # ---------------------------------------------------------------------------
+
+_CUMSUM_TEMPLATE = """
+kernel void cumsum_{suffix}(
+    device const {type}* input  [[buffer(0)]],
+    device {type}* output       [[buffer(1)]],
+    constant uint& outer_size   [[buffer(2)]],
+    constant uint& dim_size     [[buffer(3)]],
+    constant uint& inner_size   [[buffer(4)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    // One thread per (outer, inner) pair
+    uint total = outer_size * inner_size;
+    if (gid >= total) return;
+
+    uint outer = gid / inner_size;
+    uint inner = gid % inner_size;
+
+    float acc = 0.0f;
+    for (uint d = 0; d < dim_size; d++) {{
+        uint idx = outer * (dim_size * inner_size) + d * inner_size + inner;
+        acc += (float)input[idx];
+        output[idx] = ({type})acc;
+    }}
+}}
+"""
+
+
+def _gen_cumsum(types=None):
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_CUMSUM_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Adaptive avg pool2d Metal compute shader
+# ---------------------------------------------------------------------------
+
+_ADAPTIVE_AVG_POOL2D_TEMPLATE = """
+kernel void adaptive_avg_pool2d_{suffix}(
+    device const {type}* input  [[buffer(0)]],
+    device {type}* output       [[buffer(1)]],
+    constant uint& N            [[buffer(2)]],
+    constant uint& C            [[buffer(3)]],
+    constant uint& H_in         [[buffer(4)]],
+    constant uint& W_in         [[buffer(5)]],
+    constant uint& oH           [[buffer(6)]],
+    constant uint& oW           [[buffer(7)]],
+    constant uint& total        [[buffer(8)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    if (gid >= total) return;
+
+    uint ow = gid % oW;
+    uint oh = (gid / oW) % oH;
+    uint c  = (gid / (oW * oH)) % C;
+    uint n  = gid / (oW * oH * C);
+
+    uint h_start = oh * H_in / oH;
+    uint h_end   = (oh + 1) * H_in / oH;
+    uint w_start = ow * W_in / oW;
+    uint w_end   = (ow + 1) * W_in / oW;
+
+    float sum_val = 0.0f;
+    uint count = 0;
+    for (uint h = h_start; h < h_end; h++) {{
+        for (uint w = w_start; w < w_end; w++) {{
+            uint idx = n * (C * H_in * W_in) + c * (H_in * W_in) + h * W_in + w;
+            sum_val += (float)input[idx];
+            count++;
+        }}
+    }}
+    output[gid] = ({type})(sum_val / (float)count);
+}}
+"""
+
+
+def _gen_adaptive_avg_pool2d(types=None):
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_ADAPTIVE_AVG_POOL2D_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Upsample nearest 2d Metal compute shader
+# ---------------------------------------------------------------------------
+
+_UPSAMPLE_NEAREST2D_TEMPLATE = """
+kernel void upsample_nearest2d_{suffix}(
+    device const {type}* input  [[buffer(0)]],
+    device {type}* output       [[buffer(1)]],
+    constant uint& N            [[buffer(2)]],
+    constant uint& C            [[buffer(3)]],
+    constant uint& H_in         [[buffer(4)]],
+    constant uint& W_in         [[buffer(5)]],
+    constant uint& H_out        [[buffer(6)]],
+    constant uint& W_out        [[buffer(7)]],
+    constant uint& _unused      [[buffer(8)]],
+    constant uint& total        [[buffer(9)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    if (gid >= total) return;
+
+    uint ow = gid % W_out;
+    uint oh = (gid / W_out) % H_out;
+    uint c  = (gid / (W_out * H_out)) % C;
+    uint n  = gid / (W_out * H_out * C);
+
+    uint ih = oh * H_in / H_out;
+    uint iw = ow * W_in / W_out;
+    if (ih >= H_in) ih = H_in - 1;
+    if (iw >= W_in) iw = W_in - 1;
+
+    uint in_idx = n * (C * H_in * W_in) + c * (H_in * W_in) + ih * W_in + iw;
+    output[gid] = input[in_idx];
+}}
+"""
+
+
+def _gen_upsample_nearest2d(types=None):
+    if types is None:
+        types = _FLOAT_TYPES + ("int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_UPSAMPLE_NEAREST2D_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Upsample bilinear 2d Metal compute shader
+# ---------------------------------------------------------------------------
+
+_UPSAMPLE_BILINEAR2D_TEMPLATE = """
+kernel void upsample_bilinear2d_{suffix}(
+    device const {type}* input  [[buffer(0)]],
+    device {type}* output       [[buffer(1)]],
+    constant uint& N            [[buffer(2)]],
+    constant uint& C            [[buffer(3)]],
+    constant uint& H_in         [[buffer(4)]],
+    constant uint& W_in         [[buffer(5)]],
+    constant uint& H_out        [[buffer(6)]],
+    constant uint& W_out        [[buffer(7)]],
+    constant uint& align_corners [[buffer(8)]],
+    constant uint& total        [[buffer(9)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    if (gid >= total) return;
+
+    uint ow = gid % W_out;
+    uint oh = (gid / W_out) % H_out;
+    uint c  = (gid / (W_out * H_out)) % C;
+    uint n  = gid / (W_out * H_out * C);
+
+    float h_coord, w_coord;
+    if (align_corners != 0u && H_out > 1) {{
+        h_coord = (float)oh * (float)(H_in - 1) / (float)(H_out - 1);
+    }} else {{
+        h_coord = ((float)oh + 0.5f) * (float)H_in / (float)H_out - 0.5f;
+    }}
+    if (align_corners != 0u && W_out > 1) {{
+        w_coord = (float)ow * (float)(W_in - 1) / (float)(W_out - 1);
+    }} else {{
+        w_coord = ((float)ow + 0.5f) * (float)W_in / (float)W_out - 0.5f;
+    }}
+
+    h_coord = clamp(h_coord, 0.0f, (float)(H_in - 1));
+    w_coord = clamp(w_coord, 0.0f, (float)(W_in - 1));
+
+    uint h0 = (uint)floor(h_coord);
+    uint w0 = (uint)floor(w_coord);
+    uint h1 = min(h0 + 1, H_in - 1);
+    uint w1 = min(w0 + 1, W_in - 1);
+
+    float wh = h_coord - (float)h0;
+    float ww = w_coord - (float)w0;
+
+    uint base = n * (C * H_in * W_in) + c * (H_in * W_in);
+    float v00 = (float)input[base + h0 * W_in + w0];
+    float v01 = (float)input[base + h0 * W_in + w1];
+    float v10 = (float)input[base + h1 * W_in + w0];
+    float v11 = (float)input[base + h1 * W_in + w1];
+
+    float val = v00 * (1.0f - wh) * (1.0f - ww) +
+                v01 * (1.0f - wh) * ww +
+                v10 * wh * (1.0f - ww) +
+                v11 * wh * ww;
+    output[gid] = ({type})val;
+}}
+"""
+
+
+def _gen_upsample_bilinear2d(types=None):
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_UPSAMPLE_BILINEAR2D_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Constant pad Metal compute shader
+# ---------------------------------------------------------------------------
+
+_PAD_CONSTANT_TEMPLATE = """
+kernel void pad_constant_{suffix}(
+    device const {type}* input  [[buffer(0)]],
+    device {type}* output       [[buffer(1)]],
+    constant uint* in_shape     [[buffer(2)]],
+    constant int* pad_before    [[buffer(3)]],
+    constant uint* out_shape    [[buffer(4)]],
+    constant {type}& fill_val   [[buffer(5)]],
+    constant uint& ndim         [[buffer(6)]],
+    constant uint& total        [[buffer(7)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    if (gid >= total) return;
+
+    // Decode output index to per-dim coords
+    uint remaining = gid;
+    bool in_bounds = true;
+    uint in_idx = 0;
+    uint in_stride = 1;
+
+    // Compute input strides
+    // We'll do it from the last dim backwards
+    // First pass: check bounds and compute input linear index
+    // We need to iterate dims from last to first
+    uint coords[8];  // max 8 dims
+    for (int d = (int)ndim - 1; d >= 0; d--) {{
+        uint coord = remaining % out_shape[d];
+        remaining /= out_shape[d];
+        coords[d] = coord;
+    }}
+
+    uint in_linear = 0;
+    uint stride = 1;
+    for (int d = (int)ndim - 1; d >= 0; d--) {{
+        int in_coord = (int)coords[d] - pad_before[d];
+        if (in_coord < 0 || in_coord >= (int)in_shape[d]) {{
+            in_bounds = false;
+            break;
+        }}
+        in_linear += (uint)in_coord * stride;
+        stride *= in_shape[d];
+    }}
+
+    if (in_bounds) {{
+        output[gid] = input[in_linear];
+    }} else {{
+        output[gid] = fill_val;
+    }}
+}}
+"""
+
+
+def _gen_pad_constant(types=None):
+    if types is None:
+        types = _FLOAT_TYPES + ("int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_PAD_CONSTANT_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
 
 _HEADER = """
 #include <metal_stdlib>
@@ -1660,6 +1933,19 @@ def _build_msl_source():
     # Pooling kernels
     parts.append(_gen_max_pool2d())
     parts.append(_gen_avg_pool2d())
+
+    # Cumsum kernel
+    parts.append(_gen_cumsum())
+
+    # Adaptive avg pool2d kernel
+    parts.append(_gen_adaptive_avg_pool2d())
+
+    # Upsample kernels
+    parts.append(_gen_upsample_nearest2d())
+    parts.append(_gen_upsample_bilinear2d())
+
+    # Pad kernel
+    parts.append(_gen_pad_constant())
 
     # Philox RNG kernels
     parts.append(_gen_philox_uniform())
