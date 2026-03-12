@@ -13,7 +13,9 @@ from . import runtime as npu_runtime
 # Ops that must use on-device composite workaround on a given chip.
 
 _FALLBACK_OPS = {
-    "910a": frozenset(),
+    "910a": frozenset({
+        "amax", "amin", "argmax", "argmin",
+    }),
     "910b": frozenset(),
     "310b": frozenset({
         "atan2", "where", "flip", "argsort", "sort", "topk",

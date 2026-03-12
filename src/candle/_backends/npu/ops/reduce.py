@@ -14,11 +14,41 @@ from ._helpers import (
 )
 
 
+def _argmax_fallback(a, dim, keepdim):
+    """Composite argmax: compare each slice to amax, pick first match."""
+    from .math import eq as _eq, mul as _mul, _cast_tensor_dtype
+    mx = amax(a, dim=dim, keepdim=True)
+    mask = _eq(a, mx)
+    ndim = len(a.shape)
+    dim_size = a.shape[dim]
+    idx_shape = [1] * ndim
+    idx_shape[dim] = dim_size
+    import numpy as _np
+    from .creation import tensor_create
+    indices = tensor_create(_np.arange(dim_size, dtype=_np.int64).reshape(idx_shape),
+                            device=a.device)
+    big_val = dim_size + 1
+    masked = _mul(mask, indices)
+    inv_mask_val = _mul(_cast_tensor_dtype(
+        _eq(mask, tensor_create(_np.zeros(1, dtype=_np.float32), device=a.device)),
+        a.dtype), tensor_create(_np.array(big_val, dtype=_np.float32), device=a.device))
+    from .math import add as _add
+    pick = _add(masked, _cast_tensor_dtype(inv_mask_val, int64_dtype))
+    result = amin(pick, dim=dim, keepdim=keepdim)
+    return _cast_tensor_dtype(result, int64_dtype)
+
+
 def argmax(a, dim=None, keepdim=False):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU argmax expects NPU tensors")
+    if _use_soc_fallback("argmax"):
+        if dim is None:
+            flat = reshape(a, (_numel(a.shape),))
+            return _argmax_fallback(flat, 0, False)
+        dim = _normalize_dim(dim, len(a.shape))
+        return _argmax_fallback(a, dim, keepdim)
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
     if not aclnn.max_dim_symbols_ok():
         raise RuntimeError("aclnnMaxDim not available")
     if dim is None:
@@ -54,11 +84,41 @@ def argmax(a, dim=None, keepdim=False):
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
+def _argmin_fallback(a, dim, keepdim):
+    """Composite argmin: compare each slice to amin, pick first match."""
+    from .math import eq as _eq, mul as _mul, _cast_tensor_dtype
+    mn = amin(a, dim=dim, keepdim=True)
+    mask = _eq(a, mn)
+    ndim = len(a.shape)
+    dim_size = a.shape[dim]
+    idx_shape = [1] * ndim
+    idx_shape[dim] = dim_size
+    import numpy as _np
+    from .creation import tensor_create
+    indices = tensor_create(_np.arange(dim_size, dtype=_np.int64).reshape(idx_shape),
+                            device=a.device)
+    big_val = dim_size + 1
+    masked = _mul(mask, indices)
+    inv_mask_val = _mul(_cast_tensor_dtype(
+        _eq(mask, tensor_create(_np.zeros(1, dtype=_np.float32), device=a.device)),
+        a.dtype), tensor_create(_np.array(big_val, dtype=_np.float32), device=a.device))
+    from .math import add as _add
+    pick = _add(masked, _cast_tensor_dtype(inv_mask_val, int64_dtype))
+    result = amin(pick, dim=dim, keepdim=keepdim)
+    return _cast_tensor_dtype(result, int64_dtype)
+
+
 def argmin(a, dim=None, keepdim=False):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU argmin expects NPU tensors")
+    if _use_soc_fallback("argmin"):
+        if dim is None:
+            flat = reshape(a, (_numel(a.shape),))
+            return _argmin_fallback(flat, 0, False)
+        dim = _normalize_dim(dim, len(a.shape))
+        return _argmin_fallback(a, dim, keepdim)
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
     if not aclnn.min_dim_symbols_ok():
         raise RuntimeError("aclnnMinDim not available")
     if dim is None:
@@ -202,11 +262,25 @@ def kthvalue(a, k, dim=None, keepdim=False):
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
+def _amax_aminmax_fallback(a, dim, keepdim):
+    """Use aclnnAminmax as fallback when aclnnMaxDim is unavailable."""
+    result = aminmax_aclnn(a, dim=dim, keepdim=keepdim)
+    return result.max
+
+
+def _amin_aminmax_fallback(a, dim, keepdim):
+    """Use aclnnAminmax as fallback when aclnnMinDim is unavailable."""
+    result = aminmax_aclnn(a, dim=dim, keepdim=keepdim)
+    return result.min
+
+
 def amax(a, dim=None, keepdim=False):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU amax expects NPU tensors")
+    if _use_soc_fallback("amax"):
+        return _amax_aminmax_fallback(a, dim=dim, keepdim=keepdim)
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
     if not aclnn.max_dim_symbols_ok():
         raise RuntimeError("aclnnMaxDim not available")
     if dim is None:
@@ -244,10 +318,12 @@ def amax(a, dim=None, keepdim=False):
 
 
 def amin(a, dim=None, keepdim=False):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU amin expects NPU tensors")
+    if _use_soc_fallback("amin"):
+        return _amin_aminmax_fallback(a, dim=dim, keepdim=keepdim)
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
     if not aclnn.min_dim_symbols_ok():
         raise RuntimeError("aclnnMinDim not available")
     if dim is None:
