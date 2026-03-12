@@ -30,7 +30,6 @@ import threading
 # Only entries that differ from a direct 1-to-1 mapping need to be listed.
 # ---------------------------------------------------------------------------
 _ALIASES = {
-    "autograd": "_autograd",
     "random": "_random",
 }
 
@@ -68,10 +67,10 @@ def _resolve_candle_name(fullname):
 
         torch            → candle
         torch.nn         → candle.nn
-        torch.autograd   → candle._autograd
+        torch.autograd   → candle.autograd
         torch.random     → candle._random
         torch.nn.functional → candle.nn.functional
-        torch.autograd.graph → candle._autograd.graph
+        torch.autograd.graph → candle.autograd.graph
     """
     parts = fullname.split(".")
     # parts[0] is "torch"
