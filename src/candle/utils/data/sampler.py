@@ -63,3 +63,52 @@ class BatchSampler(Sampler):
         if self.drop_last:
             return n // self.batch_size
         return (n + self.batch_size - 1) // self.batch_size
+
+
+class SubsetRandomSampler(Sampler):
+    def __init__(self, indices, generator=None):
+        self.indices = list(indices)
+        self.generator = generator
+
+    def __iter__(self):
+        rng = self.generator if self.generator is not None else random
+        idx = list(self.indices)
+        rng.shuffle(idx)
+        return iter(idx)
+
+    def __len__(self):
+        return len(self.indices)
+
+
+class WeightedRandomSampler(Sampler):
+    def __init__(self, weights, num_samples, replacement=True, generator=None):
+        if not isinstance(num_samples, int) or num_samples < 0:
+            raise ValueError(
+                f"num_samples should be a non-negative integer, got {num_samples}"
+            )
+        self.weights = list(weights)
+        self.num_samples = num_samples
+        self.replacement = replacement
+        self.generator = generator
+
+    def __iter__(self):
+        rng = self.generator if self.generator is not None else random
+        if self.replacement:
+            yield from rng.choices(
+                range(len(self.weights)),
+                weights=self.weights,
+                k=self.num_samples,
+            )
+        else:
+            # Weighted sampling without replacement
+            w = list(self.weights)
+            indices = list(range(len(w)))
+            for _ in range(self.num_samples):
+                chosen = rng.choices(
+                    indices, weights=[w[i] for i in indices], k=1
+                )[0]
+                yield chosen
+                indices.remove(chosen)
+
+    def __len__(self):
+        return self.num_samples
