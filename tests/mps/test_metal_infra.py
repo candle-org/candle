@@ -1736,3 +1736,145 @@ class TestP3Lerp:
         out = torch.lerp(a, b, w).cpu().numpy()
         ref = a_np + w_np * (b_np - a_np)
         np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+
+class TestP4GPUOps:
+    """P4 GPU kernels: floor_divide, cumprod, rot90, sort/argsort/topk."""
+
+    # --- floor_divide ---
+    def test_floor_divide_f32(self):
+        a_np = np.random.randn(256).astype(np.float32) * 10
+        b_np = np.random.randn(256).astype(np.float32) * 5 + 0.5
+        a = torch.tensor(a_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.floor_divide(a, b).cpu().numpy()
+        ref = np.floor_divide(a_np, b_np)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
+
+    def test_floor_divide_f16(self):
+        a_np = np.random.randn(128).astype(np.float16) * 5
+        b_np = (np.random.randn(128).astype(np.float16) * 2 + 1.0)
+        a = torch.tensor(a_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.floor_divide(a, b).cpu().numpy()
+        ref = np.floor_divide(a_np, b_np)
+        np.testing.assert_allclose(out, ref, rtol=0.05, atol=0.1)
+
+    # --- cumprod ---
+    def test_cumprod_f32(self):
+        a_np = np.random.rand(4, 8).astype(np.float32) + 0.5
+        a = torch.tensor(a_np, device="mps")
+        out = torch.cumprod(a, dim=1).cpu().numpy()
+        ref = np.cumprod(a_np, axis=1)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
+
+    def test_cumprod_dim0(self):
+        a_np = np.random.rand(8, 4).astype(np.float32) + 0.5
+        a = torch.tensor(a_np, device="mps")
+        out = torch.cumprod(a, dim=0).cpu().numpy()
+        ref = np.cumprod(a_np, axis=0)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
+
+    def test_cumprod_f16(self):
+        a_np = np.random.rand(4, 8).astype(np.float16) + 0.5
+        a = torch.tensor(a_np, device="mps")
+        out = torch.cumprod(a, dim=1).cpu().numpy()
+        ref = np.cumprod(a_np, axis=1)
+        np.testing.assert_allclose(out, ref, rtol=0.05, atol=0.05)
+
+    # --- rot90 ---
+    def test_rot90_k1(self):
+        a_np = np.random.randn(4, 5).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.rot90(a, 1).cpu().numpy()
+        ref = np.rot90(a_np, 1)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+    def test_rot90_k2(self):
+        a_np = np.random.randn(4, 5).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.rot90(a, 2).cpu().numpy()
+        ref = np.rot90(a_np, 2)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+    def test_rot90_k3(self):
+        a_np = np.random.randn(4, 5).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.rot90(a, 3).cpu().numpy()
+        ref = np.rot90(a_np, 3)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+    # --- sort ---
+    def test_sort_f32(self):
+        a_np = np.random.randn(4, 16).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        values, indices = torch.sort(a, dim=1)
+        v_np = values.cpu().numpy()
+        i_np = indices.cpu().numpy()
+        ref_idx = np.argsort(a_np, axis=1)
+        ref_val = np.take_along_axis(a_np, ref_idx, axis=1)
+        np.testing.assert_allclose(v_np, ref_val, rtol=1e-5, atol=1e-6)
+        np.testing.assert_array_equal(i_np, ref_idx)
+
+    def test_sort_descending(self):
+        a_np = np.random.randn(4, 16).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        values, indices = torch.sort(a, dim=1, descending=True)
+        v_np = values.cpu().numpy()
+        i_np = indices.cpu().numpy()
+        ref_idx = np.argsort(-a_np, axis=1)
+        ref_val = np.take_along_axis(a_np, ref_idx, axis=1)
+        np.testing.assert_allclose(v_np, ref_val, rtol=1e-5, atol=1e-6)
+        np.testing.assert_array_equal(i_np, ref_idx)
+
+    def test_sort_dim0(self):
+        a_np = np.random.randn(8, 4).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        values, indices = torch.sort(a, dim=0)
+        v_np = values.cpu().numpy()
+        i_np = indices.cpu().numpy()
+        ref_idx = np.argsort(a_np, axis=0)
+        ref_val = np.take_along_axis(a_np, ref_idx, axis=0)
+        np.testing.assert_allclose(v_np, ref_val, rtol=1e-5, atol=1e-6)
+        np.testing.assert_array_equal(i_np, ref_idx)
+
+    # --- argsort ---
+    def test_argsort_f32(self):
+        a_np = np.random.randn(4, 16).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.argsort(a, dim=1).cpu().numpy()
+        ref = np.argsort(a_np, axis=1)
+        np.testing.assert_array_equal(out, ref)
+
+    def test_argsort_descending(self):
+        a_np = np.random.randn(4, 16).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.argsort(a, dim=1, descending=True).cpu().numpy()
+        ref = np.argsort(-a_np, axis=1)
+        np.testing.assert_array_equal(out, ref)
+
+    # --- topk ---
+    def test_topk_f32(self):
+        a_np = np.random.randn(4, 32).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        values, indices = torch.topk(a, k=5, dim=1)
+        v_np = values.cpu().numpy()
+        i_np = indices.cpu().numpy()
+        # Verify values are sorted descending
+        for row in range(4):
+            assert np.all(np.diff(v_np[row]) <= 0)
+        # Verify values match gathered from input
+        gathered = np.take_along_axis(a_np, i_np, axis=1)
+        np.testing.assert_allclose(v_np, gathered, rtol=1e-5, atol=1e-6)
+
+    def test_topk_smallest(self):
+        a_np = np.random.randn(4, 32).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        values, indices = torch.topk(a, k=5, dim=1, largest=False)
+        v_np = values.cpu().numpy()
+        i_np = indices.cpu().numpy()
+        # Verify values are sorted ascending
+        for row in range(4):
+            assert np.all(np.diff(v_np[row]) >= 0)
+        gathered = np.take_along_axis(a_np, i_np, axis=1)
+        np.testing.assert_allclose(v_np, gathered, rtol=1e-5, atol=1e-6)
