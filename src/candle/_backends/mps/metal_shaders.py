@@ -428,7 +428,7 @@ def _gen_binary(name, expr, types=None, float_only=False):
 def _gen_comparison(name, op, types=None):
     """Generate comparison kernels (typed input → uchar output)."""
     if types is None:
-        types = ("float", "half", "int", "long")
+        types = ("float", "half", "int", "long", "uchar")
     parts = []
     for t in types:
         suffix = _SUFFIX[t]
@@ -2010,6 +2010,8 @@ def _build_msl_source():
     parts.append(_gen_unary_predicate("isnan", "isnan(a[id])"))
     parts.append(_gen_unary_predicate("isfinite", "isfinite(a[id])"))
     parts.append(_gen_unary_predicate("signbit", "signbit(a[id])"))
+    parts.append(_gen_unary_predicate("isneginf", "(isinf(a[id]) && a[id] < 0)"))
+    parts.append(_gen_unary_predicate("isposinf", "(isinf(a[id]) && a[id] > 0)"))
 
     # Full-tensor reductions (multi-dtype)
     # sum: identity=0, combine=add
