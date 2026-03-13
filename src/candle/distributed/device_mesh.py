@@ -1,6 +1,7 @@
 """DeviceMesh — multi-dimensional device topology abstraction.
 
-MVP: 1D mesh only (pure FSDP). API aligned with torch.distributed.device_mesh.
+Supports 1D mesh (pure FSDP) and 2D mesh (HSDP: replicate + shard).
+API aligned with torch.distributed.device_mesh.
 """
 
 
@@ -8,8 +9,12 @@ class DeviceMesh:
     """Logical arrangement of devices for distributed training.
 
     Usage:
-        # After dist.init_process_group()
+        # 1D: pure FSDP
         mesh = DeviceMesh("npu", (world_size,), mesh_dim_names=("shard",))
+
+        # 2D: HSDP (replicate across nodes, shard within node)
+        mesh = DeviceMesh("npu", (num_replicas, shard_size),
+                          mesh_dim_names=("replicate", "shard"))
     """
 
     def __init__(self, device_type, mesh_shape, *, mesh_dim_names=None):
@@ -22,20 +27,53 @@ class DeviceMesh:
         self._init_process_groups()
 
     def _init_process_groups(self):
-        """Create ProcessGroups per mesh dimension.
-
-        1D MVP: reuse the global WORLD process group.
-        """
+        """Create ProcessGroups per mesh dimension."""
         from . import is_initialized
         if not is_initialized():
             return
         if len(self._mesh_shape) == 1:
             from . import _get_default_group
             self._dim_groups = [_get_default_group()]
+        elif len(self._mesh_shape) == 2:
+            self._init_2d_process_groups()
         else:
             raise NotImplementedError(
-                f"DeviceMesh only supports 1D mesh in MVP, got shape {self._mesh_shape}"
+                f"DeviceMesh supports up to 2D mesh, got shape {self._mesh_shape}"
             )
+
+    def _init_2d_process_groups(self):
+        """Create sub-process-groups for a 2D mesh.
+
+        For mesh shape ``(num_replicas, shard_size)``:
+        - dim 0 (replicate): groups of ranks at the same position within
+          each shard group (e.g., ranks [0, 2] and [1, 3] for 2x2).
+        - dim 1 (shard): groups of contiguous ranks within each replica
+          (e.g., ranks [0, 1] and [2, 3] for 2x2).
+        """
+        from . import new_group, get_rank
+        num_replicas, shard_size = self._mesh_shape
+        world_size = num_replicas * shard_size
+        my_rank = get_rank()
+
+        # dim 0: replicate groups — ranks that share the same intra-shard position
+        # For rank r, its shard-local position is r % shard_size
+        # Its replicate group contains ranks at that position across all replicas
+        my_shard_pos = my_rank % shard_size
+        replicate_ranks = [
+            replica * shard_size + my_shard_pos
+            for replica in range(num_replicas)
+        ]
+        replicate_pg = new_group(replicate_ranks)
+
+        # dim 1: shard groups — contiguous ranks within each replica
+        my_replica = my_rank // shard_size
+        shard_ranks = [
+            my_replica * shard_size + pos
+            for pos in range(shard_size)
+        ]
+        shard_pg = new_group(shard_ranks)
+
+        self._dim_groups = [replicate_pg, shard_pg]
 
     def get_group(self, mesh_dim=0):
         """Get the ProcessGroup for a mesh dimension."""

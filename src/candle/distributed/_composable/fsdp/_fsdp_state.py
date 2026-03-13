@@ -5,11 +5,13 @@ from ....distributed.tensor.dtensor import DTensor
 class FSDPState:
     """Manages FSDP hook lifecycle for a module."""
 
-    def __init__(self, module, param_group, mesh_info, reshard_after_forward):
+    def __init__(self, module, param_group, mesh_info, reshard_after_forward,
+                 mp_policy=None):
         self.module = module
         self.param_group = param_group
         self.mesh_info = mesh_info
         self.reshard_after_forward = reshard_after_forward
+        self._mp_policy = mp_policy
         self._is_root = None
         self._pre_backward_hook_handles = []
         self._grad_count = 0
@@ -39,11 +41,15 @@ class FSDPState:
         return args, kwargs
 
     def _post_forward(self, module, args, output):
-        """Post-forward: register backward hooks + reshard."""
+        """Post-forward: register backward hooks + reshard + output cast."""
         self._register_pre_backward_hooks(output)
         self._register_post_backward_hooks()
         if self.reshard_after_forward:
             self.param_group.post_forward()
+        # Mixed precision: cast output to output_dtype
+        if (self._mp_policy is not None
+                and self._mp_policy.output_dtype is not None):
+            output = _cast_output(output, self._mp_policy.output_dtype)
         return output
 
     def _register_pre_backward_hooks(self, output):
@@ -152,3 +158,17 @@ def _extract_tensors_from_output(output):
         for v in output.values():
             tensors.extend(_extract_tensors_from_output(v))
     return tensors
+
+
+def _cast_output(output, dtype):
+    """Recursively cast tensors in *output* to *dtype*."""
+    from ...._tensor import Tensor
+    if isinstance(output, Tensor):
+        return output.to(dtype) if output.dtype != dtype else output
+    if isinstance(output, tuple):
+        return tuple(_cast_output(o, dtype) for o in output)
+    if isinstance(output, list):
+        return [_cast_output(o, dtype) for o in output]
+    if isinstance(output, dict):
+        return {k: _cast_output(v, dtype) for k, v in output.items()}
+    return output

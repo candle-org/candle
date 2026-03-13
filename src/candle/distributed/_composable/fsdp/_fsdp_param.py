@@ -19,10 +19,11 @@ class FSDPParam:
     the DTensor view.
     """
 
-    def __init__(self, param, module, param_name, mesh_info):
+    def __init__(self, param, module, param_name, mesh_info, mp_policy=None):
         self._module = module
         self._param_name = param_name
         self._mesh_info = mesh_info
+        self._mp_policy = mp_policy
         self._sharded_state = ShardedState.SHARDED
         self._orig_shape = param.shape
         self._orig_dtype = param.dtype
@@ -104,6 +105,13 @@ class FSDPParam:
                 orig_dim_size = self._orig_shape[self._shard_dim]
                 output = narrow(output, self._shard_dim, 0, orig_dim_size)
             self._unsharded_param = output
+        # Mixed precision: cast to param_dtype for forward/backward compute
+        if (self._mp_policy is not None
+                and self._mp_policy.param_dtype is not None
+                and self._unsharded_param.dtype != self._mp_policy.param_dtype):
+            self._unsharded_param = self._unsharded_param.to(
+                self._mp_policy.param_dtype
+            )
         self._unsharded_param.requires_grad = self._sharded_param.requires_grad
         self._set_param_on_module(self._unsharded_param)
         self._sharded_state = ShardedState.UNSHARDED
@@ -119,6 +127,13 @@ class FSDPParam:
             orig_dim_size = self._orig_shape[self._shard_dim]
             local = narrow(local, self._shard_dim, 0, orig_dim_size)
         self._unsharded_param = local
+        # Mixed precision: cast to param_dtype for forward/backward compute
+        if (self._mp_policy is not None
+                and self._mp_policy.param_dtype is not None
+                and self._unsharded_param.dtype != self._mp_policy.param_dtype):
+            self._unsharded_param = self._unsharded_param.to(
+                self._mp_policy.param_dtype
+            )
         self._unsharded_param.requires_grad = self._sharded_param.requires_grad
         self._set_param_on_module(self._unsharded_param)
         self._sharded_state = ShardedState.UNSHARDED
@@ -151,8 +166,21 @@ class FSDPParam:
             grad = self._unsharded_param.grad
         if grad is None:
             return
+
+        # Mixed precision: cast gradient to reduce_dtype before communication
+        reduce_dtype = (
+            self._mp_policy.reduce_dtype
+            if self._mp_policy is not None else None
+        )
+        if reduce_dtype is not None and grad.dtype != reduce_dtype:
+            grad = grad.to(reduce_dtype)
+
         world_size = self._mesh_info.shard_mesh_size
         if world_size == 1:
+            # Cast back to param storage dtype for optimizer
+            shard_dtype = self._sharded_param.to_local().dtype
+            if grad.dtype != shard_dtype:
+                grad = grad.to(shard_dtype)
             self._sharded_param.to_local().grad = grad
             return
         # Pad gradient if the original dim was not divisible by world_size
@@ -171,6 +199,10 @@ class FSDPParam:
         )
         pg = self._mesh_info.shard_process_group
         dist.reduce_scatter_tensor(reduced_grad, grad, group=pg)
+        # Cast reduced gradient back to param storage dtype for optimizer
+        shard_dtype = self._sharded_param.to_local().dtype
+        if reduced_grad.dtype != shard_dtype:
+            reduced_grad = reduced_grad.to(shard_dtype)
         self._sharded_param.to_local().grad = reduced_grad
 
     # ------------------------------------------------------------------
