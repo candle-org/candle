@@ -126,7 +126,11 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env pytest tests/npu/ -v --tb=short --ignore=tests/npu/test_pipeline_npu_bench_smoke.py
+        clean_env pytest tests/npu/ -v --tb=short \
+          --ignore=tests/npu/test_pipeline_npu_bench_smoke.py \
+          --ignore=tests/npu/910b/ \
+          --ignore=tests/npu/310b/ \
+          --ignore=tests/npu/310p/
 
   test-distributed-2card:
     name: Distributed Suite (4-5)

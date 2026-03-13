@@ -1,4 +1,4 @@
-"""Tests for nn.functional NPU implementations."""
+"""Tests for nn.functional NPU implementations (generic, all SoCs)."""
 import pytest
 import numpy as np
 
@@ -49,17 +49,6 @@ class TestActivationFunctionsNPU:
             out.to("cpu").numpy(), expected.numpy(), rtol=1e-3, atol=1e-4
         )
 
-    def test_mish_npu(self):
-        x = torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0], device="npu")
-        out = nn.functional.mish(x)
-
-        x_cpu = x.to("cpu")
-        expected = nn.functional.mish(x_cpu)
-
-        np.testing.assert_allclose(
-            out.to("cpu").numpy(), expected.numpy(), rtol=1e-3, atol=1e-4
-        )
-
     def test_prelu_npu(self):
         x = torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0], device="npu")
         weight = torch.tensor([0.25], device="npu")
@@ -76,33 +65,6 @@ class TestActivationFunctionsNPU:
 
 class TestNormalizationNPU:
     """Test normalization functions on NPU."""
-
-    def test_batch_norm_npu(self):
-        # Input: (N=2, C=3, H=4, W=4)
-        x = torch.randn(2, 3, 4, 4, device="npu")
-        running_mean = torch.randn(3, device="npu")
-        running_var = torch.rand(3, device="npu") + 0.1  # Ensure positive
-        weight = torch.randn(3, device="npu")
-        bias = torch.randn(3, device="npu")
-
-        out = nn.functional.batch_norm(
-            x, running_mean, running_var, weight, bias, training=False
-        )
-
-        # Compare with CPU
-        x_cpu = x.to("cpu")
-        running_mean_cpu = running_mean.to("cpu")
-        running_var_cpu = running_var.to("cpu")
-        weight_cpu = weight.to("cpu")
-        bias_cpu = bias.to("cpu")
-
-        expected = nn.functional.batch_norm(
-            x_cpu, running_mean_cpu, running_var_cpu, weight_cpu, bias_cpu, training=False
-        )
-
-        np.testing.assert_allclose(
-            out.to("cpu").numpy(), expected.numpy(), rtol=1e-3, atol=1e-4
-        )
 
     def test_group_norm_npu(self):
         # Input: (N=2, C=4, H=3, W=3)
@@ -174,18 +136,6 @@ class TestModulesNPU:
             out.to("cpu").numpy(), expected.numpy(), rtol=1e-3, atol=1e-4
         )
 
-    def test_mish_module_npu(self):
-        layer = nn.Mish()
-        x = torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0], device="npu")
-        out = layer(x)
-
-        x_cpu = x.to("cpu")
-        expected = layer(x_cpu)
-
-        np.testing.assert_allclose(
-            out.to("cpu").numpy(), expected.numpy(), rtol=1e-3, atol=1e-4
-        )
-
     def test_prelu_module_npu(self):
         layer = nn.PReLU(num_parameters=1, init=0.25)
         layer = layer.to("npu")
@@ -199,17 +149,6 @@ class TestModulesNPU:
         np.testing.assert_allclose(
             out.to("cpu").numpy(), expected.numpy(), rtol=1e-3, atol=1e-4
         )
-
-    def test_batch_norm_module_npu(self):
-        layer = nn.BatchNorm2d(3)
-        layer = layer.to("npu")
-        layer.eval()  # Use eval mode to use running stats
-
-        x = torch.randn(2, 3, 4, 4, device="npu")
-        out = layer(x)
-
-        assert out.shape == x.shape
-        assert out.device.type == "npu"
 
     def test_group_norm_module_npu(self):
         layer = nn.GroupNorm(num_groups=2, num_channels=4)

@@ -29,7 +29,10 @@ def test_npu_workflow_partitions_suites_by_runner_pool():
 
     assert 'runs-on: [self-hosted, linux, ascend, 910a, npu-6-7]' in payload
     assert 'ASCEND_RT_VISIBLE_DEVICES: 6,7' in payload
-    assert 'clean_env pytest tests/npu/ -v --tb=short --ignore=tests/npu/test_pipeline_npu_bench_smoke.py' in payload
+    assert '--ignore=tests/npu/test_pipeline_npu_bench_smoke.py' in payload
+    assert '--ignore=tests/npu/910b/' in payload
+    assert '--ignore=tests/npu/310b/' in payload
+    assert '--ignore=tests/npu/310p/' in payload
 
     assert 'runs-on: [self-hosted, linux, ascend, 910a, npu-4-5]' in payload
     assert 'ASCEND_RT_VISIBLE_DEVICES: 4,5' in payload

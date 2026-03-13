@@ -574,14 +574,6 @@ def test_npu_range_prefers_single_op(monkeypatch):
     np.testing.assert_allclose(out.to("cpu").numpy(), np.arange(0.0, 2.0 + 0.5, 0.5), atol=1e-6, rtol=1e-6)
 
 
-def test_npu_flip():
-    if not torch.npu.is_available():
-        pytest.skip("NPU not available")
-    x = torch.tensor([[1, 2], [3, 4]], device="npu")
-    out = torch.flip(x, dims=(0,))
-    np.testing.assert_array_equal(out.to("cpu").numpy(), np.flip(x.to("cpu").numpy(), axis=0))
-
-
 def test_npu_roll():
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
@@ -623,37 +615,6 @@ def test_npu_cummax():
     expected_idx = np.array([[0, 1, 1], [0, 0, 2]], dtype=np.int64)
     np.testing.assert_allclose(values.to("cpu").numpy(), expected_vals, atol=1e-6, rtol=1e-6)
     np.testing.assert_array_equal(indices.to("cpu").numpy(), expected_idx)
-
-
-def test_npu_argsort():
-    if not torch.npu.is_available():
-        pytest.skip("NPU not available")
-    x = torch.tensor([[3.0, 1.0, 2.0], [0.0, -1.0, 5.0]], device="npu")
-    out = torch.argsort(x, dim=1)
-    expected = np.argsort(x.to("cpu").numpy(), axis=1)
-    np.testing.assert_array_equal(out.to("cpu").numpy(), expected)
-
-
-def test_npu_sort():
-    if not torch.npu.is_available():
-        pytest.skip("NPU not available")
-    x = torch.tensor([[3.0, 1.0, 2.0], [0.0, -1.0, 5.0]], device="npu")
-    values, indices = torch.sort(x, dim=1)
-    expected_indices = np.argsort(x.to("cpu").numpy(), axis=1)
-    expected_values = np.take_along_axis(x.to("cpu").numpy(), expected_indices, axis=1)
-    np.testing.assert_allclose(values.to("cpu").numpy(), expected_values, atol=1e-6, rtol=1e-6)
-    np.testing.assert_array_equal(indices.to("cpu").numpy(), expected_indices)
-
-
-def test_npu_topk():
-    if not torch.npu.is_available():
-        pytest.skip("NPU not available")
-    x = torch.tensor([[3.0, 1.0, 2.0], [0.0, -1.0, 5.0]], device="npu")
-    values, indices = torch.topk(x, k=2, dim=1, largest=True, sorted=True)
-    expected_indices = np.argsort(-x.to("cpu").numpy(), axis=1)[:, :2]
-    expected_values = np.take_along_axis(x.to("cpu").numpy(), expected_indices, axis=1)
-    np.testing.assert_allclose(values.to("cpu").numpy(), expected_values, atol=1e-6, rtol=1e-6)
-    np.testing.assert_array_equal(indices.to("cpu").numpy(), expected_indices)
 
 
 def test_npu_tril_triu():
@@ -717,14 +678,6 @@ def test_npu_tril_indices_triu_indices():
     triu_out = torch.triu_indices(3, 4, offset=0, device="npu")
     np.testing.assert_array_equal(tril_out.to("cpu").numpy(), np.array(np.tril_indices(3, k=0, m=4), dtype=np.int64))
     np.testing.assert_array_equal(triu_out.to("cpu").numpy(), np.array(np.triu_indices(3, k=0, m=4), dtype=np.int64))
-
-
-def test_npu_diag():
-    if not torch.npu.is_available():
-        pytest.skip("NPU not available")
-    x = torch.tensor([1.0, 2.0, 3.0], device="npu")
-    out = torch.diag(x)
-    np.testing.assert_allclose(out.to("cpu").numpy(), np.diag(x.to("cpu").numpy()), atol=1e-6, rtol=1e-6)
 
 
 def test_npu_cartesian_prod():
@@ -1027,42 +980,6 @@ def test_npu_gelu(dtype):
 
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
-def test_npu_layer_norm(dtype):
-    if not torch.npu.is_available():
-        pytest.skip("NPU not available")
-
-    # Test with 1-row input (works)
-    data_1row = np.array([[1.0, 2.0, 3.0]], dtype=np.float32)
-    x_1row = torch.tensor(data_1row, device="npu", dtype=dtype)
-
-    from candle.nn import functional as F
-    out_1row = F.layer_norm(x_1row, (3,))
-
-    mean_val = np.mean(data_1row, axis=-1, keepdims=True)
-    var_val = np.var(data_1row, axis=-1, keepdims=True)
-    expected = ((data_1row - mean_val) / np.sqrt(var_val + 1e-5)).astype(np.float32)
-    assert np.allclose(out_1row.to("cpu").numpy().astype(np.float32), expected, atol=1e-2, rtol=1e-2)
-
-
-@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
-def test_npu_layer_norm_multirow(dtype):
-    """Test layer_norm with multi-row input (batch_size > 1)."""
-    if not torch.npu.is_available():
-        pytest.skip("NPU not available")
-    data = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=np.float32)
-    x = torch.tensor(data, device="npu", dtype=dtype)
-
-    from candle.nn import functional as F
-    out = F.layer_norm(x, (3,))
-
-    # Compute expected manually
-    mean_val = np.mean(data, axis=-1, keepdims=True)
-    var_val = np.var(data, axis=-1, keepdims=True)
-    expected = ((data - mean_val) / np.sqrt(var_val + 1e-5)).astype(np.float32)
-    assert np.allclose(out.to("cpu").numpy().astype(np.float32), expected, atol=1e-2, rtol=1e-2)
-
-
-@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
 def test_npu_embedding(dtype):
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
@@ -1095,18 +1012,6 @@ def test_npu_embedding_2d_indices(dtype):
 
 
 
-def test_npu_layer_norm_does_not_break_bool_any_cast_path():
-    if not torch.npu.is_available():
-        pytest.skip("NPU not available")
-
-    from candle.nn import functional as F
-
-    x = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="npu", dtype=torch.float16)
-    _ = F.layer_norm(x, (3,))
-
-    mask = torch.tensor([True, False, True], dtype=torch.bool, device="npu")
-    assert bool(torch.any(mask).to("cpu").item()) is True
-
 def test_npu_take():
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
@@ -1126,35 +1031,6 @@ def test_npu_take():
     out_of_range = torch.tensor([4], dtype=torch.int64, device="npu")
     with pytest.raises(IndexError):
         torch.take(x, out_of_range)
-
-
-def test_npu_take_along_dim():
-    if not torch.npu.is_available():
-        pytest.skip("NPU not available")
-    x = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="npu")
-    indices = torch.tensor([[0, 2, 1], [2, 0, 1]], dtype=torch.int64, device="npu")
-    expected = np.take_along_axis(
-        x.to("cpu").numpy(),
-        indices.to("cpu").numpy().astype(np.int64),
-        axis=1,
-    )
-    np.testing.assert_allclose(
-        torch.take_along_dim(x, indices, dim=1).to("cpu").numpy(),
-        expected,
-    )
-    neg_indices = torch.tensor([[-1, 0, 1], [1, -2, 0]], dtype=torch.int64, device="npu")
-    expected_neg = np.take_along_axis(
-        x.to("cpu").numpy(),
-        neg_indices.to("cpu").numpy().astype(np.int64),
-        axis=1,
-    )
-    np.testing.assert_allclose(
-        torch.take_along_dim(x, neg_indices, dim=1).to("cpu").numpy(),
-        expected_neg,
-    )
-    out_of_range = torch.tensor([[3, 0, 1], [1, 2, 0]], dtype=torch.int64, device="npu")
-    with pytest.raises(IndexError):
-        torch.take_along_dim(x, out_of_range, dim=1)
 
 
 def test_npu_index_select():
@@ -1187,28 +1063,6 @@ def test_npu_index_select():
     bad_index = torch.tensor([[0, 1]], dtype=torch.int64, device="npu")
     with pytest.raises(ValueError):
         torch.index_select(x, dim=1, index=bad_index)
-
-
-def test_npu_gather():
-    if not torch.npu.is_available():
-        pytest.skip("NPU not available")
-    x = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], device="npu")
-    index = torch.tensor([[0, 2], [1, 0]], dtype=torch.int64, device="npu")
-    expected = np.take_along_axis(
-        x.to("cpu").numpy(),
-        index.to("cpu").numpy().astype(np.int64),
-        axis=1,
-    )
-    np.testing.assert_allclose(
-        torch.gather(x, dim=1, index=index).to("cpu").numpy(),
-        expected,
-    )
-    neg_index = torch.tensor([[0, -1], [1, 0]], dtype=torch.int64, device="npu")
-    with pytest.raises(IndexError):
-        torch.gather(x, dim=1, index=neg_index)
-    out_of_range = torch.tensor([[3, 0], [1, 0]], dtype=torch.int64, device="npu")
-    with pytest.raises(IndexError):
-        torch.gather(x, dim=1, index=out_of_range)
 
 
 def test_npu_masked_select():
