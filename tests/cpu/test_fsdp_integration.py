@@ -234,3 +234,217 @@ def test_fsdp_clip_grad_norm():
     # After clipping, recompute norm — should be <= max_norm + epsilon
     norm_after = clip_grad_norm_(model, max_norm=1e10)  # large max_norm = no-op
     assert float(norm_after) <= 0.1 + 1e-4, f"Clipped norm {float(norm_after)} exceeds max_norm 0.1"
+
+
+# ======================================================================
+# Phase 3 tests
+# ======================================================================
+
+
+def test_mixed_precision_forward_backward():
+    """MixedPrecision: params cast to float16 during forward, grads reduced in float32."""
+    from candle.distributed._composable.fsdp import (
+        fully_shard, MixedPrecisionPolicy,
+    )
+
+    mp = MixedPrecisionPolicy(
+        param_dtype=torch.float16,
+        reduce_dtype=torch.float32,
+        output_dtype=torch.float32,
+    )
+    model = SimpleMLP(8)
+    mesh = MockMesh()
+    fully_shard(model.fc1, mesh=mesh, mp_policy=mp)
+    fully_shard(model.fc2, mesh=mesh, mp_policy=mp)
+    fully_shard(model, mesh=mesh, mp_policy=mp)
+
+    x = torch.randn(4, 8, requires_grad=True)
+    out = model(x)
+
+    # output_dtype should cast output to float32
+    assert out.dtype == torch.float32, f"Expected float32 output, got {out.dtype}"
+    assert out.shape == (4, 8)
+
+    loss = out.sum()
+    loss.backward()
+
+    # Gradients should exist and be in the original param dtype (float32 shards)
+    for name, param in model.named_parameters():
+        local = param.to_local() if isinstance(param, DTensor) else param
+        assert local.grad is not None, f"No gradient for {name}"
+
+
+def test_mixed_precision_param_dtype_casting():
+    """Verify params are cast to param_dtype during forward."""
+    from candle.distributed._composable.fsdp import (
+        fully_shard, MixedPrecisionPolicy,
+    )
+
+    mp = MixedPrecisionPolicy(param_dtype=torch.float16)
+    model = nn.Linear(8, 4)
+    mesh = MockMesh()
+    fully_shard(model, mesh=mesh, mp_policy=mp)
+
+    # During forward, the hook unshards and casts to float16
+    # We can verify by checking the param dtype inside forward
+    observed_dtypes = []
+
+    orig_forward = model.forward
+
+    def capturing_forward(x):
+        observed_dtypes.append(model.weight.dtype)
+        return orig_forward(x)
+
+    model.forward = capturing_forward
+
+    x = torch.randn(2, 8)
+    model(x)
+
+    assert len(observed_dtypes) == 1
+    assert observed_dtypes[0] == torch.float16, (
+        f"Expected float16 during forward, got {observed_dtypes[0]}"
+    )
+
+
+def test_summon_full_params_read():
+    """summon_full_params should expose full-sized params for reading."""
+    from candle.distributed._composable.fsdp import fully_shard
+
+    model = SimpleMLP(8)
+    mesh = MockMesh()
+    fully_shard(model.fc1, mesh=mesh)
+    fully_shard(model.fc2, mesh=mesh)
+    fully_shard(model, mesh=mesh)
+
+    # Params should be sharded (DTensor) outside context
+    assert isinstance(model.fc1.weight, DTensor)
+
+    with model.summon_full_params():
+        # Inside context, params should be unsharded (full-sized)
+        w = model.fc1.weight
+        assert w.shape == (16, 8), f"Expected (16, 8), got {w.shape}"
+        assert not isinstance(w, DTensor), "Should be plain tensor inside summon"
+
+    # After exit, params should be resharded
+    assert isinstance(model.fc1.weight, DTensor)
+
+
+def test_summon_full_params_writeback():
+    """summon_full_params with writeback should persist modifications."""
+    from candle.distributed._composable.fsdp import fully_shard
+
+    model = nn.Linear(8, 4)
+    mesh = MockMesh()
+    fully_shard(model, mesh=mesh)
+
+    with model.summon_full_params(writeback=True):
+        # Zero out all weights
+        model.weight.data = torch.zeros(4, 8)
+
+    # After writeback, the shard should contain zeros
+    local = model.weight.to_local() if isinstance(model.weight, DTensor) else model.weight
+    assert float(local.abs().sum()) == 0.0, "Writeback should have zeroed the shard"
+
+
+def test_summon_full_params_with_grads():
+    """summon_full_params(with_grads=True) should expose gradients."""
+    from candle.distributed._composable.fsdp import fully_shard
+
+    model = nn.Linear(8, 4)
+    mesh = MockMesh()
+    fully_shard(model, mesh=mesh)
+
+    # Run forward/backward to get gradients
+    x = torch.randn(2, 8, requires_grad=True)
+    out = model(x)
+    out.sum().backward()
+
+    with model.summon_full_params(with_grads=True):
+        assert model.weight.grad is not None, "Grad should be available inside summon"
+
+
+def test_state_dict_full_roundtrip():
+    """Full state dict save/load round-trip."""
+    from candle.distributed._composable.fsdp import (
+        fully_shard, get_model_state_dict, set_model_state_dict,
+    )
+
+    model = SimpleMLP(8)
+    mesh = MockMesh()
+    fully_shard(model.fc1, mesh=mesh)
+    fully_shard(model.fc2, mesh=mesh)
+    fully_shard(model, mesh=mesh)
+
+    # Get full state dict
+    sd = get_model_state_dict(model, type="full")
+    assert "fc1.weight" in sd
+    assert "fc2.weight" in sd
+    # Full state dict should have unsharded shapes
+    assert sd["fc1.weight"].shape == (16, 8), f"Expected (16, 8), got {sd['fc1.weight'].shape}"
+
+    # Modify model weights
+    with model.summon_full_params(writeback=True):
+        model.fc1.weight.data = torch.zeros(16, 8)
+
+    # Load original state dict back
+    set_model_state_dict(model, sd, type="full")
+
+    # Verify restoration
+    sd2 = get_model_state_dict(model, type="full")
+    diff = float((sd2["fc1.weight"] - sd["fc1.weight"]).abs().sum())
+    assert diff < 1e-6, f"State dict round-trip failed, diff={diff}"
+
+
+def test_state_dict_sharded_roundtrip():
+    """Sharded state dict save/load round-trip."""
+    from candle.distributed._composable.fsdp import (
+        fully_shard, get_model_state_dict, set_model_state_dict,
+    )
+
+    model = nn.Linear(8, 4)
+    mesh = MockMesh()
+    fully_shard(model, mesh=mesh)
+
+    sd = get_model_state_dict(model, type="sharded")
+    assert "weight" in sd
+
+    # Modify and restore
+    orig_weight = sd["weight"].detach()
+    with model.summon_full_params(writeback=True):
+        model.weight.data = torch.zeros(4, 8)
+
+    set_model_state_dict(model, {"weight": orig_weight, "bias": sd["bias"]}, type="sharded")
+
+    sd2 = get_model_state_dict(model, type="sharded")
+    diff = float((sd2["weight"] - orig_weight).abs().sum())
+    assert diff < 1e-6, f"Sharded state dict round-trip failed, diff={diff}"
+
+
+def test_shard_grad_op_strategy():
+    """reshard_after_forward=False (SHARD_GRAD_OP) keeps params unsharded after forward."""
+    from candle.distributed._composable.fsdp import fully_shard
+
+    model = SimpleMLP(8)
+    mesh = MockMesh()
+    fully_shard(model.fc1, mesh=mesh, reshard_after_forward=False)
+    fully_shard(model.fc2, mesh=mesh, reshard_after_forward=False)
+    fully_shard(model, mesh=mesh, reshard_after_forward=False)
+
+    x = torch.randn(4, 8, requires_grad=True)
+    out = model(x)
+    assert out.shape == (4, 8)
+
+    # After forward with reshard_after_forward=False, params should still be unsharded
+    # (the post_forward hook skips reshard)
+    w = model.fc1.weight
+    assert not isinstance(w, DTensor), (
+        "With SHARD_GRAD_OP, params should stay unsharded after forward"
+    )
+
+    # Backward should still work
+    loss = out.sum()
+    loss.backward()
+
+    for name, param in model.named_parameters():
+        local = param.to_local() if isinstance(param, DTensor) else param
+        assert local.grad is not None, f"No gradient for {name}"

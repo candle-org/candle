@@ -8,10 +8,15 @@ Usage (bottom-up):
 """
 from contextlib import contextmanager
 
-from ._fsdp_common import FSDPMeshInfo
+from ._fsdp_common import FSDPMeshInfo, MixedPrecisionPolicy
 from ._fsdp_param import FSDPParam
 from ._fsdp_param_group import FSDPParamGroup
 from ._fsdp_state import FSDPState
+from ._fsdp_state_dict import (
+    get_model_state_dict,
+    set_model_state_dict,
+    get_optimizer_state_dict,
+)
 
 
 class FSDPModule:
@@ -53,6 +58,51 @@ class FSDPModule:
             for st, old in zip(states, old_values):
                 st._sync_gradients = old
 
+    @contextmanager
+    def summon_full_params(self, writeback=True, with_grads=False):
+        """Context manager that unshards all params in the FSDP subtree.
+
+        On enter: all-gather all parameters so they are full-sized.
+        On exit: if *writeback* is True, scatter modified params back to
+        shards; then reshard all parameters.
+
+        If *with_grads* is True, gradients on the unsharded params are
+        also made available (and written back on exit).
+        """
+        # Collect all param groups in the subtree
+        param_groups = []
+        for mod in self.modules():
+            st = getattr(mod, '_fsdp_state', None)
+            if st is not None and st.param_group is not None:
+                param_groups.append(st.param_group)
+
+        # Unshard all
+        for pg in param_groups:
+            pg.unshard()
+
+        # If with_grads, copy shard grads onto unsharded params
+        if with_grads:
+            for pg in param_groups:
+                for fp in pg.fsdp_params:
+                    shard_grad = fp._sharded_param.to_local().grad
+                    if shard_grad is not None and fp._unsharded_param is not None:
+                        fp._unsharded_param.grad = shard_grad
+
+        try:
+            yield
+        finally:
+            if writeback:
+                # Write modified unsharded params back to shards
+                for pg in param_groups:
+                    for fp in pg.fsdp_params:
+                        if fp._unsharded_param is not None:
+                            _writeback_to_shard(fp)
+                            if with_grads and fp._unsharded_param.grad is not None:
+                                _writeback_grad_to_shard(fp)
+            # Reshard all
+            for pg in param_groups:
+                pg.reshard()
+
 
 class _MockMeshInfo:
     """MeshInfo for single-process / mock scenarios (world_size=1)."""
@@ -70,7 +120,7 @@ class _MockMeshInfo:
             self.shard_mesh_rank = self.shard_process_group.rank()
 
 
-def fully_shard(module, *, mesh, reshard_after_forward=None):
+def fully_shard(module, *, mesh, reshard_after_forward=None, mp_policy=None):
     """Apply FSDP2 to a module. PyTorch-compatible composable API."""
     # 1. Build mesh info
     try:
@@ -94,7 +144,7 @@ def fully_shard(module, *, mesh, reshard_after_forward=None):
 
     # 3. Create FSDPParam for each parameter
     fsdp_params = [
-        FSDPParam(param, owner, name, mesh_info)
+        FSDPParam(param, owner, name, mesh_info, mp_policy=mp_policy)
         for name, param, owner in managed_params
     ]
 
@@ -111,7 +161,10 @@ def fully_shard(module, *, mesh, reshard_after_forward=None):
         reshard_after_forward = True
 
     # 6. Create FSDPState and register hooks
-    state = FSDPState(module, param_group, mesh_info, reshard_after_forward)
+    state = FSDPState(
+        module, param_group, mesh_info, reshard_after_forward,
+        mp_policy=mp_policy,
+    )
     module._fsdp_state = state
 
     # 7. Inject FSDPModule mixin
@@ -149,6 +202,39 @@ def _get_managed_params(module):
                 owner = getattr(owner, part)
             managed.append((leaf_name, param, owner))
     return managed
+
+
+def _writeback_to_shard(fp):
+    """Write modified unsharded param data back into the local shard."""
+    from ._fsdp_param import _chunk_tensor
+    unsharded = fp._unsharded_param
+    if unsharded is None:
+        return
+    world_size = fp._mesh_info.shard_mesh_size
+    rank = fp._mesh_info.shard_mesh_rank
+    if world_size == 1:
+        local = fp._sharded_param.to_local()
+        local.data = unsharded.data
+    else:
+        # Re-chunk the full param and copy this rank's shard
+        chunks = _chunk_tensor(unsharded.detach(), world_size, dim=fp._shard_dim)
+        local = fp._sharded_param.to_local()
+        local.data = chunks[rank].contiguous().data
+
+
+def _writeback_grad_to_shard(fp):
+    """Write unsharded grad back into the local shard grad."""
+    from ._fsdp_param import _chunk_tensor
+    unsharded = fp._unsharded_param
+    if unsharded is None or unsharded.grad is None:
+        return
+    world_size = fp._mesh_info.shard_mesh_size
+    rank = fp._mesh_info.shard_mesh_rank
+    if world_size == 1:
+        fp._sharded_param.to_local().grad = unsharded.grad
+    else:
+        chunks = _chunk_tensor(unsharded.grad.detach(), world_size, dim=fp._shard_dim)
+        fp._sharded_param.to_local().grad = chunks[rank].contiguous()
 
 
 def clip_grad_norm_(model, max_norm, norm_type=2.0, error_if_nonfinite=False):
