@@ -1243,6 +1243,72 @@ class MetalKernelDispatcher:
         rt.commit_and_wait(cmd)
 
     # ------------------------------------------------------------------
+    # Dispatch: flip  (input → output, reverse along dims)
+    # ------------------------------------------------------------------
+
+    def dispatch_flip(self, kernel_name, input_buf, output_buf,
+                      shape_packed, flip_mask_packed, ndim, total):
+        """Encode flip kernel (2 bufs + shape + flip_mask + ndim + total)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (total + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 1)
+            enc.setBytes_length_atIndex_(shape_packed, len(shape_packed), 2)
+            enc.setBytes_length_atIndex_(flip_mask_packed, len(flip_mask_packed), 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", ndim), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", total), 4, 5)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_flip_ctypes(enc, pipeline, input_buf, output_buf,
+                                shape_packed, flip_mask_packed, ndim, total,
+                                groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
+    # Dispatch: roll  (input → output, circular shift along dims)
+    # ------------------------------------------------------------------
+
+    def dispatch_roll(self, kernel_name, input_buf, output_buf,
+                      shape_packed, shifts_packed, ndim, total):
+        """Encode roll kernel (2 bufs + shape + shifts + ndim + total)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        groups = (total + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(output_buf, 0, 1)
+            enc.setBytes_length_atIndex_(shape_packed, len(shape_packed), 2)
+            enc.setBytes_length_atIndex_(shifts_packed, len(shifts_packed), 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", ndim), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", total), 4, 5)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_roll_ctypes(enc, pipeline, input_buf, output_buf,
+                                shape_packed, shifts_packed, ndim, total,
+                                groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
     # Dispatch: Philox RNG fill  (seed, offset → output)
     # ------------------------------------------------------------------
 
@@ -2110,5 +2176,35 @@ def _encode_pad_constant_ctypes(enc, pipeline, input_buf, output_buf,
     _ctypes_set_bytes(enc, fill_val_bytes, fill_val_size, 5)
     _ctypes_set_bytes(enc, struct.pack("I", ndim), 4, 6)
     _ctypes_set_bytes(enc, struct.pack("I", total), 4, 7)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_flip_ctypes(enc, pipeline, input_buf, output_buf,
+                         shape_packed, flip_mask_packed, ndim, total,
+                         groups, tpg):
+    """Encode flip kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, output_buf, 0, 1)
+    _ctypes_set_bytes(enc, shape_packed, len(shape_packed), 2)
+    _ctypes_set_bytes(enc, flip_mask_packed, len(flip_mask_packed), 3)
+    _ctypes_set_bytes(enc, struct.pack("I", ndim), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", total), 4, 5)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_roll_ctypes(enc, pipeline, input_buf, output_buf,
+                         shape_packed, shifts_packed, ndim, total,
+                         groups, tpg):
+    """Encode roll kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, output_buf, 0, 1)
+    _ctypes_set_bytes(enc, shape_packed, len(shape_packed), 2)
+    _ctypes_set_bytes(enc, shifts_packed, len(shifts_packed), 3)
+    _ctypes_set_bytes(enc, struct.pack("I", ndim), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", total), 4, 5)
     _ctypes_dispatch_threadgroups(enc, groups, tpg)
     _ctypes_end_encoding(enc)

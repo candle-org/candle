@@ -23,6 +23,7 @@ _SUFFIX = dict(DTYPE_MAP)
 _FLOAT_ONLY_OPS = frozenset({
     "sqrt", "rsqrt", "exp", "log", "log2", "sin", "cos", "tanh",
     "sigmoid", "gelu", "silu", "floor", "ceil", "round",
+    "tan", "trunc", "log10", "exp2", "square",
 })
 
 # ---------------------------------------------------------------------------
@@ -1298,6 +1299,78 @@ kernel void pad_constant_{suffix}(
 """
 
 
+_FLIP_TEMPLATE = """
+kernel void flip_{suffix}(device const {type}* input [[buffer(0)]],
+                          device {type}* output       [[buffer(1)]],
+                          constant uint* shape         [[buffer(2)]],
+                          constant uint* flip_mask     [[buffer(3)]],
+                          constant uint& ndim          [[buffer(4)]],
+                          constant uint& total         [[buffer(5)]],
+                          uint id [[thread_position_in_grid]]) {{
+    if (id >= total) return;
+    uint coords[8];
+    uint remaining = id;
+    for (uint d = ndim; d > 0; d--) {{
+        coords[d-1] = remaining % shape[d-1];
+        remaining /= shape[d-1];
+    }}
+    uint in_idx = 0;
+    for (uint d2 = 0; d2 < ndim; d2++) {{
+        uint c = flip_mask[d2] ? (shape[d2] - 1 - coords[d2]) : coords[d2];
+        in_idx = in_idx * shape[d2] + c;
+    }}
+    output[id] = input[in_idx];
+}}
+"""
+
+_ROLL_TEMPLATE = """
+kernel void roll_{suffix}(device const {type}* input [[buffer(0)]],
+                          device {type}* output       [[buffer(1)]],
+                          constant uint* shape         [[buffer(2)]],
+                          constant int*  shifts        [[buffer(3)]],
+                          constant uint& ndim          [[buffer(4)]],
+                          constant uint& total         [[buffer(5)]],
+                          uint id [[thread_position_in_grid]]) {{
+    if (id >= total) return;
+    uint coords[8];
+    uint remaining = id;
+    for (uint d = ndim; d > 0; d--) {{
+        coords[d-1] = remaining % shape[d-1];
+        remaining /= shape[d-1];
+    }}
+    uint src_idx = 0;
+    for (uint d2 = 0; d2 < ndim; d2++) {{
+        int s = shifts[d2];
+        int dim_size = int(shape[d2]);
+        int src_c = int(coords[d2]) - s;
+        src_c = ((src_c % dim_size) + dim_size) % dim_size;
+        src_idx = src_idx * shape[d2] + uint(src_c);
+    }}
+    output[id] = input[src_idx];
+}}
+"""
+
+
+def _gen_flip(types=None):
+    if types is None:
+        types = _FLOAT_TYPES + ("int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_FLIP_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+def _gen_roll(types=None):
+    if types is None:
+        types = _FLOAT_TYPES + ("int", "long")
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_ROLL_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
 def _gen_pad_constant(types=None):
     if types is None:
         types = _FLOAT_TYPES + ("int", "long")
@@ -1326,6 +1399,7 @@ _BINARY_FLOAT_OPS = (
     ("pow", "pow(a[id], b[id])"),
     ("fmod", "fmod(a[id], b[id])"),
     ("remainder", "a[id] - b[id] * floor(a[id] / b[id])"),
+    ("logaddexp", "log(exp(a[id]) + exp(b[id]))"),
 )
 
 # --- Unary element-wise (numeric types: float, half, int, long) ---
@@ -1351,6 +1425,11 @@ _UNARY_FLOAT_OPS = (
     ("round", "rint(x)"),
     ("gelu", "0.5f * x * (1.0f + tanh(0.7978845608f * (x + 0.044715f * x * x * x)))"),
     ("silu", "x / (1.0f + exp(-x))"),
+    ("tan", "tan(x)"),
+    ("trunc", "trunc(x)"),
+    ("log10", "log10(x)"),
+    ("exp2", "exp2(x)"),
+    ("square", "x * x"),
 )
 
 # --- Comparison ops ---
@@ -1946,6 +2025,10 @@ def _build_msl_source():
 
     # Pad kernel
     parts.append(_gen_pad_constant())
+
+    # Flip / Roll kernels
+    parts.append(_gen_flip())
+    parts.append(_gen_roll())
 
     # Philox RNG kernels
     parts.append(_gen_philox_uniform())

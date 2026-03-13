@@ -621,12 +621,65 @@ def masked_select(a, mask):
 
 
 def flip(a, dims):
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype)
+            and len(a.shape) <= 8):
+        import struct
+        ndim = len(a.shape)
+        if isinstance(dims, int):
+            dims = (dims,)
+        norm_dims = set()
+        for d in dims:
+            norm_dims.add(d if d >= 0 else ndim + d)
+        flip_mask = [1 if d in norm_dims else 0 for d in range(ndim)]
+        total = a.numel()
+        if total > 0:
+            sfx = _kernel_suffix(a.dtype)
+            d = _get_dispatcher()
+            out_buf = _alloc_output_buf(total, a.dtype)
+            shape_packed = struct.pack(f"{ndim}I", *a.shape)
+            flip_packed = struct.pack(f"{ndim}I", *flip_mask)
+            d.dispatch_flip(f"flip_{sfx}", _metal_buf(a), out_buf,
+                            shape_packed, flip_packed, ndim, total)
+            from ..._tensor import _compute_strides
+            out_shape = tuple(a.shape)
+            return _from_metal_buffer(out_buf, out_shape,
+                                      _compute_strides(out_shape),
+                                      a.dtype, a.device)
     arr = _to_numpy(a)
     out = np.flip(arr, axis=dims)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
 
 
 def roll(a, shifts, dims=None):
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype)
+            and len(a.shape) <= 8 and dims is not None):
+        import struct
+        ndim = len(a.shape)
+        if isinstance(shifts, int):
+            shifts = (shifts,)
+        if isinstance(dims, int):
+            dims = (dims,)
+        # Build per-dim shift array (0 for unshifted dims)
+        shift_arr = [0] * ndim
+        for s, d in zip(shifts, dims):
+            dd = d if d >= 0 else ndim + d
+            shift_arr[dd] = int(s)
+        total = a.numel()
+        if total > 0:
+            sfx = _kernel_suffix(a.dtype)
+            d = _get_dispatcher()
+            out_buf = _alloc_output_buf(total, a.dtype)
+            shape_packed = struct.pack(f"{ndim}I", *a.shape)
+            shifts_packed = struct.pack(f"{ndim}i", *shift_arr)
+            d.dispatch_roll(f"roll_{sfx}", _metal_buf(a), out_buf,
+                            shape_packed, shifts_packed, ndim, total)
+            from ..._tensor import _compute_strides
+            out_shape = tuple(a.shape)
+            return _from_metal_buffer(out_buf, out_shape,
+                                      _compute_strides(out_shape),
+                                      a.dtype, a.device)
     arr = _to_numpy(a)
     out = np.roll(arr, shift=shifts, axis=dims)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
@@ -1745,6 +1798,8 @@ def cos(a):
 
 
 def tan(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "tan")
     return _from_numpy(np.tan(_to_numpy(a)), a.dtype, a.device)
 
 
@@ -1781,10 +1836,14 @@ def round(a):
 
 
 def trunc(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "trunc")
     return _from_numpy(np.trunc(_to_numpy(a)), a.dtype, a.device)
 
 
 def frac(a):
+    if _can_use_gpu(a):
+        return sub(a, _dispatch_unary_gpu(a, "trunc"))
     arr = _to_numpy(a)
     out = arr - np.trunc(arr)
     return _from_numpy(out, a.dtype, a.device)
@@ -1825,10 +1884,14 @@ def log2(a):
 
 
 def log10(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "log10")
     return _from_numpy(np.log10(_to_numpy(a)), a.dtype, a.device)
 
 
 def exp2(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "exp2")
     return _from_numpy(np.exp2(_to_numpy(a)), a.dtype, a.device)
 
 
@@ -1847,6 +1910,8 @@ def sign(a):
 
 
 def square(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "square")
     arr = _to_numpy(a)
     out = np.square(arr)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
@@ -1911,6 +1976,11 @@ def erfc(a):
 
 
 def softplus(a):
+    # GPU composite: log(1 + exp(x))
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        exp_a = _dispatch_unary_gpu(a, "exp")
+        sum_val = add(exp_a, 1.0)
+        return _dispatch_unary_gpu(sum_val, "log")
     arr = _to_numpy(a)
     out = np.log1p(np.exp(arr))
     return _from_numpy(out, a.dtype, a.device)
@@ -2050,12 +2120,16 @@ def clamp_max(a, max_val):
 
 
 def relu6(a):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
+        return clamp(a, 0.0, 6.0)
     arr = _to_numpy(a)
     out = np.minimum(np.maximum(arr, 0.0), 6.0)
     return _from_numpy(out, a.dtype, a.device)
 
 
 def hardtanh(a, min_val=-1.0, max_val=1.0):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
+        return clamp(a, min_val, max_val)
     arr = _to_numpy(a)
     out = np.clip(arr, min_val, max_val)
     return _from_numpy(out, a.dtype, a.device)
@@ -2064,12 +2138,32 @@ def hardtanh(a, min_val=-1.0, max_val=1.0):
 def selu(a):
     ALPHA = 1.6732632423543772
     SCALE = 1.0507009873554805
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        # scale * where(x > 0, x, alpha * (exp(x) - 1))
+        exp_a = _dispatch_unary_gpu(a, "exp")
+        elu_part = mul(sub(exp_a, 1.0), ALPHA)
+        relu_a = _dispatch_unary_gpu(a, "relu")
+        # where(x > 0, x, elu_part) = relu(x) + min(0, elu_part)
+        # Simpler: use the where op if available, or compute via masks
+        # relu(x) - relu(-elu_part) + elu_part = ... too complex
+        # Just use: selu = scale * (relu(x) + min(0, alpha*(exp(x)-1)))
+        neg_part = clamp(elu_part, None, 0.0)
+        result = add(relu_a, neg_part)
+        return mul(result, SCALE)
     arr = _to_numpy(a)
     out = SCALE * np.where(arr > 0, arr, ALPHA * (np.exp(arr) - 1))
     return _from_numpy(out, a.dtype, a.device)
 
 
 def celu(a, alpha=1.0):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        # max(0, x) + min(0, alpha * (exp(x/alpha) - 1))
+        relu_a = _dispatch_unary_gpu(a, "relu")
+        scaled = div(a, alpha)
+        exp_scaled = _dispatch_unary_gpu(scaled, "exp")
+        elu_part = mul(sub(exp_scaled, 1.0), alpha)
+        neg_part = clamp(elu_part, None, 0.0)
+        return add(relu_a, neg_part)
     arr = _to_numpy(a)
     out = np.maximum(arr, 0.0) + np.minimum(0.0, alpha * (np.exp(arr / alpha) - 1))
     return _from_numpy(out, a.dtype, a.device)
@@ -2250,6 +2344,8 @@ def lerp(a, b, weight):
 
 
 def addcmul(a, b, c, value=1.0):
+    if _can_use_gpu(a) and _can_use_gpu(b) and _can_use_gpu(c):
+        return add(a, mul(mul(b, c), value))
     return _from_numpy(
         _to_numpy(a) + value * (_to_numpy(b) * _to_numpy(c)),
         a.dtype,
@@ -2258,6 +2354,8 @@ def addcmul(a, b, c, value=1.0):
 
 
 def addcdiv(a, b, c, value=1.0):
+    if _can_use_gpu(a) and _can_use_gpu(b) and _can_use_gpu(c):
+        return add(a, mul(div(b, c), value))
     return _from_numpy(
         _to_numpy(a) + value * (_to_numpy(b) / _to_numpy(c)),
         a.dtype,
@@ -2266,6 +2364,8 @@ def addcdiv(a, b, c, value=1.0):
 
 
 def logaddexp(a, b):
+    if isinstance(a, Tensor) and isinstance(b, Tensor) and _can_use_gpu(a) and _can_use_gpu(b):
+        return _dispatch_binary_gpu(a, b, "logaddexp")
     return _from_numpy(np.logaddexp(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
 
 

@@ -1385,3 +1385,184 @@ class TestP1GPUOps:
         out = torch.addmm(inp, m1, m2, beta=0)
         ref = m1_np @ m2_np
         np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# P2 GPU kernels: unary, activations, binary composites, flip/roll
+# ---------------------------------------------------------------------------
+
+class TestP2GPUOps:
+    """Verify P2 GPU-accelerated ops produce correct results on MPS."""
+
+    # ---- Unary float ops ----
+
+    def test_tan(self):
+        np.random.seed(100)
+        a_np = np.random.randn(64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.tan(a)
+        np.testing.assert_allclose(out.cpu().numpy(), np.tan(a_np), atol=5e-4)
+
+    def test_trunc(self):
+        a_np = np.array([-2.7, -0.3, 0.0, 1.5, 3.9], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.trunc(a)
+        np.testing.assert_allclose(out.cpu().numpy(), np.trunc(a_np), atol=1e-6)
+
+    def test_frac(self):
+        a_np = np.array([-2.7, -0.3, 0.0, 1.5, 3.9], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.frac(a)
+        ref = a_np - np.trunc(a_np)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-6)
+
+    def test_log10(self):
+        a_np = np.array([0.1, 1.0, 10.0, 100.0, 1000.0], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.log10(a)
+        np.testing.assert_allclose(out.cpu().numpy(), np.log10(a_np), atol=1e-6)
+
+    def test_exp2(self):
+        a_np = np.array([-2.0, -1.0, 0.0, 1.0, 3.0], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.exp2(a)
+        np.testing.assert_allclose(out.cpu().numpy(), np.exp2(a_np), atol=1e-6)
+
+    def test_square(self):
+        np.random.seed(101)
+        a_np = np.random.randn(128).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.square(a)
+        np.testing.assert_allclose(out.cpu().numpy(), np.square(a_np), atol=1e-5)
+
+    def test_tan_f16(self):
+        a_np = np.array([0.1, 0.5, 1.0, -0.5], dtype=np.float16)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.tan(a)
+        ref = np.tan(a_np.astype(np.float32)).astype(np.float16)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=5e-3)
+
+    # ---- Activation composites ----
+
+    def test_softplus(self):
+        np.random.seed(102)
+        a_np = np.random.randn(64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.softplus(a)
+        ref = np.log1p(np.exp(a_np))
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_relu6(self):
+        a_np = np.array([-3.0, 0.0, 3.0, 6.0, 9.0], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.relu6(a)
+        ref = np.minimum(np.maximum(a_np, 0.0), 6.0)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-6)
+
+    def test_hardtanh(self):
+        a_np = np.array([-3.0, -1.0, 0.0, 1.0, 3.0], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.hardtanh(a)
+        ref = np.clip(a_np, -1.0, 1.0)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-6)
+
+    def test_selu(self):
+        np.random.seed(103)
+        a_np = np.random.randn(64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.selu(a)
+        ALPHA = 1.6732632423543772
+        SCALE = 1.0507009873554805
+        ref = SCALE * np.where(a_np > 0, a_np, ALPHA * (np.exp(a_np) - 1))
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_celu(self):
+        np.random.seed(104)
+        a_np = np.random.randn(64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.celu(a, alpha=1.5)
+        alpha = 1.5
+        ref = np.maximum(a_np, 0.0) + np.minimum(0.0, alpha * (np.exp(a_np / alpha) - 1))
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    # ---- Binary composites ----
+
+    def test_addcmul(self):
+        np.random.seed(105)
+        a_np = np.random.randn(32).astype(np.float32)
+        b_np = np.random.randn(32).astype(np.float32)
+        c_np = np.random.randn(32).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        c = torch.tensor(c_np, device="mps")
+        out = torch.addcmul(a, b, c, value=0.5)
+        ref = a_np + 0.5 * b_np * c_np
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_addcdiv(self):
+        np.random.seed(106)
+        a_np = np.random.randn(32).astype(np.float32)
+        b_np = np.random.randn(32).astype(np.float32)
+        c_np = np.random.uniform(0.5, 2.0, 32).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        c = torch.tensor(c_np, device="mps")
+        out = torch.addcdiv(a, b, c, value=0.5)
+        ref = a_np + 0.5 * b_np / c_np
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    def test_logaddexp(self):
+        np.random.seed(107)
+        a_np = np.random.randn(64).astype(np.float32)
+        b_np = np.random.randn(64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.logaddexp(a, b)
+        ref = np.logaddexp(a_np, b_np)
+        np.testing.assert_allclose(out.cpu().numpy(), ref, atol=1e-5)
+
+    # ---- Flip / Roll ----
+
+    def test_flip_1d(self):
+        a_np = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.flip(a, [0])
+        np.testing.assert_allclose(out.cpu().numpy(), a_np[::-1])
+
+    def test_flip_2d(self):
+        np.random.seed(108)
+        a_np = np.random.randn(4, 6).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.flip(a, [0, 1])
+        ref = np.flip(a_np, axis=(0, 1))
+        np.testing.assert_allclose(out.cpu().numpy(), ref)
+
+    def test_flip_single_dim(self):
+        np.random.seed(109)
+        a_np = np.random.randn(3, 4, 5).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.flip(a, [1])
+        ref = np.flip(a_np, axis=1)
+        np.testing.assert_allclose(out.cpu().numpy(), ref)
+
+    def test_roll_1d(self):
+        a_np = np.array([1.0, 2.0, 3.0, 4.0, 5.0], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.roll(a, 2, 0)
+        ref = np.roll(a_np, 2, axis=0)
+        np.testing.assert_allclose(out.cpu().numpy(), ref)
+
+    def test_roll_2d(self):
+        np.random.seed(110)
+        a_np = np.random.randn(4, 6).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.roll(a, (1, -2), (0, 1))
+        ref = np.roll(np.roll(a_np, 1, axis=0), -2, axis=1)
+        np.testing.assert_allclose(out.cpu().numpy(), ref)
+
+    def test_roll_negative_shift(self):
+        a_np = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.roll(a, -1, 0)
+        ref = np.roll(a_np, -1, axis=0)
+        np.testing.assert_allclose(out.cpu().numpy(), ref)
