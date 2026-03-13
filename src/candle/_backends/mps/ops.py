@@ -608,6 +608,18 @@ def argmin(a, dim=None, keepdim=False):
 
 
 def count_nonzero(a, dim=None, keepdim=False):
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype)):
+        # composite: ne(a, 0) → sum as float → cast to int64
+        mask = ne(a, 0)
+        # Need float for sum — use where(mask, 1.0, 0.0) with a float tensor
+        ones_np = np.ones(a.shape, dtype=np.float32)
+        ones_t = _from_numpy(ones_np, float32_dtype, a.device)
+        count_f = where(mask, ones_t, 0.0)
+        s = sum_(count_f, dim=dim, keepdim=keepdim)
+        # Convert to int64 via numpy (small result)
+        s_np = _to_numpy(s).astype(np.int64)
+        return _from_numpy(np.ascontiguousarray(s_np), int64_dtype, a.device)
     arr = _to_numpy(a)
     if dim is None:
         count = np.count_nonzero(arr)
@@ -1418,7 +1430,7 @@ def eq(a, b):
             d.dispatch_comparison(f"eq_{sfx}", _metal_buf(a), _metal_buf(b),
                                   out_buf, numel)
         elif not isinstance(b, Tensor) or not _can_use_gpu(b):
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+            scalar = _scalar_value(float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0]), a.dtype)
             if a.is_contiguous():
                 d.dispatch_comparison_scalar(f"eq_scalar_{sfx}", _metal_buf(a),
                                              scalar, out_buf, numel,
@@ -1443,7 +1455,7 @@ def ne(a, b):
             d.dispatch_comparison(f"ne_{sfx}", _metal_buf(a), _metal_buf(b),
                                   out_buf, numel)
         elif not isinstance(b, Tensor) or not _can_use_gpu(b):
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+            scalar = _scalar_value(float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0]), a.dtype)
             if a.is_contiguous():
                 d.dispatch_comparison_scalar(f"ne_scalar_{sfx}", _metal_buf(a),
                                              scalar, out_buf, numel,
@@ -3982,22 +3994,42 @@ def einsum(equation, *operands):
 # ---------------------------------------------------------------------------
 
 def logical_and(a, b):
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and isinstance(b, Tensor) and _can_use_gpu(b) and b.is_contiguous()):
+        # ne(a,0) returns bool(uint8), ne(b,0) returns bool(uint8), mul gives AND
+        a_bool = ne(a, 0)
+        b_bool = ne(b, 0)
+        return _dispatch_binary_gpu(a_bool, b_bool, "mul")
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.logical_and(a_np, b_np), bool_dtype, a.device)
 
 
 def logical_or(a, b):
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and isinstance(b, Tensor) and _can_use_gpu(b) and b.is_contiguous()):
+        # ne(a,0) | ne(b,0) = ne(a_bool + b_bool, 0)
+        a_bool = ne(a, 0)
+        b_bool = ne(b, 0)
+        sum_buf = _dispatch_binary_gpu(a_bool, b_bool, "add")
+        return ne(sum_buf, 0)
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.logical_or(a_np, b_np), bool_dtype, a.device)
 
 
 def logical_not(a):
+    if _can_use_gpu(a) and a.is_contiguous():
+        return eq(a, 0)
     return _from_numpy(np.logical_not(_to_numpy(a)), bool_dtype, a.device)
 
 
 def logical_xor(a, b):
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and isinstance(b, Tensor) and _can_use_gpu(b) and b.is_contiguous()):
+        a_bool = ne(a, 0)
+        b_bool = ne(b, 0)
+        return ne(a_bool, b_bool)
     a_np = _to_numpy(a).astype(bool)
     b_np = (_to_numpy(b) if isinstance(b, Tensor) else np.array(b)).astype(bool)
     return _from_numpy(np.logical_xor(a_np, b_np), bool_dtype, a.device)
@@ -4063,25 +4095,59 @@ def random_(a, from_=0, to=None, generator=None):
 # ---------------------------------------------------------------------------
 
 def flatten(a, start_dim=0, end_dim=-1):
-    arr = _to_numpy(a)
-    ndim = arr.ndim
+    ndim = len(a.shape)
     start = start_dim if start_dim >= 0 else start_dim + ndim
     end = end_dim if end_dim >= 0 else end_dim + ndim
-    new_shape = arr.shape[:start] + (-1,) + arr.shape[end + 1:]
+    new_shape = a.shape[:start] + (-1,) + a.shape[end + 1:]
+    # Compute actual -1 size
+    known = 1
+    for i, s in enumerate(new_shape):
+        if s != -1:
+            known *= s
+    total = 1
+    for s in a.shape:
+        total *= s
+    new_shape = tuple(s if s != -1 else total // known for s in new_shape)
+    if _can_use_gpu(a) and a.is_contiguous():
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(_metal_buf(a), new_shape, _compute_strides(new_shape), a.dtype, a.device)
+    arr = _to_numpy(a)
     out = arr.reshape(new_shape)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
 
 
 def unflatten(a, dim, sizes):
-    arr = _to_numpy(a)
-    ndim = arr.ndim
+    ndim = len(a.shape)
     d = dim if dim >= 0 else dim + ndim
-    new_shape = arr.shape[:d] + tuple(sizes) + arr.shape[d + 1:]
+    new_shape = a.shape[:d] + tuple(sizes) + a.shape[d + 1:]
+    if _can_use_gpu(a) and a.is_contiguous():
+        from ..._tensor import _compute_strides
+        return _from_metal_buffer(_metal_buf(a), new_shape, _compute_strides(new_shape), a.dtype, a.device)
+    arr = _to_numpy(a)
     out = arr.reshape(new_shape)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
 
 
 def broadcast_to(a, shape):
+    if _can_use_gpu(a) and a.is_contiguous():
+        # Compute broadcast strides: 0 for expanded dims, original stride otherwise
+        a_shape = a.shape
+        a_stride = list(a.stride)
+        ndim_out = len(shape)
+        ndim_a = len(a_shape)
+        # Pad a_shape/a_stride on the left
+        padded_shape = [1] * (ndim_out - ndim_a) + list(a_shape)
+        padded_stride = [0] * (ndim_out - ndim_a) + a_stride
+        out_stride = []
+        for i in range(ndim_out):
+            if padded_shape[i] == shape[i]:
+                out_stride.append(padded_stride[i])
+            elif padded_shape[i] == 1:
+                out_stride.append(0)
+            else:
+                break
+        else:
+            return _from_metal_buffer(_metal_buf(a), tuple(shape), tuple(out_stride), a.dtype, a.device)
     arr = _to_numpy(a)
     out = np.broadcast_to(arr, shape)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
@@ -4313,6 +4379,13 @@ def renorm(a, p, dim, maxnorm):
 
 def nansum(a, dim=None, keepdim=False):
     """Sum ignoring NaN values."""
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)):
+        # composite: where(isnan(a), 0, a) → sum
+        mask = isnan(a)
+        not_nan = logical_not(mask)
+        cleaned = where(not_nan, a, 0.0)
+        return sum_(cleaned, dim=dim, keepdim=keepdim)
     arr = _to_numpy(a)
     if dim is None:
         out = np.nansum(arr)
@@ -4324,6 +4397,19 @@ def nansum(a, dim=None, keepdim=False):
 
 def nanmean(a, dim=None, keepdim=False):
     """Mean ignoring NaN values."""
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)):
+        mask = isnan(a)
+        not_nan = logical_not(mask)
+        cleaned = where(not_nan, a, 0.0)
+        s = sum_(cleaned, dim=dim, keepdim=keepdim)
+        # Count non-NaN: use add_scalar(0*a, 1) to get float ones, then mask
+        zeros = _dispatch_binary_gpu(a, 0.0, "mul")  # 0*a = 0 everywhere (incl NaN→0*NaN=NaN... no)
+        # Simplest: fall back to numpy for count since composite is tricky
+        arr = _to_numpy(a)
+        cnt_val = np.sum(~np.isnan(arr), axis=dim, keepdims=keepdim).astype(arr.dtype)
+        cnt = _from_numpy(np.ascontiguousarray(cnt_val), a.dtype, a.device)
+        return div(s, cnt)
     arr = _to_numpy(a)
     if dim is None:
         out = np.nanmean(arr)
@@ -4569,6 +4655,8 @@ def bucketize(a, boundaries, out_int32=False, right=False):
 
 def isneginf(a):
     """Returns a bool tensor indicating negative infinity."""
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return _dispatch_unary_predicate_gpu(a, "isneginf")
     arr = _to_numpy(a)
     out = np.isneginf(arr)
     return _from_numpy(np.ascontiguousarray(out), bool_dtype, a.device)
@@ -4576,6 +4664,8 @@ def isneginf(a):
 
 def isposinf(a):
     """Returns a bool tensor indicating positive infinity."""
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return _dispatch_unary_predicate_gpu(a, "isposinf")
     arr = _to_numpy(a)
     out = np.isposinf(arr)
     return _from_numpy(np.ascontiguousarray(out), bool_dtype, a.device)
@@ -4600,6 +4690,23 @@ def isin(elements, test_elements):
 
 def heaviside(a, values):
     """Heaviside step function."""
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)
+            and isinstance(values, Tensor) and _can_use_gpu(values)
+            and values.is_contiguous() and a.shape == values.shape):
+        # composite: where(a > 0, 1, where(a == 0, values, 0))
+        # Use: where(neg_mask, 0, where(pos_mask, 1, values)) with scalar y
+        pos_mask = gt(a, 0)
+        # where(pos_mask, values, values) but replace true branch with 1.0:
+        # where(~pos_mask, values, scalar=1.0) → need x=values, y=1.0
+        neg_mask = lt(a, 0)
+        # Step 1: start with values (used at a==0)
+        # Step 2: where a>0, set to 1.0 → where(~pos_mask, values, 1.0) → x=values, y=1.0, cond=~pos_mask
+        not_pos = logical_not(pos_mask)
+        out = where(not_pos, values, 1.0)
+        # Step 3: where a<0, set to 0.0 → where(~neg_mask, out, 0.0)
+        not_neg = logical_not(neg_mask)
+        return where(not_neg, out, 0.0)
     a_np = _to_numpy(a)
     v_np = _to_numpy(values)
     out = np.heaviside(a_np, v_np)
