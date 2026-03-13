@@ -7,6 +7,10 @@ This document tracks native kernel bugs and their on-device composite workaround
 - **After a platform upgrade**: Test each `open` entry by re-enabling the native kernel and running the associated test. If the native kernel works, mark the entry as `resolved` and remove the composite workaround.
 - **When adding a workaround**: Add a new entry here with all required fields.
 
+## Note on torch_npu
+
+The official Ascend PyTorch backend (`torch_npu`) does not implement the 910B fallback ops natively either. It registers a blanket `PrivateUse1` fallback that moves tensors to CPU via `at::native::cpu_fallback` (see `VariableFallbackKernel.cpp` line 259). Candle instead uses on-device ACLNN small-op composites so that tensors never leave the NPU.
+
 ## Issue Table
 
 | Op | Backend | Error Description | Composite Workaround | Platform Version | Status |

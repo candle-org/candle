@@ -11,10 +11,17 @@ from . import runtime as npu_runtime
 
 # ── 1. Operator fallback ─────────────────────────────────────────────
 # Ops that must use on-device composite workaround on a given chip.
+#
+# NOTE: torch_npu (Ascend's official PyTorch backend) does NOT implement
+# these ops natively either — they fall through to CPU via PyTorch's
+# `at::native::cpu_fallback` (see VariableFallbackKernel.cpp).  Candle
+# instead uses on-device ACLNN small-op composites so that tensors never
+# leave the NPU, avoiding the D2H/H2D round-trip penalty.
 
 _FALLBACK_OPS = {
     "910a": frozenset(),
     "910b": frozenset({
+        # torch_npu: CPU fallback; candle: on-device composite
         "std",              # aclnnVar all-reduce fails with 161002
         "nansum",           # aclnnReduceNansum returns 161002
         "instance_norm",    # aclnnInstanceNorm returns 161002
