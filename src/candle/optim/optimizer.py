@@ -131,25 +131,39 @@ class Optimizer:
         raise NotImplementedError("step() must be implemented by subclass")
 
     def state_dict(self) -> Dict[str, Any]:
-        """Returns the state of the optimizer as a dict."""
+        """Returns the state of the optimizer as a dict.
+
+        Uses positional integer indices as keys (matching PyTorch) so that
+        state dicts are portable across different model instances.
+        """
         for hook in self._state_dict_pre_hooks.values():
             hook(self)
 
+        # Build id(param) -> positional index mapping
+        param_mappings = {}
+        start_index = 0
+        for group in self.param_groups:
+            packed = {id(p): i + start_index for i, p in enumerate(group["params"])}
+            param_mappings.update(packed)
+            start_index += len(group["params"])
+
+        # Pack state using positional indices
+        packed_state = {}
+        for param_id, param_state in self.state.items():
+            if param_id in param_mappings:
+                packed_state[param_mappings[param_id]] = param_state
+
+        # Pack param_groups with positional indices instead of param refs
+        param_groups = []
+        for group in self.param_groups:
+            packed_group = {k: v for k, v in group.items() if k != "params"}
+            packed_group["params"] = [param_mappings[id(p)] for p in group["params"]]
+            param_groups.append(packed_group)
+
         state_dict: Dict[str, Any] = {
-            "state": {},
-            "param_groups": [],
+            "state": packed_state,
+            "param_groups": param_groups,
         }
-
-        for param_group in self.param_groups:
-            for param in param_group["params"]:
-                param_id = id(param)
-                if param_id in self.state:
-                    state_dict["state"][str(param_id)] = self.state[param_id]
-
-        for param_group in self.param_groups:
-            param_group_copy = {k: v for k, v in param_group.items() if k != "params"}
-            param_group_copy["param_ids"] = [id(p) for p in param_group["params"]]
-            state_dict["param_groups"].append(param_group_copy)
 
         for hook in self._state_dict_post_hooks.values():
             result = hook(self, state_dict)
@@ -159,21 +173,44 @@ class Optimizer:
         return state_dict
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        """Loads the optimizer state."""
+        """Loads the optimizer state.
+
+        Maps positional indices from the saved state back to the current
+        model's parameter id()s.
+        """
         for hook in self._load_state_dict_pre_hooks.values():
             result = hook(self, state_dict)
             if result is not None:
                 state_dict = result
 
-        self.state = {}
-        for param_id_str, state in state_dict["state"].items():
-            param_id = int(param_id_str)
-            self.state[param_id] = state
+        saved_groups = state_dict["param_groups"]
+        if len(saved_groups) != len(self.param_groups):
+            raise ValueError(
+                f"loaded state dict has {len(saved_groups)} param groups, "
+                f"but optimizer has {len(self.param_groups)}"
+            )
 
-        self.param_groups = []
-        for param_group in state_dict["param_groups"]:
-            param_ids = param_group.pop("param_ids", [])
-            self.param_groups.append(param_group)
+        # Build positional index -> id(param) mapping from current params
+        idx_to_id = {}
+        start_index = 0
+        for group in self.param_groups:
+            for i, p in enumerate(group["params"]):
+                idx_to_id[i + start_index] = id(p)
+            start_index += len(group["params"])
+
+        # Restore state keyed by id(param)
+        self.state = {}
+        for idx, param_state in state_dict["state"].items():
+            # Keys may be int or str depending on serialization
+            idx_int = int(idx) if isinstance(idx, str) else idx
+            if idx_int in idx_to_id:
+                self.state[idx_to_id[idx_int]] = param_state
+
+        # Update param_group settings (lr, momentum, etc.) but keep param refs
+        for saved_group, group in zip(saved_groups, self.param_groups):
+            for key, value in saved_group.items():
+                if key != "params":
+                    group[key] = value
 
         for hook in self._load_state_dict_post_hooks.values():
             hook(self)
