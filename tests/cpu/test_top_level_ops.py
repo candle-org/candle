@@ -75,6 +75,26 @@ class TestCategoryA:
         assert mask.dtype == torch.float32
         assert mask.tolist() == [1.0, 0.0, 1.0]
 
+    def test_tensor_int_list_infers_int64_dtype(self):
+        x = torch.tensor([1, 2, 3])
+        assert x.dtype == torch.int64
+        assert x.tolist() == [1, 2, 3]
+
+    def test_tensor_int_scalar_infers_int64_dtype(self):
+        x = torch.tensor(3)
+        assert x.dtype == torch.int64
+        assert x.item() == 3
+
+    def test_as_tensor_int_list_infers_int64_dtype(self):
+        x = torch.as_tensor([1, 2, 3])
+        assert x.dtype == torch.int64
+        assert x.tolist() == [1, 2, 3]
+
+    def test_as_tensor_int_scalar_infers_int64_dtype(self):
+        x = torch.as_tensor(3)
+        assert x.dtype == torch.int64
+        assert x.item() == 3
+
     def test_unfold(self):
         a = torch.arange(1, 8, dtype=torch.float32)
         out = torch.unfold(a, 0, 3, 2)
