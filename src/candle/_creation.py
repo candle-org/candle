@@ -35,7 +35,8 @@ def tensor(data, *, dtype=None, device=None, requires_grad=False):
     if dtype is None:
         dtype = _infer_creation_dtype(data)
     if dtype is None:
-        dtype = float32
+        from . import get_default_dtype
+        dtype = get_default_dtype()
     return tensor_dispatch(data, dtype=dtype, device=device, requires_grad=requires_grad)
 
 
@@ -112,10 +113,18 @@ def from_numpy(ndarray):
 
 
 def as_tensor(data, dtype=None, device=None):
+    from ._tensor import Tensor
+
+    if isinstance(data, Tensor):
+        if dtype is None and device is None:
+            return data
+        return data.to(device=device, dtype=dtype)
+
     if dtype is None:
         dtype = _infer_creation_dtype(data)
     if dtype is None:
-        dtype = float32
+        from . import get_default_dtype
+        dtype = get_default_dtype()
     return tensor_dispatch(data, dtype=dtype, device=device)
 
 
