@@ -65,6 +65,16 @@ class TestCategoryA:
         out = torch.masked_fill(a, mask, 0.0)
         assert out.tolist() == [0.0, 2.0, 0.0]
 
+    def test_tensor_bool_input_infers_bool_dtype(self):
+        mask = torch.tensor([True, False, True])
+        assert mask.dtype == torch.bool
+        assert mask.tolist() == [True, False, True]
+
+    def test_tensor_explicit_float_dtype_overrides_bool_inference(self):
+        mask = torch.tensor([True, False, True], dtype=torch.float32)
+        assert mask.dtype == torch.float32
+        assert mask.tolist() == [1.0, 0.0, 1.0]
+
     def test_unfold(self):
         a = torch.arange(1, 8, dtype=torch.float32)
         out = torch.unfold(a, 0, 3, 2)

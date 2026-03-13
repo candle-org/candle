@@ -754,6 +754,10 @@ def _npu_advanced_getitem(tensor, key):
 
     keys = list(key) if isinstance(key, tuple) else [key]
 
+    if any(isinstance(item, Tensor) and item.dtype.name == 'bool' for item in keys):
+        # TODO: re-enable native kernel when CANN fixes aclnnIndex bool-mask advanced indexing (161001)
+        raise RuntimeError('NPU boolean mask indexing is not supported')
+
     # Step 1: Expand bool Tensor indices BEFORE expanding Ellipsis.
     # A bool tensor of N dims consumes N real dims, and we need the correct
     # dim count for Ellipsis expansion.

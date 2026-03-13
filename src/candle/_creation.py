@@ -1,4 +1,7 @@
+import numpy as np
+
 from ._dtype import float32
+from ._dtype import bool as bool_dtype
 from ._functional import tensor as tensor_dispatch
 from ._functional import zeros as zeros_dispatch
 from ._functional import ones as ones_dispatch
@@ -16,7 +19,23 @@ from ._functional import randperm as randperm_dispatch
 from ._functional import normal as normal_dispatch
 
 
-def tensor(data, *, dtype=float32, device=None, requires_grad=False):
+def _infer_creation_dtype(data):
+    if isinstance(data, (np.ndarray, np.generic)):
+        return bool_dtype if data.dtype == np.bool_ else None
+    if hasattr(data, "dtype"):
+        return None
+    try:
+        arr = np.asarray(data)
+    except Exception:
+        return None
+    return bool_dtype if arr.dtype == np.bool_ else None
+
+
+def tensor(data, *, dtype=None, device=None, requires_grad=False):
+    if dtype is None:
+        dtype = _infer_creation_dtype(data)
+    if dtype is None:
+        dtype = float32
     return tensor_dispatch(data, dtype=dtype, device=device, requires_grad=requires_grad)
 
 
@@ -79,7 +98,6 @@ def randperm(n, *, dtype=None, device=None, generator=None):
 
 
 def from_numpy(ndarray):
-    import numpy as np
     from ._dtype import (
         float16, float32, float64, int8, int16, int32, int64,
         uint8, bool as bool_dtype, bfloat16,
@@ -94,6 +112,8 @@ def from_numpy(ndarray):
 
 
 def as_tensor(data, dtype=None, device=None):
+    if dtype is None:
+        dtype = _infer_creation_dtype(data)
     if dtype is None:
         dtype = float32
     return tensor_dispatch(data, dtype=dtype, device=device)

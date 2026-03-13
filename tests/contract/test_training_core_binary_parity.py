@@ -163,3 +163,85 @@ def test_add_inplace_matches_torch_contract():
     )
 
     assert result["value_match"] is True
+
+
+def test_sub_bool_bool_error_matches_torch_contract():
+    import torch as real_torch
+
+    result = run_training_core_parity_case(
+        op_name="sub",
+        candle_fn=lambda x, y: torch.sub(x, y),
+        torch_fn=lambda x, y: real_torch.sub(x, y),
+        candle_inputs=lambda: (
+            torch.tensor([True, False, True], dtype=torch.bool),
+            torch.tensor([False, False, True], dtype=torch.bool),
+        ),
+        torch_inputs=lambda: (
+            real_torch.tensor([True, False, True], dtype=real_torch.bool),
+            real_torch.tensor([False, False, True], dtype=real_torch.bool),
+        ),
+        expect_error=True,
+    )
+
+    assert result["error_type_match"] is True
+    assert str(result["candle_error"]) == str(result["torch_error"])
+
+
+@pytest.mark.parametrize(
+    ("op_name", "torch_fn"),
+    [
+        ("logaddexp", lambda x, y, real_torch: real_torch.logaddexp(x, y)),
+        ("logaddexp2", lambda x, y, real_torch: real_torch.logaddexp2(x, y)),
+        ("hypot", lambda x, y, real_torch: real_torch.hypot(x, y)),
+    ],
+)
+def test_binary_int64_notimplemented_matches_torch_contract(op_name, torch_fn):
+    import torch as real_torch
+
+    result = run_training_core_parity_case(
+        op_name=op_name,
+        candle_fn=lambda x, y: getattr(torch, op_name)(x, y),
+        torch_fn=lambda x, y: torch_fn(x, y, real_torch),
+        candle_inputs=lambda: (
+            torch.tensor([1, -2, 3], dtype=torch.int64),
+            torch.tensor([2, 4, -1], dtype=torch.int64),
+        ),
+        torch_inputs=lambda: (
+            real_torch.tensor([1, -2, 3], dtype=real_torch.int64),
+            real_torch.tensor([2, 4, -1], dtype=real_torch.int64),
+        ),
+        expect_error=True,
+    )
+
+    assert result["error_type_match"] is True
+    assert str(result["candle_error"]) == str(result["torch_error"])
+
+
+@pytest.mark.parametrize(
+    ("op_name", "torch_fn"),
+    [
+        ("pow", lambda x, y, real_torch: real_torch.pow(x, y)),
+        ("remainder", lambda x, y, real_torch: real_torch.remainder(x, y)),
+        ("fmod", lambda x, y, real_torch: real_torch.fmod(x, y)),
+    ],
+)
+def test_binary_bool_notimplemented_matches_torch_contract(op_name, torch_fn):
+    import torch as real_torch
+
+    result = run_training_core_parity_case(
+        op_name=op_name,
+        candle_fn=lambda x, y: getattr(torch, op_name)(x, y),
+        torch_fn=lambda x, y: torch_fn(x, y, real_torch),
+        candle_inputs=lambda: (
+            torch.tensor([True, False, True], dtype=torch.bool),
+            torch.tensor([False, False, True], dtype=torch.bool),
+        ),
+        torch_inputs=lambda: (
+            real_torch.tensor([True, False, True], dtype=real_torch.bool),
+            real_torch.tensor([False, False, True], dtype=real_torch.bool),
+        ),
+        expect_error=True,
+    )
+
+    assert result["error_type_match"] is True
+    assert str(result["candle_error"]) == str(result["torch_error"])

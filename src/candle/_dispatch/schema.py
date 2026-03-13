@@ -198,6 +198,45 @@ class OpSchema:
             if op_name == "frac":
                 raise NotImplementedError(f"\"frac_cpu\" not implemented for '{dtype_label}'")
 
+        def _validate_binary_dtype_parity(op_name, a, b):
+            if not hasattr(a, "dtype") or not hasattr(b, "dtype"):
+                return
+
+            a_dtype = a.dtype
+            b_dtype = b.dtype
+            a_bool = getattr(a_dtype, "name", None) == "bool"
+            b_bool = getattr(b_dtype, "name", None) == "bool"
+
+            if op_name == "sub" and a_bool and b_bool:
+                raise RuntimeError(
+                    "Subtraction, the `-` operator, with two bool tensors is not supported. "
+                    "Use the `^` or `logical_xor()` operator instead."
+                )
+
+            if op_name in {"logaddexp", "logaddexp2", "hypot"}:
+                if not (
+                    (getattr(a_dtype, "is_floating_point", False) or getattr(a_dtype, "is_complex", False))
+                    or (getattr(b_dtype, "is_floating_point", False) or getattr(b_dtype, "is_complex", False))
+                ):
+                    kernel_name = {
+                        "logaddexp": "logaddexp_cpu",
+                        "logaddexp2": "logaddexp2_cpu",
+                        "hypot": "hypot_cpu",
+                    }[op_name]
+                    raise NotImplementedError(
+                        f'"{kernel_name}" not implemented for \'{_torch_dtype_label(a_dtype)}\''
+                    )
+
+            if op_name in {"pow", "remainder", "fmod"} and a_bool and b_bool:
+                kernel_name = {
+                    "pow": "pow",
+                    "remainder": "remainder_cpu",
+                    "fmod": "fmod_cpu",
+                }[op_name]
+                raise NotImplementedError(
+                    f'"{kernel_name}" not implemented for \'Bool\''
+                )
+
         def _validate_sum_mean_dim(value, input_tensor):
             # Match torch call-site validation for sum/mean(dim=...).
             if value is None:
@@ -715,6 +754,10 @@ class OpSchema:
             ptype = getattr(param, "type_name", None)
             if op_short_name in {"gelu", "silu", "mish", "frac"} and param.name == "input":
                 _validate_unary_requires_float(op_short_name, value)
+                continue
+            if op_short_name in {"sub", "pow", "logaddexp", "logaddexp2", "hypot", "remainder", "fmod"}:
+                if "input" in bound and "other" in bound:
+                    _validate_binary_dtype_parity(op_short_name, bound["input"], bound["other"])
                 continue
             if op_short_name == "sum" and param.name == "dim":
                 input_tensor = bound.get("input")
