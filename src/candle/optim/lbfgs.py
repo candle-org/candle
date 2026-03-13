@@ -4,15 +4,15 @@ LBFGS (Limited-memory BFGS) optimizer for candle.
 Aligned with PyTorch's torch.optim.LBFGS.
 """
 
-import math
 from typing import Any, Callable, Dict, Iterable, Optional, Union
-
-import numpy as np
 
 from .optimizer import Optimizer
 from .._tensor import Tensor
-from .._dispatch import dispatch
-from .._functional import zeros_like
+from .._functional import (
+    cat,
+    dot,
+    zeros_like,
+)
 
 
 class LBFGS(Optimizer):
@@ -68,55 +68,46 @@ class LBFGS(Optimizer):
         self.state.setdefault("n_iter", 0)
 
     def _gather_flat_grad(self):
-        views = []
+        grads = []
         for p in self._params:
             if p.grad is None:
-                views.append(np.zeros(np.prod(p._numpy_view().shape)))
+                grads.append(zeros_like(p).reshape(-1))
             else:
-                views.append(p.grad._numpy_view().ravel())
-        return np.concatenate(views)
+                grads.append(p.grad.detach().reshape(-1))
+        return cat(grads, dim=0)
 
     def _gather_flat_params(self):
-        views = []
-        for p in self._params:
-            views.append(p._numpy_view().ravel())
-        return np.concatenate(views)
+        return cat([p.detach().reshape(-1) for p in self._params], dim=0)
 
-    def _set_flat_params(self, flat_params):
+    def _set_flat_params(self, flat):
         offset = 0
         for p in self._params:
-            shape = p._numpy_view().shape
-            numel = int(np.prod(shape))
-            p.storage()._data[:] = flat_params[offset:offset + numel].reshape(shape)
+            numel = 1
+            for s in p.shape:
+                numel *= s
+            p_flat = flat[offset:offset + numel].reshape(p.shape)
+            p.data = p_flat
             offset += numel
 
-    def _two_loop_recursion(self, flat_grad, old_dirs, old_stps, ro, H_diag):
-        q = flat_grad.copy()
+    def _two_loop(self, flat_grad, old_dirs, old_stps, ro, H_diag):
+        """L-BFGS two-loop recursion using tensor ops."""
+        q = flat_grad.clone()
         num_old = len(old_dirs)
-        if num_old == 0:
-            return -q
-
         alphas = [0.0] * num_old
 
         for i in range(num_old - 1, -1, -1):
-            alphas[i] = ro[i] * np.dot(old_stps[i], q)
-            q -= alphas[i] * old_dirs[i]
+            alphas[i] = float(dot(old_stps[i], q)) * ro[i]
+            q = q - alphas[i] * old_dirs[i]
 
-        r = H_diag * q
+        r = q * H_diag
 
         for i in range(num_old):
-            beta = ro[i] * np.dot(old_dirs[i], r)
-            r += (alphas[i] - beta) * old_stps[i]
+            beta = float(dot(old_dirs[i], r)) * ro[i]
+            r = r + (alphas[i] - beta) * old_stps[i]
 
-        return -r
+        return r
 
-    def step(self, closure: Callable[[], float] = None) -> Optional[float]:
-        """Perform a single optimization step.
-
-        Args:
-            closure: A callable that re-evaluates the model and returns the loss.
-                Required for LBFGS.
-        """
+    def step(self, closure=None):
         if closure is None:
             raise RuntimeError("LBFGS requires a closure")
 
@@ -141,43 +132,36 @@ class LBFGS(Optimizer):
         old_stps = state["old_stps"]
         ro = state["ro"]
 
-        # Evaluate initial loss and gradient
-        orig_params = self._gather_flat_params().copy()
-        loss = float(closure().detach().item())
+        current_loss = float(closure().detach().item())
         flat_grad = self._gather_flat_grad()
         n_eval = 1
-
-        current_loss = loss
-        current_params = orig_params.copy()
-
         state["n_iter"] += 1
 
         for _ in range(max_iter):
-            abs_grad_max = np.max(np.abs(flat_grad))
+            abs_grad_max = float(flat_grad.abs().amax().item())
             if abs_grad_max <= tolerance_grad:
                 break
 
-            d = self._two_loop_recursion(flat_grad, old_dirs, old_stps, ro, state["H_diag"])
+            d = self._two_loop(flat_grad, old_dirs, old_stps, ro, state["H_diag"])
+            d = d * (-1.0)
+
+            prev_flat_grad = flat_grad.clone()
+            prev_loss = current_loss
 
             if line_search_fn == "strong_wolfe":
-                step_size = self._line_search(closure, current_params, d, current_loss, flat_grad)
-                n_eval += 1
+                x0 = self._gather_flat_params()
+                step_size = self._line_search(closure, x0, d, current_loss, flat_grad)
+                step = d * step_size
             else:
-                step_size = lr
+                step = d * lr
 
-            prev_flat_grad = flat_grad.copy()
-            step = step_size * d
-            current_params = current_params + step
-            self._set_flat_params(current_params)
-
-            prev_loss = current_loss
+            self._set_flat_params(self._gather_flat_params() + step)
             current_loss = float(closure().detach().item())
             flat_grad = self._gather_flat_grad()
             n_eval += 1
 
-            # Update LBFGS history
             y = flat_grad - prev_flat_grad
-            ys = np.dot(y, step)
+            ys = float(dot(y, step).item())
             if ys > 1e-10:
                 if len(old_dirs) >= history_size:
                     old_dirs.pop(0)
@@ -186,7 +170,7 @@ class LBFGS(Optimizer):
                 old_dirs.append(y)
                 old_stps.append(step)
                 ro.append(1.0 / ys)
-                state["H_diag"] = ys / np.dot(y, y)
+                state["H_diag"] = ys / float(dot(y, y).item())
 
             if abs(current_loss - prev_loss) < tolerance_change:
                 break
@@ -200,7 +184,7 @@ class LBFGS(Optimizer):
 
     def _line_search(self, closure, x0, d, f0, g0, c1=1e-4, max_ls=25):
         """Backtracking line search with Armijo condition."""
-        dg0 = np.dot(g0, d)
+        dg0 = float(dot(g0, d).item())
         step_size = 1.0
         for _ in range(max_ls):
             x_new = x0 + step_size * d

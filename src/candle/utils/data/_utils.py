@@ -1,7 +1,11 @@
+import dataclasses
 import threading
 from dataclasses import dataclass
 
+import numpy as np
+
 from ..._functional import stack as _stack
+from ..._creation import from_numpy as _from_numpy
 
 
 @dataclass
@@ -36,10 +40,32 @@ def default_collate(batch):
     if len(batch) == 0:
         return batch
     first = batch[0]
+    # Candle tensors
     if hasattr(first, "device") and hasattr(first, "shape"):
         return _stack(batch, dim=0)
-    if isinstance(first, (int, float, bool, str)):
-        return list(batch)
+    # Numpy arrays -> convert to tensors then stack
+    if isinstance(first, np.ndarray):
+        return _stack([_from_numpy(b) for b in batch], dim=0)
+    # Numpy scalars (np.float64, np.int64, etc.)
+    if isinstance(first, np.generic):
+        return default_collate([b.item() for b in batch])
+    if isinstance(first, float):
+        return batch
+    if isinstance(first, int):
+        return batch
+    if isinstance(first, (str, bytes)):
+        return batch
+    # Named tuples
+    if isinstance(first, tuple) and hasattr(first, '_fields'):
+        return type(first)(*(default_collate(list(samples)) for samples in zip(*batch)))
+    # Dataclasses
+    if dataclasses.is_dataclass(first) and not isinstance(first, type):
+        return type(first)(
+            **{
+                f.name: default_collate([getattr(d, f.name) for d in batch])
+                for f in dataclasses.fields(first)
+            }
+        )
     if isinstance(first, tuple):
         transposed = list(zip(*batch))
         return tuple(default_collate(list(samples)) for samples in transposed)
@@ -48,7 +74,7 @@ def default_collate(batch):
         return [default_collate(list(samples)) for samples in transposed]
     if isinstance(first, dict):
         return {k: default_collate([d[k] for d in batch]) for k in first.keys()}
-    return list(batch)
+    return batch
 
 
 def _pin_memory_batch(batch):

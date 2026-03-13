@@ -555,7 +555,7 @@ class TestOptimizerHooks:
         opt.register_load_state_dict_pre_hook(lambda o, sd: pre_called.append(1))
         opt.register_load_state_dict_post_hook(lambda o: post_called.append(1))
 
-        opt.load_state_dict({"state": {}, "param_groups": []})
+        opt.load_state_dict(opt.state_dict())
         assert pre_called == [1]
         assert post_called == [1]
 
