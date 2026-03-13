@@ -1131,6 +1131,41 @@ class MetalKernelDispatcher:
         rt.commit_and_wait(cmd)
 
     # ------------------------------------------------------------------
+    # Dispatch: sort  (input → values + indices)
+    # ------------------------------------------------------------------
+
+    def dispatch_sort(self, kernel_name, input_buf, values_buf, indices_buf,
+                      outer_size, dim_size, inner_size, descending):
+        """Encode sort kernel (3 bufs + 4 setBytes)."""
+        rt = get_runtime()
+        pipeline = self._get_pipeline(kernel_name)
+        tpg = self._threads_per_group(pipeline)
+        numel = outer_size * inner_size
+        groups = (numel + tpg - 1) // tpg
+
+        cmd = rt.create_command_buffer()
+        enc = rt.get_compute_encoder(cmd)
+
+        if _HAS_PYOBJC:
+            enc.setComputePipelineState_(pipeline)
+            enc.setBuffer_offset_atIndex_(input_buf, 0, 0)
+            enc.setBuffer_offset_atIndex_(values_buf, 0, 1)
+            enc.setBuffer_offset_atIndex_(indices_buf, 0, 2)
+            enc.setBytes_length_atIndex_(struct.pack("I", outer_size), 4, 3)
+            enc.setBytes_length_atIndex_(struct.pack("I", dim_size), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", inner_size), 4, 5)
+            enc.setBytes_length_atIndex_(struct.pack("I", 1 if descending else 0), 4, 6)
+            enc.dispatchThreadgroups_threadsPerThreadgroup_(
+                _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
+            enc.endEncoding()
+        else:
+            _encode_sort_ctypes(enc, pipeline, input_buf, values_buf,
+                                indices_buf, outer_size, dim_size,
+                                inner_size, descending, groups, tpg)
+
+        rt.commit_and_wait(cmd)
+
+    # ------------------------------------------------------------------
     # Dispatch: adaptive_avg_pool2d
     # ------------------------------------------------------------------
 
@@ -2121,6 +2156,22 @@ def _encode_cumsum_ctypes(enc, pipeline, input_buf, output_buf,
     _ctypes_set_bytes(enc, struct.pack("I", outer_size), 4, 2)
     _ctypes_set_bytes(enc, struct.pack("I", dim_size), 4, 3)
     _ctypes_set_bytes(enc, struct.pack("I", inner_size), 4, 4)
+    _ctypes_dispatch_threadgroups(enc, groups, tpg)
+    _ctypes_end_encoding(enc)
+
+
+def _encode_sort_ctypes(enc, pipeline, input_buf, values_buf, indices_buf,
+                         outer_size, dim_size, inner_size, descending,
+                         groups, tpg):
+    """Encode sort kernel via ctypes."""
+    _ctypes_set_pipeline(enc, pipeline)
+    _ctypes_set_buffer(enc, input_buf, 0, 0)
+    _ctypes_set_buffer(enc, values_buf, 0, 1)
+    _ctypes_set_buffer(enc, indices_buf, 0, 2)
+    _ctypes_set_bytes(enc, struct.pack("I", outer_size), 4, 3)
+    _ctypes_set_bytes(enc, struct.pack("I", dim_size), 4, 4)
+    _ctypes_set_bytes(enc, struct.pack("I", inner_size), 4, 5)
+    _ctypes_set_bytes(enc, struct.pack("I", 1 if descending else 0), 4, 6)
     _ctypes_dispatch_threadgroups(enc, groups, tpg)
     _ctypes_end_encoding(enc)
 

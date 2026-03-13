@@ -1074,6 +1074,106 @@ def _gen_cumsum(types=None):
     return "".join(parts)
 
 
+_CUMPROD_TEMPLATE = """
+kernel void cumprod_{suffix}(
+    device const {type}* input  [[buffer(0)]],
+    device {type}* output       [[buffer(1)]],
+    constant uint& outer_size   [[buffer(2)]],
+    constant uint& dim_size     [[buffer(3)]],
+    constant uint& inner_size   [[buffer(4)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    uint total = outer_size * inner_size;
+    if (gid >= total) return;
+
+    uint outer = gid / inner_size;
+    uint inner = gid % inner_size;
+
+    float acc = 1.0f;
+    for (uint d = 0; d < dim_size; d++) {{
+        uint idx = outer * (dim_size * inner_size) + d * inner_size + inner;
+        acc *= (float)input[idx];
+        output[idx] = ({type})acc;
+    }}
+}}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Sort Metal compute shader (per-slice insertion sort)
+# ---------------------------------------------------------------------------
+
+_SORT_TEMPLATE = """
+kernel void sort_{suffix}(
+    device const {type}* input  [[buffer(0)]],
+    device {type}* values        [[buffer(1)]],
+    device int*   indices        [[buffer(2)]],
+    constant uint& outer_size   [[buffer(3)]],
+    constant uint& dim_size     [[buffer(4)]],
+    constant uint& inner_size   [[buffer(5)]],
+    constant uint& descending   [[buffer(6)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    uint total = outer_size * inner_size;
+    if (gid >= total) return;
+
+    uint outer = gid / inner_size;
+    uint inner = gid % inner_size;
+    uint base = outer * (dim_size * inner_size) + inner;
+
+    // Copy slice to output and init indices
+    for (uint d = 0; d < dim_size; d++) {{
+        uint idx = base + d * inner_size;
+        values[idx] = input[idx];
+        indices[idx] = int(d);
+    }}
+
+    // Insertion sort along dim
+    for (uint i = 1; i < dim_size; i++) {{
+        uint pos_i = base + i * inner_size;
+        {type} key = values[pos_i];
+        int key_idx = indices[pos_i];
+        uint j = i;
+        while (j > 0) {{
+            uint pos_j = base + (j - 1) * inner_size;
+            bool should_swap;
+            if (descending) {{
+                should_swap = (float)values[pos_j] < (float)key;
+            }} else {{
+                should_swap = (float)values[pos_j] > (float)key;
+            }}
+            if (!should_swap) break;
+            values[base + j * inner_size] = values[pos_j];
+            indices[base + j * inner_size] = indices[pos_j];
+            j--;
+        }}
+        values[base + j * inner_size] = key;
+        indices[base + j * inner_size] = key_idx;
+    }}
+}}
+"""
+
+
+def _gen_sort(types=None):
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_SORT_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+def _gen_cumprod(types=None):
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_CUMPROD_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Adaptive avg pool2d Metal compute shader
 # ---------------------------------------------------------------------------
@@ -1423,6 +1523,7 @@ _BINARY_FLOAT_OPS = (
     ("atan2", "atan2(a[id], b[id])"),
     ("hypot", "sqrt(a[id] * a[id] + b[id] * b[id])"),
     ("logaddexp2", "log2(exp2(a[id]) + exp2(b[id]))"),
+    ("floor_divide", "floor(a[id] / b[id])"),
 )
 
 # --- Unary element-wise (numeric types: float, half, int, long) ---
@@ -2052,6 +2153,12 @@ def _build_msl_source():
 
     # Cumsum kernel
     parts.append(_gen_cumsum())
+
+    # Cumprod kernel
+    parts.append(_gen_cumprod())
+
+    # Sort kernel
+    parts.append(_gen_sort())
 
     # Adaptive avg pool2d kernel
     parts.append(_gen_adaptive_avg_pool2d())

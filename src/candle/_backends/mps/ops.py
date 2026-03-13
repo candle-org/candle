@@ -71,6 +71,13 @@ def _alloc_output_buf(numel, dtype):
     return rt.create_buffer(numel * _itemsize(dtype))
 
 
+def _metal_buf_to_bytes(metal_buf, nbytes):
+    """Read raw bytes from a Metal buffer."""
+    from .runtime import buffer_contents
+    ptr = buffer_contents(metal_buf)
+    return bytes((ctypes.c_char * nbytes).from_address(ptr))
+
+
 def _from_metal_buffer(metal_buf, shape, stride, dtype, device):
     """Wrap an existing Metal buffer into a Tensor without copying data."""
     from .runtime import buffer_contents
@@ -686,6 +693,18 @@ def roll(a, shifts, dims=None):
 
 
 def rot90(a, k=1, dims=(0, 1)):
+    # GPU composite: rot90 = combinations of flip + transpose
+    if _can_use_gpu(a):
+        k = k % 4
+        if k == 0:
+            return a
+        d0, d1 = dims[0], dims[1]
+        if k == 1:
+            return flip(a.transpose(d0, d1), (d0,))
+        elif k == 2:
+            return flip(flip(a, (d0,)), (d1,))
+        else:  # k == 3
+            return flip(a, (d0,)).transpose(d0, d1)
     arr = _to_numpy(a)
     out = np.rot90(arr, k=k, axes=dims)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
@@ -749,6 +768,27 @@ def cumsum(a, dim=0):
 
 
 def cumprod(a, dim=0):
+    # GPU path: float32/float16, contiguous (same dispatch as cumsum)
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)):
+        ndim = len(a.shape)
+        if dim < 0:
+            dim = ndim + dim
+        outer_size = 1
+        for i in range(dim):
+            outer_size *= a.shape[i]
+        dim_size = a.shape[dim]
+        inner_size = 1
+        for i in range(dim + 1, ndim):
+            inner_size *= a.shape[i]
+        sfx = _kernel_suffix(a.dtype)
+        d = _get_dispatcher()
+        numel = outer_size * dim_size * inner_size
+        out_buf = _alloc_output_buf(numel, a.dtype)
+        d.dispatch_cumsum(f"cumprod_{sfx}", _metal_buf(a), out_buf,
+                          outer_size, dim_size, inner_size)
+        return _from_metal_buffer(out_buf, tuple(a.shape),
+                                  tuple(a.stride()), a.dtype, a.device)
     return _from_numpy(np.cumprod(_to_numpy(a), axis=dim), a.dtype, a.device)
 
 
@@ -775,7 +815,37 @@ def cummax(a, dim=0):
     )
 
 
+def _sort_gpu(a, dim, descending):
+    """GPU sort helper returning (values_buf, indices_buf, shape, strides)."""
+    ndim = len(a.shape)
+    if dim < 0:
+        dim = ndim + dim
+    outer_size = 1
+    for i in range(dim):
+        outer_size *= a.shape[i]
+    dim_size = a.shape[dim]
+    inner_size = 1
+    for i in range(dim + 1, ndim):
+        inner_size *= a.shape[i]
+    sfx = _kernel_suffix(a.dtype)
+    d = _get_dispatcher()
+    numel = outer_size * dim_size * inner_size
+    values_buf = _alloc_output_buf(numel, a.dtype)
+    indices_buf = _alloc_output_buf(numel, int32_dtype)
+    d.dispatch_sort(f"sort_{sfx}", _metal_buf(a), values_buf, indices_buf,
+                    outer_size, dim_size, inner_size, descending)
+    return values_buf, indices_buf, numel
+
+
 def argsort(a, dim=-1, descending=False, stable=False):
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)):
+        _, indices_buf, numel = _sort_gpu(a, dim, descending)
+        # Convert int32 indices to int64
+        idx_np = np.frombuffer(
+            _metal_buf_to_bytes(indices_buf, numel * 4),
+            dtype=np.int32).astype(np.int64).reshape(a.shape)
+        return _from_numpy(idx_np, int64_dtype, a.device)
     arr = _to_numpy(a)
     kind = "stable" if stable else "quicksort"
     if descending:
@@ -786,6 +856,20 @@ def argsort(a, dim=-1, descending=False, stable=False):
 
 
 def sort(a, dim=-1, descending=False, stable=False):
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)):
+        values_buf, indices_buf, numel = _sort_gpu(a, dim, descending)
+        from ..._tensor import _compute_strides
+        out_shape = tuple(a.shape)
+        out_stride = _compute_strides(out_shape)
+        values = _from_metal_buffer(values_buf, out_shape, out_stride,
+                                    a.dtype, a.device)
+        # Convert int32 indices to int64
+        idx_np = np.frombuffer(
+            _metal_buf_to_bytes(indices_buf, numel * 4),
+            dtype=np.int32).astype(np.int64).reshape(a.shape)
+        indices = _from_numpy(idx_np, int64_dtype, a.device)
+        return (values, indices)
     arr = _to_numpy(a)
     kind = "stable" if stable else "quicksort"
     if descending:
@@ -800,6 +884,16 @@ def sort(a, dim=-1, descending=False, stable=False):
 
 
 def topk(a, k, dim=-1, largest=True, sorted=True):
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)):
+        values, indices = sort(a, dim=dim, descending=largest)
+        # Slice first k along dim
+        ndim = len(a.shape)
+        if dim < 0:
+            dim = ndim + dim
+        slices = [slice(None)] * ndim
+        slices[dim] = slice(0, k)
+        return (values[tuple(slices)], indices[tuple(slices)])
     arr = _to_numpy(a)
     if largest:
         idx = np.argsort(-arr, axis=dim)
@@ -3343,6 +3437,8 @@ def prod_(a, dim=None, keepdim=False):
 
 
 def floor_divide(a, b):
+    if _can_use_gpu(a):
+        return _dispatch_binary_gpu(a, b, "floor_divide")
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     out = np.floor_divide(a_np, b_np)
