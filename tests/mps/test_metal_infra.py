@@ -1,5 +1,6 @@
 """Tests for MPS Metal infrastructure: multi-dtype, strided access,
 axis reduction, and comparison ops."""
+import math
 import numpy as np
 import pytest
 import candle as torch
@@ -1566,3 +1567,172 @@ class TestP2GPUOps:
         out = torch.roll(a, -1, 0)
         ref = np.roll(a_np, -1, axis=0)
         np.testing.assert_allclose(out.cpu().numpy(), ref)
+
+
+# ---------------------------------------------------------------------------
+# P3: Math, trig, error funcs, activations, predicates
+# ---------------------------------------------------------------------------
+
+class TestP3UnaryMath:
+    """log1p, expm1, reciprocal on GPU."""
+
+    @pytest.mark.parametrize("op,np_op", [
+        ("log1p", np.log1p),
+        ("expm1", np.expm1),
+    ])
+    def test_unary_math(self, op, np_op):
+        a_np = np.random.rand(64).astype(np.float32) + 0.1
+        a = torch.tensor(a_np, device="mps")
+        out = getattr(torch, op)(a).cpu().numpy()
+        np.testing.assert_allclose(out, np_op(a_np), rtol=1e-5, atol=1e-6)
+
+    def test_reciprocal(self):
+        a_np = np.random.rand(64).astype(np.float32) + 0.5
+        a = torch.tensor(a_np, device="mps")
+        out = torch.reciprocal(a).cpu().numpy()
+        np.testing.assert_allclose(out, 1.0 / a_np, rtol=1e-5, atol=1e-6)
+
+
+class TestP3Trig:
+    """sinh, cosh, asinh, acosh, atanh, asin, acos, atan, atan2."""
+
+    @pytest.mark.parametrize("op,np_op", [
+        ("sinh", np.sinh),
+        ("cosh", np.cosh),
+        ("asinh", np.arcsinh),
+        ("atanh", np.arctanh),
+        ("asin", np.arcsin),
+        ("acos", np.arccos),
+        ("atan", np.arctan),
+    ])
+    def test_trig_unary(self, op, np_op):
+        a_np = np.random.uniform(-0.9, 0.9, 64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = getattr(torch, op)(a).cpu().numpy()
+        np.testing.assert_allclose(out, np_op(a_np), rtol=1e-5, atol=1e-5)
+
+    def test_acosh(self):
+        a_np = np.random.uniform(1.1, 5.0, 64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.acosh(a).cpu().numpy()
+        np.testing.assert_allclose(out, np.arccosh(a_np), rtol=1e-5, atol=1e-5)
+
+    def test_atan2(self):
+        a_np = np.random.randn(64).astype(np.float32)
+        b_np = np.random.randn(64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.atan2(a, b).cpu().numpy()
+        np.testing.assert_allclose(out, np.arctan2(a_np, b_np), rtol=1e-5, atol=1e-5)
+
+
+class TestP3ErrorFuncs:
+    """erf, erfc on GPU."""
+
+    def test_erf(self):
+        a_np = np.linspace(-3, 3, 128).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.erf(a).cpu().numpy()
+        ref = np.vectorize(math.erf)(a_np)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=2e-7)
+
+    def test_erfc(self):
+        a_np = np.linspace(-3, 3, 128).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.erfc(a).cpu().numpy()
+        ref = np.vectorize(math.erfc)(a_np)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=5e-7)
+
+
+class TestP3BinaryOps:
+    """hypot, logaddexp2 on GPU."""
+
+    def test_hypot(self):
+        a_np = np.random.randn(64).astype(np.float32)
+        b_np = np.random.randn(64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.hypot(a, b).cpu().numpy()
+        np.testing.assert_allclose(out, np.hypot(a_np, b_np), rtol=1e-5, atol=1e-6)
+
+    def test_logaddexp2(self):
+        a_np = np.random.randn(64).astype(np.float32)
+        b_np = np.random.randn(64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.logaddexp2(a, b).cpu().numpy()
+        np.testing.assert_allclose(out, np.logaddexp2(a_np, b_np), rtol=1e-4, atol=1e-5)
+
+
+class TestP3Activations:
+    """elu, mish, hardswish, hardsigmoid, softsign on GPU."""
+
+    def test_elu(self):
+        a_np = np.random.randn(128).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.elu(a, alpha=1.0).cpu().numpy()
+        ref = np.where(a_np > 0, a_np, 1.0 * (np.exp(a_np) - 1))
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+    def test_mish(self):
+        a_np = np.random.randn(128).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.mish(a).cpu().numpy()
+        ref = a_np * np.tanh(np.log1p(np.exp(a_np)))
+        np.testing.assert_allclose(out, ref, rtol=1e-4, atol=1e-5)
+
+    def test_hardswish(self):
+        a_np = np.random.randn(128).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.hardswish(a).cpu().numpy()
+        ref = a_np * np.clip(a_np + 3.0, 0.0, 6.0) / 6.0
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+    def test_hardsigmoid(self):
+        a_np = np.random.randn(128).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.hardsigmoid(a).cpu().numpy()
+        ref = np.clip(a_np + 3.0, 0.0, 6.0) / 6.0
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+    def test_softsign(self):
+        a_np = np.random.randn(128).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.softsign(a).cpu().numpy()
+        ref = a_np / (1.0 + np.abs(a_np))
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+
+class TestP3Predicates:
+    """signbit on GPU."""
+
+    def test_signbit(self):
+        a_np = np.array([-1.0, 0.0, 1.0, -0.5, float('inf'), float('-inf')],
+                        dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.signbit(a).cpu().numpy()
+        np.testing.assert_array_equal(out, np.signbit(a_np))
+
+
+class TestP3Lerp:
+    """lerp composite on GPU."""
+
+    def test_lerp_scalar_weight(self):
+        a_np = np.random.randn(64).astype(np.float32)
+        b_np = np.random.randn(64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        out = torch.lerp(a, b, 0.3).cpu().numpy()
+        ref = a_np + 0.3 * (b_np - a_np)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+    def test_lerp_tensor_weight(self):
+        a_np = np.random.randn(64).astype(np.float32)
+        b_np = np.random.randn(64).astype(np.float32)
+        w_np = np.random.rand(64).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        b = torch.tensor(b_np, device="mps")
+        w = torch.tensor(w_np, device="mps")
+        out = torch.lerp(a, b, w).cpu().numpy()
+        ref = a_np + w_np * (b_np - a_np)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)

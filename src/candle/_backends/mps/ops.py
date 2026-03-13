@@ -1918,6 +1918,8 @@ def square(a):
 
 
 def signbit(a):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return _dispatch_unary_predicate_gpu(a, "signbit")
     arr = np.signbit(_to_numpy(a))
     return _from_numpy(arr, bool_dtype, a.device)
 
@@ -1944,32 +1946,46 @@ def isfinite(a):
 
 
 def sinh(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "sinh")
     return _from_numpy(np.sinh(_to_numpy(a)), a.dtype, a.device)
 
 
 def cosh(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "cosh")
     return _from_numpy(np.cosh(_to_numpy(a)), a.dtype, a.device)
 
 
 def asinh(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "asinh")
     return _from_numpy(np.arcsinh(_to_numpy(a)), a.dtype, a.device)
 
 
 def acosh(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "acosh")
     return _from_numpy(np.arccosh(_to_numpy(a)), a.dtype, a.device)
 
 
 def atanh(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "atanh")
     return _from_numpy(np.arctanh(_to_numpy(a)), a.dtype, a.device)
 
 
 def erf(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "erf")
     arr = _to_numpy(a)
     out = np.vectorize(math.erf)(arr)
     return _from_numpy(out, a.dtype, a.device)
 
 
 def erfc(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "erfc")
     arr = _to_numpy(a)
     out = np.vectorize(math.erfc)(arr)
     return _from_numpy(out, a.dtype, a.device)
@@ -2019,12 +2035,23 @@ def leaky_relu(a, negative_slope=0.01):
 
 
 def elu(a, alpha=1.0):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        # elu(x) = x if x > 0, alpha*(exp(x)-1) otherwise
+        relu_a = _dispatch_unary_gpu(a, "relu")
+        exp_a = _dispatch_unary_gpu(a, "exp")
+        elu_part = mul(sub(exp_a, 1.0), alpha)
+        neg_part = clamp(elu_part, None, 0.0)
+        return add(relu_a, neg_part)
     arr = _to_numpy(a)
     out = np.where(arr > 0, arr, alpha * (np.exp(arr) - 1))
     return _from_numpy(out, a.dtype, a.device)
 
 
 def mish(a):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        # mish(x) = x * tanh(softplus(x)) = x * tanh(log(1 + exp(x)))
+        sp = softplus(a)
+        return mul(a, _dispatch_unary_gpu(sp, "tanh"))
     arr = _to_numpy(a)
     out = arr * np.tanh(np.log1p(np.exp(arr)))
     return _from_numpy(out, a.dtype, a.device)
@@ -2208,18 +2235,33 @@ def max_(a, b):
 
 
 def hardswish(a):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        # hardswish(x) = x * clamp(x + 3, 0, 6) / 6
+        shifted = add(a, 3.0)
+        clamped = clamp(shifted, 0.0, 6.0)
+        return div(mul(a, clamped), 6.0)
     arr = _to_numpy(a).astype(np.float64)
     out = arr * np.clip(arr + 3.0, 0.0, 6.0) / 6.0
     return _from_numpy(out.astype(to_numpy_dtype(a.dtype)), a.dtype, a.device)
 
 
 def hardsigmoid(a):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        # hardsigmoid(x) = clamp(x + 3, 0, 6) / 6
+        shifted = add(a, 3.0)
+        clamped = clamp(shifted, 0.0, 6.0)
+        return div(clamped, 6.0)
     arr = _to_numpy(a).astype(np.float64)
     out = np.clip(arr + 3.0, 0.0, 6.0) / 6.0
     return _from_numpy(out.astype(to_numpy_dtype(a.dtype)), a.dtype, a.device)
 
 
 def softsign(a):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        # softsign(x) = x / (1 + |x|)
+        abs_a = _dispatch_unary_gpu(a, "abs")
+        denom = add(abs_a, 1.0)
+        return div(a, denom)
     arr = _to_numpy(a).astype(np.float64)
     out = arr / (1.0 + np.abs(arr))
     return _from_numpy(out.astype(to_numpy_dtype(a.dtype)), a.dtype, a.device)
@@ -2317,22 +2359,37 @@ def where(cond, x, y):
 
 
 def atan(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "atan")
     return _from_numpy(np.arctan(_to_numpy(a)), a.dtype, a.device)
 
 
 def atan2(a, b):
+    if isinstance(a, Tensor) and isinstance(b, Tensor) and _can_use_gpu(a) and _can_use_gpu(b):
+        return _dispatch_binary_gpu(a, b, "atan2")
     return _from_numpy(np.arctan2(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
 
 
 def asin(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "asin")
     return _from_numpy(np.arcsin(_to_numpy(a)), a.dtype, a.device)
 
 
 def acos(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "acos")
     return _from_numpy(np.arccos(_to_numpy(a)), a.dtype, a.device)
 
 
 def lerp(a, b, weight):
+    if _can_use_gpu(a) and _can_use_gpu(b):
+        # lerp(a, b, w) = a + w * (b - a)
+        diff = sub(b, a)
+        if isinstance(weight, Tensor):
+            return add(a, mul(diff, weight))
+        else:
+            return add(a, mul(diff, weight))
     arr_a = _to_numpy(a)
     arr_b = _to_numpy(b)
     if isinstance(weight, Tensor):
@@ -2370,10 +2427,14 @@ def logaddexp(a, b):
 
 
 def logaddexp2(a, b):
+    if isinstance(a, Tensor) and isinstance(b, Tensor) and _can_use_gpu(a) and _can_use_gpu(b):
+        return _dispatch_binary_gpu(a, b, "logaddexp2")
     return _from_numpy(np.logaddexp2(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
 
 
 def hypot(a, b):
+    if isinstance(a, Tensor) and isinstance(b, Tensor) and _can_use_gpu(a) and _can_use_gpu(b):
+        return _dispatch_binary_gpu(a, b, "hypot")
     return _from_numpy(np.hypot(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
 
 
@@ -3716,14 +3777,20 @@ def sub(a, b):
 
 
 def log1p(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "log1p")
     return _from_numpy(np.log1p(_to_numpy(a)), a.dtype, a.device)
 
 
 def expm1(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "expm1")
     return _from_numpy(np.expm1(_to_numpy(a)), a.dtype, a.device)
 
 
 def reciprocal(a):
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "reciprocal")
     return _from_numpy(1.0 / _to_numpy(a), a.dtype, a.device)
 
 

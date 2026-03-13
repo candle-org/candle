@@ -24,6 +24,9 @@ _FLOAT_ONLY_OPS = frozenset({
     "sqrt", "rsqrt", "exp", "log", "log2", "sin", "cos", "tanh",
     "sigmoid", "gelu", "silu", "floor", "ceil", "round",
     "tan", "trunc", "log10", "exp2", "square",
+    "log1p", "expm1", "reciprocal", "sinh", "cosh",
+    "asinh", "acosh", "atanh", "asin", "acos", "atan",
+    "erf", "erfc",
 })
 
 # ---------------------------------------------------------------------------
@@ -1383,6 +1386,23 @@ def _gen_pad_constant(types=None):
 _HEADER = """
 #include <metal_stdlib>
 using namespace metal;
+
+// Abramowitz & Stegun approximation for erf (max error ~1.5e-7)
+inline float _metal_erf(float x) {
+    float ax = abs(x);
+    float t = 1.0f / (1.0f + 0.3275911f * ax);
+    float t2 = t * t;
+    float t3 = t2 * t;
+    float t4 = t3 * t;
+    float t5 = t4 * t;
+    float y = 1.0f - (0.254829592f * t - 0.284496736f * t2
+              + 1.421413741f * t3 - 1.453152027f * t4
+              + 1.061405429f * t5) * exp(-ax * ax);
+    return x >= 0.0f ? y : -y;
+}
+inline half _metal_erf(half x) {
+    return half(_metal_erf(float(x)));
+}
 """
 
 # --- Binary element-wise ---
@@ -1400,6 +1420,9 @@ _BINARY_FLOAT_OPS = (
     ("fmod", "fmod(a[id], b[id])"),
     ("remainder", "a[id] - b[id] * floor(a[id] / b[id])"),
     ("logaddexp", "log(exp(a[id]) + exp(b[id]))"),
+    ("atan2", "atan2(a[id], b[id])"),
+    ("hypot", "sqrt(a[id] * a[id] + b[id] * b[id])"),
+    ("logaddexp2", "log2(exp2(a[id]) + exp2(b[id]))"),
 )
 
 # --- Unary element-wise (numeric types: float, half, int, long) ---
@@ -1430,6 +1453,19 @@ _UNARY_FLOAT_OPS = (
     ("log10", "log10(x)"),
     ("exp2", "exp2(x)"),
     ("square", "x * x"),
+    ("log1p", "log(1.0 + x)"),
+    ("expm1", "exp(x) - 1.0"),
+    ("reciprocal", "1.0 / x"),
+    ("sinh", "sinh(x)"),
+    ("cosh", "cosh(x)"),
+    ("asinh", "asinh(x)"),
+    ("acosh", "acosh(x)"),
+    ("atanh", "atanh(x)"),
+    ("asin", "asin(x)"),
+    ("acos", "acos(x)"),
+    ("atan", "atan(x)"),
+    ("erf", "_metal_erf(x)"),
+    ("erfc", "1.0f - _metal_erf(x)"),
 )
 
 # --- Comparison ops ---
@@ -1868,10 +1904,11 @@ def _build_msl_source():
     # Clamp with 2 scalars (min + max)
     parts.append(_gen_clamp())
 
-    # Unary predicate ops (float → bool): isinf, isnan, isfinite
+    # Unary predicate ops (float → bool): isinf, isnan, isfinite, signbit
     parts.append(_gen_unary_predicate("isinf", "isinf(a[id])"))
     parts.append(_gen_unary_predicate("isnan", "isnan(a[id])"))
     parts.append(_gen_unary_predicate("isfinite", "isfinite(a[id])"))
+    parts.append(_gen_unary_predicate("signbit", "signbit(a[id])"))
 
     # Full-tensor reductions (multi-dtype)
     # sum: identity=0, combine=add
