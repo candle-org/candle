@@ -19,7 +19,11 @@ from . import runtime as npu_runtime
 # leave the NPU, avoiding the D2H/H2D round-trip penalty.
 
 _FALLBACK_OPS = {
-    "910a": frozenset(),
+    "910a": frozenset({
+        # 6-op allclose composite (abs/sub/mul/add/le/all_) triggers ACLNN 561000
+        # after executor pool pressure; use isclose (single kernel) + all_ instead.
+        "allclose",
+    }),
     "910b": frozenset({
         # torch_npu: CPU fallback; candle: on-device composite
         "std",              # aclnnVar all-reduce fails with 161002

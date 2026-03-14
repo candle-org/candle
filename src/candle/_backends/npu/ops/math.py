@@ -259,8 +259,8 @@ def isinf(a):
             stream=stream.stream,
         )
         runtime.defer_free(tmp_ptr)
+        runtime.defer_free(out_ptr)  # free the unused initial allocation
         out_ptr = tmp_bool_ptr
-        runtime.defer_free(tmp_bool_ptr)
     else:
         # TODO: re-enable native aclnnIsInf when CANN fixes 161001
         aclnn.isinf(

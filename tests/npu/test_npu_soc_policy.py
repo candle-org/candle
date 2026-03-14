@@ -2,7 +2,7 @@ from candle._backends.npu import ops_soc
 
 
 def test_soc_policy_profile_mapping_contains_expected_profiles():
-    assert ops_soc.fallback_ops("910a") == frozenset()
+    assert "allclose" in ops_soc.fallback_ops("910a")
     assert "std" in ops_soc.fallback_ops("910b")
     assert ops_soc.fallback_ops("310p") == frozenset()
     assert "uniform_" in ops_soc.fallback_ops("310b")
@@ -50,6 +50,14 @@ def test_soc_910b_fallback_ops_cover_expected_watchlist_set():
         "im2col",
     }
     got = set(ops_soc.fallback_ops("910b"))
+    assert got == expected
+
+
+def test_soc_910a_fallback_ops_cover_expected_watchlist_set():
+    expected = {
+        "allclose",
+    }
+    got = set(ops_soc.fallback_ops("910a"))
     assert got == expected
 
 

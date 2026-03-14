@@ -209,8 +209,10 @@ class _Runtime:
             return
         self.activate()
         from . import allocator as npu_allocator
+        from . import aclnn as _aclnn
 
         npu_allocator.get_allocator(self.device_id).synchronize()
+        _aclnn.flush_deferred_executors()
         frees = self._deferred_frees
         self._deferred_frees = []
         for ptr in frees:

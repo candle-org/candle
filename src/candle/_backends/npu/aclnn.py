@@ -4196,6 +4196,29 @@ def _defer_executor(executor):
     _DEFERRED_EXECUTORS.append(executor)
 
 
+def flush_deferred_executors():
+    """Destroy all deferred ACLNN executors to prevent pool exhaustion.
+
+    Called by runtime.synchronize() so that executor handles are reclaimed
+    at the same sync point that drains workspace memory.  Without this,
+    the executor list grows unboundedly and eventually causes
+    aclnnMatmulGetWorkspaceSize (and other ops) to fail with 561103.
+    """
+    global _DEFERRED_EXECUTORS  # pylint: disable=global-statement
+    if not _DEFERRED_EXECUTORS:
+        return
+    bindings = _BINDINGS
+    if bindings is None:
+        return
+    executors = _DEFERRED_EXECUTORS
+    _DEFERRED_EXECUTORS = []
+    for executor in executors:
+        try:
+            bindings.acl_destroy_executor(executor)
+        except Exception:
+            pass
+
+
 def get_bindings():
     global _BINDINGS
     if _BINDINGS is None:
