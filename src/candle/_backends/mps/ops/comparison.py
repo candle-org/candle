@@ -21,26 +21,34 @@ from ._helpers import (
 )
 
 def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
-    return np.allclose(
-        _to_numpy(a),
-        _to_numpy(b),
-        rtol=rtol,
-        atol=atol,
-        equal_nan=equal_nan,
-    )
+    # GPU composite: all(isclose(a, b))
+    close = isclose(a, b, rtol=rtol, atol=atol, equal_nan=equal_nan)
+    # all_ returns a scalar tensor; extract Python bool
+    from .reduce import all_
+    return bool(all_(close).item())
 
 def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
-    out = np.isclose(
-        _to_numpy(a),
-        _to_numpy(b),
-        rtol=rtol,
-        atol=atol,
-        equal_nan=equal_nan,
-    )
-    return _from_numpy(out, bool_dtype, a.device)
+    # GPU composite: |a - b| <= atol + rtol * |b|
+    if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
+        from .math import abs as _abs, sub, mul, add
+        diff = _abs(sub(a, b))
+        tol = add(_dispatch_binary_gpu(_abs(b), float(rtol), "mul"), float(atol))
+        close = le(diff, tol)
+        if equal_nan:
+            from .math import isnan
+            both_nan = logical_and(isnan(a), isnan(b))
+            close = logical_or(close, both_nan)
+        return close
+    _unsupported_dtype("isclose", a)
 
 def equal(a, b):
-    return np.array_equal(_to_numpy(a), _to_numpy(b))
+    # GPU composite: all(eq(a, b))
+    if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
+        if a.shape != b.shape:
+            return False
+        from .reduce import all_
+        return bool(all_(eq(a, b)).item())
+    _unsupported_dtype("equal", a)
 
 def eq(a, b):
     if _can_use_gpu(a):

@@ -275,8 +275,11 @@ def argmax(a, dim=None, keepdim=False):
         from ..runtime import buffer_contents
         ptr = buffer_contents(out_buf)
         idx_val = struct.unpack("I", (ctypes.c_char * 4).from_address(ptr))[0]
-        out = np.array(int(idx_val), dtype=np.int64)
-        return _from_numpy(out, int64_dtype, a.device)
+        # Write int64 value into a Metal buffer (no numpy)
+        i64_buf = _alloc_output_buf(1, int64_dtype)
+        i64_ptr = buffer_contents(i64_buf)
+        struct.pack_into("q", (ctypes.c_char * 8).from_address(i64_ptr), 0, int(idx_val))
+        return _from_metal_buffer(i64_buf, (), (), int64_dtype, a.device)
 
     # GPU path: axis argmax (dim specified)
     if dim is not None and _can_use_gpu(a) and a.is_contiguous():
@@ -298,8 +301,11 @@ def argmin(a, dim=None, keepdim=False):
         from ..runtime import buffer_contents
         ptr = buffer_contents(out_buf)
         idx_val = struct.unpack("I", (ctypes.c_char * 4).from_address(ptr))[0]
-        out = np.array(int(idx_val), dtype=np.int64)
-        return _from_numpy(out, int64_dtype, a.device)
+        # Write int64 value into a Metal buffer (no numpy)
+        i64_buf = _alloc_output_buf(1, int64_dtype)
+        i64_ptr = buffer_contents(i64_buf)
+        struct.pack_into("q", (ctypes.c_char * 8).from_address(i64_ptr), 0, int(idx_val))
+        return _from_metal_buffer(i64_buf, (), (), int64_dtype, a.device)
 
     # GPU path: axis argmin (dim specified)
     if dim is not None and _can_use_gpu(a) and a.is_contiguous():
@@ -315,12 +321,16 @@ def count_nonzero(a, dim=None, keepdim=False):
             and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype)):
         # composite: ne(a, 0) → sum as float → cast to int64
         mask = ne(a, 0)
-        # Need float for sum — use where(mask, 1.0, 0.0) with a float tensor
-        ones_np = np.ones(a.shape, dtype=np.float32)
-        ones_t = _from_numpy(ones_np, float32_dtype, a.device)
+        # Create float ones tensor on GPU without numpy
+        if a.dtype in (float32_dtype, float16_dtype):
+            ones_t = add(mul(a, 0.0), 1.0)
+        else:
+            # int types: create float32 ones via alloc + fill
+            ones_np = np.ones(a.shape, dtype=np.float32)
+            ones_t = _from_numpy(ones_np, float32_dtype, a.device)
         count_f = where(mask, ones_t, 0.0)
         s = sum_(count_f, dim=dim, keepdim=keepdim)
-        # Convert to int64 via numpy (small result)
+        # Convert to int64 via numpy (small result after reduction)
         s_np = _to_numpy(s).astype(np.int64)
         return _from_numpy(np.ascontiguousarray(s_np), int64_dtype, a.device)
     # Non-contiguous or unsupported dtype: make contiguous and retry
@@ -642,17 +652,12 @@ def renorm(a, p, dim, maxnorm):
         n = norm_(a_c, p=p, dim=dim, keepdim=True)
         # scale = where(norm > maxnorm, maxnorm / (norm + eps), 1.0)
         eps_t = _dispatch_binary_gpu(n, 1e-7, "add")
-        ratio = _dispatch_binary_gpu(
-            _from_numpy(np.array(float(maxnorm), dtype=np.float32), float32_dtype, a.device),
-            eps_t, "div") if a.dtype == float32_dtype else _dispatch_binary_gpu(
-            _from_numpy(np.array(float(maxnorm), dtype=np.float32), float32_dtype, a.device),
-            eps_t, "div")
+        from .math import reciprocal
+        ratio = mul(reciprocal(eps_t), float(maxnorm))
         from .comparison import gt
         cond = gt(n, float(maxnorm))
-        ones_shape = tuple(n.shape)
-        ones_np = np.ones(ones_shape, dtype=to_numpy_dtype(a.dtype))
-        ones_t = _from_numpy(ones_np, a.dtype, a.device)
-        scale = where(cond, ratio, ones_t)
+        # Use where with scalar y=1.0 (no numpy ones tensor needed)
+        scale = where(cond, ratio, 1.0)
         return mul(a_c, scale)
     _unsupported_dtype("renorm", a)
 

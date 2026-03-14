@@ -1,7 +1,6 @@
 import math
 import ctypes
 import struct
-import numpy as np
 
 from ._helpers import (
     _can_use_gpu, _empty_like, _unsupported_dtype,
@@ -174,7 +173,7 @@ def pow(a, b):
             d.dispatch_binary(f"pow_{sfx}", _metal_buf(a), _metal_buf(b),
                               out_buf, numel)
         else:
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+            scalar = float(b) if not isinstance(b, Tensor) else float(b.item())
             d.dispatch_binary_scalar(f"pow_scalar_{sfx}", _metal_buf(a),
                                      scalar, out_buf, numel,
                                      scalar_fmt=_scalar_fmt(a.dtype))
@@ -229,11 +228,9 @@ def square(a):
 def signbit(a):
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         return _dispatch_unary_predicate_gpu(a, "signbit")
-    # Integer types: signbit is always False for unsigned, check sign for signed
+    # Integer types: check sign via GPU comparison
     if _can_use_gpu(a) and a.dtype in (int32_dtype, int64_dtype):
         from .comparison import lt
-        from ...._tensor import _compute_strides
-        zero_buf = _alloc_output_buf(a.numel(), a.dtype)
         return lt(a, 0)
     if a.numel() == 0:
         return _empty_like(a)
@@ -242,10 +239,10 @@ def signbit(a):
 def isnan(a):
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         return _dispatch_unary_predicate_gpu(a, "isnan")
-    # Integer/bool types: never NaN
+    # Integer/bool types: never NaN → ne(a, a) is always False
     if _can_use_gpu(a) and a.dtype in (int32_dtype, int64_dtype, bool_dtype):
-        out = np.zeros(a.shape, dtype=np.uint8)
-        return _from_numpy(out, bool_dtype, a.device)
+        from .comparison import ne
+        return ne(a, a)
     if a.numel() == 0:
         return _empty_like(a)
     _unsupported_dtype("isnan", a)
@@ -253,10 +250,10 @@ def isnan(a):
 def isinf(a):
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         return _dispatch_unary_predicate_gpu(a, "isinf")
-    # Integer/bool types: never inf
+    # Integer/bool types: never inf → ne(a, a) is always False
     if _can_use_gpu(a) and a.dtype in (int32_dtype, int64_dtype, bool_dtype):
-        out = np.zeros(a.shape, dtype=np.uint8)
-        return _from_numpy(out, bool_dtype, a.device)
+        from .comparison import ne
+        return ne(a, a)
     if a.numel() == 0:
         return _empty_like(a)
     _unsupported_dtype("isinf", a)
@@ -264,10 +261,10 @@ def isinf(a):
 def isfinite(a):
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         return _dispatch_unary_predicate_gpu(a, "isfinite")
-    # Integer/bool types: always finite
+    # Integer/bool types: always finite → eq(a, a) is always True
     if _can_use_gpu(a) and a.dtype in (int32_dtype, int64_dtype, bool_dtype):
-        out = np.ones(a.shape, dtype=np.uint8)
-        return _from_numpy(out, bool_dtype, a.device)
+        from .comparison import eq
+        return eq(a, a)
     if a.numel() == 0:
         return _empty_like(a)
     _unsupported_dtype("isfinite", a)
@@ -276,9 +273,10 @@ def isneginf(a):
     """Returns a bool tensor indicating negative infinity."""
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         return _dispatch_unary_predicate_gpu(a, "isneginf")
+    # Integer/bool types: never -inf → ne(a, a) is always False
     if _can_use_gpu(a) and a.dtype in (int32_dtype, int64_dtype, bool_dtype):
-        out = np.zeros(a.shape, dtype=np.uint8)
-        return _from_numpy(out, bool_dtype, a.device)
+        from .comparison import ne
+        return ne(a, a)
     if a.numel() == 0:
         return _empty_like(a)
     _unsupported_dtype("isneginf", a)
@@ -287,19 +285,23 @@ def isposinf(a):
     """Returns a bool tensor indicating positive infinity."""
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         return _dispatch_unary_predicate_gpu(a, "isposinf")
+    # Integer/bool types: never +inf → ne(a, a) is always False
     if _can_use_gpu(a) and a.dtype in (int32_dtype, int64_dtype, bool_dtype):
-        out = np.zeros(a.shape, dtype=np.uint8)
-        return _from_numpy(out, bool_dtype, a.device)
+        from .comparison import ne
+        return ne(a, a)
     if a.numel() == 0:
         return _empty_like(a)
     _unsupported_dtype("isposinf", a)
 
 def isreal(a):
     """Returns a bool tensor indicating real-valued elements."""
-    # Candle has no complex dtype support; all tensors are real
-    from ...._tensor import _compute_strides
-    ones = np.ones(a.shape, dtype=np.uint8)
-    return _from_numpy(ones, bool_dtype, a.device)
+    # Candle has no complex dtype support; all tensors are real → eq(a, a)
+    if _can_use_gpu(a):
+        from .comparison import eq
+        return eq(a, a)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("isreal", a)
 
 def sinh(a):
     if _can_use_gpu(a):
