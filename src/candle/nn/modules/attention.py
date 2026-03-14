@@ -1,7 +1,10 @@
+import math
+
 from ..module import Module
 from ..parameter import Parameter
-from ..._creation import tensor
+from ..._creation import empty
 from .. import functional as F
+from .. import init as init
 
 
 class MultiheadAttention(Module):
@@ -19,24 +22,32 @@ class MultiheadAttention(Module):
         self._qkv_same_embed_dim = self.kdim == embed_dim and self.vdim == embed_dim
 
         if self._qkv_same_embed_dim:
-            w = tensor([[0.0] * embed_dim for _ in range(3 * embed_dim)])
-            self.in_proj_weight = Parameter(w)
+            self.in_proj_weight = Parameter(empty(3 * embed_dim, embed_dim, device=device, dtype=dtype))
             self.register_parameter('q_proj_weight', None)
             self.register_parameter('k_proj_weight', None)
             self.register_parameter('v_proj_weight', None)
         else:
             self.register_parameter('in_proj_weight', None)
-            self.q_proj_weight = Parameter(tensor([[0.0] * embed_dim for _ in range(embed_dim)]))
-            self.k_proj_weight = Parameter(tensor([[0.0] * self.kdim for _ in range(embed_dim)]))
-            self.v_proj_weight = Parameter(tensor([[0.0] * self.vdim for _ in range(embed_dim)]))
+            self.q_proj_weight = Parameter(empty(embed_dim, embed_dim, device=device, dtype=dtype))
+            self.k_proj_weight = Parameter(empty(embed_dim, self.kdim, device=device, dtype=dtype))
+            self.v_proj_weight = Parameter(empty(embed_dim, self.vdim, device=device, dtype=dtype))
 
         if bias:
-            self.in_proj_bias = Parameter(tensor([0.0] * 3 * embed_dim))
+            self.in_proj_bias = Parameter(empty(3 * embed_dim, device=device, dtype=dtype))
         else:
             self.register_parameter('in_proj_bias', None)
 
         from .linear import Linear
-        self.out_proj = Linear(embed_dim, embed_dim, bias=bias)
+        self.out_proj = Linear(embed_dim, embed_dim, bias=bias, device=device, dtype=dtype)
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        if self._qkv_same_embed_dim:
+            init.xavier_uniform_(self.in_proj_weight)
+        else:
+            init.xavier_uniform_(self.q_proj_weight)
+            init.xavier_uniform_(self.k_proj_weight)
+            init.xavier_uniform_(self.v_proj_weight)
 
     def forward(self, query, key, value, key_padding_mask=None, need_weights=True,
                 attn_mask=None, average_attn_weights=True, is_causal=False):
@@ -95,8 +106,18 @@ class MultiheadAttention(Module):
                 attn_mask = kpm_mask
 
         dropout_p = self.dropout if self.training else 0.0
-        attn_output = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal)
+
+        if need_weights:
+            # Manual attention computation to return weights
+            scale = 1.0 / math.sqrt(head_dim)
+            attn_weights = F.matmul(q, k.transpose(-2, -1)) * scale
+            if attn_mask is not None:
+                attn_weights = attn_weights + attn_mask
+            attn_weights = F.softmax(attn_weights, dim=-1)
+            attn_output = F.matmul(attn_weights, v)
+        else:
+            attn_output = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal)
 
         # (N, H, L, D) -> (N, L, H, D) -> (N, L, E) -> (L, N, E)
         attn_output = attn_output.transpose(1, 2).reshape(bsz, tgt_len, embed_dim)
@@ -109,6 +130,10 @@ class MultiheadAttention(Module):
         if self.batch_first:
             attn_output = attn_output.transpose(0, 1)
 
+        if need_weights:
+            if average_attn_weights:
+                attn_weights = attn_weights.mean(dim=1)
+            return attn_output, attn_weights
         return attn_output, None
 
     def extra_repr(self):

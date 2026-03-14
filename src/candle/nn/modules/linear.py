@@ -1,7 +1,10 @@
+import math
+
 from ..module import Module
 from ..parameter import Parameter
-from ..._creation import empty, randn
+from ..._creation import empty
 from .. import functional as F
+from .. import init as init
 
 
 class Linear(Module):
@@ -9,15 +12,19 @@ class Linear(Module):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        import math
-        k = math.sqrt(1.0 / in_features)
-        w = randn(out_features, in_features, device=device, dtype=dtype) * k
-        self.weight = Parameter(w)
+        self.weight = Parameter(empty(out_features, in_features, device=device, dtype=dtype))
         if bias:
-            b = randn(out_features, device=device, dtype=dtype) * k
-            self.bias = Parameter(b)
+            self.bias = Parameter(empty(out_features, device=device, dtype=dtype))
         else:
             self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_uniform_(self.weight, a=5 ** 0.5)
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            init.uniform_(self.bias, -bound, bound)
 
     def forward(self, input):
         return F.linear(input, self.weight, self.bias)
@@ -32,13 +39,19 @@ class Bilinear(Module):
         self.in1_features = in1_features
         self.in2_features = in2_features
         self.out_features = out_features
-        from ..._creation import tensor
-        w = tensor([[[0.0] * in2_features for _ in range(in1_features)] for _ in range(out_features)])
-        self.weight = Parameter(w)
+        self.weight = Parameter(empty(out_features, in1_features, in2_features, device=device, dtype=dtype))
         if bias:
-            self.bias = Parameter(tensor([0.0] * out_features))
+            self.bias = Parameter(empty(out_features, device=device, dtype=dtype))
         else:
             self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_uniform_(self.weight, a=5 ** 0.5)
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            init.uniform_(self.bias, -bound, bound)
 
     def forward(self, input1, input2):
         return F.bilinear(input1, input2, self.weight, self.bias)

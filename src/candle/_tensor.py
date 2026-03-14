@@ -652,6 +652,10 @@ class Tensor:
         out = dispatch("bernoulli_", self.device.type, self, p, generator=generator)
         return out
 
+    def multinomial(self, num_samples, replacement=False, *, generator=None):
+        from ._random import multinomial
+        return multinomial(self, num_samples, replacement=replacement, generator=generator)
+
     def exponential_(self, lambd=1.0, *, generator=None):
         from ._dispatch.dispatcher import dispatch
 
@@ -952,35 +956,8 @@ class Tensor:
             stride = tuple(np.array(arr.strides) // arr.itemsize)
             return Tensor(storage, arr.shape, stride)
         elif self.device.type == "npu":
-            from ._backends.npu import ops as npu_ops
-            from ._backends.npu import runtime as npu_runtime
-            from ._backends.npu import state as npu_state
-
-            runtime = npu_runtime.get_runtime((self.device.index or 0))
-            stream = npu_state.current_stream((self.device.index or 0))
-
-            # Allocate output buffer
-            from ._backends.npu.ops import _numel, _dtype_itemsize, _unwrap_storage, _wrap_tensor
-            out_size = _numel(self.shape) * _dtype_itemsize(dtype)
-            out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-
-            # Call aclnnCast
-            from ._backends.npu import aclnn
-            self_storage = _unwrap_storage(self)
-            aclnn.cast(
-                self_storage.data_ptr(),
-                out_ptr,
-                self.shape,
-                self.stride,
-                self.dtype,
-                dtype,
-                runtime,
-                stream=stream.stream,
-            )
-
-            # Wrap result
-            storage = npu_typed_storage_from_ptr(out_ptr, _numel(self.shape), dtype, device=self.device)
-            return _wrap_tensor(storage, self.shape, self.stride)
+            from ._backends.npu.ops._helpers import _cast_tensor_dtype
+            return _cast_tensor_dtype(self, dtype)
         elif self.device.type == "mps":
             from ._storage import mps_typed_storage_from_numpy
             arr = self._numpy_view()
