@@ -2,6 +2,7 @@ import inspect
 
 from .grad_mode import is_grad_enabled
 from .node import Node, InputMetadata
+from .anomaly_mode import annotate_node_creation
 
 
 class FunctionCtx:
@@ -115,7 +116,8 @@ class Function(metaclass=FunctionMeta):
             return cls.backward(ctx, grad)
 
         # Create Node
-        node = Node(_backward, input_tensors)
+        node = Node(_backward, input_tensors, name=f"{cls.__name__}Backward")
+        annotate_node_creation(node)
         node._input_metadata = [InputMetadata(t) for t in input_tensors]
 
         # Wire saved tensors through Node
@@ -125,22 +127,25 @@ class Function(metaclass=FunctionMeta):
 
         # Set grad_fn on outputs
         non_diff = ctx._non_differentiable
-        if isinstance(output, Tensor):
-            if id(output) not in non_diff:
-                output.grad_fn = node
-                output.requires_grad = True
+        def _mark_output(o):
+            if not isinstance(o, Tensor):
+                return
+            if id(o) not in non_diff:
+                o.grad_fn = node
+                o.requires_grad = True
+                if o._is_view():
+                    view_meta = dict(getattr(o, "_view_meta", None) or {})
+                    view_meta["creation_kind"] = "custom_function"
+                    o._view_meta = view_meta
             else:
-                output.grad_fn = None
-                output.requires_grad = False
+                o.grad_fn = None
+                o.requires_grad = False
+
+        if isinstance(output, Tensor):
+            _mark_output(output)
         elif isinstance(output, tuple):
             for o in output:
-                if isinstance(o, Tensor):
-                    if id(o) not in non_diff:
-                        o.grad_fn = node
-                        o.requires_grad = True
-                    else:
-                        o.grad_fn = None
-                        o.requires_grad = False
+                _mark_output(o)
 
         return output
 

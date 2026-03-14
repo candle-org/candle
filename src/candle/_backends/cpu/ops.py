@@ -12,7 +12,7 @@ from ..._dtype import int64 as int64_dtype
 from ..._dtype import from_numpy_dtype
 from ..._dtype import to_numpy_dtype
 from ..._storage import typed_storage_from_numpy
-from ..._tensor import Tensor
+from ..._tensor import Tensor, _StrideTuple
 
 
 def _to_numpy(t):
@@ -144,7 +144,8 @@ def div(a, b):
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     out_dtype = _binary_out_dtype(a, b, for_div=True)
-    out = np.true_divide(a_np, b_np).astype(to_numpy_dtype(out_dtype), copy=False)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = np.true_divide(a_np, b_np).astype(to_numpy_dtype(out_dtype), copy=False)
     return _from_numpy(out, out_dtype, a.device)
 
 
@@ -725,16 +726,13 @@ def dsplit(a, split_size_or_sections):
 
 
 def unbind(a, dim=0):
-    arr = _to_numpy(a)
-    if dim < 0:
-        dim += arr.ndim
-    dim_size = arr.shape[dim]
+    from ..._backends.common import view as view_backend
+
+    d = dim if dim >= 0 else dim + a.dim()
+    dim_size = a.shape[d]
     outputs = []
     for i in range(dim_size):
-        slices = [slice(None)] * arr.ndim
-        slices[dim] = i
-        out = np.ascontiguousarray(arr[tuple(slices)])
-        outputs.append(_from_numpy(out, a.dtype, a.device))
+        outputs.append(view_backend.select(a, d, i, creation_kind="multi_view"))
     return tuple(outputs)
 
 
@@ -959,7 +957,8 @@ def sub_(a, b):
 def div_(a, b):
     arr = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    arr /= b_np
+    with np.errstate(divide="ignore", invalid="ignore"):
+        arr /= b_np
     return a
 
 
@@ -1690,26 +1689,13 @@ def linalg_qr(a, mode='reduced'):
 # ---------------------------------------------------------------------------
 
 def narrow(a, dim, start, length):
-    from ..._tensor import Tensor
-    d = dim if dim >= 0 else dim + a.dim()
-    new_shape = list(a.shape)
-    new_shape[d] = int(length)
-    new_offset = a.offset + int(start) * a.stride[d]
-    return Tensor(a.storage(), tuple(new_shape), a.stride, new_offset)
+    from ..._backends.common import view as view_backend
+    return view_backend.narrow(a, dim, start, length)
 
 
 def select(a, dim, index):
-    from ..._tensor import Tensor
-    d = dim if dim >= 0 else dim + a.dim()
-    idx = int(index)
-    if idx < 0:
-        idx += a.shape[d]
-    new_shape = list(a.shape)
-    del new_shape[d]
-    new_stride = list(a.stride)
-    new_offset = a.offset + idx * a.stride[d]
-    del new_stride[d]
-    return Tensor(a.storage(), tuple(new_shape), tuple(new_stride), new_offset)
+    from ..._backends.common import view as view_backend
+    return view_backend.select(a, dim, index)
 
 
 def expand(a, sizes):

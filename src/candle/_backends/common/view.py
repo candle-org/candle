@@ -1,11 +1,22 @@
 from ..._tensor import Tensor
+from ...autograd.grad_mode import current_creation_mode
 
 
 def _get_base(tensor):
     return tensor._base if tensor._base is not None else tensor
 
 
-def _make_view(base, shape, stride, offset, op):
+def _make_view(base, shape, stride, offset, op, source=None, *, creation_kind=None):
+    source_view_meta = getattr(source, "_view_meta", None) or {}
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    inherited_kind = source_view_meta.get("creation_kind")
+    if creation_kind is None:
+        creation_kind = inherited_kind
+    if creation_mode is not None:
+        if getattr(source, "_is_view", lambda: False)():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
     view = Tensor(base.storage(), shape, stride, offset, requires_grad=base.requires_grad)
     view._base = base
     view._version_counter = base._version_counter
@@ -14,6 +25,8 @@ def _make_view(base, shape, stride, offset, op):
         "shape": tuple(shape),
         "stride": tuple(stride),
         "offset": int(offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
     }
     return view
 
@@ -55,7 +68,7 @@ def reshape(a, shape):
         raise ValueError("reshape size mismatch")
     stride = _contiguous_stride(shape)
     base = _get_base(a)
-    return _make_view(base, shape, stride, a.offset, "reshape")
+    return _make_view(base, shape, stride, a.offset, "reshape", source=a)
 
 
 def view(a, shape):
@@ -100,7 +113,7 @@ def view(a, shape):
 
     stride = _contiguous_stride(shape)
     base = _get_base(a)
-    return _make_view(base, shape, stride, a.offset, "view")
+    return _make_view(base, shape, stride, a.offset, "view", source=a)
 
 
 def transpose(a, dim0, dim1):
@@ -109,7 +122,7 @@ def transpose(a, dim0, dim1):
     shape[dim0], shape[dim1] = shape[dim1], shape[dim0]
     stride[dim0], stride[dim1] = stride[dim1], stride[dim0]
     base = _get_base(a)
-    return _make_view(base, shape, stride, a.offset, "transpose")
+    return _make_view(base, shape, stride, a.offset, "transpose", source=a)
 
 
 def squeeze(a, dim=None):
@@ -140,7 +153,7 @@ def squeeze(a, dim=None):
         shape = [p[0] for p in pairs]
         stride = [p[1] for p in pairs]
     base = _get_base(a)
-    return _make_view(base, shape, stride, a.offset, "squeeze")
+    return _make_view(base, shape, stride, a.offset, "squeeze", source=a)
 
 
 def unsqueeze(a, dim):
@@ -152,11 +165,34 @@ def unsqueeze(a, dim):
     shape.insert(d, 1)
     stride.insert(d, new_stride)
     base = _get_base(a)
-    return _make_view(base, shape, stride, a.offset, "unsqueeze")
+    return _make_view(base, shape, stride, a.offset, "unsqueeze", source=a)
+
+
+def narrow(a, dim, start, length, *, creation_kind=None):
+    d = dim if dim >= 0 else dim + len(a.shape)
+    new_shape = list(a.shape)
+    new_shape[d] = int(length)
+    new_offset = a.offset + int(start) * a.stride[d]
+    base = _get_base(a)
+    return _make_view(base, tuple(new_shape), a.stride, new_offset, "narrow", source=a, creation_kind=creation_kind)
+
+
+def select(a, dim, index, *, creation_kind=None):
+    d = dim if dim >= 0 else dim + len(a.shape)
+    idx = int(index)
+    if idx < 0:
+        idx += a.shape[d]
+    new_shape = list(a.shape)
+    del new_shape[d]
+    new_stride = list(a.stride)
+    new_offset = a.offset + idx * a.stride[d]
+    del new_stride[d]
+    base = _get_base(a)
+    return _make_view(base, tuple(new_shape), tuple(new_stride), new_offset, "select", source=a, creation_kind=creation_kind)
 
 
 def permute(a, dims):
     shape = [a.shape[d] for d in dims]
     stride = [a.stride[d] for d in dims]
     base = _get_base(a)
-    return _make_view(base, shape, stride, a.offset, "permute")
+    return _make_view(base, shape, stride, a.offset, "permute", source=a)

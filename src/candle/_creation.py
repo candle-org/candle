@@ -1,5 +1,4 @@
 import numpy as np
-
 from ._dtype import float32, int64
 from ._dtype import bool as bool_dtype
 from ._functional import tensor as tensor_dispatch

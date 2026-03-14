@@ -59,3 +59,101 @@ def test_inplace_npu_versioning():
     v0 = t._version_counter.value
     t.relu_()
     assert t._version_counter.value == v0 + 1
+
+
+
+def test_inplace_on_view_of_view_created_in_no_grad_raises():
+    x = torch.zeros(2)
+    with torch.no_grad():
+        y = x.view(2)
+    y.requires_grad_(True)
+    z = y.view(2)
+    with pytest.raises(RuntimeError, match=r"a view of a view .* inside the no_grad block"):
+        z.div_(2)
+
+
+
+def test_inplace_on_view_of_view_created_in_inference_mode_raises():
+    x = torch.zeros(2)
+    with torch.inference_mode():
+        y = x.view(2)
+    y.requires_grad_(True)
+    z = y.view(2)
+    with pytest.raises(RuntimeError, match=r"a view of a view .* inside the inference_mode"):
+        z.div_(2)
+
+
+
+def test_as_strided_inplace_updates_stride_without_nameerror():
+    x = torch.zeros(2, 3)
+    x.as_strided_((1, 0), (2, 2))
+    assert x.shape == (1, 0)
+    assert tuple(x.stride) == (2, 2)
+
+
+
+def test_inplace_view_op_on_view_created_with_set_grad_enabled_false_raises():
+    base = torch.rand(2, 3, requires_grad=True).clone()
+    with torch.set_grad_enabled(False):
+        inp = base.view_as(base)
+    with pytest.raises(RuntimeError, match=r"A view was created in no_grad mode"):
+        inp.as_strided_((1, 0), (2, 2))
+
+
+def test_inplace_view_op_on_no_grad_created_view_is_allowed_inside_no_grad_but_later_inplace_raises():
+    base = torch.rand(2, 3, requires_grad=True).clone()
+    with torch.set_grad_enabled(False):
+        inp = base.view_as(base)
+    with torch.set_grad_enabled(False):
+        inp.as_strided_((1, 0), (2, 2))
+    with pytest.raises(RuntimeError, match=r"A view was created in no_grad mode"):
+        inp.add_(1)
+
+
+def test_unbind_output_view_inplace_errors_like_multi_view_creation_meta():
+    base = torch.rand(2, 3, requires_grad=True).clone()
+    inp = base.unbind()[0]
+    with pytest.raises(RuntimeError, match=r"function that returns multiple views"):
+        inp.as_strided_((1, 0), (2, 2))
+
+
+def test_unbind_output_view_deferred_inplace_error_under_no_grad_matches_multi_view_creation_meta():
+    base = torch.rand(2, 3, requires_grad=True).clone()
+    inp = base.unbind()[0]
+    with torch.set_grad_enabled(False):
+        inp.as_strided_((1, 0), (2, 2))
+    with pytest.raises(RuntimeError, match=r"function that returns multiple views"):
+        inp.add_(1)
+
+
+class _ViewAutogradFunc(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x):
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad):
+        return grad
+
+
+def test_custom_function_view_inplace_errors_like_custom_creation_meta():
+    base = torch.rand(2, 3, requires_grad=True).clone()
+    inp = _ViewAutogradFunc.apply(base)
+    with pytest.raises(RuntimeError, match=r"view was created inside a custom Function"):
+        inp.as_strided_((1, 0), (2, 2))
+
+
+def test_custom_function_view_deferred_inplace_error_under_no_grad_matches_custom_creation_meta():
+    base = torch.rand(2, 3, requires_grad=True).clone()
+    inp = _ViewAutogradFunc.apply(base)
+    with torch.set_grad_enabled(False):
+        inp.as_strided_((1, 0), (2, 2))
+    with pytest.raises(RuntimeError, match=r"view was created inside a custom Function"):
+        inp.add_(1)
+
+
+def test_t_noop_on_unbind_output_still_checks_multi_view_creation_meta():
+    base = torch.rand(2, 3, requires_grad=True).clone()
+    inp = base.unbind()[0]
+    with pytest.raises(RuntimeError, match=r"function that returns multiple views"):
+        inp.t_()

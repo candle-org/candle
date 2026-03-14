@@ -1,6 +1,41 @@
+from enum import Enum
+
 from ..autograd.grad_mode import no_grad, enable_grad
 from ..autograd.engine import _run_backward
 from ..autograd.node import Node
+
+
+class CheckpointPolicy(str, Enum):
+    DEFAULT = "DEFAULT"
+
+
+class _CheckpointNode(Node):
+    def __init__(self, backward, inputs, recompute_saved_result):
+        super().__init__(backward, inputs)
+        self._recompute_saved_result = recompute_saved_result
+        self._checkpoint_released = False
+
+    def release_saved_tensors(self):
+        super().release_saved_tensors()
+        self._checkpoint_released = True
+
+    def __getattr__(self, name):
+        if name == "_saved_result":
+            if self._checkpoint_released:
+                raise RuntimeError(
+                    "Trying to backward through the graph a second time (or directly access saved tensors after they have already been freed). "
+                    "Saved intermediate values of the graph are freed when you call .backward() or autograd.grad(). "
+                    "Specify retain_graph=True if you need to backward through the graph a second time or if you need to access saved tensors after calling backward."
+                )
+            return self._recompute_saved_result()
+        return super().__getattr__(name)
+
+
+def create_selective_checkpoint_contexts(*args, **kwargs):  # noqa: ARG001
+    def _ctx():
+        return None
+
+    return _ctx, _ctx
 
 
 def checkpoint(function, *args, use_reentrant=True, preserve_rng_state=True, **kwargs):
@@ -73,7 +108,15 @@ def checkpoint(function, *args, use_reentrant=True, preserve_rng_state=True, **k
             all_grads[i] = g
         return tuple(all_grads)
 
-    node = Node(_checkpoint_backward, tuple(tensor_inputs))
+    def _recompute_saved_result():
+        new_args, _ = make_recompute_inputs()
+        with enable_grad():
+            recomputed = function(*new_args, **kwargs)
+        if isinstance(recomputed, tuple):
+            return recomputed[0]
+        return recomputed
+
+    node = _CheckpointNode(_checkpoint_backward, tuple(tensor_inputs), _recompute_saved_result)
     # Attach grad_fn to outputs and mark as requiring grad
     for out in outputs:
         if hasattr(out, 'grad_fn'):

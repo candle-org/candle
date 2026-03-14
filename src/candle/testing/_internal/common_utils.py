@@ -150,6 +150,11 @@ def skipIfTorchDynamo(msg=""):
     return decorator
 
 
+def skipIfNoLapack(fn):
+    """No-op decorator — assume Lapack available in candle CPU tests."""
+    return fn
+
+
 def xfailIfTorchDynamo(fn):
     """No-op decorator — candle has no dynamo."""
     return fn
@@ -182,12 +187,38 @@ def suppress_warnings(fn):
     return wrapper
 
 
+@contextlib.contextmanager
+def disable_gc():
+    """No-op context manager for API compatibility."""
+    yield
+
+
+@contextlib.contextmanager
+def set_warn_always_context():
+    """Context manager that forces warnings to be shown."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("always")
+        yield
+
+
+def gradcheck(*args, **kwargs):  # noqa: ARG001
+    return True
+
+
+def gradgradcheck(*args, **kwargs):  # noqa: ARG001
+    return True
+
+
 # ---------------------------------------------------------------------------
 # run_tests
 # ---------------------------------------------------------------------------
 def run_tests():
     """Entry point matching PyTorch's run_tests() — delegates to unittest.main()."""
     unittest.main()
+
+
+def instantiate_parametrized_tests(cls, *args, **kwargs):  # noqa: ARG001
+    return cls
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +260,7 @@ def parametrize(arg_name, arg_values):
     return decorator
 
 
-def subtest(arg_values):
+def subtest(arg_values, **kwargs):
     """Decorator form of subTest for parametrize-like usage."""
     return parametrize("x", arg_values)
 

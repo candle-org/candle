@@ -589,4 +589,65 @@ __all__ = [
     "special",
     "testing",
     "fx",
+    "strided",
+    "sparse_coo",
+    "sparse_csr",
+    "sparse_csc",
+    "sparse_bsr",
+    "sparse_bsc",
 ]
+
+
+strided = "strided"
+
+
+def sparse_coo(*args, **kwargs):  # noqa: ARG001
+    raise NotImplementedError("sparse_coo is not implemented in candle")
+
+
+def sparse_csr(*args, **kwargs):  # noqa: ARG001
+    raise NotImplementedError("sparse_csr is not implemented in candle")
+
+
+def sparse_csc(*args, **kwargs):  # noqa: ARG001
+    raise NotImplementedError("sparse_csc is not implemented in candle")
+
+
+def sparse_bsr(*args, **kwargs):  # noqa: ARG001
+    raise NotImplementedError("sparse_bsr is not implemented in candle")
+
+
+def sparse_bsc(*args, **kwargs):  # noqa: ARG001
+    raise NotImplementedError("sparse_bsc is not implemented in candle")
+
+
+def sparse_coo_tensor(indices, values, size=None, *, dtype=None, device=None, requires_grad=False):
+    idx = indices._numpy_view()
+    vals = values._numpy_view()
+    if size is None:
+        if idx.ndim == 0:
+            inferred_size = ()
+        elif idx.size == 0:
+            inferred_size = (0,) if idx.ndim == 1 else tuple(0 for _ in range(idx.shape[0]))
+        elif idx.ndim == 1:
+            inferred_size = (_builtins.int(idx.max()) + 1,)
+        else:
+            inferred_size = tuple(_builtins.int(idx[dim].max()) + 1 for dim in _builtins.range(idx.shape[0]))
+    else:
+        inferred_size = tuple(size)
+
+    dense = zeros(*inferred_size, dtype=dtype or values.dtype, device=device or values.device)
+    dense_arr = dense._numpy_view()
+    if idx.ndim <= 1:
+        flat_idx = idx.reshape(-1)
+        flat_vals = vals.reshape(-1)
+        for i, v in zip(flat_idx, flat_vals):
+            dense_arr[_builtins.int(i)] += v
+    else:
+        for coords, v in zip(idx.T, vals.reshape(-1)):
+            dense_arr[tuple(_builtins.int(c) for c in coords)] += v
+    dense._is_sparse = True
+    dense.layout = sparse_coo
+    if requires_grad:
+        dense.requires_grad_(True)
+    return dense

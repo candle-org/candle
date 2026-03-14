@@ -98,12 +98,80 @@ class SavedTensor:
         return result
 
 
+class _NodeHookHandle:
+    _next_id = 0
+
+    def __init__(self, hooks):
+        self._hooks = hooks
+        self.id = _NodeHookHandle._next_id
+        _NodeHookHandle._next_id += 1
+
+    def remove(self):
+        if self._hooks is None:
+            return
+        self._hooks.pop(self.id, None)
+        self._hooks = None
+
+
+class AccumulateGrad:
+    def __init__(self, tensor):
+        self.tensor = tensor
+        self._hooks = {}
+        self._prehooks = {}
+        self._metadata = None
+        self._name = "torch::autograd::AccumulateGrad"
+
+    def register_hook(self, hook):
+        handle = _NodeHookHandle(self._hooks)
+        self._hooks[handle.id] = hook
+        return handle
+
+    def register_prehook(self, hook):
+        handle = _NodeHookHandle(self._prehooks)
+        self._prehooks[handle.id] = hook
+        return handle
+
+    def apply_prehooks(self, grad):
+        grads = (grad,)
+        for hook in self._prehooks.values():
+            result = hook(grads)
+            if result is not None:
+                grads = tuple(result)
+        return grads[0]
+
+    def apply_posthooks(self, grad):
+        grad_input = (grad,)
+        grad_output = ()
+        for hook in self._hooks.values():
+            hook(grad_output, grad_input)
+
+    @property
+    def next_functions(self):
+        return ()
+
+    @property
+    def metadata(self):
+        if self._metadata is None:
+            self._metadata = {}
+        return self._metadata
+
+    def name(self):
+        return self._name
+
+
 class Node:
-    def __init__(self, backward, inputs):
+    def __init__(self, backward, inputs, *, name=None):
         self.backward = backward
-        self.inputs = inputs
+        self.inputs = tuple(inputs)
         self._saved_tensors_list = []
         self._saved_fields = {}
+        self._hooks = {}
+        self._prehooks = {}
+        self._next_functions_cache = self._freeze_next_functions()
+        self._metadata = None
+        self._name = name or type(self).__name__
+        self._anomaly_trace = None
+        self._anomaly_parent = None
 
     def save_for_backward(self, *tensors):
         saved = []
@@ -129,7 +197,41 @@ class Node:
         for saved in self._saved_tensors_list:
             saved.release()
 
+    def register_hook(self, hook):
+        handle = _NodeHookHandle(self._hooks)
+        self._hooks[handle.id] = hook
+        return handle
+
+    def register_prehook(self, hook):
+        handle = _NodeHookHandle(self._prehooks)
+        self._prehooks[handle.id] = hook
+        return handle
+
+    def _freeze_next_functions(self):
+        next_functions = []
+        for inp in self.inputs:
+            fn = getattr(inp, "grad_fn", None)
+            if fn is not None:
+                next_functions.append((fn, 0))
+            elif getattr(inp, "requires_grad", False):
+                acc = getattr(inp, "_accumulate_grad_node", None)
+                if acc is None:
+                    acc = AccumulateGrad(inp)
+                    inp._accumulate_grad_node = acc
+                next_functions.append((acc, 0))
+            else:
+                next_functions.append((None, 0))
+        return tuple(next_functions)
+
+    @property
+    def next_functions(self):
+        return self._next_functions_cache
+
     def __getattr__(self, name):
+        if name == "metadata":
+            if self._metadata is None:
+                self._metadata = {}
+            return self._metadata
         if name == "_raw_saved_tensors":
             return tuple(self._saved_tensors_list)
         if name == "_saved_tensors":
@@ -153,3 +255,6 @@ class Node:
                     return tuple(item.materialize() for item in saved)
                 return saved.materialize()
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def name(self):
+        return self._name

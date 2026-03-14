@@ -94,6 +94,14 @@ def dtypesIfCUDA(*dtype_args):
     return decorator
 
 
+def dtypesIfMPS(*dtype_args):
+    """Like @dtypes but only for MPS devices."""
+    def decorator(fn):
+        fn._dtypes_mps = dtype_args
+        return fn
+    return decorator
+
+
 def dtypesIfCPU(*dtype_args):
     """Like @dtypes but only for CPU device."""
     def decorator(fn):

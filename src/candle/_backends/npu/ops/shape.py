@@ -756,7 +756,7 @@ def _npu_advanced_getitem(tensor, key):
 
     if any(isinstance(item, Tensor) and item.dtype.name == 'bool' for item in keys):
         # TODO: re-enable native kernel when CANN fixes aclnnIndex bool-mask advanced indexing (161001)
-        raise RuntimeError('NPU boolean mask indexing is not supported')
+        raise RuntimeError("NPU boolean mask indexing is not supported")
 
     # Step 1: Expand bool Tensor indices BEFORE expanding Ellipsis.
     # A bool tensor of N dims consumes N real dims, and we need the correct
@@ -2205,8 +2205,13 @@ def column_stack(tensors):
 
 def getitem(tensor, key):
     """NPU tensor indexing — full support for basic and advanced indexing."""
+    from ...._tensor import Tensor
+
     if not isinstance(key, tuple):
         key = (key,)
+
+    if any(isinstance(item, Tensor) and item.dtype.name == 'bool' for item in key):
+        raise RuntimeError("NPU boolean mask indexing is not supported")
 
     if _is_basic_index_key(key):
         view = _npu_basic_getitem_view(tensor, key)
