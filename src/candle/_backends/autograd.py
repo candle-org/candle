@@ -1076,11 +1076,13 @@ def _autograd_dropout():
                 training = args[1] if len(args) > 1 else kwargs.get("training", True)
                 if not training or p == 0:
                     return (grad,)
-                # Without the mask we cannot compute the exact backward;
-                # use the output to infer which elements were zeroed
-                out_np = _to_numpy(out)
-                a_np = _to_numpy(a)
-                mask_np = _np.where(_np.abs(a_np) > 0, (out_np != 0).astype(g_np.dtype), 1.0)
+                if backward_data is not None and "mask" in backward_data:
+                    mask_np = backward_data["mask"].astype(g_np.dtype)
+                    p = backward_data["p"]
+                else:
+                    out_np = _to_numpy(out)
+                    a_np = _to_numpy(a)
+                    mask_np = _np.where(_np.abs(a_np) > 0, (out_np != 0).astype(g_np.dtype), 1.0)
                 scale = 1.0 / (1.0 - p) if p < 1.0 else 0.0
                 grad_np = g_np * mask_np * scale
                 return (_from_numpy(grad_np, grad.dtype, grad.device),)

@@ -1560,7 +1560,9 @@ def dropout(a, p=0.5, training=True):
     rng = _get_cpu_rng()
     arr = _to_numpy(a)
     mask = (rng.random(arr.shape) >= p).astype(arr.dtype)
-    return _from_numpy(arr * mask / (1.0 - p), a.dtype, a.device)
+    out = _from_numpy(arr * mask / (1.0 - p), a.dtype, a.device)
+    out._backward_data = {"mask": mask, "p": p}
+    return out
 
 
 def pad(a, pad_widths, mode='constant', value=0):
