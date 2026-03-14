@@ -19,6 +19,8 @@ from ._helpers import (
     _accel,
 )
 from .math import add, sub, mul, div, log
+from .comparison import gt
+from .elementwise import where
 from .shape import _ensure_integer_indices
 
 
@@ -96,6 +98,15 @@ def mish(a):
     return _from_numpy(out, a.dtype, a.device)
 
 def prelu(a, weight):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        a_c = a.contiguous() if not a.is_contiguous() else a
+        mask = gt(a_c, 0)
+        w_np = _to_numpy(weight)
+        # Broadcast weight to match a's shape
+        w_expanded = _from_numpy(
+            np.broadcast_to(w_np, a_c.shape).copy(), a.dtype, a.device)
+        neg = mul(a_c, w_expanded)
+        return where(mask, a_c, neg)
     arr = _to_numpy(a)
     weight_arr = _to_numpy(weight)
     out = np.where(arr > 0, arr, arr * weight_arr)
@@ -227,16 +238,33 @@ def celu(a, alpha=1.0):
     return _from_numpy(out, a.dtype, a.device)
 
 def threshold(a, threshold_val, value):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        a_c = a.contiguous() if not a.is_contiguous() else a
+        mask = gt(a_c, threshold_val)
+        fill = mul(add(mul(a_c, 0.0), 1.0), value)
+        return where(mask, a_c, fill)
     arr = _to_numpy(a)
     out = np.where(arr > threshold_val, arr, value)
     return _from_numpy(out, a.dtype, a.device)
 
 def hardshrink(a, lambd=0.5):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        a_c = a.contiguous() if not a.is_contiguous() else a
+        abs_a = _dispatch_unary_gpu(a_c, "abs")
+        mask = gt(abs_a, lambd)
+        return where(mask, a_c, mul(a_c, 0.0))
     arr = _to_numpy(a)
     out = np.where(np.abs(arr) > lambd, arr, 0.0)
     return _from_numpy(out, a.dtype, a.device)
 
 def softshrink(a, lambd=0.5):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        a_c = a.contiguous() if not a.is_contiguous() else a
+        s = _dispatch_unary_gpu(a_c, "sign")
+        abs_a = _dispatch_unary_gpu(a_c, "abs")
+        shifted = sub(abs_a, lambd)
+        clamped = clamp(shifted, 0.0, None)
+        return mul(s, clamped)
     arr = _to_numpy(a)
     out = np.sign(arr) * np.maximum(np.abs(arr) - lambd, 0.0)
     return _from_numpy(out, a.dtype, a.device)
