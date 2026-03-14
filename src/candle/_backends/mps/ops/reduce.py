@@ -520,16 +520,16 @@ def topk(a, k, dim=-1, largest=True, sorted=True):
 
 def min_(a, b):
     if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
-        return _dispatch_binary_gpu(a, b, "min")
+        return _dispatch_binary_gpu(a, b, "minimum")
     if _can_use_gpu(a) and not isinstance(b, Tensor):
-        return _dispatch_binary_gpu(a, float(b), "min")
+        return _dispatch_binary_gpu(a, float(b), "minimum")
     _unsupported_dtype("min", a)
 
 def max_(a, b):
     if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
-        return _dispatch_binary_gpu(a, b, "max")
+        return _dispatch_binary_gpu(a, b, "maximum")
     if _can_use_gpu(a) and not isinstance(b, Tensor):
-        return _dispatch_binary_gpu(a, float(b), "max")
+        return _dispatch_binary_gpu(a, float(b), "maximum")
     _unsupported_dtype("max", a)
 
 def amin(a, dim=None, keepdim=False):
@@ -583,19 +583,19 @@ def amax(a, dim=None, keepdim=False):
     _unsupported_dtype("amax", a)
 
 def fmin(a, b):
-    # fmin ignores NaN (returns the non-NaN value) — use GPU min composite
+    # fmin ignores NaN (returns the non-NaN value) — use GPU minimum composite
     if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
-        return _dispatch_binary_gpu(a, b, "min")
+        return _dispatch_binary_gpu(a, b, "minimum")
     if _can_use_gpu(a) and not isinstance(b, Tensor):
-        return _dispatch_binary_gpu(a, float(b), "min")
+        return _dispatch_binary_gpu(a, float(b), "minimum")
     _unsupported_dtype("fmin", a)
 
 def fmax(a, b):
-    # fmax ignores NaN (returns the non-NaN value) — use GPU max composite
+    # fmax ignores NaN (returns the non-NaN value) — use GPU maximum composite
     if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
-        return _dispatch_binary_gpu(a, b, "max")
+        return _dispatch_binary_gpu(a, b, "maximum")
     if _can_use_gpu(a) and not isinstance(b, Tensor):
-        return _dispatch_binary_gpu(a, float(b), "max")
+        return _dispatch_binary_gpu(a, float(b), "maximum")
     _unsupported_dtype("fmax", a)
 
 def maximum(a, b):
