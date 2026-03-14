@@ -75,6 +75,30 @@ def _normalize_repeats_tuple(repeats, ndim, name):
     return repeats
 
 
+def _strided_copy(a):
+    """Copy a non-contiguous NPU tensor into a fresh contiguous buffer using aclnnInplaceCopy."""
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
+    numel = _numel(a.shape)
+    out_stride = npu_runtime._contiguous_stride(a.shape)
+    out_ptr = npu_runtime._alloc_device(numel * _dtype_itemsize(a.dtype), runtime=runtime)
+    a_storage = _unwrap_storage(a)
+    aclnn.inplace_copy(
+        out_ptr,
+        a_storage.data_ptr(),
+        a.shape,
+        out_stride,
+        a.dtype,
+        a.shape,
+        a.stride,
+        a.dtype,
+        runtime,
+        stream=stream.stream,
+    )
+    storage = npu_typed_storage_from_ptr(out_ptr, numel, a.dtype, device=a.device)
+    return _wrap_tensor(storage, a.shape, out_stride)
+
+
 def _build_repeat_interleave_indices(dim_size, repeats, device):
     from ..creation import zeros_create
 
@@ -1192,6 +1216,8 @@ def _gather_310b_fallback(a, dim, index):
 
     # Move gather dim to last and broadcast over index dim.
     moved = _move_dim_to_last(a, dim)
+    if not moved.is_contiguous():
+        moved = _strided_copy(moved)
     moved_shape = list(moved.shape)
     moved_shape.insert(dim, 1)
     moved = view_backend.reshape(moved, tuple(moved_shape))
