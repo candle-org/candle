@@ -723,6 +723,31 @@ def rot90(a, k=1, dims=(0, 1)):
 
 
 def repeat(a, repeats):
+    if _can_use_gpu(a):
+        ndim = len(a.shape)
+        reps = tuple(repeats)
+        # Pad shape with leading 1s if repeats has more dims
+        if len(reps) > ndim:
+            a = a.reshape((1,) * (len(reps) - ndim) + a.shape)
+            ndim = len(a.shape)
+        # Pad repeats with leading 1s if needed
+        reps = (1,) * (ndim - len(reps)) + reps
+        # If all repeats are 1, return contiguous copy
+        if all(r == 1 for r in reps):
+            return a.contiguous()
+        # Build interleaved shape: (1, s0, 1, s1, ...)
+        inter_shape = []
+        for s in a.shape:
+            inter_shape.extend([1, s])
+        a_inter = a.reshape(tuple(inter_shape))
+        # Expand: (r0, s0, r1, s1, ...)
+        exp_shape = []
+        for r, s in zip(reps, a.shape):
+            exp_shape.extend([r, s])
+        a_exp = expand(a_inter, tuple(exp_shape))
+        # Reshape to final: (r0*s0, r1*s1, ...)
+        final_shape = tuple(r * s for r, s in zip(reps, a.shape))
+        return a_exp.contiguous().reshape(final_shape)
     arr = _to_numpy(a)
     out = np.tile(arr, repeats)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
@@ -736,9 +761,12 @@ def repeat_interleave(a, repeats, dim=None):
 
 
 def tile(a, dims):
-    arr = _to_numpy(a)
-    out = np.tile(arr, dims)
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    # tile is repeat with dim padding
+    ndim = len(a.shape)
+    reps = tuple(dims)
+    if len(reps) < ndim:
+        reps = (1,) * (ndim - len(reps)) + reps
+    return repeat(a, reps)
 
 
 def nonzero(a, as_tuple=False):
@@ -1296,10 +1324,9 @@ def cartesian_prod(*tensors):
 
 
 def chunk(a, chunks, dim=0):
-    arr = _to_numpy(a)
     if dim < 0:
-        dim += arr.ndim
-    dim_size = arr.shape[dim]
+        dim += len(a.shape)
+    dim_size = a.shape[dim]
     if chunks <= 0:
         raise ValueError("chunks must be > 0")
     actual_chunks = min(chunks, dim_size) if dim_size > 0 else chunks
@@ -1309,44 +1336,31 @@ def chunk(a, chunks, dim=0):
     outputs = []
     for i in range(actual_chunks):
         start = i * chunk_size
-        end = min(start + chunk_size, dim_size)
-        if start >= end:
+        length = min(chunk_size, dim_size - start)
+        if length <= 0:
             break
-        slices = [slice(None)] * arr.ndim
-        slices[dim] = slice(start, end)
-        out = np.ascontiguousarray(arr[tuple(slices)])
-        outputs.append(_from_numpy(out, a.dtype, a.device))
+        outputs.append(narrow(a, dim, start, length))
     return tuple(outputs)
 
 
 def split(a, split_size_or_sections, dim=0):
-    arr = _to_numpy(a)
     if dim < 0:
-        dim += arr.ndim
-    dim_size = arr.shape[dim]
-    outputs = []
+        dim += len(a.shape)
+    dim_size = a.shape[dim]
     if isinstance(split_size_or_sections, int):
         if split_size_or_sections <= 0:
             raise ValueError("split_size must be > 0")
         step = split_size_or_sections
-        for start in range(0, dim_size, step):
-            end = min(start + step, dim_size)
-            slices = [slice(None)] * arr.ndim
-            slices[dim] = slice(start, end)
-            out = np.ascontiguousarray(arr[tuple(slices)])
-            outputs.append(_from_numpy(out, a.dtype, a.device))
-    else:
-        sizes = list(split_size_or_sections)
-        if sum(sizes) != dim_size:
-            raise ValueError("split sections must sum to dim size")
-        start = 0
-        for size in sizes:
-            end = start + size
-            slices = [slice(None)] * arr.ndim
-            slices[dim] = slice(start, end)
-            out = np.ascontiguousarray(arr[tuple(slices)])
-            outputs.append(_from_numpy(out, a.dtype, a.device))
-            start = end
+        return tuple(narrow(a, dim, s, min(step, dim_size - s))
+                     for s in range(0, dim_size, step))
+    sizes = list(split_size_or_sections)
+    if sum(sizes) != dim_size:
+        raise ValueError("split sections must sum to dim size")
+    outputs = []
+    start = 0
+    for size in sizes:
+        outputs.append(narrow(a, dim, start, size))
+        start += size
     return tuple(outputs)
 
 
@@ -1382,17 +1396,9 @@ def dsplit(a, split_size_or_sections):
 
 
 def unbind(a, dim=0):
-    arr = _to_numpy(a)
     if dim < 0:
-        dim += arr.ndim
-    dim_size = arr.shape[dim]
-    outputs = []
-    for i in range(dim_size):
-        slices = [slice(None)] * arr.ndim
-        slices[dim] = i
-        out = np.ascontiguousarray(arr[tuple(slices)])
-        outputs.append(_from_numpy(out, a.dtype, a.device))
-    return tuple(outputs)
+        dim += len(a.shape)
+    return tuple(select(a, dim, i) for i in range(a.shape[dim]))
 
 
 def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
@@ -1857,6 +1863,10 @@ def div_(a, b):
 def contiguous(a):
     if a.device.type != "mps":
         raise ValueError("MPS contiguous expects MPS tensors")
+    if _can_use_gpu(a):
+        if a.is_contiguous():
+            return a
+        return _dispatch_unary_gpu(a, "identity")
     arr = np.ascontiguousarray(_to_numpy(a))
     return _from_numpy(arr, a.dtype, a.device)
 
@@ -2987,20 +2997,27 @@ def pad(a, pad_widths, mode='constant', value=0):
 
 
 def softmax(a, dim):
-    # GPU path: softmax over last dim for 2D+ contiguous float32/float16
+    # GPU path: float32/float16
     ndim = len(a.shape)
     actual_dim = dim if dim >= 0 else dim + ndim
-    if (_can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype)
-            and actual_dim == ndim - 1 and ndim >= 1):
-        d = _get_dispatcher()
-        sfx = _kernel_suffix(a.dtype)
-        numel = a.numel()
-        cols = a.shape[-1]
-        rows = numel // cols
-        out_buf = _alloc_output_buf(numel, a.dtype)
-        d.dispatch_softmax_2d(f"softmax_{sfx}", _metal_buf(a), out_buf,
-                              rows, cols)
-        return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype) and ndim >= 1:
+        if actual_dim == ndim - 1 and a.is_contiguous():
+            # Fast path: softmax over last dim
+            d = _get_dispatcher()
+            sfx = _kernel_suffix(a.dtype)
+            numel = a.numel()
+            cols = a.shape[-1]
+            rows = numel // cols
+            out_buf = _alloc_output_buf(numel, a.dtype)
+            d.dispatch_softmax_2d(f"softmax_{sfx}", _metal_buf(a), out_buf,
+                                  rows, cols)
+            return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+        # Non-last dim: permute target to last → softmax → permute back
+        perm = list(range(ndim))
+        perm[actual_dim], perm[-1] = perm[-1], perm[actual_dim]
+        a_t = a.permute(*perm).contiguous()
+        out_t = softmax(a_t, -1)
+        return out_t.permute(*perm).contiguous()
     arr = _to_numpy(a)
     exp_arr = np.exp(arr - np.max(arr, axis=dim, keepdims=True))
     result = exp_arr / np.sum(exp_arr, axis=dim, keepdims=True)
@@ -3008,11 +3025,10 @@ def softmax(a, dim):
 
 
 def log_softmax(a, dim):
-    # GPU composite: log(softmax(x)) = x - max - log(sum(exp(x - max)))
+    # GPU composite: log(softmax(x))
     ndim = len(a.shape)
     actual_dim = dim if dim >= 0 else dim + ndim
-    if (_can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype)
-            and actual_dim == ndim - 1 and ndim >= 1):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype) and ndim >= 1:
         s = softmax(a, dim)
         return log(s)
     arr = _to_numpy(a)

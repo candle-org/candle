@@ -1878,3 +1878,127 @@ class TestP4GPUOps:
             assert np.all(np.diff(v_np[row]) >= 0)
         gathered = np.take_along_axis(a_np, i_np, axis=1)
         np.testing.assert_allclose(v_np, gathered, rtol=1e-5, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# P6: Softmax (all dims) + View/Shape Ops GPU Acceleration
+# ---------------------------------------------------------------------------
+
+class TestP6ViewOps:
+    """Verify softmax any-dim, contiguous GPU copy, split/chunk/unbind
+    zero-copy, and repeat/tile GPU composites."""
+
+    # --- softmax any dim ---
+    def test_softmax_dim0(self):
+        a_np = np.random.randn(4, 8).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.softmax(a, dim=0).cpu().numpy()
+        exp = np.exp(a_np - np.max(a_np, axis=0, keepdims=True))
+        ref = exp / np.sum(exp, axis=0, keepdims=True)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+    def test_softmax_middle_dim_3d(self):
+        a_np = np.random.randn(2, 5, 8).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.softmax(a, dim=1).cpu().numpy()
+        exp = np.exp(a_np - np.max(a_np, axis=1, keepdims=True))
+        ref = exp / np.sum(exp, axis=1, keepdims=True)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+    def test_softmax_last_dim(self):
+        a_np = np.random.randn(3, 10).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.softmax(a, dim=-1).cpu().numpy()
+        exp = np.exp(a_np - np.max(a_np, axis=-1, keepdims=True))
+        ref = exp / np.sum(exp, axis=-1, keepdims=True)
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-6)
+
+    def test_log_softmax_dim0(self):
+        a_np = np.random.randn(4, 8).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.nn.functional.log_softmax(a, dim=0).cpu().numpy()
+        max_arr = np.max(a_np, axis=0, keepdims=True)
+        log_sum_exp = np.log(np.sum(np.exp(a_np - max_arr), axis=0, keepdims=True))
+        ref = a_np - max_arr - log_sum_exp
+        np.testing.assert_allclose(out, ref, rtol=1e-5, atol=1e-5)
+
+    # --- contiguous GPU copy ---
+    def test_contiguous_after_transpose(self):
+        a_np = np.random.randn(4, 8).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        t = a.T  # transpose -> non-contiguous
+        assert not t.is_contiguous()
+        c = t.contiguous()
+        assert c.is_contiguous()
+        np.testing.assert_allclose(c.cpu().numpy(), a_np.T, rtol=1e-6, atol=1e-6)
+
+    def test_contiguous_after_permute(self):
+        a_np = np.random.randn(2, 3, 4).astype(np.float32)
+        a = torch.tensor(a_np, device="mps")
+        p = a.permute(2, 0, 1)  # non-contiguous
+        assert not p.is_contiguous()
+        c = p.contiguous()
+        assert c.is_contiguous()
+        np.testing.assert_allclose(c.cpu().numpy(), a_np.transpose(2, 0, 1),
+                                   rtol=1e-6, atol=1e-6)
+
+    # --- split zero-copy ---
+    def test_split_basic(self):
+        a_np = np.arange(12, dtype=np.float32).reshape(4, 3)
+        a = torch.tensor(a_np, device="mps")
+        parts = torch.split(a, 2, dim=0)
+        assert len(parts) == 2
+        np.testing.assert_array_equal(parts[0].cpu().numpy(), a_np[:2])
+        np.testing.assert_array_equal(parts[1].cpu().numpy(), a_np[2:])
+
+    def test_split_sections(self):
+        a_np = np.arange(10, dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        parts = torch.split(a, [3, 3, 4])
+        assert len(parts) == 3
+        np.testing.assert_array_equal(parts[0].cpu().numpy(), a_np[:3])
+        np.testing.assert_array_equal(parts[1].cpu().numpy(), a_np[3:6])
+        np.testing.assert_array_equal(parts[2].cpu().numpy(), a_np[6:])
+
+    # --- chunk zero-copy ---
+    def test_chunk_basic(self):
+        a_np = np.arange(12, dtype=np.float32).reshape(6, 2)
+        a = torch.tensor(a_np, device="mps")
+        parts = torch.chunk(a, 3, dim=0)
+        assert len(parts) == 3
+        np.testing.assert_array_equal(parts[0].cpu().numpy(), a_np[:2])
+        np.testing.assert_array_equal(parts[1].cpu().numpy(), a_np[2:4])
+        np.testing.assert_array_equal(parts[2].cpu().numpy(), a_np[4:])
+
+    # --- unbind zero-copy ---
+    def test_unbind_basic(self):
+        a_np = np.arange(12, dtype=np.float32).reshape(3, 4)
+        a = torch.tensor(a_np, device="mps")
+        parts = torch.unbind(a, dim=0)
+        assert len(parts) == 3
+        for i, p in enumerate(parts):
+            np.testing.assert_array_equal(p.cpu().numpy(), a_np[i])
+
+    # --- repeat GPU composite ---
+    def test_repeat_2d(self):
+        a_np = np.array([[1, 2], [3, 4]], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = a.repeat(2, 3).cpu().numpy()
+        ref = np.tile(a_np, (2, 3))
+        np.testing.assert_array_equal(out, ref)
+
+    def test_repeat_new_leading_dims(self):
+        a_np = np.array([1, 2, 3], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = a.repeat(2, 4).cpu().numpy()
+        # 1D [3] -> repeat(2,4) -> [2, 12]
+        ref = np.tile(a_np, (2, 4))
+        np.testing.assert_array_equal(out, ref)
+
+    # --- tile ---
+    def test_tile_basic(self):
+        a_np = np.array([[1, 2], [3, 4]], dtype=np.float32)
+        a = torch.tensor(a_np, device="mps")
+        out = torch.tile(a, (2, 3)).cpu().numpy()
+        ref = np.tile(a_np, (2, 3))
+        np.testing.assert_array_equal(out, ref)
