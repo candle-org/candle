@@ -687,3 +687,100 @@ def test_dispatch_nanmean_rejects_str_dim_matches_torch():
         pt.nanmean(pt.tensor([1.0, 0.0]), dim="0")
 
     assert_torch_error(mt_call, th_call)
+
+
+
+def test_dispatch_movedim_rejects_duplicate_source_matches_torch():
+    mt_x = torch.arange(24).reshape((2, 3, 4))
+
+    def mt_call():
+        dispatch("movedim", mt_x.device.type, mt_x, (0, 0), (1, 2))
+
+    def th_call():
+        pt.movedim(pt.arange(24).reshape((2, 3, 4)), (0, 0), (1, 2))
+
+    assert_torch_error(mt_call, th_call)
+
+
+def test_dispatch_movedim_rejects_duplicate_destination_matches_torch():
+    mt_x = torch.arange(24).reshape((2, 3, 4))
+
+    def mt_call():
+        dispatch("movedim", mt_x.device.type, mt_x, (0, 1), (2, 2))
+
+    def th_call():
+        pt.movedim(pt.arange(24).reshape((2, 3, 4)), (0, 1), (2, 2))
+
+    assert_torch_error(mt_call, th_call)
+
+
+def test_dispatch_movedim_rejects_length_mismatch_matches_torch():
+    mt_x = torch.arange(24).reshape((2, 3, 4))
+
+    def mt_call():
+        dispatch("movedim", mt_x.device.type, mt_x, (0, 1), (2,))
+
+    def th_call():
+        pt.movedim(pt.arange(24).reshape((2, 3, 4)), (0, 1), (2,))
+
+    assert_torch_error(mt_call, th_call)
+
+
+def test_dispatch_movedim_rejects_out_of_range_dim_matches_torch():
+    mt_x = torch.arange(24).reshape((2, 3, 4))
+
+    def mt_call():
+        dispatch("movedim", mt_x.device.type, mt_x, 3, 0)
+
+    def th_call():
+        pt.movedim(pt.arange(24).reshape((2, 3, 4)), 3, 0)
+
+    assert_torch_error(mt_call, th_call)
+
+
+def test_dispatch_moveaxis_rejects_duplicate_source_matches_torch():
+    mt_x = torch.arange(24).reshape((2, 3, 4))
+
+    def mt_call():
+        dispatch("moveaxis", mt_x.device.type, mt_x, (0, 0), (1, 2))
+
+    def th_call():
+        pt.moveaxis(pt.arange(24).reshape((2, 3, 4)), (0, 0), (1, 2))
+
+    assert_torch_error(mt_call, th_call)
+
+
+def test_dispatch_moveaxis_rejects_duplicate_destination_matches_torch():
+    mt_x = torch.arange(24).reshape((2, 3, 4))
+
+    def mt_call():
+        dispatch("moveaxis", mt_x.device.type, mt_x, (0, 1), (2, 2))
+
+    def th_call():
+        pt.moveaxis(pt.arange(24).reshape((2, 3, 4)), (0, 1), (2, 2))
+
+    assert_torch_error(mt_call, th_call)
+
+
+def test_dispatch_moveaxis_rejects_length_mismatch_matches_torch():
+    mt_x = torch.arange(24).reshape((2, 3, 4))
+
+    def mt_call():
+        dispatch("moveaxis", mt_x.device.type, mt_x, (0, 1), (2,))
+
+    def th_call():
+        pt.moveaxis(pt.arange(24).reshape((2, 3, 4)), (0, 1), (2,))
+
+    assert_torch_error(mt_call, th_call)
+
+
+def test_dispatch_moveaxis_rejects_out_of_range_dim_matches_torch():
+    mt_x = torch.arange(24).reshape((2, 3, 4))
+
+    def mt_call():
+        dispatch("moveaxis", mt_x.device.type, mt_x, 3, 0)
+
+    def th_call():
+        pt.moveaxis(pt.arange(24).reshape((2, 3, 4)), 3, 0)
+
+    assert_torch_error(mt_call, th_call)

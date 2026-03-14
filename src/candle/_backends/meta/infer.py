@@ -618,8 +618,17 @@ def infer_broadcast_to(a, shape):
 
 
 def infer_movedim(a, source, destination):
-    # Shape doesn't change, only strides
-    shape = tuple(a.shape)
+    ndim = len(a.shape)
+    if isinstance(source, int):
+        source = [source]
+    if isinstance(destination, int):
+        destination = [destination]
+    source = [s % ndim for s in source]
+    destination = [d % ndim for d in destination]
+    order = [i for i in range(ndim) if i not in source]
+    for dst, src in sorted(zip(destination, source)):
+        order.insert(dst, src)
+    shape = tuple(a.shape[idx] for idx in order)
     return TensorSpec(shape=shape, stride=_contiguous_stride(shape), dtype=a.dtype)
 
 

@@ -130,3 +130,23 @@ def test_pipeline_layer_norm_meta_accepts_args():
         assert y._pending is True
         assert y.shape == x.shape
     assert y._pending is False
+
+
+def test_pipeline_movedim_pending_shape_matches_output():
+    a = torch.arange(24).reshape((2, 3, 4))
+    with torch.pipeline():
+        moved = torch.movedim(a, 0, 2)
+        assert moved._pending is True
+        assert moved.shape == (3, 4, 2)
+    assert moved._pending is False
+    assert moved.shape == (3, 4, 2)
+
+
+def test_pipeline_moveaxis_pending_shape_matches_output():
+    a = torch.arange(24).reshape((2, 3, 4))
+    with torch.pipeline():
+        moved = torch.moveaxis(a, (0, 2), (2, 0))
+        assert moved._pending is True
+        assert moved.shape == (4, 3, 2)
+    assert moved._pending is False
+    assert moved.shape == (4, 3, 2)

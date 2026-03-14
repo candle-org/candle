@@ -489,3 +489,32 @@ class TestCategoryC2:
         assert out[0].item() == 0.0
         assert out[1].item() == 0.5
         assert out[2].item() == 1.0
+
+
+    def test_movedim_top_level_single_dim(self):
+        a = torch.arange(24).reshape((2, 3, 4))
+        out = torch.movedim(a, 0, 2)
+        assert out.shape == (3, 4, 2)
+        assert out[0][0].tolist() == [0, 12]
+        assert out[2][3].tolist() == [11, 23]
+
+    def test_moveaxis_matches_movedim_single_dim(self):
+        a = torch.arange(24).reshape((2, 3, 4))
+        out = torch.moveaxis(a, 0, 2)
+        ref = torch.movedim(a, 0, 2)
+        assert out.shape == ref.shape
+        assert out.tolist() == ref.tolist()
+
+    def test_movedim_tuple(self):
+        a = torch.arange(24).reshape((2, 3, 4))
+        out = a.movedim((0, 2), (2, 0))
+        assert out.shape == (4, 3, 2)
+        assert out[0][0].tolist() == [0, 12]
+        assert out[3][2].tolist() == [11, 23]
+
+    def test_moveaxis_matches_movedim_tuple(self):
+        a = torch.arange(24).reshape((2, 3, 4))
+        out = a.moveaxis((0, 2), (2, 0))
+        ref = a.movedim((0, 2), (2, 0))
+        assert out.shape == ref.shape
+        assert out.tolist() == ref.tolist()

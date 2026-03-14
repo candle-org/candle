@@ -121,7 +121,7 @@ class OpSchema:
         )
         return True
 
-    def _validate_types(self, args, kwargs, *, name, error_overrides, got):
+    def _validate_types(self, args, kwargs, *, name, error_overrides, got):  # pylint: disable=too-many-statements
         if kwargs is None:
             kwargs = {}
 
@@ -689,6 +689,60 @@ class OpSchema:
                     raise RuntimeError("permute(): duplicate dims are not allowed.")
                 seen.add(norm)
 
+
+        def _validate_movedim_dim_index(dim_value, rank):
+            if dim_value < -rank or dim_value >= rank:
+                raise IndexError(
+                    f"Dimension out of range (expected to be in range of [{-rank}, {rank - 1}], but got {dim_value})"
+                )
+
+        def _normalize_movedim_dims(value):
+            if isinstance(value, bool):
+                _raise_invalid_combo()
+            if isinstance(value, int):
+                return [value], True
+            if isinstance(value, tuple):
+                if not value:
+                    return [], False
+                for item in value:
+                    if not isinstance(item, int) or isinstance(item, bool):
+                        _raise_invalid_combo()
+                return list(value), False
+            _raise_invalid_combo()
+            return [], False
+
+        def _validate_movedim_dims(source_value, destination_value, input_tensor):
+            rank = _rank_of_input(input_tensor)
+            source_dims, source_is_int = _normalize_movedim_dims(source_value)
+            dest_dims, dest_is_int = _normalize_movedim_dims(destination_value)
+            if source_is_int != dest_is_int:
+                _raise_invalid_combo()
+            if source_is_int:
+                _validate_movedim_dim_index(source_dims[0], rank)
+                _validate_movedim_dim_index(dest_dims[0], rank)
+                return
+            if len(source_dims) != len(dest_dims):
+                raise RuntimeError(
+                    "movedim: Invalid source or destination dims: "
+                    f"source ({source_dims} dims) should contain the same number of dims as destination ({dest_dims} dims)"
+                )
+            for item in source_dims:
+                _validate_movedim_dim_index(item, rank)
+            for item in dest_dims:
+                _validate_movedim_dim_index(item, rank)
+            seen = set()
+            for item in source_dims:
+                norm = _normalize_dim_index(item, rank)
+                if norm in seen:
+                    raise RuntimeError(f"movedim: repeated dim in `source` ({source_dims})")
+                seen.add(norm)
+            seen = set()
+            for item in dest_dims:
+                norm = _normalize_dim_index(item, rank)
+                if norm in seen:
+                    raise RuntimeError(f"movedim: repeated dim in `destination` ({dest_dims})")
+                seen.add(norm)
+
         def _validate_sum_to_size_size(value):
             # Match torch.sum_to_size type errors for size argument.
             if isinstance(value, bool):
@@ -823,6 +877,10 @@ class OpSchema:
                 continue
             if ptype == "bool" and not isinstance(value, bool):
                 _raise_invalid_combo()
+
+        if op_short_name in {"movedim", "moveaxis"} and "source" in bound and "destination" in bound:
+            input_tensor = bound.get("input")
+            _validate_movedim_dims(bound["source"], bound["destination"], input_tensor)
 
         if op_short_name == "transpose" and "dim0" in bound and "dim1" in bound:
             _validate_transpose_dims(bound["dim0"], bound["dim1"])
