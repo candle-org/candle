@@ -29,6 +29,23 @@ def _can_use_gpu(t):
             and t._storage._untyped._metal_buffer is not None)
 
 
+def _empty_like(t):
+    """Return an empty contiguous tensor with the same shape/dtype/device."""
+    from ...._tensor import _compute_strides
+    shape = tuple(t.shape)
+    stride = _compute_strides(shape)
+    buf = _alloc_output_buf(max(t.numel(), 1), t.dtype)
+    return _from_metal_buffer(buf, shape, stride, t.dtype, t.device)
+
+
+def _unsupported_dtype(op_name, t):
+    """Raise TypeError for unsupported MPS dtype."""
+    raise TypeError(
+        f"MPS {op_name}: unsupported dtype {t.dtype}. "
+        f"Supported: float32, float16, int32, int64, bool"
+    )
+
+
 def _metal_buf(t):
     """Get the raw Metal buffer from a tensor."""
     return t._storage._untyped._metal_buffer

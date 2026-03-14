@@ -4,7 +4,8 @@ import struct
 import numpy as np
 
 from ._helpers import (
-    _can_use_gpu, _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
+    _can_use_gpu, _empty_like, _unsupported_dtype,
+    _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
     _alloc_output_buf, _metal_buf_to_bytes, _from_metal_buffer,
     _get_dispatcher, _dispatch_unary_gpu, _dispatch_unary_predicate_gpu,
     _scalar_value, _dispatch_binary_gpu,
@@ -62,8 +63,9 @@ def eq(a, b):
             return eq(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.equal(_to_numpy(a), b_np), bool_dtype, a.device)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("eq", a)
 
 def ne(a, b):
     if _can_use_gpu(a):
@@ -86,8 +88,9 @@ def ne(a, b):
             return ne(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.not_equal(_to_numpy(a), b_np), bool_dtype, a.device)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("ne", a)
 
 def lt(a, b):
     if _can_use_gpu(a):
@@ -110,8 +113,9 @@ def lt(a, b):
             return lt(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.less(_to_numpy(a), b_np), bool_dtype, a.device)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("lt", a)
 
 def le(a, b):
     if _can_use_gpu(a):
@@ -134,8 +138,9 @@ def le(a, b):
             return le(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.less_equal(_to_numpy(a), b_np), bool_dtype, a.device)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("le", a)
 
 def gt(a, b):
     if _can_use_gpu(a):
@@ -158,8 +163,9 @@ def gt(a, b):
             return gt(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.greater(_to_numpy(a), b_np), bool_dtype, a.device)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("gt", a)
 
 def ge(a, b):
     if _can_use_gpu(a):
@@ -182,36 +188,37 @@ def ge(a, b):
             return ge(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.greater_equal(_to_numpy(a), b_np), bool_dtype, a.device)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("ge", a)
 
 def logical_and(a, b):
     if (_can_use_gpu(a)
             and isinstance(b, Tensor) and _can_use_gpu(b)):
-        # ne(a,0) returns bool(uint8), ne(b,0) returns bool(uint8), mul gives AND
         a_bool = ne(a, 0)
         b_bool = ne(b, 0)
         return _dispatch_binary_gpu(a_bool, b_bool, "mul")
-    a_np = _to_numpy(a)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.logical_and(a_np, b_np), bool_dtype, a.device)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("logical_and", a)
 
 def logical_or(a, b):
     if (_can_use_gpu(a)
             and isinstance(b, Tensor) and _can_use_gpu(b)):
-        # ne(a,0) | ne(b,0) = ne(a_bool + b_bool, 0)
         a_bool = ne(a, 0)
         b_bool = ne(b, 0)
         sum_buf = _dispatch_binary_gpu(a_bool, b_bool, "add")
         return ne(sum_buf, 0)
-    a_np = _to_numpy(a)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.logical_or(a_np, b_np), bool_dtype, a.device)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("logical_or", a)
 
 def logical_not(a):
     if _can_use_gpu(a):
         return eq(a, 0)
-    return _from_numpy(np.logical_not(_to_numpy(a)), bool_dtype, a.device)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("logical_not", a)
 
 def logical_xor(a, b):
     if (_can_use_gpu(a)
@@ -219,9 +226,9 @@ def logical_xor(a, b):
         a_bool = ne(a, 0)
         b_bool = ne(b, 0)
         return ne(a_bool, b_bool)
-    a_np = _to_numpy(a).astype(bool)
-    b_np = (_to_numpy(b) if isinstance(b, Tensor) else np.array(b)).astype(bool)
-    return _from_numpy(np.logical_xor(a_np, b_np), bool_dtype, a.device)
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("logical_xor", a)
 
 
 # ---------------------------------------------------------------------------
@@ -229,22 +236,16 @@ def logical_xor(a, b):
 # ---------------------------------------------------------------------------
 
 def bitwise_and(a, b):
-    a_np = _to_numpy(a)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.bitwise_and(a_np, b_np), a.dtype, a.device)
+    raise NotImplementedError("MPS bitwise_and: Metal shader not yet implemented")
 
 def bitwise_or(a, b):
-    a_np = _to_numpy(a)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.bitwise_or(a_np, b_np), a.dtype, a.device)
+    raise NotImplementedError("MPS bitwise_or: Metal shader not yet implemented")
 
 def bitwise_xor(a, b):
-    a_np = _to_numpy(a)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.bitwise_xor(a_np, b_np), a.dtype, a.device)
+    raise NotImplementedError("MPS bitwise_xor: Metal shader not yet implemented")
 
 def bitwise_not(a):
-    return _from_numpy(np.bitwise_not(_to_numpy(a)), a.dtype, a.device)
+    raise NotImplementedError("MPS bitwise_not: Metal shader not yet implemented")
 
 
 # ---------------------------------------------------------------------------
