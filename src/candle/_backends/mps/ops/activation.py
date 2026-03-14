@@ -103,10 +103,9 @@ def prelu(a, weight):
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         a_c = a.contiguous() if not a.is_contiguous() else a
         mask = gt(a_c, 0)
-        w_np = _to_numpy(weight)
-        # Broadcast weight to match a's shape
-        w_expanded = _from_numpy(
-            np.broadcast_to(w_np, a_c.shape).copy(), a.dtype, a.device)
+        # Broadcast weight to match a's shape via GPU expand (zero-copy view)
+        from .shape import expand
+        w_expanded = expand(weight, tuple(a_c.shape))
         neg = mul(a_c, w_expanded)
         return where(mask, a_c, neg)
     _unsupported_dtype("prelu", a)

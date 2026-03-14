@@ -33,9 +33,8 @@ def where(cond, x, y):
         out_buf = _alloc_output_buf(numel, x.dtype)
         # Ensure condition is uint8 (uchar) for the shader
         if cond.dtype != bool_dtype:
-            cond_u8 = _from_numpy(
-                _to_numpy(cond).astype(np.bool_).astype(np.uint8),
-                bool_dtype, cond.device)
+            from .comparison import ne
+            cond_u8 = ne(cond, 0)
         else:
             cond_u8 = cond
         cond_buf = _metal_buf(cond_u8)
@@ -79,35 +78,27 @@ def lerp(a, b, weight):
 def addcmul(a, b, c, value=1.0):
     if _can_use_gpu(a) and _can_use_gpu(b) and _can_use_gpu(c):
         return add(a, mul(mul(b, c), value))
-    return _from_numpy(
-        _to_numpy(a) + value * (_to_numpy(b) * _to_numpy(c)),
-        a.dtype,
-        a.device,
-    )
+    _unsupported_dtype("addcmul", a)
 
 def addcdiv(a, b, c, value=1.0):
     if _can_use_gpu(a) and _can_use_gpu(b) and _can_use_gpu(c):
         return add(a, mul(div(b, c), value))
-    return _from_numpy(
-        _to_numpy(a) + value * (_to_numpy(b) / _to_numpy(c)),
-        a.dtype,
-        a.device,
-    )
+    _unsupported_dtype("addcdiv", a)
 
 def logaddexp(a, b):
     if isinstance(a, Tensor) and isinstance(b, Tensor) and _can_use_gpu(a) and _can_use_gpu(b):
         return _dispatch_binary_gpu(a, b, "logaddexp")
-    return _from_numpy(np.logaddexp(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
+    _unsupported_dtype("logaddexp", a if isinstance(a, Tensor) else b)
 
 def logaddexp2(a, b):
     if isinstance(a, Tensor) and isinstance(b, Tensor) and _can_use_gpu(a) and _can_use_gpu(b):
         return _dispatch_binary_gpu(a, b, "logaddexp2")
-    return _from_numpy(np.logaddexp2(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
+    _unsupported_dtype("logaddexp2", a if isinstance(a, Tensor) else b)
 
 def hypot(a, b):
     if isinstance(a, Tensor) and isinstance(b, Tensor) and _can_use_gpu(a) and _can_use_gpu(b):
         return _dispatch_binary_gpu(a, b, "hypot")
-    return _from_numpy(np.hypot(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
+    _unsupported_dtype("hypot", a if isinstance(a, Tensor) else b)
 
 def remainder(a, b):
     if isinstance(a, Tensor) and _can_use_gpu(a):
@@ -119,15 +110,12 @@ def remainder(a, b):
             d.dispatch_binary(f"remainder_{sfx}", _metal_buf(a), _metal_buf(b),
                               out_buf, numel)
         else:
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+            scalar = float(b) if not isinstance(b, Tensor) else float(b.item())
             d.dispatch_binary_scalar(f"remainder_scalar_{sfx}", _metal_buf(a),
                                      scalar, out_buf, numel,
                                      scalar_fmt=_scalar_fmt(a.dtype))
         return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
-    a_np = _to_numpy(a) if isinstance(a, Tensor) else a
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    ref = a if isinstance(a, Tensor) else b
-    return _from_numpy(np.remainder(a_np, b_np), ref.dtype, ref.device)
+    _unsupported_dtype("remainder", a if isinstance(a, Tensor) else b)
 
 def fmod(a, b):
     if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
@@ -138,7 +126,7 @@ def fmod(a, b):
         d.dispatch_binary(f"fmod_{sfx}", _metal_buf(a), _metal_buf(b),
                           out_buf, numel)
         return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
-    return _from_numpy(np.fmod(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
+    _unsupported_dtype("fmod", a)
 
 def heaviside(a, values):
     """Heaviside step function."""
@@ -159,10 +147,15 @@ def heaviside(a, values):
         # Step 3: where a<0, set to 0.0 → where(~neg_mask, out, 0.0)
         not_neg = logical_not(neg_mask)
         return where(not_neg, out, 0.0)
-    a_np = _to_numpy(a)
-    v_np = _to_numpy(values)
-    out = np.heaviside(a_np, v_np)
-    return _from_numpy(np.ascontiguousarray(out.astype(to_numpy_dtype(a.dtype))), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and isinstance(values, Tensor) and _can_use_gpu(values):
+        a_c = a.contiguous() if not a.is_contiguous() else a
+        v_c = values.contiguous() if not values.is_contiguous() else values
+        from .shape import expand
+        if a_c.shape != v_c.shape:
+            v_c = expand(v_c, tuple(a_c.shape))
+        return heaviside(a_c, v_c)
+    _unsupported_dtype("heaviside", a)
 
 
 # ---------------------------------------------------------------------------
