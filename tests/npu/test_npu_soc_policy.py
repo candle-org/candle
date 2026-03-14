@@ -74,6 +74,8 @@ def test_soc_310b_fallback_ops_cover_expected_watchlist_set():
         "dropout",
         "take_along_dim",
         "gather",
+        "isinf",
+        "matmul",
     }
     got = set(ops_soc.fallback_ops("310b"))
     assert got == expected

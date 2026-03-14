@@ -201,3 +201,28 @@ def test_310b_batch_norm_module():
     assert out.shape == x.shape
     assert out.device.type == "npu"
 
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+def test_310b_matmul_2d(dtype):
+    """310B aclnnMatmul natively supports float16; float32 is cast internally."""
+    a = torch.randn(4, 8, device="npu", dtype=dtype)
+    b = torch.randn(8, 6, device="npu", dtype=dtype)
+    out = torch.matmul(a, b)
+    assert out.shape == (4, 6)
+    assert out.dtype == dtype
+    # float32 inputs are cast to float16 internally on 310B, so tolerance matches float16 precision
+    atol = 1e-2 if dtype == torch.float16 else 5e-3
+    np.testing.assert_allclose(
+        out.to("cpu").numpy().astype(np.float32),
+        np.matmul(a.to("cpu").numpy().astype(np.float32), b.to("cpu").numpy().astype(np.float32)),
+        atol=atol, rtol=1e-3,
+    )
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+def test_310b_matmul_batched(dtype):
+    a = torch.randn(2, 4, 8, device="npu", dtype=dtype)
+    b = torch.randn(2, 8, 6, device="npu", dtype=dtype)
+    out = torch.matmul(a, b)
+    assert out.shape == (2, 4, 6)
+    assert out.dtype == dtype
