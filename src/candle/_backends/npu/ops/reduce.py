@@ -1588,3 +1588,59 @@ def nanmedian_op(a, dim=None, keepdim=False):
     from collections import namedtuple
     NanmedianResult = namedtuple("nanmedian", ["values", "indices"])
     return NanmedianResult(values, indices)
+
+
+def sum_to_size_npu(a, size):
+    """Reduce *a* by summing along axes until shape matches *size*."""
+    if isinstance(size, list):
+        size = tuple(size)
+    elif isinstance(size, int):
+        size = (size,)
+
+    target = tuple(int(v) for v in size)
+    input_shape = tuple(a.shape)
+
+    if target == input_shape:
+        return a
+
+    if len(target) > len(input_shape) or any(dim <= 0 for dim in target):
+        raise RuntimeError(
+            f"size {{{list(target)}}} is not expandable to size "
+            f"{{{list(input_shape)}}}."
+        )
+
+    ndiff = len(input_shape) - len(target)
+    padded_target = (1,) * ndiff + target
+
+    for tgt, src in zip(padded_target, input_shape):
+        if tgt != 1 and tgt != src:
+            raise RuntimeError(
+                f"size {{{list(target)}}} is not expandable to size "
+                f"{{{list(input_shape)}}}."
+            )
+
+    needs_reduce = ndiff > 0
+    if not needs_reduce:
+        for tgt, src in zip(target, input_shape):
+            if tgt == 1 and src != 1:
+                needs_reduce = True
+                break
+
+    if not needs_reduce:
+        return a
+
+    # Integer inputs accumulate as int64
+    if not (a.dtype.is_floating_point or a.dtype.is_complex):
+        a = _cast_tensor_dtype(a, int64_dtype)
+
+    result = a
+    # First collapse leading dims that don't exist in target
+    for axis in range(ndiff):
+        result = sum_(result, dim=0, keepdim=False)
+
+    # Then reduce dims where target == 1 but source != 1
+    for axis, (tgt, src) in enumerate(zip(target, result.shape)):
+        if tgt == 1 and src != 1:
+            result = sum_(result, dim=axis, keepdim=True)
+
+    return result

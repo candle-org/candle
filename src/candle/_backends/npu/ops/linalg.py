@@ -298,7 +298,27 @@ def baddbmm(self_tensor, batch1, batch2, beta=1.0, alpha=1.0):
     out_size = _numel(out_shape) * _dtype_itemsize(self_tensor.dtype)
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
     if hasattr(beta, "shape") or hasattr(alpha, "shape"):
-        raise RuntimeError("NPU baddbmm does not support tensor alpha/beta without CPU fallback")
+        # Tensor alpha/beta: decompose into bmm + mul + add using existing NPU ops
+        from ...._dispatch import dispatch
+        dev = self_tensor.device.type
+        bmm_result = dispatch("bmm", dev, batch1, batch2)
+        if hasattr(alpha, "shape"):
+            bmm_result = dispatch("mul", dev, bmm_result, alpha)
+        else:
+            alpha_val = float(alpha)
+            if alpha_val != 1.0:
+                bmm_result = dispatch("mul", dev, bmm_result, alpha_val)
+        if hasattr(beta, "shape"):
+            scaled_self = dispatch("mul", dev, self_tensor, beta)
+        else:
+            beta_val = float(beta)
+            if beta_val == 0.0:
+                return bmm_result
+            elif beta_val == 1.0:
+                scaled_self = self_tensor
+            else:
+                scaled_self = dispatch("mul", dev, self_tensor, beta_val)
+        return dispatch("add", dev, scaled_self, bmm_result)
     aclnn.baddbmm(
         self_storage.data_ptr(), b1_storage.data_ptr(), b2_storage.data_ptr(), out_ptr,
         self_tensor.shape, self_tensor.stride, batch1.shape, batch1.stride,

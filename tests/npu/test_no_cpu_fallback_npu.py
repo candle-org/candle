@@ -88,42 +88,27 @@ def test_npu_block_diag_no_cpu_roundtrip(monkeypatch):
 
 
 @pytest.mark.skipif(not torch.npu.is_available(), reason="NPU not available")
-def test_npu_repeat_interleave_tensor_repeats_rejects_cpu_roundtrip(monkeypatch):
-    original_to = Tensor.to
-
-    def guard_to(self, *args, **kwargs):
-        device = None
-        if args:
-            device = args[0]
-        elif "device" in kwargs:
-            device = kwargs["device"]
-        if getattr(self, "device", None) is not None and self.device.type == "npu":
-            if device == "cpu" or getattr(device, "type", None) == "cpu":
-                raise AssertionError("repeat_interleave should not move NPU tensors to CPU")
-        return original_to(self, *args, **kwargs)
-
-    monkeypatch.setattr(Tensor, "to", guard_to)
-    x = torch.tensor([[1, 2], [3, 4]], device="npu")
+def test_npu_repeat_interleave_tensor_repeats_stays_on_device():
+    x = torch.tensor([[1, 2], [3, 4]], device="npu", dtype=torch.float32)
     repeats = torch.tensor([1, 2], device="npu", dtype=torch.int64)
-
-    with pytest.raises(RuntimeError, match="NPU repeat_interleave with tensor repeats is not implemented without CPU fallback"):
-        torch.repeat_interleave(x, repeats=repeats, dim=1)
+    out = torch.repeat_interleave(x, repeats=repeats, dim=1)
+    assert out.device.type == "npu"
+    assert out.shape == (2, 3)
+    import numpy as np
+    expected = np.array([[1, 2, 2], [3, 4, 4]], dtype=np.float32)
+    np.testing.assert_allclose(out.to("cpu").numpy(), expected)
 
 
 @pytest.mark.skipif(not torch.npu.is_available(), reason="NPU not available")
-def test_npu_baddbmm_tensor_alpha_beta_rejects_cpu_readback(monkeypatch):
-    self_tensor = torch.randn((2, 3, 4), device="npu")
-    batch1 = torch.randn((2, 3, 5), device="npu")
-    batch2 = torch.randn((2, 5, 4), device="npu")
+def test_npu_baddbmm_tensor_alpha_beta_stays_on_device():
+    B, N, M, P = 2, 3, 5, 4
+    self_tensor = torch.ones(B, N, P, dtype=torch.float32, device="npu")
+    batch1 = torch.ones(B, N, M, dtype=torch.float32, device="npu")
+    batch2 = torch.ones(B, M, P, dtype=torch.float32, device="npu")
     alpha = torch.tensor(0.5, device="npu")
     beta = torch.tensor(2.0, device="npu")
-
-    storage_cls = type(alpha.storage())
-
-    def fail_to_numpy(self):
-        raise AssertionError("baddbmm should not read NPU tensor scalars on CPU")
-
-    monkeypatch.setattr(storage_cls, "to_numpy", fail_to_numpy, raising=False)
-
-    with pytest.raises(RuntimeError, match="NPU baddbmm does not support tensor alpha/beta without CPU fallback"):
-        torch.baddbmm(self_tensor, batch1, batch2, beta=beta, alpha=alpha)
+    out = torch.baddbmm(self_tensor, batch1, batch2, beta=beta, alpha=alpha)
+    assert out.device.type == "npu"
+    # 2.0 * 1 + 0.5 * (ones @ ones) = 2 + 0.5*5 = 4.5
+    import numpy as np
+    np.testing.assert_allclose(out.to("cpu").numpy(), np.full((B, N, P), 4.5))
