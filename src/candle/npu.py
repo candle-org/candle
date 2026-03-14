@@ -110,10 +110,10 @@ def synchronize(device=None):
     dev = _normalize_npu_device(device)
     runtime = npu_runtime.get_runtime(dev.index or 0)
     _set_initialized()
-    if hasattr(runtime, "synchronize_device"):
-        runtime.synchronize_device()
-    else:
-        runtime.synchronize()
+    # Use runtime.synchronize() which also flushes deferred ACLNN executors.
+    # synchronize_device() only waits for device completion but does NOT
+    # reclaim executor handles, leading to pool exhaustion (561103).
+    runtime.synchronize()
 
 
 def _set_initialized():

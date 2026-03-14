@@ -35,6 +35,7 @@ _BINDINGS = None
 _ACLNN_INITIALIZED = False
 _ACLNN_FINALIZED = False
 _DEFERRED_EXECUTORS = []
+_EXECUTOR_HWM = 64  # flush when executor count reaches this threshold
 _CLEANUP_REGISTERED = False
 
 
@@ -4194,6 +4195,8 @@ def _defer_executor(executor):
         return
     _register_cleanup()
     _DEFERRED_EXECUTORS.append(executor)
+    if len(_DEFERRED_EXECUTORS) >= _EXECUTOR_HWM:
+        flush_deferred_executors()
 
 
 def flush_deferred_executors():
