@@ -1033,6 +1033,24 @@ def _autograd_dropout():
                     out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1),
                                                             grad.dtype, device=grad.device)
                     return (_wrap_tensor(out_storage, out_shape, out_stride),)
+                if backward_data is not None and grad.device.type == "mps":
+                    from .mps.ops._helpers import (
+                        _metal_buf, _alloc_output_buf, _kernel_suffix,
+                        _get_dispatcher, _from_metal_buffer,
+                    )
+                    bd = backward_data
+                    numel = grad.numel()
+                    sfx = _kernel_suffix(grad.dtype)
+                    out_buf = _alloc_output_buf(numel, grad.dtype)
+                    _get_dispatcher().dispatch_philox_dropout(
+                        f"philox_dropout_{sfx}", _metal_buf(grad), out_buf,
+                        bd['p'], bd['scale'],
+                        bd['seed_lo'], bd['seed_hi'], bd['offset'], numel,
+                    )
+                    return (_from_metal_buffer(
+                        out_buf, grad.shape, tuple(grad.stride()),
+                        grad.dtype, grad.device,
+                    ),)
                 # CPU fallback: apply mask * scale
                 from .cpu.ops import _to_numpy, _from_numpy
                 import numpy as _np

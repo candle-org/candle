@@ -376,7 +376,15 @@ def dropout(a, p=0.5, training=True):
             f"philox_dropout_{sfx}", _metal_buf(a), out_buf,
             float(p), float(scale), seed_lo, seed_hi, offset, numel)
         stride = tuple(a.stride())
-        return _from_metal_buffer(out_buf, tuple(a.shape), stride, a.dtype, a.device)
+        result = _from_metal_buffer(out_buf, tuple(a.shape), stride, a.dtype, a.device)
+        result._backward_data = {
+            'seed_lo': seed_lo,
+            'seed_hi': seed_hi,
+            'offset': offset,
+            'p': float(p),
+            'scale': float(scale),
+        }
+        return result
     from ...._random import _get_cpu_rng
     rng = _get_cpu_rng()
     arr = _to_numpy(a)
