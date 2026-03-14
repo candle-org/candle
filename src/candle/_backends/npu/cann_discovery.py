@@ -183,6 +183,12 @@ def get_aclnn_lib_names():
     return base, preload, libs
 
 
+def get_cann_version():
+    """Return the detected CANN version as a tuple, e.g. (8, 5, 0), or None."""
+    _detect()
+    return _cann_version
+
+
 def get_cann_info():
     """Debugging helper."""
     _detect()

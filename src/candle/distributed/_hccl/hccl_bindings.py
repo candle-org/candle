@@ -8,14 +8,17 @@ HCCL_ROOT_INFO_BYTES = 4108
 HCCL_COMM_CONFIG_INFO_BYTES = 24
 COMM_NAME_MAX_LENGTH = 128
 UDI_MAX_LENGTH = 128
+HCCL_COMM_ALGO_MAX_LENGTH = 1600
+HCCL_COMM_RETRY_ENABLE_MAX_LENGTH = 50
+HCCL_COMM_RETRY_PARAMS_MAX_LENGTH = 128
 HCCL_COMM_CONFIG_MAGIC_WORD = 0xf0f0f0f0
-HCCL_COMM_CONFIG_VERSION = 6
 HCCL_COMM_DEFAULT_BUFFSIZE = 200
 HCCL_COMM_BUFFSIZE_CONFIG_NOT_SET = 0xffffffff
 HCCL_COMM_DETERMINISTIC_CONFIG_NOT_SET = 0xffffffff
 HCCL_COMM_DEFAULT_OP_EXPANSION_MODE = 0
 HCCL_COMM_TRAFFIC_CLASS_CONFIG_NOT_SET = 0xffffffff
 HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET = 0xffffffff
+HCCL_COMM_EXECTIMEOUT_CONFIG_NOT_SET = 0xffffffff
 
 # HcclCommConfigCapability enum
 HCCL_COMM_CONFIG_BUFFER_SIZE = 0
@@ -25,13 +28,42 @@ HCCL_COMM_CONFIG_OP_EXPANSION_MODE = 3
 HCCL_COMM_CONFIG_SUPPORT_INIT_BY_ENV = 4
 HCCL_COMM_CONFIG_WORLD_RANKID = 5
 HCCL_COMM_CONFIG_JOBID = 6
+HCCL_COMM_CONFIG_ACLGRAPH_ZEROCOPY_ENABLE = 7
+HCCL_COMM_CONFIG_EXEC_TIMEOUT = 8
+HCCL_COMM_CONFIG_ALGO = 9
+HCCL_COMM_CONFIG_RETRY = 10
 
+
+# ---------------------------------------------------------------------------
+# CANN version detection
+# ---------------------------------------------------------------------------
+
+def _is_new_cann():
+    """Return True if the detected CANN version is >= 8.5 (new-style)."""
+    try:
+        from candle._backends.npu.cann_discovery import get_cann_version
+        ver = get_cann_version()
+        if ver is not None and ver >= (8, 5):
+            return True
+    except Exception:  # pylint: disable=broad-except
+        pass
+    return False
+
+
+_USE_V8 = _is_new_cann()
+HCCL_COMM_CONFIG_VERSION = 8 if _USE_V8 else 6
+
+
+# ---------------------------------------------------------------------------
+# HcclCommConfig structs — V6 (CANN <=8.3) and V8 (CANN >=8.5)
+# ---------------------------------------------------------------------------
 
 class HcclRootInfo(ctypes.Structure):
     _fields_ = [("internal", ctypes.c_char * HCCL_ROOT_INFO_BYTES)]
 
 
-class HcclCommConfig(ctypes.Structure):
+class _HcclCommConfigV6(ctypes.Structure):
+    """CANN <=8.3 (config version 6): 10 data fields after the reserved header."""
     _fields_ = [
         ("reserved", ctypes.c_char * HCCL_COMM_CONFIG_INFO_BYTES),
         ("hcclBufferSize", ctypes.c_uint32),
@@ -46,13 +78,38 @@ class HcclCommConfig(ctypes.Structure):
     ]
 
 
+class _HcclCommConfigV8(ctypes.Structure):
+    """CANN >=8.5 (config version 8): 15 data fields — adds 5 new fields."""
+    _fields_ = [
+        ("reserved", ctypes.c_char * HCCL_COMM_CONFIG_INFO_BYTES),
+        ("hcclBufferSize", ctypes.c_uint32),
+        ("hcclDeterministic", ctypes.c_uint32),
+        ("hcclCommName", ctypes.c_char * COMM_NAME_MAX_LENGTH),
+        ("hcclUdi", ctypes.c_char * UDI_MAX_LENGTH),
+        ("hcclOpExpansionMode", ctypes.c_uint32),
+        ("hcclRdmaTrafficClass", ctypes.c_uint32),
+        ("hcclRdmaServiceLevel", ctypes.c_uint32),
+        ("hcclWorldRankID", ctypes.c_uint32),
+        ("hcclJobID", ctypes.c_uint64),
+        ("aclGraphZeroCopyEnable", ctypes.c_uint8),
+        ("hcclExecTimeOut", ctypes.c_int32),
+        ("hcclAlgo", ctypes.c_char * HCCL_COMM_ALGO_MAX_LENGTH),
+        ("hcclRetryEnable", ctypes.c_char * HCCL_COMM_RETRY_ENABLE_MAX_LENGTH),
+        ("hcclRetryParams", ctypes.c_char * HCCL_COMM_RETRY_PARAMS_MAX_LENGTH),
+    ]
+
+
+# Public alias — consumers import HcclCommConfig
+HcclCommConfig = _HcclCommConfigV8 if _USE_V8 else _HcclCommConfigV6
+
+
 def hccl_comm_config_init(config):
     """Python equivalent of the inline HcclCommConfigInit() from hccl.h."""
     ctypes.memset(ctypes.byref(config), 0, ctypes.sizeof(config))
     # reserved header: size(8B) + magicWord(4B) + version(4B) + reserved(8B)
     header = struct.pack(
         "<QII Q",
-        ctypes.sizeof(HcclCommConfig),  # size = sizeof(HcclCommConfig)
+        ctypes.sizeof(type(config)),
         HCCL_COMM_CONFIG_MAGIC_WORD,
         HCCL_COMM_CONFIG_VERSION,
         0,
@@ -67,6 +124,10 @@ def hccl_comm_config_init(config):
     config.hcclRdmaServiceLevel = HCCL_COMM_SERVICE_LEVEL_CONFIG_NOT_SET
     config.hcclWorldRankID = 0
     config.hcclJobID = 0
+    # V8-only fields
+    if _USE_V8:
+        config.aclGraphZeroCopyEnable = 0
+        config.hcclExecTimeOut = HCCL_COMM_EXECTIMEOUT_CONFIG_NOT_SET
 
 
 def is_hccl_feature_supported(capability_bit):
