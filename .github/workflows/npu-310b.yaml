@@ -47,6 +47,13 @@ jobs:
     - name: Install candle
       run: |
         "$JOB_CONDA_ENV/bin/python" -m pip install -e .
+    - name: Free memory before tests
+      run: |
+        # Kill stale Python/pytest processes from previous runs
+        pkill -9 -f 'pytest|python.*candle' || true
+        sleep 2
+        # Drop system page cache (host and device share RAM on 310B)
+        sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
     - name: Assert NPU availability
       run: |
         source "$ASCEND_ENV_SCRIPT"
@@ -93,6 +100,11 @@ jobs:
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
         clean_env pytest tests/npu/310b/ -v --tb=short
+    - name: Free memory between test suites
+      run: |
+        pkill -9 -f 'pytest|python.*candle' || true
+        sleep 2
+        sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
     - name: Run NPU common tests
       run: |
         source "$ASCEND_ENV_SCRIPT"
