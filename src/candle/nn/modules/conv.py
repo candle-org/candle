@@ -1,10 +1,10 @@
-import functools
-import operator
+import math
 
 from ..module import Module
 from ..parameter import Parameter
-from ..._creation import tensor
+from ..._creation import empty
 from .. import functional as F
+from .. import init as init
 
 
 def _single(x):
@@ -17,13 +17,6 @@ def _pair(x):
 
 def _triple(x):
     return (x, x, x) if isinstance(x, int) else tuple(x)
-
-
-def _make_nested(flat, shape):
-    if len(shape) == 1:
-        return flat[:shape[0]]
-    size = functools.reduce(operator.mul, shape[1:], 1)
-    return [_make_nested(flat[i * size:(i + 1) * size], shape[1:]) for i in range(shape[0])]
 
 
 class _ConvNd(Module):
@@ -45,12 +38,19 @@ class _ConvNd(Module):
             weight_shape = [in_channels, out_channels // groups] + list(kernel_size)
         else:
             weight_shape = [out_channels, in_channels // groups] + list(kernel_size)
-        total = functools.reduce(operator.mul, weight_shape, 1)
-        self.weight = Parameter(tensor(_make_nested([0.0] * total, weight_shape)))
+        self.weight = Parameter(empty(*weight_shape, device=device, dtype=dtype))
         if bias:
-            self.bias = Parameter(tensor([0.0] * out_channels))
+            self.bias = Parameter(empty(out_channels, device=device, dtype=dtype))
         else:
             self.register_parameter('bias', None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_uniform_(self.weight, a=5 ** 0.5)
+        if self.bias is not None:
+            fan_in, _ = init._calculate_fan_in_and_fan_out(self.weight)
+            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+            init.uniform_(self.bias, -bound, bound)
 
     def extra_repr(self):
         s = (f'{self.in_channels}, {self.out_channels}, kernel_size={self.kernel_size}'

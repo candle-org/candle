@@ -68,6 +68,10 @@ class Module:
         self._parameters[name] = param
         super().__setattr__(name, param)
 
+    def add_module(self, name, module):
+        self._modules[name] = module
+        super().__setattr__(name, module)
+
     def parameters(self, recurse=True):
         for name, param in self.named_parameters(recurse=recurse):
             yield param

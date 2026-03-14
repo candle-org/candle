@@ -410,7 +410,7 @@ class ReduceLROnPlateau:
         threshold: float = 1e-4,
         threshold_mode: str = "rel",
         cooldown: int = 0,
-        min_lr: float = 0,
+        min_lr: Union[float, List[float]] = 0,
         eps: float = 1e-8,
         verbose: bool = False,
     ):
@@ -421,9 +421,15 @@ class ReduceLROnPlateau:
         self.threshold = threshold
         self.threshold_mode = threshold_mode
         self.cooldown = cooldown
-        self.min_lr = min_lr
         self.eps = eps
         self.verbose = verbose
+
+        # Normalize min_lr to a list (one per param group)
+        n_groups = len(optimizer.param_groups)
+        if isinstance(min_lr, (list, tuple)):
+            self.min_lrs = list(min_lr)
+        else:
+            self.min_lrs = [min_lr] * n_groups
 
         self.num_bad_epochs = 0
         self.cooldown_counter = 0
@@ -488,7 +494,7 @@ class ReduceLROnPlateau:
         """Reduce learning rate by factor."""
         for i, param_group in enumerate(self.optimizer.param_groups):
             old_lr = param_group["lr"]
-            new_lr = max(old_lr * self.factor, self.min_lr)
+            new_lr = max(old_lr * self.factor, self.min_lrs[i])
             if old_lr - new_lr > self.eps:
                 param_group["lr"] = new_lr
                 if self.verbose:
@@ -677,6 +683,10 @@ class OneCycleLR(LRScheduler):
         anneal_strategy: str = "cos",
         div_factor: float = 25.0,
         final_div_factor: float = 1e4,
+        three_phase: bool = False,
+        cycle_momentum: bool = True,
+        base_momentum: Union[float, List[float]] = 0.85,
+        max_momentum: Union[float, List[float]] = 0.95,
         last_epoch: int = -1,
         verbose: bool = False,
     ):
@@ -696,6 +706,8 @@ class OneCycleLR(LRScheduler):
         self.anneal_strategy = anneal_strategy
         self.div_factor = div_factor
         self.final_div_factor = final_div_factor
+        self.three_phase = three_phase
+        self.cycle_momentum = cycle_momentum
 
         if isinstance(max_lr, (list, tuple)):
             self.max_lrs = list(max_lr)
@@ -729,16 +741,35 @@ class OneCycleLR(LRScheduler):
             max_lr = group.get("max_lr", initial_lr * self.div_factor)
             min_lr = group.get("min_lr", initial_lr / self.final_div_factor)
 
-            if step_num <= self.total_steps * self.pct_start:
-                # Phase 1: warmup
-                pct = step_num / (self.total_steps * self.pct_start) if self.pct_start > 0 else 1.0
-                lr = self._annealing_func(initial_lr, max_lr, pct)
+            if self.three_phase:
+                # Phase 1: warmup (0 -> pct_start)
+                # Phase 2: decay to initial_lr (pct_start -> pct_start + 0.7*(1-pct_start))
+                # Phase 3: anneal to min_lr
+                phase2_end = self.pct_start + 0.7 * (1 - self.pct_start)
+                if step_num <= self.total_steps * self.pct_start:
+                    pct = step_num / (self.total_steps * self.pct_start) if self.pct_start > 0 else 1.0
+                    lr = self._annealing_func(initial_lr, max_lr, pct)
+                elif step_num <= self.total_steps * phase2_end:
+                    pct = (step_num - self.total_steps * self.pct_start) / (
+                        self.total_steps * (phase2_end - self.pct_start)
+                    )
+                    lr = self._annealing_func(max_lr, initial_lr, pct)
+                else:
+                    pct = (step_num - self.total_steps * phase2_end) / (
+                        self.total_steps * (1 - phase2_end)
+                    )
+                    lr = self._annealing_func(initial_lr, min_lr, pct)
             else:
-                # Phase 2: annealing
-                pct = (step_num - self.total_steps * self.pct_start) / (
-                    self.total_steps * (1 - self.pct_start)
-                )
-                lr = self._annealing_func(max_lr, min_lr, pct)
+                if step_num <= self.total_steps * self.pct_start:
+                    # Phase 1: warmup
+                    pct = step_num / (self.total_steps * self.pct_start) if self.pct_start > 0 else 1.0
+                    lr = self._annealing_func(initial_lr, max_lr, pct)
+                else:
+                    # Phase 2: annealing
+                    pct = (step_num - self.total_steps * self.pct_start) / (
+                        self.total_steps * (1 - self.pct_start)
+                    )
+                    lr = self._annealing_func(max_lr, min_lr, pct)
             lrs.append(lr)
         return lrs
 
@@ -1132,3 +1163,21 @@ class CyclicLR:
 
         if self.verbose:
             print(f"Adjusting learning rate to {new_lrs}.")
+
+    def state_dict(self) -> Dict[str, Any]:
+        """Returns the state of the scheduler as a dict."""
+        return {
+            "last_epoch": self.last_epoch,
+            "_step_count": self._step_count,
+            "base_lrs": self.base_lrs,
+            "max_lrs": self.max_lrs,
+            "_last_lr": self._last_lr,
+        }
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        """Loads the scheduler state."""
+        self.last_epoch = state_dict["last_epoch"]
+        self._step_count = state_dict.get("_step_count", 0)
+        self.base_lrs = state_dict.get("base_lrs", self.base_lrs)
+        self.max_lrs = state_dict.get("max_lrs", self.max_lrs)
+        self._last_lr = state_dict.get("_last_lr", self._last_lr)
