@@ -131,27 +131,77 @@ When using option 3 as a workaround for a broken native kernel:
 - **origin**: `lvyufeng/candle` (fork, push target)
 - **upstream**: `candle-org/candle` (upstream, PR target)
 
+### Worktree & Branch Rules (Mandatory)
+
+These rules apply to Claude Code, Codex, and all coding agents. No exceptions.
+
+#### 1. Always use a worktree
+
+Before making ANY code change, create an isolated worktree and sync upstream:
+
+```bash
+git fetch upstream main
+git worktree add .worktrees/<branch-name> -b <branch-name> upstream/main
+cd .worktrees/<branch-name>
+```
+
+Never edit files on `main` directly. If you find yourself on `main` with uncommitted changes, stop immediately, create a worktree, and move the changes there.
+
+#### 2. Never modify main
+
+The `main` branch is read-only during development. All commits go on feature branches inside `.worktrees/`. If a command would alter `main`, abort it.
+
+#### 3. Rebase upstream before PR
+
+Before pushing and opening a PR, rebase onto the latest upstream main:
+
+```bash
+git fetch upstream main
+git rebase upstream/main
+```
+
+Resolve any conflicts before proceeding.
+
+#### 4. Pylint gate before PR
+
+Run pylint locally and confirm zero errors before pushing or creating a PR:
+
+```bash
+pylint src/candle/ --rcfile=pyproject.toml
+```
+
+Do NOT open a PR if pylint fails. Fix all issues first.
+
+#### 5. Clean up after merge
+
+After a PR is merged (manually or via command), delete ONLY the worktree and branch YOU created:
+
+```bash
+# From the repo root (not inside the worktree)
+git worktree remove .worktrees/<your-branch-name>
+git branch -d <your-branch-name>
+git push origin --delete <your-branch-name>
+```
+
+NEVER touch worktrees or branches created by other agents or contributors.
+
 ### PR Workflow
 
 ```bash
-# 1. Create feature branch from main
-git checkout -b feat/<name>
+# Push to origin
+git push -u origin <branch-name>
 
-# 2. Push to origin
-git push -u origin feat/<name>
-
-# 3. Create PR to upstream
-gh pr create --repo candle-org/candle --head lvyufeng:feat/<name> --base main
+# Create PR to upstream
+gh pr create --repo candle-org/candle --head lvyufeng:<branch-name> --base main
 ```
 
 ### Merge Convention
 
 - Squash merge PRs into main
-- After merge: sync local main, delete feature branch
+- After merge: clean up worktree and branch (Rule 5 above), then sync main:
 
 ```bash
 git checkout main && git pull upstream main && git push origin main
-git branch -d feat/<name> && git push origin --delete feat/<name>
 ```
 
 ---

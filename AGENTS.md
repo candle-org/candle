@@ -58,15 +58,59 @@ pytest tests/mps/ -v --tb=short
 - Match PyTorch dispatch semantics first (schema binding, error class, dispatch path), then optimize implementation.
 - Error message wording can differ slightly unless a contract test requires exact match.
 
-## Branch Rule
+## Worktree & Branch Rules (Mandatory)
 
-- Always develop on a feature branch from latest `main`.
-- Rebase before opening PR to avoid conflicts.
+These rules apply to Claude Code, Codex, and all coding agents. No exceptions.
+
+### 1. Always use a worktree
+
+Before making ANY code change, create an isolated worktree and sync upstream:
 
 ```bash
-git checkout main && git pull upstream main
-git checkout -b feat/<name>
+git fetch upstream main
+git worktree add .worktrees/<branch-name> -b <branch-name> upstream/main
+cd .worktrees/<branch-name>
 ```
+
+Never edit files on `main` directly. If you find yourself on `main` with uncommitted changes, stop immediately, create a worktree, and move the changes there.
+
+### 2. Never modify main
+
+The `main` branch is read-only during development. All commits go on feature branches inside `.worktrees/`. If a command would alter `main`, abort it.
+
+### 3. Rebase upstream before PR
+
+Before pushing and opening a PR, rebase onto the latest upstream main:
+
+```bash
+git fetch upstream main
+git rebase upstream/main
+```
+
+Resolve any conflicts before proceeding.
+
+### 4. Pylint gate before PR
+
+Run pylint locally and confirm zero errors before pushing or creating a PR:
+
+```bash
+pylint src/candle/ --rcfile=pyproject.toml
+```
+
+Do NOT open a PR if pylint fails. Fix all issues first.
+
+### 5. Clean up after merge
+
+After a PR is merged (manually or via command), delete ONLY the worktree and branch YOU created:
+
+```bash
+# From the repo root (not inside the worktree)
+git worktree remove .worktrees/<your-branch-name>
+git branch -d <your-branch-name>
+git push origin --delete <your-branch-name>
+```
+
+NEVER touch worktrees or branches created by other agents or contributors.
 
 ## GPU/NPU Kernel Fallback Policy (Mandatory)
 
