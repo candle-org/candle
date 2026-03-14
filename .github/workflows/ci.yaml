@@ -80,43 +80,66 @@ jobs:
       run: |
         pytest tests/mps/ -v --tb=short
 
-  # Future runners (configure when hardware is available):
-  #
-  # test-npu:
-  #   needs: pylint-check
-  #   runs-on: [self-hosted, ascend]
-  #   steps:
-  #   - uses: actions/checkout@v4
-  #   - name: Install dependencies
-  #     run: |
-  #       pip install -r requirements/requirements-test.txt
-  #   - name: Install candle
-  #     run: pip install -e .
-  #   - name: Run NPU 0.1 gate tests
-  #     run: |
-  #       PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:src \
-  #       pytest \
-  #         tests/npu/test_npu_golden_training_loop.py \
-  #         tests/npu/test_npu_training_checkpoint_continuity.py \
-  #         tests/npu/test_mul_scalar_regression_npu.py \
-  #         tests/npu/test_no_cpu_fallback_npu.py \
-  #         -v --tb=short
-  #
-  # test-distributed-experimental:
-  #   needs: test-npu
-  #   runs-on: [self-hosted, ascend, multicard]
-  #   continue-on-error: true
-  #   steps:
-  #   - uses: actions/checkout@v4
-  #   - name: Install dependencies
-  #     run: |
-  #       pip install -r requirements/requirements-test.txt
-  #   - name: Install candle
-  #     run: pip install -e .
-  #   - name: Run experimental HCCL validation
-  #     run: |
-  #       PYTHONPATH=/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:src \
-  #       pytest tests/distributed/test_hccl_mvp_longrun.py -v --tb=short
+  # ── NPU 910B runners (ascendnode3, 8× Ascend 910B3) ──────────────
+  # Card allocation: unit [0,1] | integ [2,3] | dist [4,5,6,7]
+
+  test-npu-910b-unit:
+    needs: pylint-check
+    runs-on: [self-hosted, npu-unit]
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install candle
+      run: |
+        source /opt/miniconda3/etc/profile.d/conda.sh
+        conda activate candle
+        pip install -e .
+    - name: Run NPU common + 910B op tests
+      run: |
+        source /opt/miniconda3/etc/profile.d/conda.sh
+        conda activate candle
+        pytest tests/npu/common/ tests/npu/910b/ -v --tb=short
+
+  test-npu-910b-integ:
+    needs: pylint-check
+    runs-on: [self-hosted, npu-integ]
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install candle
+      run: |
+        source /opt/miniconda3/etc/profile.d/conda.sh
+        conda activate candle
+        pip install -e .
+    - name: Run NPU integration tests
+      run: |
+        source /opt/miniconda3/etc/profile.d/conda.sh
+        conda activate candle
+        pytest tests/npu/ -v --tb=short \
+          --ignore=tests/npu/common \
+          --ignore=tests/npu/910a \
+          --ignore=tests/npu/910b \
+          --ignore=tests/npu/310b \
+          --ignore=tests/npu/310p
+
+  test-npu-910b-dist:
+    needs: [test-npu-910b-unit, test-npu-910b-integ]
+    runs-on: [self-hosted, npu-dist]
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install candle
+      run: |
+        source /opt/miniconda3/etc/profile.d/conda.sh
+        conda activate candle
+        pip install -e .
+    - name: Run HCCL distributed tests
+      run: |
+        source /opt/miniconda3/etc/profile.d/conda.sh
+        conda activate candle
+        pytest tests/distributed/ -v --tb=short -k "hccl"
+
+  # Future runners:
   #
   # test-cuda:
   #   needs: pylint-check
