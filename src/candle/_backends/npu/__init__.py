@@ -195,6 +195,9 @@ from .ops import (
     scatter_add_,
     masked_scatter_,
     unfold,
+    as_strided_npu, as_strided_copy_npu, as_strided_scatter_npu,
+    expand_copy_npu, slice_op_npu, slice_copy_npu, slice_scatter_npu,
+    sum_to_size_npu,
     var_,
     norm_,
     prod_,
@@ -643,6 +646,16 @@ registry.register("scatter_", "npu", scatter_)
 registry.register("scatter_add_", "npu", scatter_add_)
 registry.register("masked_scatter_", "npu", masked_scatter_)
 registry.register("unfold", "npu", unfold)
+
+# View/copy/slice ops
+registry.register("as_strided_", "npu", as_strided_npu)
+registry.register("as_strided_copy", "npu", as_strided_copy_npu)
+registry.register("as_strided_scatter", "npu", as_strided_scatter_npu)
+registry.register("expand_copy", "npu", expand_copy_npu)
+registry.register("slice", "npu", slice_op_npu)
+registry.register("slice_copy", "npu", slice_copy_npu)
+registry.register("slice_scatter", "npu", slice_scatter_npu)
+registry.register("sum_to_size", "npu", sum_to_size_npu, meta=meta_infer.infer_sum_to_size)
 
 # Reduction ops (composite)
 registry.register("var", "npu", var_, meta=meta_infer.infer_sum)

@@ -118,10 +118,9 @@ def _build_repeat_interleave_indices(dim_size, repeats, device):
         rep = int(rep)
         if rep == 0:
             continue
-        scalar = _npu_arange_1d(int(rep), device)
-        from .math import add as math_add
-        scalar = math_add(scalar, _scalar_to_npu_tensor(int(i), scalar))
-        idx_chunks.append(scalar)
+        from ..creation import full_create
+        chunk = full_create((rep,), i, dtype=int64_dtype, device=device)
+        idx_chunks.append(chunk)
 
     if not idx_chunks:
         return zeros_create((0,), dtype=int64_dtype, device=device), 0
@@ -1372,7 +1371,22 @@ def repeat_interleave(a, repeats, dim=None):
     from ..creation import zeros_create
 
     if hasattr(repeats, "shape"):
-        raise RuntimeError("NPU repeat_interleave with tensor repeats is not implemented without CPU fallback")
+        # Tensor repeats: use on-device index_select approach
+        if dim is None:
+            flat = view_backend.reshape(a, (a.numel(),))
+            idx, out_size = _build_repeat_interleave_indices(flat.shape[0], repeats, a.device)
+            if out_size == 0:
+                return zeros_create((0,), dtype=a.dtype, device=a.device)
+            return index_select(flat, 0, idx)
+
+        dim = _normalize_dim(dim, a.dim())
+        idx, out_size = _build_repeat_interleave_indices(a.shape[dim], repeats, a.device)
+        out_shape = list(a.shape)
+        out_shape[dim] = out_size
+        out_shape = tuple(out_shape)
+        if out_size == 0:
+            return zeros_create(out_shape, dtype=a.dtype, device=a.device)
+        return index_select(a, dim, idx)
 
     if isinstance(repeats, int) and aclnn.repeat_interleave_int_symbols_ok():
         rep = int(repeats)
@@ -2629,4 +2643,199 @@ def unfold(a, dimension, size, step):
         if copy_bytes > 0:
             npu_runtime.memcpy_d2d(dst_ptr_val, copy_bytes, src_ptr, runtime=runtime)
     return result
+
+
+# ---------------------------------------------------------------------------
+# as_strided / expand_copy / slice ops
+# ---------------------------------------------------------------------------
+
+def _compute_required_storage_npu(size, stride, offset):
+    if any(s < 0 for s in stride):
+        raise RuntimeError(
+            f"as_strided: Negative strides are not supported at the moment, "
+            f"got strides: {list(stride)}"
+        )
+    if offset < 0:
+        raise RuntimeError(f"Tensor: invalid storage offset {offset}")
+    if not size:
+        return offset
+    max_index = offset
+    for dim, st in zip(size, stride):
+        if dim <= 0:
+            continue
+        max_index += (dim - 1) * st
+    return max_index + 1
+
+
+def _validate_as_strided_storage_npu(a, size, stride, offset):
+    required = _compute_required_storage_npu(size, stride, offset)
+    storage_size = a.storage().size()
+    if required > storage_size:
+        itemsize = a.element_size()
+        raise RuntimeError(
+            f"setStorage: sizes {list(size)}, strides {list(stride)}, "
+            f"storage offset {offset}, and itemsize {itemsize} requiring a "
+            f"storage size of {required * itemsize} are out of bounds for "
+            f"storage of size {storage_size * itemsize}"
+        )
+
+
+def as_strided_npu(a, size, stride, storage_offset=None):
+    """In-place metadata modification — same semantics as CPU as_strided_."""
+    from ...._tensor import _StrideTuple
+    offset = a.offset if storage_offset is None else int(storage_offset)
+    size = tuple(int(s) for s in size)
+    stride = tuple(int(s) for s in stride)
+    _validate_as_strided_storage_npu(a, size, stride, offset)
+    a.shape = tuple(size)
+    a.stride = _StrideTuple(stride)
+    a.offset = int(offset)
+    return a
+
+
+def _is_contiguous_view(shape, stride):
+    """Check if shape+stride describe a contiguous layout."""
+    if not shape:
+        return True
+    expected = 1
+    for i in range(len(shape) - 1, -1, -1):
+        if shape[i] != 1 and stride[i] != expected:
+            return False
+        expected *= shape[i]
+    return True
+
+
+def _npu_strided_linear_indices(shape, stride, offset, device):
+    """Build a 1-D int64 tensor of linear storage indices for a strided view.
+
+    For shape=(3,), stride=(4,), offset=0 this returns tensor([0, 4, 8]).
+    Works for arbitrary dimensionality by combining per-dim arange tensors.
+    """
+    from ...._dispatch import dispatch
+    dev = device.type
+    indices = None
+    for dim_size, dim_stride in zip(shape, stride):
+        # arange for this dimension: [0, dim_stride, 2*dim_stride, ...]
+        dim_idx = _npu_arange_1d(dim_size, device)
+        if dim_stride != 1:
+            dim_idx = dispatch("mul", dev, dim_idx, dim_stride)
+        if indices is None:
+            indices = dim_idx
+        else:
+            # Outer-add: expand existing indices with new dimension
+            indices = dispatch("add", dev,
+                dispatch("unsqueeze", dev, indices, -1),
+                dim_idx,
+            )
+    if indices is None:
+        # Scalar (empty shape) — single element at offset
+        from ..creation import full_create
+        return full_create((1,), offset, dtype=int64_dtype, device=device)
+    # Flatten and add offset
+    flat = dispatch("reshape", dev, indices, (-1,))
+    if offset != 0:
+        flat = dispatch("add", dev, flat, offset)
+    return flat
+
+
+def _npu_copy_view_to_contiguous(view):
+    """Copy a possibly non-contiguous NPU view to a new contiguous tensor.
+
+    Uses memcpy_d2d for contiguous views (fast path) and index_select with
+    computed linear indices for non-contiguous views.
+    """
+    out_shape = tuple(view.shape)
+
+    if _is_contiguous_view(view.shape, view.stride):
+        # Fast path: contiguous layout, just memcpy from the right offset
+        runtime = npu_runtime.get_runtime((view.device.index or 0))
+        out_stride = npu_runtime._contiguous_stride(out_shape)
+        out_numel = max(_numel(out_shape), 1)
+        out_ptr = npu_runtime._alloc_device(out_numel * _dtype_itemsize(view.dtype), runtime=runtime)
+        copy_bytes = out_numel * _dtype_itemsize(view.dtype)
+        npu_runtime.memcpy_d2d(out_ptr, copy_bytes, _npu_data_ptr(view), runtime=runtime)
+        out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, view.dtype, device=view.device)
+        return _wrap_tensor(out_storage, out_shape, out_stride)
+
+    # Non-contiguous: flatten storage, compute linear indices, gather, reshape
+    from ...._dispatch import dispatch
+    dev = view.device.type
+    # Get flat storage as 1-D tensor
+    storage = view.storage()
+    flat_storage = dispatch("reshape", dev,
+        _wrap_tensor(storage, (storage.size(),), (1,)),
+        (-1,),
+    )
+    # Compute linear indices from shape/stride/offset
+    indices = _npu_strided_linear_indices(view.shape, view.stride, view.offset, view.device)
+    # Gather elements
+    gathered = index_select(flat_storage, 0, indices)
+    # Reshape to target shape
+    return dispatch("reshape", dev, gathered, out_shape)
+
+
+def as_strided_copy_npu(a, size, stride, storage_offset=None):
+    offset = a.offset if storage_offset is None else int(storage_offset)
+    size = tuple(int(s) for s in size)
+    stride = tuple(int(s) for s in stride)
+    _validate_as_strided_storage_npu(a, size, stride, offset)
+    view = a.as_strided(size, stride, offset)
+    return _npu_copy_view_to_contiguous(view)
+
+
+def as_strided_scatter_npu(a, src, size, stride, storage_offset=None):
+    offset = a.offset if storage_offset is None else int(storage_offset)
+    size = tuple(int(s) for s in size)
+    stride = tuple(int(s) for s in stride)
+    _validate_as_strided_storage_npu(a, size, stride, offset)
+    out = a.clone()
+    view = out.as_strided(size, stride, offset)
+    if view.shape != src.shape:
+        raise RuntimeError(
+            f"expected src to have a size equal to the slice of self. "
+            f"src size = {list(src.shape)}, slice size = {list(view.shape)}"
+        )
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
+    aclnn.inplace_copy(
+        _npu_data_ptr(view),
+        _npu_data_ptr(src),
+        view.shape,
+        view.stride,
+        view.dtype,
+        src.shape,
+        src.stride,
+        src.dtype,
+        runtime,
+        stream=stream.stream,
+    )
+    return out
+
+
+def expand_copy_npu(a, sizes):
+    expanded = expand(a, sizes)
+    return _npu_copy_view_to_contiguous(expanded)
+
+
+def slice_op_npu(a, dim, start=0, end=9223372036854775807, step=1):
+    if step <= 0:
+        raise RuntimeError("slice step must be positive")
+    key = [slice(None)] * a.dim()
+    key[int(dim)] = slice(int(start), int(end), int(step))
+    return getitem(a, tuple(key))
+
+
+def slice_copy_npu(a, dim, start=0, end=9223372036854775807, step=1):
+    view = slice_op_npu(a, dim, start, end, step)
+    return _npu_copy_view_to_contiguous(view)
+
+
+def slice_scatter_npu(a, src, dim, start=0, end=9223372036854775807, step=1):
+    if step <= 0:
+        raise RuntimeError("slice step must be positive")
+    out = a.clone()
+    key = [slice(None)] * out.dim()
+    key[int(dim)] = slice(int(start), int(end), int(step))
+    setitem(out, tuple(key), src)
+    return out
 

@@ -45,6 +45,7 @@ from .reduce import (
     aminmax_op, nanmean_op, argwhere_op,
     quantile_op, nanquantile_op, nanmedian_op,
     aminmax_aclnn,
+    sum_to_size_npu,
 )
 
 from .shape import (
@@ -65,6 +66,8 @@ from .shape import (
     index_put_, index_put, index_copy_, index_fill_, index_add_,
     scatter_, scatter_add_, masked_scatter_,
     unfold,
+    as_strided_npu, as_strided_copy_npu, as_strided_scatter_npu,
+    expand_copy_npu, slice_op_npu, slice_copy_npu, slice_scatter_npu,
 )
 
 from .activation import (
