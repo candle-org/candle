@@ -37,6 +37,8 @@ _FALLBACK_OPS = {
         "diag", "lerp", "remainder", "isclose", "softplus",
         "uniform_", "normal_", "layer_norm", "mish",
         "batch_norm", "dropout", "take_along_dim", "gather",
+        "isinf",    # aclnnIsInf returns 161001 (unavailable) on 310B
+        "matmul",   # aclnnMatmul on 310B only supports float16; float32 inputs are cast
     }),
     "310p": frozenset(),
 }

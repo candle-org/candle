@@ -29,6 +29,14 @@ def matmul(a, b):
     if a.dtype != b.dtype:
         raise ValueError("NPU matmul requires matching dtypes")
 
+    # 310B aclnnMatmul only supports float16; cast float32 inputs and cast result back.
+    # TODO: re-enable float32 native path when CANN fixes float32 support on 310B.
+    from ...._dtype import float16 as float16_dtype
+    orig_dtype = a.dtype
+    if _use_soc_fallback("matmul") and orig_dtype == float_dtype:
+        a = _cast_tensor_dtype(a, float16_dtype)
+        b = _cast_tensor_dtype(b, float16_dtype)
+
     itemsize = _dtype_itemsize(a.dtype)
     a_storage = _unwrap_storage(a)
     b_storage = _unwrap_storage(b)
@@ -118,6 +126,9 @@ def matmul(a, b):
         from ...common import view as view_backend
 
         out = view_backend.reshape(out, out_shape)
+    # Cast result back to original dtype if we promoted for 310B float32 workaround.
+    if _use_soc_fallback("matmul") and orig_dtype != a.dtype:
+        out = _cast_tensor_dtype(out, orig_dtype)
     return out
 
 
