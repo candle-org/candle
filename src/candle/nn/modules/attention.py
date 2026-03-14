@@ -48,6 +48,9 @@ class MultiheadAttention(Module):
             init.xavier_uniform_(self.q_proj_weight)
             init.xavier_uniform_(self.k_proj_weight)
             init.xavier_uniform_(self.v_proj_weight)
+        if self.in_proj_bias is not None:
+            init.constant_(self.in_proj_bias, 0.)
+            init.constant_(self.out_proj.bias, 0.)
 
     def forward(self, query, key, value, key_padding_mask=None, need_weights=True,
                 attn_mask=None, average_attn_weights=True, is_causal=False):
@@ -109,12 +112,13 @@ class MultiheadAttention(Module):
 
         if need_weights:
             # Manual attention computation to return weights
+            from ..._functional import matmul as _matmul
             scale = 1.0 / math.sqrt(head_dim)
-            attn_weights = F.matmul(q, k.transpose(-2, -1)) * scale
+            attn_weights = _matmul(q, k.transpose(-2, -1)) * scale
             if attn_mask is not None:
                 attn_weights = attn_weights + attn_mask
             attn_weights = F.softmax(attn_weights, dim=-1)
-            attn_output = F.matmul(attn_weights, v)
+            attn_output = _matmul(attn_weights, v)
         else:
             attn_output = F.scaled_dot_product_attention(
                 q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal)

@@ -205,3 +205,118 @@ def test_dropout_backward_p_zero():
     out = F.dropout(x, p=0.0, training=True)
     out.sum().backward()
     np.testing.assert_allclose(x.grad.numpy(), np.ones_like(x.grad.numpy()))
+
+
+# ---- MultiheadAttention backward ----
+
+
+def test_mha_self_attention_backward():
+    """MHA self-attention: all projection weights should get gradients."""
+    torch.manual_seed(42)
+    embed_dim, num_heads, seq_len, batch = 8, 2, 4, 2
+    mha = torch.nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+    x = torch.randn(batch, seq_len, embed_dim, device='cpu')
+    x.requires_grad = True
+    out, _ = mha(x, x, x)
+    out.sum().backward()
+
+    assert x.grad is not None
+    assert mha.in_proj_weight.grad is not None
+    assert mha.in_proj_bias.grad is not None
+    assert mha.out_proj.weight.grad is not None
+    assert mha.out_proj.bias.grad is not None
+    # Weight grads should be non-zero
+    assert np.abs(mha.in_proj_weight.grad.numpy()).sum() > 0
+    assert np.abs(mha.out_proj.weight.grad.numpy()).sum() > 0
+
+
+def test_mha_cross_attention_backward():
+    """MHA cross-attention: query and key/value from different sources."""
+    torch.manual_seed(42)
+    embed_dim, num_heads = 8, 2
+    mha = torch.nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+    q = torch.randn(2, 4, embed_dim, device='cpu'); q.requires_grad = True
+    kv = torch.randn(2, 6, embed_dim, device='cpu'); kv.requires_grad = True
+    out, _ = mha(q, kv, kv)
+    out.sum().backward()
+
+    assert q.grad is not None
+    assert kv.grad is not None
+    assert mha.in_proj_weight.grad is not None
+
+
+def test_mha_need_weights_true():
+    """MHA with need_weights=True returns attention weights and still backprops."""
+    torch.manual_seed(42)
+    embed_dim, num_heads = 8, 2
+    mha = torch.nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+    x = torch.randn(2, 4, embed_dim, device='cpu')
+    x.requires_grad = True
+    out, attn_weights = mha(x, x, x, need_weights=True)
+    assert attn_weights is not None
+    assert attn_weights.shape == (2, 4, 4)  # (N, L, S) when averaged over heads
+    out.sum().backward()
+    assert x.grad is not None
+
+
+# ---- End-to-end transformer training step ----
+
+
+def test_transformer_training_step():
+    """Full forward + backward + optimizer step on a small transformer."""
+    torch.manual_seed(42)
+    batch, seq_len, embed_dim, num_heads = 2, 4, 8, 2
+
+    # Build a minimal transformer encoder layer
+    mha = torch.nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+    ln1 = torch.nn.LayerNorm(embed_dim)
+    linear1 = torch.nn.Linear(embed_dim, 16)
+    linear2 = torch.nn.Linear(16, embed_dim)
+    ln2 = torch.nn.LayerNorm(embed_dim)
+
+    params = (
+        list(mha.parameters()) +
+        list(ln1.parameters()) +
+        list(ln2.parameters()) +
+        list(linear1.parameters()) +
+        list(linear2.parameters())
+    )
+    optimizer = torch.optim.SGD(params, lr=0.01)
+
+    # Save initial weights
+    init_weights = {id(p): p.detach().numpy().copy() for p in params}
+
+    # Forward pass
+    x = torch.randn(batch, seq_len, embed_dim, device='cpu')
+    # Self-attention + residual
+    attn_out, _ = mha(x, x, x)
+    x2 = ln1(x + attn_out)
+    # FFN + residual
+    ffn_out = linear2(F.relu(linear1(x2)))
+    x3 = ln2(x2 + ffn_out)
+
+    # Loss
+    target = torch.randn(batch, seq_len, embed_dim, device='cpu')
+    loss = ((x3 - target) ** 2).mean()
+
+    # Backward
+    loss.backward()
+
+    # Check gradients exist for all parameters
+    for p in params:
+        assert p.grad is not None, f"Parameter with shape {p.shape} has no gradient"
+
+    # Optimizer step
+    optimizer.step()
+
+    # Verify weights changed
+    changed_count = 0
+    for p in params:
+        old = init_weights[id(p)]
+        new = p.detach().numpy()
+        if not np.allclose(old, new, atol=1e-10):
+            changed_count += 1
+
+    assert changed_count == len(params), (
+        f"Only {changed_count}/{len(params)} parameters changed after optimizer step"
+    )

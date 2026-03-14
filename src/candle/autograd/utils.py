@@ -11,7 +11,7 @@ def reduce_grad(grad, shape):
     if grad.device.type != "cpu":
         return _reduce_grad_dispatch(grad, shape)
 
-    arr = grad.storage().data
+    arr = np.array(grad.storage().data).reshape(grad.shape)
     while arr.ndim > len(shape):
         arr = arr.sum(axis=0)
     for i, (g_dim, s_dim) in enumerate(zip(arr.shape, shape)):

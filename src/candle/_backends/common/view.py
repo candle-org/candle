@@ -66,6 +66,8 @@ def reshape(a, shape):
         new_size *= d
     if size != new_size:
         raise ValueError("reshape size mismatch")
+    if not a.is_contiguous():
+        a = a.contiguous()
     stride = _contiguous_stride(shape)
     base = _get_base(a)
     return _make_view(base, shape, stride, a.offset, "reshape", source=a)
