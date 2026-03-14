@@ -159,10 +159,12 @@ def _autograd_unary_args(name, backward_impl, *, cpu_only=False, save_input=True
 
 
 def _autograd_rrelu():
+    op_name = "rrelu"
+
     def wrapper(a, *args, **kwargs):
         active_keyset = current_dispatch_keyset()
         raw_keyset = _strip_autograd_keys(active_keyset)
-        out = redispatch("rrelu", raw_keyset, a, *args, **kwargs)
+        out = redispatch(op_name, raw_keyset, a, *args, **kwargs)
         if GradMode.enabled and a.requires_grad:
             slope = getattr(out, "_rrelu_slope", None)
             node_holder = {}
@@ -172,7 +174,7 @@ def _autograd_rrelu():
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return _rrelu_backward(grad, a, saved_a, backward_keyset, args, kwargs, slope=slope)
 
-            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            node = Node(_backward, (a,), name=f"{op_name.capitalize()}Backward0")
             annotate_node_creation(node)
             node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
@@ -1010,10 +1012,12 @@ def _hardtanh_backward(grad, _a, saved_a, keyset, args, _kwargs):
 
 def _autograd_dropout():
     """Proper dropout backward using the mask saved during forward."""
+    op_name = "dropout"
+
     def wrapper(a, *args, **kwargs):
         active_keyset = current_dispatch_keyset()
         raw_keyset = _strip_autograd_keys(active_keyset)
-        out = redispatch("dropout", raw_keyset, a, *args, **kwargs)
+        out = redispatch(op_name, raw_keyset, a, *args, **kwargs)
         if GradMode.enabled and getattr(a, "requires_grad", False):
             backward_data = getattr(out, "_backward_data", None)
             node_holder = {}
@@ -1063,7 +1067,7 @@ def _autograd_dropout():
                 grad_np = g_np * mask_np * scale
                 return (_from_numpy(grad_np, grad.dtype, grad.device),)
 
-            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            node = Node(_backward, (a,), name=f"{op_name.capitalize()}Backward0")
             annotate_node_creation(node)
             node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
