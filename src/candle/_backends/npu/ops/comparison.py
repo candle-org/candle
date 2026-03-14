@@ -206,17 +206,11 @@ def equal(a, b):
 
 def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
     from ...._tensor import Tensor
-    from .math import abs, sub, mul, add
-    from .math import isnan
     if not isinstance(a, Tensor) or not isinstance(b, Tensor):
         raise ValueError("NPU allclose expects tensors")
-    diff = abs(sub(a, b))
-    tol = add(_scalar_to_npu_tensor(atol, diff), mul(_scalar_to_npu_tensor(rtol, diff), abs(b)))
-    close = le(diff, tol)
-    if equal_nan:
-        nan_match = logical_and(isnan(a), isnan(b))
-        close = logical_or(close, nan_match)
-    # all_ is in __init__.py; use lazy import to avoid circular dependency
+    # Use isclose (single aclnn.sisclose kernel) instead of compositing 6 small
+    # ops (abs/sub/mul/add/le/logical_or) which triggers ACLNN 561000 on 910A.
+    close = isclose(a, b, rtol=rtol, atol=atol, equal_nan=equal_nan)
     from . import all_
     return all_(close).item()
 
