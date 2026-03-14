@@ -1,0 +1,118 @@
+name: NPU 310B
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - 'src/candle/**'
+      - 'tests/npu/310b/**'
+      - 'tests/npu/common/**'
+      - '.github/workflows/npu-310b.yaml'
+  push:
+    branches: ["main"]
+    paths:
+      - 'src/candle/**'
+      - 'tests/npu/310b/**'
+      - 'tests/npu/common/**'
+      - '.github/workflows/npu-310b.yaml'
+
+permissions:
+  contents: read
+
+env:
+  CONDA_EXE: /usr/local/miniconda3/bin/conda
+  CONDA_ENV_PREFIX: /tmp/candle-npu-ci-310b
+  ASCEND_ENV_SCRIPT: /usr/local/Ascend/ascend-toolkit/set_env.sh
+  ASCEND_REQUIRED_GROUP: HwHiAiUser
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+  PYTHONNOUSERSITE: '1'
+
+jobs:
+  test-310b:
+    name: 310B Ops + Common
+    runs-on: [self-hosted, linux, ascend, 310b]
+    timeout-minutes: 60
+    env:
+      JOB_CONDA_ENV: /tmp/candle-npu-ci-310b
+    steps:
+    - uses: actions/checkout@v4
+    - name: Prepare conda environment
+      run: |
+        "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
+    - name: Install dependencies
+      run: |
+        "$JOB_CONDA_ENV/bin/python" -m pip install --upgrade pip
+        "$JOB_CONDA_ENV/bin/python" -m pip install -r requirements/requirements-test.txt
+    - name: Install candle
+      run: |
+        "$JOB_CONDA_ENV/bin/python" -m pip install -e .
+    - name: Assert NPU availability
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env python -c "import candle as torch; assert torch.npu.is_available(), 'NPU not available on 310B runner'; print('NPU available:', torch.npu.is_available()); print('Device count:', torch.npu.device_count())"
+    - name: Run 310B-specific tests
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env pytest tests/npu/310b/ -v --tb=short
+    - name: Run NPU common tests
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env pytest tests/npu/common/ -v --tb=short
