@@ -134,10 +134,6 @@ def matmul(a, b):
 
 def dot(a, b):
     """Dot product of two 1D tensors."""
-    if not aclnn.dot_symbols_ok():
-        raise RuntimeError("aclnnDot symbols not available")
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu" or b.device.type != "npu":
         raise ValueError("NPU dot expects NPU tensors")
     if a.dtype != b.dtype:
@@ -146,6 +142,17 @@ def dot(a, b):
         raise ValueError("NPU dot expects 1D tensors")
     if a.shape[0] != b.shape[0]:
         raise ValueError("NPU dot requires tensors of same length")
+
+    # 310B: aclnnDot returns 561103 for all dtypes; use mul+sum composite.
+    # TODO: re-enable native aclnnDot when CANN fixes 561103 on 310B.
+    if _use_soc_fallback("dot"):
+        product = mul(a, b)
+        return sum_(product)
+
+    if not aclnn.dot_symbols_ok():
+        raise RuntimeError("aclnnDot symbols not available")
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
 
     itemsize = _dtype_itemsize(a.dtype)
     a_storage = _unwrap_storage(a)
@@ -187,6 +194,14 @@ def mv(a, b):
     if a.shape[1] != b.shape[0]:
         raise ValueError(f"NPU mv: matrix columns ({a.shape[1]}) != vector length ({b.shape[0]})")
 
+    # 310B aclnnMv only supports float16; cast float32 inputs and cast result back.
+    # TODO: re-enable float32 native path when CANN fixes float32 support on 310B.
+    from ...._dtype import float16 as float16_dtype
+    orig_dtype = a.dtype
+    if _use_soc_fallback("mv") and orig_dtype == float_dtype:
+        a = _cast_tensor_dtype(a, float16_dtype)
+        b = _cast_tensor_dtype(b, float16_dtype)
+
     itemsize = _dtype_itemsize(a.dtype)
     a_storage = _unwrap_storage(a)
     b_storage = _unwrap_storage(b)
@@ -207,7 +222,10 @@ def mv(a, b):
     )
 
     storage = npu_typed_storage_from_ptr(out_ptr, out_shape[0], a.dtype, device=a.device)
-    return _wrap_tensor(storage, out_shape, out_stride)
+    out = _wrap_tensor(storage, out_shape, out_stride)
+    if _use_soc_fallback("mv") and orig_dtype != a.dtype:
+        out = _cast_tensor_dtype(out, orig_dtype)
+    return out
 
 
 def outer(a, b):
@@ -257,6 +275,15 @@ def addmm(input, mat1, mat2, beta=1, alpha=1):
     runtime = npu_runtime.get_runtime((input.device.index or 0))
     stream = npu_state.current_stream((input.device.index or 0))
 
+    # 310B aclnnAddmm only supports float16; cast float32 inputs and cast result back.
+    # TODO: re-enable float32 native path when CANN fixes float32 support on 310B.
+    from ...._dtype import float16 as float16_dtype
+    orig_dtype = input.dtype
+    if _use_soc_fallback("addmm") and orig_dtype == float_dtype:
+        input = _cast_tensor_dtype(input, float16_dtype)
+        mat1 = _cast_tensor_dtype(mat1, float16_dtype)
+        mat2 = _cast_tensor_dtype(mat2, float16_dtype)
+
     M, K = mat1.shape
     _, N = mat2.shape
     out_shape = (M, N)
@@ -279,7 +306,10 @@ def addmm(input, mat1, mat2, beta=1, alpha=1):
     )
 
     out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), input.dtype, device=input.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    out = _wrap_tensor(out_storage, out_shape, out_stride)
+    if _use_soc_fallback("addmm") and orig_dtype != input.dtype:
+        out = _cast_tensor_dtype(out, orig_dtype)
+    return out
 
 
 def baddbmm(self_tensor, batch1, batch2, beta=1.0, alpha=1.0):

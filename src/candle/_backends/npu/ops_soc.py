@@ -43,6 +43,9 @@ _FALLBACK_OPS = {
         "batch_norm", "dropout", "take_along_dim", "gather",
         "isinf",    # aclnnIsInf returns 161001 (unavailable) on 310B
         "matmul",   # aclnnMatmul on 310B only supports float16; float32 inputs are cast
+        "addmm",    # aclnnAddmm on 310B only supports float16; float32 inputs are cast
+        "mv",       # aclnnMv on 310B only supports float16; float32 inputs are cast
+        "dot",      # aclnnDot returns 561103 for all dtypes on 310B; use mul+sum composite
     }),
     "310p": frozenset(),
 }

@@ -30,6 +30,9 @@ The official Ascend PyTorch backend (`torch_npu`) does not implement the 910B fa
 | `isinf` | npu (910B) | `aclnnIsInf` returns error 161001 (unavailable) on 910B series. | Composite: `!isfinite(x) & isfinite(1/x)`. Gate: `_use_soc_fallback("isinf")`. | CANN 8.5 / Ascend910B | open |
 | `isinf` | npu (310B) | `aclnnIsInf` returns error 161001 (unavailable) on 310B series. | Same composite as 910B: `!isfinite(x) & isfinite(1/x)`. Gate: `_use_soc_fallback("isinf")`. | CANN 8.5 / Ascend310B | open |
 | `matmul` | npu (310B) | `aclnnMatmul` returns error 561103 for float32 inputs on 310B; float16 works natively. | Cast float32 inputs to float16, run native `aclnnMatmul`, cast result back to float32. Gate: `_use_soc_fallback("matmul")`. | CANN 8.5 / Ascend310B | open |
+| `addmm` | npu (310B) | `aclnnAddmm` returns error 561103 for float32 inputs on 310B; float16 works natively. | Cast float32 inputs to float16, run native `aclnnAddmm`, cast result back to float32. Gate: `_use_soc_fallback("addmm")`. | CANN 8.5 / Ascend310B | open |
+| `mv` | npu (310B) | `aclnnMv` returns error 561103 for float32 inputs on 310B; float16 works natively. | Cast float32 inputs to float16, run native `aclnnMv`, cast result back to float32. Gate: `_use_soc_fallback("mv")`. | CANN 8.5 / Ascend310B | open |
+| `dot` | npu (310B) | `aclnnDot` returns error 561103 for all dtypes (float16/float32) on 310B. | Composite: `mul(a, b)` then `sum()`. Gate: `_use_soc_fallback("dot")`. | CANN 8.5 / Ascend310B | open |
 | `im2col` | npu (910B) | `aclnnIm2col` returns error 561103 on 910B series. | Manual sliding-window extraction via slice + reshape + cat. Gate: `_use_soc_fallback("im2col")`. | CANN 8.5 / Ascend910B | open |
 
 <!--
