@@ -1,150 +1,145 @@
-#MoveaxisMovedimParityImplementationPlan
+# Moveaxis Movedim Parity Implementation Plan
 
->**ForClaude:**REQUIREDSUB-SKILL:Usesuperpowers:executing-planstoimplementthisplantask-by-task.
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:**ClosetheremainingCPU-side`moveaxis`/`movedim`paritygapsbyaddingfocusedcoveragefornormalbehavior,aligningschema-levelinvalid-dimensionerrorswithPyTorch,andfixingincorrectpendingshapesinpipeline/metamode.
+**Goal:** Close the remaining CPU-side `moveaxis`/`movedim` parity gaps by adding focused coverage for normal behavior, aligning schema-level invalid-dimension errors with PyTorch, and fixing incorrect pending shapes in pipeline/meta mode.
 
-**Architecture:**Keepthisbatchmechanism-focused.ReusetheexistingpublicAPI,schemas,CPUkernels,andautogradregistrations.AddredtestsfirstinCPU,contract,andpipelinesuites;thenmakethesmallestpossiblechangesinschemavalidationandmetainferencesoruntimebehaviorandpending-shapemetadatamatchPyTorchsemantics.
+**Architecture:** Keep this batch mechanism-focused. Reuse the existing public API, schemas, CPU kernels, and autograd registrations. Add red tests first in CPU, contract, and pipeline suites; then make the smallest possible changes in schema validation and meta inference so runtime behavior and pending-shape metadata match PyTorch semantics.
 
-**TechStack:**Python,pytest,Candledispatch/schema/metasystem,NumPy-backedCPUkernels.
+**Tech Stack:** Python, pytest, Candle dispatch/schema/meta system, NumPy-backed CPU kernels.
 
 ---
 
-###Task1:AddfocusedCPUtop-levelparitytests
+### Task 1: Add focused CPU top-level parity tests
 
 **Files:**
--Modify:`tests/cpu/test_top_level_ops.py`
--Test:`tests/cpu/test_top_level_ops.py`
+- Modify: `tests/cpu/test_top_level_ops.py`
+- Test: `tests/cpu/test_top_level_ops.py`
 
-**Step1:Writethefailingtest**
+**Step 1: Write the failing test**
 
-Addteststhatcover:
--`torch.movedim(x,0,2)`returnsshape`(3,4,2)`withexpectedvalues.
--`torch.moveaxis(x,0,2)`matches`torch.movedim(x,0,2)`exactly.
--`x.movedim((0,2),(2,0))`returnsshape`(4,3,2)`withexpectedvalues.
--`x.moveaxis((0,2),(2,0))`matches`x.movedim((0,2),(2,0))`exactly.
+Add tests that cover:
+- `torch.movedim(x, 0, 2)` returns shape `(3, 4, 2)` with expected values.
+- `torch.moveaxis(x, 0, 2)` matches `torch.movedim(x, 0, 2)` exactly.
+- `x.movedim((0, 2), (2, 0))` returns shape `(4, 3, 2)` with expected values.
+- `x.moveaxis((0, 2), (2, 0))` matches `x.movedim((0, 2), (2, 0))` exactly.
 
-**Step2:Runtesttoverifycurrentstatus**
+**Step 2: Run test to verify current status**
 
-Run:`PYTHONPATH=srcpytesttests/cpu/test_top_level_ops.py-k"moveaxisormovedim"-v--tb=short`
-Expected:passorexposeanyunexpectedfunctionalgap.
+Run: `PYTHONPATH=src pytest tests/cpu/test_top_level_ops.py -k "moveaxis or movedim" -v --tb=short`
+Expected: pass or expose any unexpected functional gap.
 
-**Step3:Keeporrefineonlyifneeded**
+**Step 3: Keep or refine only if needed**
 
-Iffunctionalcoverageisgreenimmediately,keepthetestsasregressioncoverageandmoveon.
+If functional coverage is green immediately, keep the tests as regression coverage and move on.
 
-**Step4:Re-runtest**
+**Step 4: Re-run test**
 
-Runthesamecommandandconfirmcleanoutput.
+Run the same command and confirm clean output.
 
-**Step5:Commit**
+**Step 5: Commit**
 
-Donotcommityet;batchcommitafterschema/metafixesaregreen.
+Do not commit yet; batch commit after schema/meta fixes are green.
 
-###Task2:Addfailingpipeline/metaregressiontest
-
-**Files:**
--Modify:`tests/cpu/test_pipeline.py`
--Test:`tests/cpu/test_pipeline.py`
-
-**Step1:Writethefailingtest**
-
-Addafocusedtestthatexecutesunder`withtorch.pipeline():`andassertspendingtensorshapesarealreadypermutedcorrectlyfor:
--`torch.movedim(x,0,2)`->pendingshape`(3,4,2)`
--`torch.moveaxis(x,(0,2),(2,0))`->pendingshape`(4,3,2)`
-
-Alsoasserttheshapesremainthesameafterflush.
-
-**Step2:Runtesttoverifyitfails**
-
-Run:`PYTHONPATH=srcpytesttests/cpu/test_pipeline.py-k"movedimormoveaxis"-v--tb=short`
-Expected:FAILbecause`infer_movedim`currentlyreturnstheinputshapeunchanged.
-
-**Step3:Writeminimalimplementation**
-
-Update`src/candle/_backends/meta/infer.py`so`infer_movedim`computesthepermutedoutputshapeandcontiguousstride,withsource/destinationnormalizationmatchingruntimesemantics.
-
-**Step4:Runtesttoverifyitpasses**
-
-RunthesamecommandandconfirmPASS.
-
-**Step5:Commit**
-
-Donotcommityet;batchcommitaftercontractparityisgreen.
-
-###Task3:Addfailingschema-levelerror-contracttests
+### Task 2: Add failing pipeline/meta regression test
 
 **Files:**
--Modify:`tests/contract/test_schema_dim_validation.py`
--Modify:`src/candle/_dispatch/schema.py`
--Test:`tests/contract/test_schema_dim_validation.py`
+- Modify: `tests/cpu/test_pipeline.py`
+- Test: `tests/cpu/test_pipeline.py`
 
-**Step1:Writethefailingtest**
+**Step 1: Write the failing test**
 
-AddexactTorch-alignmenttestsusing`assert_torch_error(...)`forboth`dispatch("movedim",...)`and`dispatch("moveaxis",...)`covering:
--duplicatesourcedims:`([0,0],[1,2])`
--source/destinationlengthmismatch:`([0,1],[2])`
--out-of-rangedim:`(3,0)`onarank-3tensor
+Add a focused test that executes under `with torch.pipeline():` and asserts pending tensor shapes are already permuted correctly for:
+- `torch.movedim(x, 0, 2)` -> pending shape `(3, 4, 2)`
+- `torch.moveaxis(x, (0, 2), (2, 0))` -> pending shape `(4, 3, 2)`
 
-**Step2:Runtesttoverifyitfails**
+Also assert the shapes remain the same after flush.
 
-Run:`PYTHONPATH=srcpytesttests/contract/test_schema_dim_validation.py-k"movedimormoveaxis"-v--tb=short`
-Expected:FAILbecausecurrentbehaviorleaksNumPy/backendexceptionsandtexts.
+**Step 2: Run test to verify it fails**
 
-**Step3:Writeminimalimplementation**
+Run: `PYTHONPATH=src pytest tests/cpu/test_pipeline.py -k "movedim or moveaxis" -v --tb=short`
+Expected: FAIL because `infer_movedim` currently returns the input shape unchanged.
 
-In`src/candle/_dispatch/schema.py`:
--addavalidatorfor`movedim`/`moveaxis`sourceanddestinationarguments
--normalizeint/list/tupleformsintocomparabledimlists
--rejectboolsandnon-intentrieswithTorch-styletuple-of-intserrorswhereapplicable
--rejectduplicatenormalizeddimswithTorch-style`movedim:repeateddimin\`source\``/`\`destination\``messages
--rejectsource/destinationlengthmismatchwithTorch-style`Invalidsourceordestinationdims`message
--rejectout-of-rangedimswiththeexistingTorch-style`Dimensionoutofrange...`text
+**Step 3: Write minimal implementation**
 
-Keepthevalidatorscopedonlytotheseops.
+Update `src/candle/_backends/meta/infer.py` so `infer_movedim` computes the permuted output shape and contiguous stride, with source/destination normalization matching runtime semantics.
 
-**Step4:Runtesttoverifyitpasses**
+**Step 4: Run test to verify it passes**
 
-RunthesamecommandandconfirmPASS.
+Run the same command and confirm PASS.
 
-**Step5:Commit**
+**Step 5: Commit**
 
-Donotcommityet;batchcommitafterbroaderverification.
+Do not commit yet; batch commit after contract parity is green.
 
-###Task4:Runfocusedandbroaderverification
+### Task 3: Add failing schema-level error-contract tests
 
 **Files:**
--Verify:`tests/cpu/test_top_level_ops.py`
--Verify:`tests/cpu/test_pipeline.py`
--Verify:`tests/contract/test_schema_dim_validation.py`
--Verify:`tests/contract/`
--Verify:`tests/cpu/`
+- Modify: `tests/contract/test_schema_dim_validation.py`
+- Modify: `src/candle/_dispatch/schema.py`
+- Test: `tests/contract/test_schema_dim_validation.py`
 
-**Step1:Runfocusedregressioncommands**
+**Step 1: Write the failing test**
+
+Add exact Torch-alignment tests using `assert_torch_error(...)` for both `dispatch("movedim", ...)` and `dispatch("moveaxis", ...)` covering:
+- duplicate source dims: `([0, 0], [1, 2])`
+- source/destination length mismatch: `([0, 1], [2])`
+- out-of-range dim: `(3, 0)` on a rank-3 tensor
+
+**Step 2: Run test to verify it fails**
+
+Run: `PYTHONPATH=src pytest tests/contract/test_schema_dim_validation.py -k "movedim or moveaxis" -v --tb=short`
+Expected: FAIL because current behavior leaks NumPy/backend exceptions and texts.
+
+**Step 3: Write minimal implementation**
+
+In `src/candle/_dispatch/schema.py`:
+- add a validator for `movedim`/`moveaxis` source and destination arguments
+- normalize int/list/tuple forms into comparable dim lists
+- reject bools and non-int entries with Torch-style tuple-of-ints errors where applicable
+- reject duplicate normalized dims with Torch-style `movedim: repeated dim in `source`` / `destination` messages
+- reject source/destination length mismatch with Torch-style `Invalid source or destination dims` message
+- reject out-of-range dims with the existing Torch-style `Dimension out of range...` text
+
+Keep the validator scoped only to these ops.
+
+**Step 4: Run test to verify it passes**
+
+Run the same command and confirm PASS.
+
+**Step 5: Commit**
+
+Do not commit yet; batch commit after broader verification.
+
+### Task 4: Run focused and broader verification
+
+**Files:**
+- Verify: `tests/cpu/test_top_level_ops.py`
+- Verify: `tests/cpu/test_pipeline.py`
+- Verify: `tests/contract/test_schema_dim_validation.py`
+- Verify: `tests/contract/`
+- Verify: `tests/cpu/`
+
+**Step 1: Run focused regression commands**
 
 Run:
--`PYTHONPATH=srcpytesttests/cpu/test_top_level_ops.py-k"moveaxisormovedim"-v--tb=short`
--`PYTHONPATH=srcpytesttests/cpu/test_pipeline.py-k"movedimormoveaxis"-v--tb=short`
--`PYTHONPATH=srcpytesttests/contract/test_schema_dim_validation.py-k"movedimormoveaxis"-v--tb=short`
+- `PYTHONPATH=src pytest tests/cpu/test_top_level_ops.py -k "moveaxis or movedim" -v --tb=short`
+- `PYTHONPATH=src pytest tests/cpu/test_pipeline.py -k "movedim or moveaxis" -v --tb=short`
+- `PYTHONPATH=src pytest tests/contract/test_schema_dim_validation.py -k "movedim or moveaxis" -v --tb=short`
 
-**Step2:Runrequiredcontractgate**
+**Step 2: Run required contract gate**
 
-Run:`PYTHONPATH=srcpytesttests/contract/-v--tb=short`
-Expected:PASS
+Run: `PYTHONPATH=src pytest tests/contract/ -v --tb=short`
+Expected: PASS
 
-**Step3:RunbroaderCPUgate**
+**Step 3: Run broader CPU gate**
 
-Run:`PYTHONPATH=srcpytesttests/cpu/tests/contract/-v--tb=short`
-Expected:PASS
+Run: `PYTHONPATH=src pytest tests/cpu/ tests/contract/ -v --tb=short`
+Expected: PASS
 
-**Step4:Commit**
+**Step 4: Commit**
 
 ```bash
-gitadddocs/plans/2026-03-14-cpu-moveaxis-movedim-parity-plan.md\
-tests/cpu/test_top_level_ops.py\
-tests/cpu/test_pipeline.py\
-tests/contract/test_schema_dim_validation.py\
-src/candle/_dispatch/schema.py\
-src/candle/_backends/meta/infer.py
-gitcommit-m"fix:alignmoveaxismovedimparity"
+git add docs/plans/2026-03-14-cpu-moveaxis-movedim-parity-plan.md   tests/cpu/test_top_level_ops.py   tests/cpu/test_pipeline.py   tests/contract/test_schema_dim_validation.py   src/candle/_dispatch/schema.py   src/candle/_backends/meta/infer.py
+git commit -m "fix: align moveaxis/movedim parity"
 ```
