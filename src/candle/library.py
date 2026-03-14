@@ -338,6 +338,7 @@ class CustomOpHandle:
         def autograd_wrapper(*args, **kwargs):
             from .autograd.function import FunctionCtx
             from .autograd.node import Node
+            from .autograd.anomaly_mode import annotate_node_creation
             from .autograd.grad_mode import is_grad_enabled
             from ._dispatch.dispatcher import redispatch, current_dispatch_keyset
             from ._tensor import Tensor
@@ -374,7 +375,8 @@ class CustomOpHandle:
                     grad = zeros_like(output)
                 return backward_fn(ctx, grad)
 
-            node = Node(_backward, input_tensors)
+            node = Node(_backward, input_tensors, name=f"{backward_fn.__name__}Backward")
+            annotate_node_creation(node)
 
             if ctx._to_save is not None:
                 node.save_for_backward(*ctx._to_save)

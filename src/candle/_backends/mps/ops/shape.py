@@ -402,9 +402,14 @@ def dsplit(a, split_size_or_sections):
     return split(a, split_size_or_sections, dim=2)
 
 def unbind(a, dim=0):
-    if dim < 0:
-        dim += len(a.shape)
-    return tuple(select(a, dim, i) for i in range(a.shape[dim]))
+    from ...common import view as view_backend
+
+    d = dim if dim >= 0 else dim + a.dim()
+    dim_size = a.shape[d]
+    outputs = []
+    for i in range(dim_size):
+        outputs.append(view_backend.select(a, d, i, creation_kind="multi_view"))
+    return tuple(outputs)
 
 def masked_select(a, mask):
     arr = _to_numpy(a)
@@ -1005,4 +1010,3 @@ def one_hot(a, num_classes=-1):
     out = np.eye(num_classes, dtype=np.int64)[flat]
     out = out.reshape(arr.shape + (num_classes,))
     return _from_numpy(np.ascontiguousarray(out), int64_dtype, a.device)
-

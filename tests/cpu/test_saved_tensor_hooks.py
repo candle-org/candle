@@ -1,5 +1,6 @@
 import pytest
 import candle as torch
+from candle.utils.checkpoint import checkpoint
 
 
 def test_saved_tensor_hooks_basic_roundtrip():
@@ -80,6 +81,8 @@ def test_saved_tensor_none_and_release_errors():
     y.sum().backward()
     with pytest.raises(RuntimeError, match="after they have already been freed"):
         _ = y.grad_fn.saved_tensors()
+
+
 def test_saved_tensor_pack_hook_inplace_modification_raises():
     def pack(x):
         x += 1
@@ -93,3 +96,27 @@ def test_saved_tensor_pack_hook_inplace_modification_raises():
     raw = y.grad_fn._raw_saved_self
     with pytest.raises(RuntimeError, match="pack hook is modifying|in-place operation"):
         raw.register_hooks(pack, unpack)
+
+
+def test_checkpoint_saved_result_recomputes_and_frees():
+    count = [0]
+
+    def fn(x):
+        count[0] += 1
+        return torch.exp(x)
+
+    x = torch.tensor([1.0], requires_grad=True)
+    y = checkpoint(fn, x, use_reentrant=False)
+    assert count[0] == 1
+
+    _ = y.grad_fn._saved_result
+    assert count[0] == 2
+
+    _ = y.grad_fn._saved_result
+    assert count[0] == 3
+
+    y.sum().backward()
+    assert count[0] == 4
+
+    with pytest.raises(RuntimeError, match="after they have already been freed"):
+        _ = y.grad_fn._saved_result

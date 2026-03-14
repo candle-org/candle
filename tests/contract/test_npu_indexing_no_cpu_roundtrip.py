@@ -34,3 +34,8 @@ def test_npu_indexing_avoids_cpu_roundtrip(monkeypatch, case):
     else:
         with pytest.raises(RuntimeError, match="NPU boolean mask indexing is not supported"):
             _ = x[mask]
+
+
+def test_bool_literal_tensor_infers_bool_dtype_matches_torch():
+    mask = tensor([[True, False], [False, True]])
+    assert getattr(mask.dtype, "name", None) == "bool"

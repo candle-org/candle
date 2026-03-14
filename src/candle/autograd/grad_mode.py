@@ -4,6 +4,14 @@ import threading
 _GRAD_MODE_STATE = threading.local()
 
 
+def _get_creation_mode():
+    return getattr(_GRAD_MODE_STATE, "creation_mode", None)
+
+
+def _set_creation_mode(mode):
+    _GRAD_MODE_STATE.creation_mode = mode
+
+
 def _get_enabled():
     return getattr(_GRAD_MODE_STATE, "enabled", True)
 
@@ -33,13 +41,16 @@ class set_grad_enabled:
     def __init__(self, mode):
         self.mode = bool(mode)
         self._prev = _get_enabled()
+        self._prev_creation_mode = _get_creation_mode()
         _set_enabled(self.mode)
+        _set_creation_mode(None if self.mode else "no_grad")
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc, tb):
         _set_enabled(self._prev)
+        _set_creation_mode(self._prev_creation_mode)
 
 
 def _decorate_with_grad_mode(fn, enabled):
@@ -55,11 +66,14 @@ def _decorate_with_grad_mode(fn, enabled):
 class _NoGradContext:
     def __enter__(self):
         self._prev = _get_enabled()
+        self._prev_creation_mode = _get_creation_mode()
         _set_enabled(False)
+        _set_creation_mode("no_grad")
         return self
 
     def __exit__(self, exc_type, exc, tb):
         _set_enabled(self._prev)
+        _set_creation_mode(self._prev_creation_mode)
 
     def __call__(self, fn):
         return _decorate_with_grad_mode(fn, False)
@@ -92,5 +106,36 @@ def enable_grad(func=None):
     return ctx(func)
 
 
+class _InferenceModeContext:
+    def __init__(self, mode=True):
+        self.mode = bool(mode)
+
+    def __enter__(self):
+        self._prev = _get_enabled()
+        self._prev_creation_mode = _get_creation_mode()
+        _set_enabled(not self.mode and self._prev or False)
+        if self.mode:
+            _set_enabled(False)
+            _set_creation_mode("inference_mode")
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        _set_enabled(self._prev)
+        _set_creation_mode(self._prev_creation_mode)
+
+    def __call__(self, fn):
+        def wrapped(*args, **kwargs):
+            with _InferenceModeContext(self.mode):
+                return fn(*args, **kwargs)
+        wrapped.__name__ = getattr(fn, "__name__", "wrapped")
+        wrapped.__doc__ = getattr(fn, "__doc__", None)
+        wrapped.__module__ = getattr(fn, "__module__", None)
+        return wrapped
+
+
+def current_creation_mode():
+    return _get_creation_mode()
+
+
 def inference_mode(mode=True):
-    return no_grad() if mode else enable_grad()
+    return _InferenceModeContext(mode)

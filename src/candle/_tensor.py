@@ -153,6 +153,14 @@ class Tensor:
         self._base = None
         self._view_meta = None
 
+    def __delattr__(self, name):
+        if name == "grad":
+            object.__setattr__(self, "grad", None)
+            return
+        if name in {"data", "requires_grad", "_grad_fn", "grad_fn", "_backward_hooks"}:
+            raise RuntimeError(f"cannot delete {name}")
+        object.__delattr__(self, name)
+
     @property
     def dtype(self):
         return self._storage.dtype
@@ -213,7 +221,16 @@ class Tensor:
     @property
     def is_sparse(self):
         """Returns True if the tensor is sparse."""
-        return False
+        return bool(getattr(self, "_is_sparse", False))
+
+    @property
+    def layout(self):
+        """Returns the tensor layout."""
+        return getattr(self, "_layout", "strided")
+
+    @layout.setter
+    def layout(self, value):
+        self._layout = value
 
     @property
     def is_quantized(self):
@@ -380,6 +397,18 @@ class Tensor:
     def transpose(self, dim0, dim1):
         return transpose_dispatch(self, dim0, dim1)
 
+    def transpose_(self, dim0, dim1):
+        ndim = len(self.shape)
+        d0 = dim0 if dim0 >= 0 else dim0 + ndim
+        d1 = dim1 if dim1 >= 0 else dim1 + ndim
+        if d0 < 0 or d0 >= ndim or d1 < 0 or d1 >= ndim:
+            raise IndexError("Dimension out of range")
+        shape = list(self.shape)
+        stride = list(self.stride)
+        shape[d0], shape[d1] = shape[d1], shape[d0]
+        stride[d0], stride[d1] = stride[d1], stride[d0]
+        return self.as_strided_(tuple(shape), tuple(stride))
+
     def t(self):
         """Transpose for 2D tensors. Expects input to be <= 2-D tensor and transposes dimensions 0 and 1."""
         if len(self.shape) > 2:
@@ -392,12 +421,10 @@ class Tensor:
         """In-place transpose for 2D tensors."""
         if len(self.shape) > 2:
             raise RuntimeError(f"t_() expects a tensor with <= 2 dimensions, but self is {len(self.shape)}D")
+        self._check_inplace()
         if len(self.shape) < 2:
             return self
-        # Swap shape and stride dimensions in-place
-        self.shape = (self.shape[1], self.shape[0])
-        self.stride = _StrideTuple((self.stride[1], self.stride[0]))
-        return self
+        return self.transpose_(0, 1)
 
     @property
     def T(self):
@@ -501,14 +528,20 @@ class Tensor:
             raise RuntimeError("Boolean value of Tensor with more than one value is ambiguous")
         return bool(self.item())
 
-    def backward(self, gradient=None, retain_graph=False, create_graph=False):
+    def backward(self, gradient=None, retain_graph=False, create_graph=False, inputs=None):
         if self._pending:
             from ._dispatch.pipeline import current_pipeline
 
             pipe = current_pipeline()
             if pipe is not None:
                 pipe.flush()
-        _backward(self, gradient, retain_graph=retain_graph, create_graph=create_graph)
+        _backward(
+            self,
+            gradient,
+            retain_graph=retain_graph,
+            create_graph=create_graph,
+            inputs=inputs,
+        )
 
     def pin_memory(self):
         if self.device.type != "cpu":
@@ -570,10 +603,42 @@ class Tensor:
             return
         if not self.requires_grad:
             return
+        if self._is_view() and self._base is not None:
+            view_meta = getattr(self, "_view_meta", None) or {}
+            creation_mode = view_meta.get("creation_mode")
+            creation_kind = view_meta.get("creation_kind")
+            grad_fn_name = self.grad_fn.name() if self.grad_fn is not None and hasattr(self.grad_fn, "name") else "<unknown>"
+            if creation_kind == "multi_view":
+                raise RuntimeError(
+                    f"Output 0 of {grad_fn_name} is a view and is being modified inplace. This view is the output of a function that returns multiple views. Such functions do not allow the output views to be modified inplace. You should replace the inplace operation by an out-of-place one."
+                )
+            if creation_kind == "custom_function":
+                display_name = grad_fn_name.removesuffix("Backward0") if grad_fn_name.endswith("Backward0") else grad_fn_name
+                raise RuntimeError(
+                    f"Output 0 of {display_name} is a view and is being modified inplace. This view was created inside a custom Function (or because an input was returned as-is) and the autograd logic to handle view+inplace would override the custom backward associated with the custom Function, leading to incorrect gradients. This behavior is forbidden. You can fix this by cloning the output of the custom Function."
+                )
+            if creation_mode == "no_grad":
+                if creation_kind == "view_of_view":
+                    raise RuntimeError(
+                        "a view of a view which is being modified inside the no_grad block."
+                    )
+                if creation_kind == "view":
+                    raise RuntimeError(
+                        "A view was created in no_grad mode and is being modified inplace with grad mode enabled."
+                    )
+            if creation_mode == "inference_mode":
+                if creation_kind == "view_of_view":
+                    raise RuntimeError(
+                        "a view of a view which is being modified inside the inference_mode."
+                    )
+                if creation_kind == "view":
+                    raise RuntimeError(
+                        "A view was created in inference_mode and is being modified inplace in normal mode."
+                    )
+            if self._base.grad_fn is None and self._base.requires_grad:
+                raise RuntimeError("a view of a leaf Variable that requires grad is being used in an in-place operation.")
         if self.grad_fn is None and not self._is_view():
             raise RuntimeError("a leaf Variable that requires grad is being used in an in-place operation.")
-        if self._is_view() and self._base is not None and self._base.grad_fn is None and self._base.requires_grad:
-            raise RuntimeError("a view of a leaf Variable that requires grad is being used in an in-place operation.")
 
     def add_(self, other, *, alpha=1):
         from ._dispatch.dispatcher import dispatch
@@ -1329,8 +1394,52 @@ class Tensor:
     def squeeze(self, dim=None):
         return squeeze_dispatch(self, dim)
 
+    def squeeze_(self, dim=None):
+        if dim is not None:
+            if isinstance(dim, (list, tuple)):
+                if dim:
+                    ndim = len(self.shape)
+                    targets = set()
+                    for item in dim:
+                        d = item if item >= 0 else item + ndim
+                        targets.add(d)
+                    pairs = [
+                        (s, st)
+                        for idx, (s, st) in enumerate(zip(self.shape, self.stride))
+                        if idx not in targets or s != 1
+                    ]
+                    shape = [p[0] for p in pairs]
+                    stride = [p[1] for p in pairs]
+                else:
+                    shape = list(self.shape)
+                    stride = list(self.stride)
+            else:
+                d = dim if dim >= 0 else dim + len(self.shape)
+                shape = list(self.shape)
+                stride = list(self.stride)
+                if 0 <= d < len(shape) and shape[d] == 1:
+                    del shape[d]
+                    del stride[d]
+        else:
+            pairs = [(s, st) for s, st in zip(self.shape, self.stride) if s != 1]
+            shape = [p[0] for p in pairs]
+            stride = [p[1] for p in pairs]
+        return self.as_strided_(tuple(shape), tuple(stride))
+
     def unsqueeze(self, dim):
         return unsqueeze_dispatch(self, dim)
+
+    def unsqueeze_(self, dim):
+        ndim = len(self.shape)
+        d = dim if dim >= 0 else dim + ndim + 1
+        if d < 0 or d > ndim:
+            raise IndexError("Dimension out of range")
+        shape = list(self.shape)
+        stride = list(self.stride)
+        new_stride = stride[d] * shape[d] if d < ndim else 1
+        shape.insert(d, 1)
+        stride.insert(d, new_stride)
+        return self.as_strided_(tuple(shape), tuple(stride))
 
     def permute(self, *dims):
         if len(dims) == 1 and isinstance(dims[0], (tuple, list)):
@@ -1742,9 +1851,15 @@ class Tensor:
         """Swap two dimensions (alias for transpose with positional args)."""
         return self.transpose(dim0, dim1)
 
+    def swapdims_(self, dim0, dim1):
+        return self.transpose_(dim0, dim1)
+
     def swapaxes(self, axis0, axis1):
         """Alias for swapdims."""
         return self.swapdims(axis0, axis1)
+
+    def swapaxes_(self, axis0, axis1):
+        return self.swapdims_(axis0, axis1)
 
     def diagonal(self, offset=0, dim1=0, dim2=1):
         """Returns partial view of input with the diagonal elements of input."""

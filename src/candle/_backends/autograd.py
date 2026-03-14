@@ -1,7 +1,9 @@
 from contextlib import nullcontext
+import weakref
 
 from ..autograd.grad_mode import GradMode, no_grad
 from ..autograd.node import Node
+from ..autograd.anomaly_mode import annotate_node_creation
 from ..autograd.utils import reduce_grad
 from .._dispatch.dispatcher import current_dispatch_keyset, redispatch
 from .._dispatch.keys import DispatchKey
@@ -54,8 +56,9 @@ def _autograd_unary_passthrough(name):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return (redispatch("to", backward_keyset, grad, a.device, non_blocking=False),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -81,8 +84,9 @@ def _autograd_binary(name, backward_impl, *, save_inputs=True):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return backward_impl(grad, a, b, saved_a, saved_b, backward_keyset)
 
-            node = Node(_backward, (a, b))
-            node_holder["node"] = node
+            node = Node(_backward, (a, b), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             if save_inputs:
                 node.save_for_backward(a, b)
                 node._saved_fields["self"] = node._saved_tensors_list[0]
@@ -112,8 +116,9 @@ def _autograd_binary_args(name, backward_impl, *, save_inputs=True):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return backward_impl(grad, a, b, saved_a, saved_b, backward_keyset, args, kwargs)
 
-            node = Node(_backward, (a, b))
-            node_holder["node"] = node
+            node = Node(_backward, (a, b), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             if save_inputs:
                 node.save_for_backward(a, b)
             out.grad_fn = node
@@ -141,8 +146,9 @@ def _autograd_unary_args(name, backward_impl, *, cpu_only=False, save_input=True
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return backward_impl(grad, a, saved_a, backward_keyset, args, kwargs)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             if save_input:
                 node.save_for_backward(a)
             out.grad_fn = node
@@ -166,8 +172,9 @@ def _autograd_rrelu():
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return _rrelu_backward(grad, a, saved_a, backward_keyset, args, kwargs, slope=slope)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -197,8 +204,9 @@ def _autograd_norm(name, backward_impl):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return backward_impl(grad, a, saved_a, backward_keyset, args, kwargs, backward_data)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -225,8 +233,9 @@ def _autograd_unary(name, backward_impl, *, cpu_only=False, save_input=True):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return backward_impl(grad, a, saved_a, backward_keyset)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             if save_input:
                 node.save_for_backward(a)
             out.grad_fn = node
@@ -249,8 +258,9 @@ def _autograd_view(name, backward_impl):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return backward_impl(grad, a, saved_a, args, backward_keyset)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -277,8 +287,9 @@ def _autograd_inplace(name, backward_impl, *, cpu_only=False, save_input=True):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return backward_impl(grad, a, saved, args, backward_keyset)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             if save_input:
                 node.save_for_backward(a)
             out.grad_fn = node
@@ -831,8 +842,9 @@ def _autograd_multi_input(name, backward_impl, *, save_inputs=True):
                     saved = tensors
                 return backward_impl(grad, tensors, saved, backward_keyset, args, kwargs)
 
-            node = Node(_backward, tuple(tensors))
-            node_holder["node"] = node
+            node = Node(_backward, tuple(tensors), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             if save_inputs:
                 node.save_for_backward(*tensors)
             if isinstance(out, tuple):
@@ -895,8 +907,9 @@ def _autograd_multi_output(name, backward_impl, *, save_input=True):
                         return backward_impl(grad, i, a, saved_a, backward_keyset, args, kwargs)
                     return _backward
 
-                node = Node(_make_backward(idx, node_holder), (a,))
-                node_holder["node"] = node
+                node = Node(_make_backward(idx, node_holder), (a,), name=f"{name.capitalize()}Backward0")
+                annotate_node_creation(node)
+                node_holder["node"] = weakref.proxy(node)
                 if save_input:
                     node.save_for_backward(a)
                 o.grad_fn = node
@@ -1050,8 +1063,9 @@ def _autograd_dropout():
                 grad_np = g_np * mask_np * scale
                 return (_from_numpy(grad_np, grad.dtype, grad.device),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -1167,7 +1181,7 @@ def _autograd_embedding(name, backward_impl):
                 )
 
             node = Node(_backward, (weight, indices))
-            node_holder["node"] = node
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(weight, indices)
             out.grad_fn = node
             out.requires_grad = True
@@ -1225,7 +1239,7 @@ def _autograd_where(name, backward_impl):
                 return backward_impl(grad, cond, x, y, saved[0], backward_keyset)
 
             node = Node(_backward, (cond, x, y))
-            node_holder["node"] = node
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(cond)
             out.grad_fn = node
             out.requires_grad = True
@@ -1575,8 +1589,9 @@ def _autograd_conv(name, *, has_bias=True):
                                      backward_keyset, args, kwargs)
 
             inputs = (input, weight) if bias is None else (input, weight, bias)
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(*inputs)
             out.grad_fn = node
             out.requires_grad = True
@@ -1954,7 +1969,7 @@ def _autograd_pool(name, backward_impl):
                 return backward_impl(grad, input, saved_input, out, backward_keyset, args, kwargs)
 
             node = Node(_backward, (input,))
-            node_holder["node"] = node
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(input)
             out.grad_fn = node
             out.requires_grad = True
@@ -2167,8 +2182,9 @@ def _autograd_sort_like(name, backward_impl):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return backward_impl(grad, a, indices, backward_keyset, args, kwargs)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             values.grad_fn = node
             values.requires_grad = True
         return values, indices
@@ -2267,7 +2283,7 @@ def _autograd_lerp(name):
 
             inputs = [t for t in (a, b) if hasattr(t, "requires_grad")]
             node = Node(_backward, tuple(inputs))
-            node_holder["node"] = node
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -2308,8 +2324,9 @@ def _autograd_addcmul(name):
                 return _addcmul_backward(grad, a, b, c, value, backward_keyset)
 
             inputs = tuple(t for t in (a, b, c) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -2354,8 +2371,9 @@ def _autograd_addcdiv(name):
                 return _addcdiv_backward(grad, a, b, c, value, backward_keyset)
 
             inputs = tuple(t for t in (a, b, c) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -2969,8 +2987,9 @@ def _autograd_scatter(name):
                 return _scatter_backward(grad, a, src, dim, index, backward_keyset)
 
             inputs = tuple(t for t in (a, src) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -3373,8 +3392,9 @@ def _autograd_cummax(name):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return _cummax_backward(grad, a, indices, backward_keyset, args, kwargs)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             values.grad_fn = node
             values.requires_grad = True
             # Return same structure with updated values
@@ -3447,8 +3467,9 @@ def _autograd_addmm(name="addmm"):
                                        backward_keyset, args, kwargs)
 
             inputs = (input, mat1, mat2)
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(*inputs)
             out.grad_fn = node
             out.requires_grad = True
@@ -3974,8 +3995,9 @@ def _autograd_index_put(name="index_put"):
                 return _index_put_backward(grad, a, values, indices, accumulate, backward_keyset)
 
             inputs = tuple(t for t in (a, values) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -4013,8 +4035,9 @@ def _autograd_index_put_inplace(name="index_put_"):
                 return _index_put_backward(grad, a, values, indices, accumulate, backward_keyset)
 
             inputs = tuple(t for t in (a, values) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -4038,8 +4061,9 @@ def _autograd_scatter_add_inplace(name="scatter_add_"):
                 return _scatter_add_inplace_backward(grad, a, src, dim, index, backward_keyset)
 
             inputs = tuple(t for t in (a, src) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -4072,8 +4096,9 @@ def _autograd_index_add_inplace(name="index_add_"):
                 return _index_add_inplace_backward(grad, a, source, dim, index, alpha, backward_keyset)
 
             inputs = tuple(t for t in (a, source) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -4119,8 +4144,9 @@ def _autograd_einsum(name="einsum"):
                 return _einsum_backward(grad, equation, operands, backward_keyset)
 
             inputs = tuple(op for op in operands if hasattr(op, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             for op in operands:
                 if hasattr(op, "requires_grad"):
                     node.save_for_backward(op)
@@ -4207,8 +4233,9 @@ def _autograd_baddbmm(name="baddbmm"):
                                          backward_keyset, args, kwargs)
 
             inputs = (input, batch1, batch2)
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(*inputs)
             out.grad_fn = node
             out.requires_grad = True
@@ -4241,8 +4268,9 @@ def _autograd_cross(name="cross"):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return _cross_backward(grad, a, b, saved_a, saved_b, dim, backward_keyset)
 
-            node = Node(_backward, (a, b))
-            node_holder["node"] = node
+            node = Node(_backward, (a, b), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a, b)
             out.grad_fn = node
             out.requires_grad = True
@@ -4266,8 +4294,9 @@ def _autograd_cummin(name):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return _cummin_backward(grad, a, indices, backward_keyset, args, kwargs)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             values.grad_fn = node
             values.requires_grad = True
             if hasattr(result, '_replace'):
@@ -4311,8 +4340,9 @@ def _autograd_grid_sample(name="grid_sample"):
                                              backward_keyset, args, kwargs)
 
             inputs = (input, grid)
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(*inputs)
             out.grad_fn = node
             out.requires_grad = True
@@ -4442,7 +4472,7 @@ def _autograd_affine_grid(name="affine_grid"):
                 return _affine_grid_backward(grad, theta, size, align_corners, backward_keyset)
 
             node = Node(_backward, (theta,))
-            node_holder["node"] = node
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -4585,8 +4615,9 @@ def _autograd_setitem(name):
                 return _setitem_backward(grad, a, value, key, backward_keyset)
 
             inputs = tuple(t for t in (a, value) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -4623,8 +4654,9 @@ def _autograd_index_copy_inplace(name):
                 return _index_copy_inplace_backward(grad, a, source, dim, index, backward_keyset)
 
             inputs = tuple(t for t in (a, source) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -4659,8 +4691,9 @@ def _autograd_index_fill_inplace(name):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return _index_fill_inplace_backward(grad, a, dim, index, backward_keyset)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -4691,8 +4724,9 @@ def _autograd_scatter_inplace(name):
                 return _scatter_backward(grad, a, src, dim, index, backward_keyset)
 
             inputs = tuple(t for t in (a, src) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -4716,8 +4750,9 @@ def _autograd_masked_scatter_inplace(name):
                 return _masked_scatter_inplace_backward(grad, a, source, mask, backward_keyset)
 
             inputs = tuple(t for t in (a, source) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -4965,8 +5000,9 @@ def _autograd_dist(name):
                 return _dist_backward(grad, a, b, p, backward_keyset)
 
             inputs = tuple(t for t in (a, b) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a, b)
             out.grad_fn = node
             out.requires_grad = True
@@ -5076,8 +5112,9 @@ def _autograd_cdist(name):
                 return _cdist_backward(grad, x1, x2, p, backward_keyset)
 
             inputs = tuple(t for t in (x1, x2) if hasattr(t, "requires_grad"))
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(x1, x2)
             out.grad_fn = node
             out.requires_grad = True
@@ -5224,8 +5261,9 @@ def _autograd_masked_select(name):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return _masked_select_backward(grad, a, mask, backward_keyset)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -5328,7 +5366,7 @@ def _autograd_tensordot(name):
 
             inputs = [t for t in (a, b) if hasattr(t, "requires_grad")]
             node = Node(_backward, tuple(inputs))
-            node_holder["node"] = node
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -5451,8 +5489,9 @@ def _autograd_median(name):
                     backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                     return _median_scalar_backward(grad, a, out, backward_keyset)
 
-                node = Node(_backward_scalar, (a,))
-                node_holder["node"] = node
+                node = Node(_backward_scalar, (a,), name="MinBackward0")
+                annotate_node_creation(node)
+                node_holder["node"] = weakref.proxy(node)
                 out.grad_fn = node
                 out.requires_grad = True
             else:
@@ -5464,8 +5503,9 @@ def _autograd_median(name):
                     backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                     return _median_dim_backward(grad, a, indices, backward_keyset, dim, keepdim)
 
-                node = Node(_backward_dim, (a,))
-                node_holder["node"] = node
+                node = Node(_backward_dim, (a,), name="MinBackward0")
+                annotate_node_creation(node)
+                node_holder["node"] = weakref.proxy(node)
                 values.grad_fn = node
                 values.requires_grad = True
                 out = (values, indices)
@@ -5536,13 +5576,15 @@ def _autograd_aminmax(name):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return _aminmax_max_backward(grad, a, max_val, backward_keyset, dim, keepdim)
 
-            node_min = Node(_backward_min, (a,))
-            node_holder_min["node"] = node_min
+            node_min = Node(_backward_min, (a,), name="MinBackward0")
+            annotate_node_creation(node_min)
+            node_holder_min["node"] = weakref.proxy(node_min)
             min_val.grad_fn = node_min
             min_val.requires_grad = True
 
-            node_max = Node(_backward_max, (a,))
-            node_holder_max["node"] = node_max
+            node_max = Node(_backward_max, (a,), name="MaxBackward0")
+            annotate_node_creation(node_max)
+            node_holder_max["node"] = weakref.proxy(node_max)
             max_val.grad_fn = node_max
             max_val.requires_grad = True
 
@@ -5648,7 +5690,7 @@ def _autograd_ctc_loss(name):
                                           backward_keyset)
 
             node = Node(_backward, (log_probs,))
-            node_holder["node"] = node
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(log_probs)
             out.grad_fn = node
             out.requires_grad = True
@@ -6110,8 +6152,9 @@ def _autograd_special_polygamma(name):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return _special_polygamma_backward(grad, None, saved_a, backward_keyset, (n,), {})
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -6135,8 +6178,9 @@ def _autograd_special_multigammaln(name):
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
                 return _special_multigammaln_backward(grad, None, saved_a, backward_keyset, (p,), {})
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -6180,8 +6224,9 @@ def _autograd_fft_c2c(name, inverse_name):
                 with _grad_context(backward_keyset):
                     return (redispatch(inverse_name, backward_keyset, grad, *bw_args, **bw_kwargs),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -6224,8 +6269,9 @@ def _autograd_fft_r2c(name, inverse_name):
                 with _grad_context(backward_keyset):
                     return (redispatch(inverse_name, backward_keyset, grad, **bw_kwargs),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -6263,8 +6309,9 @@ def _autograd_fft_c2r(name, inverse_name):
                 with _grad_context(backward_keyset):
                     return (redispatch(inverse_name, backward_keyset, grad, **bw_kwargs),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -6287,8 +6334,9 @@ def _autograd_fft_shift(name, inverse_name):
                 with _grad_context(backward_keyset):
                     return (redispatch(inverse_name, backward_keyset, grad, *args, **kwargs),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -6380,8 +6428,9 @@ def _autograd_linalg_det(name):
                         redispatch("mul", backward_keyset, grad_expanded, det_expanded), inv_t)
                     return (result,)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -6413,8 +6462,9 @@ def _autograd_linalg_slogdet(name):
                         g = redispatch("unsqueeze", backward_keyset, g, -1)
                     return (redispatch("mul", backward_keyset, g, inv_t),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             # For multi-output, attach grad_fn to the second output (logabsdet)
             if isinstance(out, tuple):
@@ -6471,8 +6521,9 @@ def _autograd_linalg_solve(name):
                         grad_a = None
                 return (grad_a, grad_b)
 
-            node = Node(_backward, (a, b))
-            node_holder["node"] = node
+            node = Node(_backward, (a, b), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a, b)
             out.grad_fn = node
             out.requires_grad = True
@@ -6528,8 +6579,9 @@ def _autograd_linalg_cholesky(name):
                         redispatch("matmul", backward_keyset, L_inv_t, Phi), L_inv)
                     return (result,)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             out.grad_fn = node
             out.requires_grad = True
@@ -6564,8 +6616,9 @@ def _autograd_linalg_qr(name):
                     result = redispatch("matmul", backward_keyset, grad, R_inv_t)
                     return (result,)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             if isinstance(out, tuple):
                 Q, R = out
@@ -6611,8 +6664,9 @@ def _autograd_linalg_svd(name):
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
                 return (_Tensor(storage, grad_a_np.shape, stride),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             if isinstance(out, tuple):
                 for o in out:
@@ -6657,8 +6711,9 @@ def _autograd_linalg_eigh(name):
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
                 return (_Tensor(storage, grad_a_np.shape, stride),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             if isinstance(out, tuple):
                 L, V = out
@@ -6701,8 +6756,9 @@ def _autograd_linalg_multi_dot(name):
                         grads.append(right)
                     return tuple(grads)
 
-            node = Node(_backward, tuple(tensors))
-            node_holder["node"] = node
+            node = Node(_backward, tuple(tensors), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(*tensors)
             out.grad_fn = node
             out.requires_grad = True
@@ -6755,8 +6811,9 @@ def _autograd_linalg_lu(name):
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
                 return (_Tensor(storage, grad_a_np.shape, stride),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             if isinstance(out, tuple):
                 for o in out:
@@ -6792,8 +6849,9 @@ def _autograd_linalg_lu_factor(name):
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
                 return (_Tensor(storage, grad_a_np.shape, stride),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             if isinstance(out, tuple):
                 out[0].grad_fn = node
@@ -6821,7 +6879,7 @@ def _autograd_linalg_lu_solve(name):
                     return (None, None, grad_b)
 
             node = Node(_backward, (B,))
-            node_holder["node"] = node
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -6854,8 +6912,9 @@ def _autograd_linalg_eig(name):
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
                 return (_Tensor(storage, grad_a_np.shape, stride),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             if isinstance(out, tuple):
                 for o in out:
@@ -6929,8 +6988,9 @@ def _autograd_linalg_solve_triangular(name):
                 return (grad_a, grad_b)
 
             inputs = (a, b)
-            node = Node(_backward, inputs)
-            node_holder["node"] = node
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a, b)
             out.grad_fn = node
             out.requires_grad = True
@@ -7075,8 +7135,9 @@ def _autograd_nanmedian(name):
                 stride = tuple(_np.array(grad_np.strides) // grad_np.itemsize)
                 return (_Tensor(storage, grad_np.shape, stride),)
 
-            node = Node(_backward, (a,))
-            node_holder["node"] = node
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
             if isinstance(out, tuple):
                 out[0].grad_fn = node
@@ -7192,8 +7253,9 @@ def _autograd_block_diag(name):
                             col_offset += cols
                     return tuple(grads)
 
-            node = Node(_backward, tuple(tensors))
-            node_holder["node"] = node
+            node = Node(_backward, tuple(tensors), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
@@ -7234,7 +7296,7 @@ def _autograd_pad_sequence(name):
                     return tuple(grads)
 
             node = Node(_backward, tuple(sequences))
-            node_holder["node"] = node
+            node_holder["node"] = weakref.proxy(node)
             out.grad_fn = node
             out.requires_grad = True
         return out
