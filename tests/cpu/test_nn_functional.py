@@ -65,6 +65,99 @@ def test_prelu_cpu():
     assert torch.allclose(result, expected, atol=1e-6)
 
 
+def test_hardswish_matches_torch():
+    import torch as torch_ref
+
+    x = torch.tensor([-4.0, -3.0, -1.0, 0.0, 2.0, 4.0], dtype=torch.float32)
+    out = F.hardswish(x)
+
+    x_ref = torch_ref.tensor([-4.0, -3.0, -1.0, 0.0, 2.0, 4.0], dtype=torch_ref.float32)
+    ref = torch_ref.nn.functional.hardswish(x_ref)
+
+    np.testing.assert_allclose(out.numpy(), ref.detach().numpy(), rtol=1e-6, atol=1e-6)
+
+
+def test_hardsigmoid_matches_torch():
+    import torch as torch_ref
+
+    x = torch.tensor([-4.0, -3.0, -1.0, 0.0, 2.0, 4.0], dtype=torch.float32)
+    out = F.hardsigmoid(x)
+
+    x_ref = torch_ref.tensor([-4.0, -3.0, -1.0, 0.0, 2.0, 4.0], dtype=torch_ref.float32)
+    ref = torch_ref.nn.functional.hardsigmoid(x_ref)
+
+    np.testing.assert_allclose(out.numpy(), ref.detach().numpy(), rtol=1e-6, atol=1e-6)
+
+
+def test_softsign_matches_torch():
+    import torch as torch_ref
+
+    x = torch.tensor([-4.0, -1.0, 0.0, 2.0, 4.0], dtype=torch.float32)
+    out = F.softsign(x)
+
+    x_ref = torch_ref.tensor([-4.0, -1.0, 0.0, 2.0, 4.0], dtype=torch_ref.float32)
+    ref = torch_ref.nn.functional.softsign(x_ref)
+
+    np.testing.assert_allclose(out.numpy(), ref.detach().numpy(), rtol=1e-6, atol=1e-6)
+
+
+def test_hardswish_routes_through_dispatch(monkeypatch):
+    import candle._dispatch as dispatch_mod
+
+    calls = []
+    expected = torch.tensor([42.0], dtype=torch.float32)
+
+    def fake_dispatch(name, dispatch_device, input):
+        calls.append((name, dispatch_device, tuple(input.shape)))
+        return expected
+
+    monkeypatch.setattr(dispatch_mod, "dispatch", fake_dispatch)
+    x = torch.tensor([1.0], dtype=torch.float32)
+
+    out = F.hardswish(x)
+
+    assert out is expected
+    assert calls == [("hardswish", "cpu", (1,))]
+
+
+def test_hardsigmoid_routes_through_dispatch(monkeypatch):
+    import candle._dispatch as dispatch_mod
+
+    calls = []
+    expected = torch.tensor([42.0], dtype=torch.float32)
+
+    def fake_dispatch(name, dispatch_device, input):
+        calls.append((name, dispatch_device, tuple(input.shape)))
+        return expected
+
+    monkeypatch.setattr(dispatch_mod, "dispatch", fake_dispatch)
+    x = torch.tensor([1.0], dtype=torch.float32)
+
+    out = F.hardsigmoid(x)
+
+    assert out is expected
+    assert calls == [("hardsigmoid", "cpu", (1,))]
+
+
+def test_softsign_routes_through_dispatch(monkeypatch):
+    import candle._dispatch as dispatch_mod
+
+    calls = []
+    expected = torch.tensor([42.0], dtype=torch.float32)
+
+    def fake_dispatch(name, dispatch_device, input):
+        calls.append((name, dispatch_device, tuple(input.shape)))
+        return expected
+
+    monkeypatch.setattr(dispatch_mod, "dispatch", fake_dispatch)
+    x = torch.tensor([1.0], dtype=torch.float32)
+
+    out = F.softsign(x)
+
+    assert out is expected
+    assert calls == [("softsign", "cpu", (1,))]
+
+
 # --- Activation Autograd Tests ---
 
 def test_silu_backward():

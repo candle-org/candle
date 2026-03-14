@@ -1420,19 +1420,13 @@ def poisson_nll_loss(input, target, log_input=True, full=False, eps=1e-8,
 
 
 def hardswish(input, inplace=False):
-    from .._functional import relu6 as _relu6, mul as _mul, add as _add, div as _div
-    from .._creation import tensor as _tensor
-    three = _tensor(3.0, device=input.device)
-    six = _tensor(6.0, device=input.device)
-    return _div(_mul(input, _relu6(_add(input, three))), six)
+    from .._dispatch import dispatch
+    return dispatch("hardswish", input.device.type, input)
 
 
 def hardsigmoid(input, inplace=False):
-    from .._functional import relu6 as _relu6, add as _add, div as _div
-    from .._creation import tensor as _tensor
-    three = _tensor(3.0, device=input.device)
-    six = _tensor(6.0, device=input.device)
-    return _div(_relu6(_add(input, three)), six)
+    from .._dispatch import dispatch
+    return dispatch("hardsigmoid", input.device.type, input)
 
 
 def selu(input, inplace=False):
@@ -1468,10 +1462,8 @@ def softplus(input, beta=1, threshold=20):
 
 
 def softsign(input):
-    from .._functional import abs as _abs, add as _add, div as _div
-    from .._creation import tensor as _tensor
-    one = _tensor(1.0, device=input.device)
-    return _div(input, _add(one, _abs(input)))
+    from .._dispatch import dispatch
+    return dispatch("softsign", input.device.type, input)
 
 
 def threshold(input, threshold, value, inplace=False):
