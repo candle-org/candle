@@ -243,11 +243,10 @@ def isposinf(a):
 
 def isreal(a):
     """Returns a bool tensor indicating real-valued elements."""
-    arr = _to_numpy(a)
-    out = np.isreal(arr)
-    if out.ndim == 0:
-        out = np.array(out)
-    return _from_numpy(np.ascontiguousarray(out.astype(np.bool_)), bool_dtype, a.device)
+    # Candle has no complex dtype support; all tensors are real
+    from ...._tensor import _compute_strides
+    ones = np.ones(a.shape, dtype=np.uint8)
+    return _from_numpy(ones, bool_dtype, a.device)
 
 def sinh(a):
     if _can_use_gpu(a):

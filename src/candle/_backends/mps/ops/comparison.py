@@ -57,9 +57,9 @@ def eq(a, b):
                                              scalar, out_buf, numel,
                                              scalar_fmt=_scalar_fmt(a.dtype))
             else:
-                return _from_numpy(np.equal(_to_numpy(a), scalar), bool_dtype, a.device)
+                return eq(a.contiguous(), b)
         else:
-            return _from_numpy(np.equal(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+            return eq(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
@@ -81,9 +81,9 @@ def ne(a, b):
                                              scalar, out_buf, numel,
                                              scalar_fmt=_scalar_fmt(a.dtype))
             else:
-                return _from_numpy(np.not_equal(_to_numpy(a), scalar), bool_dtype, a.device)
+                return ne(a.contiguous(), b)
         else:
-            return _from_numpy(np.not_equal(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+            return ne(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
@@ -105,9 +105,9 @@ def lt(a, b):
                                              scalar, out_buf, numel,
                                              scalar_fmt=_scalar_fmt(a.dtype))
             else:
-                return _from_numpy(np.less(_to_numpy(a), scalar), bool_dtype, a.device)
+                return lt(a.contiguous(), b)
         else:
-            return _from_numpy(np.less(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+            return lt(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
@@ -129,9 +129,9 @@ def le(a, b):
                                              scalar, out_buf, numel,
                                              scalar_fmt=_scalar_fmt(a.dtype))
             else:
-                return _from_numpy(np.less_equal(_to_numpy(a), scalar), bool_dtype, a.device)
+                return le(a.contiguous(), b)
         else:
-            return _from_numpy(np.less_equal(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+            return le(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
@@ -153,9 +153,9 @@ def gt(a, b):
                                              scalar, out_buf, numel,
                                              scalar_fmt=_scalar_fmt(a.dtype))
             else:
-                return _from_numpy(np.greater(_to_numpy(a), scalar), bool_dtype, a.device)
+                return gt(a.contiguous(), b)
         else:
-            return _from_numpy(np.greater(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+            return gt(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
@@ -177,17 +177,17 @@ def ge(a, b):
                                              scalar, out_buf, numel,
                                              scalar_fmt=_scalar_fmt(a.dtype))
             else:
-                return _from_numpy(np.greater_equal(_to_numpy(a), scalar), bool_dtype, a.device)
+                return ge(a.contiguous(), b)
         else:
-            return _from_numpy(np.greater_equal(_to_numpy(a), _to_numpy(b)), bool_dtype, a.device)
+            return ge(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     return _from_numpy(np.greater_equal(_to_numpy(a), b_np), bool_dtype, a.device)
 
 def logical_and(a, b):
-    if (_can_use_gpu(a) and a.is_contiguous()
-            and isinstance(b, Tensor) and _can_use_gpu(b) and b.is_contiguous()):
+    if (_can_use_gpu(a)
+            and isinstance(b, Tensor) and _can_use_gpu(b)):
         # ne(a,0) returns bool(uint8), ne(b,0) returns bool(uint8), mul gives AND
         a_bool = ne(a, 0)
         b_bool = ne(b, 0)
@@ -197,8 +197,8 @@ def logical_and(a, b):
     return _from_numpy(np.logical_and(a_np, b_np), bool_dtype, a.device)
 
 def logical_or(a, b):
-    if (_can_use_gpu(a) and a.is_contiguous()
-            and isinstance(b, Tensor) and _can_use_gpu(b) and b.is_contiguous()):
+    if (_can_use_gpu(a)
+            and isinstance(b, Tensor) and _can_use_gpu(b)):
         # ne(a,0) | ne(b,0) = ne(a_bool + b_bool, 0)
         a_bool = ne(a, 0)
         b_bool = ne(b, 0)
@@ -209,13 +209,13 @@ def logical_or(a, b):
     return _from_numpy(np.logical_or(a_np, b_np), bool_dtype, a.device)
 
 def logical_not(a):
-    if _can_use_gpu(a) and a.is_contiguous():
+    if _can_use_gpu(a):
         return eq(a, 0)
     return _from_numpy(np.logical_not(_to_numpy(a)), bool_dtype, a.device)
 
 def logical_xor(a, b):
-    if (_can_use_gpu(a) and a.is_contiguous()
-            and isinstance(b, Tensor) and _can_use_gpu(b) and b.is_contiguous()):
+    if (_can_use_gpu(a)
+            and isinstance(b, Tensor) and _can_use_gpu(b)):
         a_bool = ne(a, 0)
         b_bool = ne(b, 0)
         return ne(a_bool, b_bool)
