@@ -1,10 +1,8 @@
-import math
-import ctypes
-import struct
 import numpy as np
 
 from ._helpers import (
-    _can_use_gpu, _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
+    _can_use_gpu, _empty_like, _unsupported_dtype,
+    _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
     _alloc_output_buf, _metal_buf_to_bytes, _from_metal_buffer,
     _get_dispatcher, _dispatch_unary_gpu, _dispatch_unary_predicate_gpu,
     _scalar_value, _dispatch_binary_gpu,
@@ -25,35 +23,39 @@ from .shape import _ensure_integer_indices
 
 
 def relu(a):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a):
         return _dispatch_unary_gpu(a, "relu")
-    return _from_numpy(np.maximum(_to_numpy(a), 0), a.dtype, a.device)
+    _unsupported_dtype("relu", a)
 
 def gelu(a):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a):
         return _dispatch_unary_gpu(a, "gelu")
-    arr = _to_numpy(a)
-    out = 0.5 * arr * (1.0 + np.vectorize(math.erf)(arr / math.sqrt(2.0)))
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    _unsupported_dtype("gelu", a)
 
 def softplus(a):
     # GPU composite: log(1 + exp(x))
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         exp_a = _dispatch_unary_gpu(a, "exp")
         sum_val = add(exp_a, 1.0)
         return _dispatch_unary_gpu(sum_val, "log")
-    arr = _to_numpy(a)
-    out = np.log1p(np.exp(arr))
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("softplus", a)
 
 def silu(a):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a):
         return _dispatch_unary_gpu(a, "silu")
-    arr = _to_numpy(a)
-    out = arr / (1.0 + np.exp(-arr))
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("silu", a)
 
 def leaky_relu(a, negative_slope=0.01):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         d = _get_dispatcher()
         sfx = _kernel_suffix(a.dtype)
@@ -72,11 +74,11 @@ def leaky_relu(a, negative_slope=0.01):
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
                                   a.dtype, a.device)
-    arr = _to_numpy(a)
-    out = np.where(arr > 0, arr, negative_slope * arr)
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("leaky_relu", a)
 
 def elu(a, alpha=1.0):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         # elu(x) = x if x > 0, alpha*(exp(x)-1) otherwise
         relu_a = _dispatch_unary_gpu(a, "relu")
@@ -84,20 +86,20 @@ def elu(a, alpha=1.0):
         elu_part = mul(sub(exp_a, 1.0), alpha)
         neg_part = clamp(elu_part, None, 0.0)
         return add(relu_a, neg_part)
-    arr = _to_numpy(a)
-    out = np.where(arr > 0, arr, alpha * (np.exp(arr) - 1))
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("elu", a)
 
 def mish(a):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         # mish(x) = x * tanh(softplus(x)) = x * tanh(log(1 + exp(x)))
         sp = softplus(a)
         return mul(a, _dispatch_unary_gpu(sp, "tanh"))
-    arr = _to_numpy(a)
-    out = arr * np.tanh(np.log1p(np.exp(arr)))
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("mish", a)
 
 def prelu(a, weight):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         a_c = a.contiguous() if not a.is_contiguous() else a
         mask = gt(a_c, 0)
@@ -107,12 +109,11 @@ def prelu(a, weight):
             np.broadcast_to(w_np, a_c.shape).copy(), a.dtype, a.device)
         neg = mul(a_c, w_expanded)
         return where(mask, a_c, neg)
-    arr = _to_numpy(a)
-    weight_arr = _to_numpy(weight)
-    out = np.where(arr > 0, arr, arr * weight_arr)
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("prelu", a)
 
 def clamp(a, min_val=None, max_val=None):
+    if a.numel() == 0:
+        return _empty_like(a)
     if min_val is not None and max_val is not None:
         if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
             d = _get_dispatcher()
@@ -136,9 +137,7 @@ def clamp(a, min_val=None, max_val=None):
             return _from_metal_buffer(out_buf, a.shape,
                                       _compute_strides(a.shape),
                                       a.dtype, a.device)
-        arr = _to_numpy(a)
-        out = np.clip(arr, min_val, max_val)
-        return _from_numpy(out, a.dtype, a.device)
+        _unsupported_dtype("clamp", a)
     if min_val is not None:
         return clamp_min(a, min_val)
     if max_val is not None:
@@ -146,6 +145,8 @@ def clamp(a, min_val=None, max_val=None):
     return a
 
 def clamp_min(a, min_val):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
         d = _get_dispatcher()
         sfx = _kernel_suffix(a.dtype)
@@ -164,11 +165,11 @@ def clamp_min(a, min_val):
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
                                   a.dtype, a.device)
-    arr = _to_numpy(a)
-    out = np.maximum(arr, min_val)
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("clamp_min", a)
 
 def clamp_max(a, max_val):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
         d = _get_dispatcher()
         sfx = _kernel_suffix(a.dtype)
@@ -187,44 +188,40 @@ def clamp_max(a, max_val):
         from ...._tensor import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
                                   a.dtype, a.device)
-    arr = _to_numpy(a)
-    out = np.minimum(arr, max_val)
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("clamp_max", a)
 
 def relu6(a):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
         return clamp(a, 0.0, 6.0)
-    arr = _to_numpy(a)
-    out = np.minimum(np.maximum(arr, 0.0), 6.0)
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("relu6", a)
 
 def hardtanh(a, min_val=-1.0, max_val=1.0):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
         return clamp(a, min_val, max_val)
-    arr = _to_numpy(a)
-    out = np.clip(arr, min_val, max_val)
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("hardtanh", a)
 
 def selu(a):
     ALPHA = 1.6732632423543772
     SCALE = 1.0507009873554805
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         # scale * where(x > 0, x, alpha * (exp(x) - 1))
         exp_a = _dispatch_unary_gpu(a, "exp")
         elu_part = mul(sub(exp_a, 1.0), ALPHA)
         relu_a = _dispatch_unary_gpu(a, "relu")
-        # where(x > 0, x, elu_part) = relu(x) + min(0, elu_part)
-        # Simpler: use the where op if available, or compute via masks
-        # relu(x) - relu(-elu_part) + elu_part = ... too complex
-        # Just use: selu = scale * (relu(x) + min(0, alpha*(exp(x)-1)))
         neg_part = clamp(elu_part, None, 0.0)
         result = add(relu_a, neg_part)
         return mul(result, SCALE)
-    arr = _to_numpy(a)
-    out = SCALE * np.where(arr > 0, arr, ALPHA * (np.exp(arr) - 1))
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("selu", a)
 
 def celu(a, alpha=1.0):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         # max(0, x) + min(0, alpha * (exp(x/alpha) - 1))
         relu_a = _dispatch_unary_gpu(a, "relu")
@@ -233,31 +230,31 @@ def celu(a, alpha=1.0):
         elu_part = mul(sub(exp_scaled, 1.0), alpha)
         neg_part = clamp(elu_part, None, 0.0)
         return add(relu_a, neg_part)
-    arr = _to_numpy(a)
-    out = np.maximum(arr, 0.0) + np.minimum(0.0, alpha * (np.exp(arr / alpha) - 1))
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("celu", a)
 
 def threshold(a, threshold_val, value):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         a_c = a.contiguous() if not a.is_contiguous() else a
         mask = gt(a_c, threshold_val)
         fill = mul(add(mul(a_c, 0.0), 1.0), value)
         return where(mask, a_c, fill)
-    arr = _to_numpy(a)
-    out = np.where(arr > threshold_val, arr, value)
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("threshold", a)
 
 def hardshrink(a, lambd=0.5):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         a_c = a.contiguous() if not a.is_contiguous() else a
         abs_a = _dispatch_unary_gpu(a_c, "abs")
         mask = gt(abs_a, lambd)
         return where(mask, a_c, mul(a_c, 0.0))
-    arr = _to_numpy(a)
-    out = np.where(np.abs(arr) > lambd, arr, 0.0)
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("hardshrink", a)
 
 def softshrink(a, lambd=0.5):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         a_c = a.contiguous() if not a.is_contiguous() else a
         s = _dispatch_unary_gpu(a_c, "sign")
@@ -265,9 +262,7 @@ def softshrink(a, lambd=0.5):
         shifted = sub(abs_a, lambd)
         clamped = clamp(shifted, 0.0, None)
         return mul(s, clamped)
-    arr = _to_numpy(a)
-    out = np.sign(arr) * np.maximum(np.abs(arr) - lambd, 0.0)
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("softshrink", a)
 
 def rrelu(a, lower=1.0 / 8, upper=1.0 / 3, training=False):
     arr = _to_numpy(a)
@@ -281,38 +276,40 @@ def rrelu(a, lower=1.0 / 8, upper=1.0 / 3, training=False):
     return result
 
 def hardswish(a):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         # hardswish(x) = x * clamp(x + 3, 0, 6) / 6
         shifted = add(a, 3.0)
         clamped = clamp(shifted, 0.0, 6.0)
         return div(mul(a, clamped), 6.0)
-    arr = _to_numpy(a).astype(np.float64)
-    out = arr * np.clip(arr + 3.0, 0.0, 6.0) / 6.0
-    return _from_numpy(out.astype(to_numpy_dtype(a.dtype)), a.dtype, a.device)
+    _unsupported_dtype("hardswish", a)
 
 def hardsigmoid(a):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         # hardsigmoid(x) = clamp(x + 3, 0, 6) / 6
         shifted = add(a, 3.0)
         clamped = clamp(shifted, 0.0, 6.0)
         return div(clamped, 6.0)
-    arr = _to_numpy(a).astype(np.float64)
-    out = np.clip(arr + 3.0, 0.0, 6.0) / 6.0
-    return _from_numpy(out.astype(to_numpy_dtype(a.dtype)), a.dtype, a.device)
+    _unsupported_dtype("hardsigmoid", a)
 
 def softsign(a):
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
         # softsign(x) = x / (1 + |x|)
         abs_a = _dispatch_unary_gpu(a, "abs")
         denom = add(abs_a, 1.0)
         return div(a, denom)
-    arr = _to_numpy(a).astype(np.float64)
-    out = arr / (1.0 + np.abs(arr))
-    return _from_numpy(out.astype(to_numpy_dtype(a.dtype)), a.dtype, a.device)
+    _unsupported_dtype("softsign", a)
 
 def softmax(a, dim):
     # GPU path: float32/float16
     ndim = len(a.shape)
+    if a.numel() == 0:
+        return _empty_like(a)
     actual_dim = dim if dim >= 0 else dim + ndim
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype) and ndim >= 1:
         if actual_dim == ndim - 1 and a.is_contiguous():
@@ -332,27 +329,23 @@ def softmax(a, dim):
         a_t = a.permute(*perm).contiguous()
         out_t = softmax(a_t, -1)
         return out_t.permute(*perm).contiguous()
-    arr = _to_numpy(a)
-    exp_arr = np.exp(arr - np.max(arr, axis=dim, keepdims=True))
-    result = exp_arr / np.sum(exp_arr, axis=dim, keepdims=True)
-    return _from_numpy(result, a.dtype, a.device)
+    _unsupported_dtype("softmax", a)
 
 def log_softmax(a, dim):
     # GPU composite: log(softmax(x))
+    if a.numel() == 0:
+        return _empty_like(a)
     ndim = len(a.shape)
     actual_dim = dim if dim >= 0 else dim + ndim
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype) and ndim >= 1:
         s = softmax(a, dim)
         return log(s)
-    arr = _to_numpy(a)
-    max_arr = np.max(arr, axis=dim, keepdims=True)
-    exp_arr = np.exp(arr - max_arr)
-    log_sum_exp = np.log(np.sum(exp_arr, axis=dim, keepdims=True))
-    result = arr - max_arr - log_sum_exp
-    return _from_numpy(result, a.dtype, a.device)
+    _unsupported_dtype("log_softmax", a)
 
 def embedding(weight, indices, padding_idx=None, scale_grad_by_freq=False, sparse=False):
     # GPU path: reuse index_select on dim=0
+    if weight.numel() == 0:
+        return _empty_like(weight)
     if (_can_use_gpu(weight) and weight.is_contiguous()
             and weight.dtype in (float32_dtype, float16_dtype)):
         idx_np = _ensure_integer_indices(_to_numpy(indices), "indices").astype(np.int64, copy=False)
@@ -370,7 +363,6 @@ def embedding(weight, indices, padding_idx=None, scale_grad_by_freq=False, spars
                                 _metal_buf(idx_tensor), out_buf,
                                 1, len(flat_idx), dim,
                                 vocab, out_numel)
-        out_shape = tuple(indices.shape) + (dim,) if hasattr(indices, 'shape') else (len(flat_idx), dim)
         out_shape = tuple(idx_np.shape) + (weight.shape[1],)
         s = 1
         out_stride = ()
@@ -378,18 +370,15 @@ def embedding(weight, indices, padding_idx=None, scale_grad_by_freq=False, spars
             out_stride = (s,) + out_stride
             s *= d_
         return _from_metal_buffer(out_buf, out_shape, out_stride, weight.dtype, weight.device)
-    weight_arr = _to_numpy(weight)
-    idx = _ensure_integer_indices(_to_numpy(indices), "indices").astype(np.int64, copy=False)
-    if idx.size and (idx.min() < 0 or idx.max() >= weight_arr.shape[0]):
-        raise IndexError("index out of range in self")
-    out = weight_arr[idx]
-    return _from_numpy(np.ascontiguousarray(out), weight.dtype, weight.device)
+    _unsupported_dtype("embedding", weight)
 
 def dropout(a, p=0.5, training=True):
     if not training or p == 0:
         return a
     if p == 1.0:
-        return _from_numpy(np.zeros(_to_numpy(a).shape, dtype=_to_numpy(a).dtype), a.dtype, a.device)
+        return mul(a, 0.0)
+    if a.numel() == 0:
+        return _empty_like(a)
     if _can_use_gpu(a) and a.is_contiguous() and a.dtype in (float32_dtype, float16_dtype):
         from ....mps import _get_default_generator
         gen = _get_default_generator()
@@ -413,9 +402,5 @@ def dropout(a, p=0.5, training=True):
             'scale': float(scale),
         }
         return result
-    from ...._random import _get_cpu_rng
-    rng = _get_cpu_rng()
-    arr = _to_numpy(a)
-    mask = (rng.random(arr.shape) >= p).astype(arr.dtype)
-    return _from_numpy(arr * mask / (1.0 - p), a.dtype, a.device)
+    _unsupported_dtype("dropout", a)
 

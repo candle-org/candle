@@ -4,7 +4,8 @@ import struct
 import numpy as np
 
 from ._helpers import (
-    _can_use_gpu, _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
+    _can_use_gpu, _empty_like, _unsupported_dtype,
+    _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
     _alloc_output_buf, _metal_buf_to_bytes, _from_metal_buffer,
     _get_dispatcher, _dispatch_unary_gpu, _dispatch_unary_predicate_gpu,
     _scalar_value, _dispatch_binary_gpu,
@@ -18,7 +19,8 @@ from ._helpers import (
     mps_typed_storage_from_numpy, _MPSUntypedStorage, TypedStorage,
     _accel,
 )
-from .math import sqrt, mul, sub, exp, log, add, div, isnan
+from .math import sqrt, mul, sub, exp, log, add, div, isnan, pow as _pow
+from .math import abs as _abs
 from .comparison import ne, logical_not
 from .elementwise import where
 from .shape import expand
@@ -69,7 +71,10 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
             result = _gpu_reduce_single_dim(result, d, "sum", keepdim)
         return result
 
-    return _from_numpy(_to_numpy(a).sum(axis=dim, keepdims=keepdim), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a):
+        return sum_(a.contiguous(), dim=dim, keepdim=keepdim, dtype=dtype)
+    _unsupported_dtype("sum", a)
 
 def mean_(a, dim=None, keepdim=False):
     # GPU path: full-tensor mean (dim=None)
@@ -99,7 +104,10 @@ def mean_(a, dim=None, keepdim=False):
             result = _gpu_reduce_single_dim(result, d, "mean", keepdim)
         return result
 
-    return _from_numpy(_to_numpy(a).mean(axis=dim, keepdims=keepdim), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a):
+        return mean_(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("mean", a)
 
 def std_(a, dim=None, keepdim=False, unbiased=True):
     if not a.dtype.is_floating_point and not a.dtype.is_complex:
@@ -108,9 +116,10 @@ def std_(a, dim=None, keepdim=False, unbiased=True):
     if _can_use_gpu(a) and a.is_contiguous() and a.dtype.is_floating_point:
         v = var_(a, dim=dim, unbiased=unbiased, keepdim=keepdim)
         return sqrt(v)
-    ddof = 1 if unbiased else 0
-    out = np.std(_to_numpy(a), axis=dim, keepdims=keepdim, ddof=ddof)
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype.is_floating_point:
+        return std_(a.contiguous(), dim=dim, keepdim=keepdim, unbiased=unbiased)
+    _unsupported_dtype("std", a)
 
 def var_(a, dim=None, unbiased=True, keepdim=False):
     # GPU composite using E[X^2] - E[X]^2 (avoids broadcast sub)
@@ -137,31 +146,40 @@ def var_(a, dim=None, unbiased=True, keepdim=False):
                 var_val = mul(var_val, correction)
         return var_val
 
-    arr = _to_numpy(a)
-    ddof = 1 if unbiased else 0
-    if dim is not None:
-        if isinstance(dim, (list, tuple)):
-            dim = tuple(dim)
-        out = np.var(arr, axis=dim, keepdims=keepdim, ddof=ddof)
-    else:
-        out = np.var(arr, ddof=ddof)
-        if keepdim:
-            out = np.full([1] * arr.ndim, out)
-    return _from_numpy(np.ascontiguousarray(np.atleast_1d(out).astype(arr.dtype, copy=False)), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype.is_floating_point:
+        return var_(a.contiguous(), dim=dim, unbiased=unbiased, keepdim=keepdim)
+    _unsupported_dtype("var", a)
 
 def norm_(a, p=2, dim=None, keepdim=False):
-    arr = _to_numpy(a).astype(np.float64)
-    if dim is not None:
-        if isinstance(dim, (list, tuple)):
-            dim = tuple(dim)
-        out = np.linalg.norm(arr, ord=p, axis=dim, keepdims=keepdim)
-    else:
-        out = np.linalg.norm(arr.ravel(), ord=p)
-        if keepdim:
-            out = np.full([1] * arr.ndim, out)
+    """Compute the p-norm of a tensor (GPU composite)."""
     from ...._dtype import float32 as f32
     out_dtype = a.dtype if a.dtype.is_floating_point else f32
-    return _from_numpy(np.ascontiguousarray(np.atleast_1d(out).astype(to_numpy_dtype(out_dtype), copy=False)), out_dtype, a.device)
+    if _can_use_gpu(a):
+        a_c = a.contiguous() if not a.is_contiguous() else a
+        # Cast to float if needed
+        if not a_c.dtype.is_floating_point:
+            from .elementwise import to as _to
+            a_c = _to(a_c, f32)
+        if p == 2:
+            sq = mul(a_c, a_c)
+            s = sum_(sq, dim=dim, keepdim=keepdim)
+            return sqrt(s)
+        elif p == 1:
+            ab = _abs(a_c)
+            return sum_(ab, dim=dim, keepdim=keepdim)
+        elif p == float('inf'):
+            ab = _abs(a_c)
+            return amax(ab, dim=dim, keepdim=keepdim)
+        elif p == float('-inf'):
+            ab = _abs(a_c)
+            return amin(ab, dim=dim, keepdim=keepdim)
+        else:
+            ab = _abs(a_c)
+            raised = _pow(ab, float(p))
+            s = sum_(raised, dim=dim, keepdim=keepdim)
+            return _pow(s, 1.0 / float(p))
+    _unsupported_dtype("norm", a)
 
 def prod_(a, dim=None, keepdim=False):
     ndim = len(a.shape)
@@ -187,14 +205,10 @@ def prod_(a, dim=None, keepdim=False):
             result = _gpu_reduce_single_dim(result, d, "prod", keepdim)
         return result
 
-    arr = _to_numpy(a)
-    if dim is not None:
-        out = np.prod(arr, axis=dim, keepdims=keepdim)
-    else:
-        out = np.prod(arr)
-        if keepdim:
-            out = np.full([1] * arr.ndim, out)
-    return _from_numpy(np.ascontiguousarray(np.atleast_1d(out).astype(arr.dtype, copy=False)), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a):
+        return prod_(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("prod", a)
 
 def all_(a, dim=None, keepdim=False):
     if _can_use_gpu(a) and a.is_contiguous():
@@ -220,7 +234,10 @@ def all_(a, dim=None, keepdim=False):
         out_shape = (1,) * ndim if keepdim else ()
         out_stride = (1,) * ndim if keepdim else ()
         return _from_metal_buffer(out_buf, out_shape, out_stride, bool_dtype, a.device)
-    return _from_numpy(np.all(_to_numpy(a), axis=dim, keepdims=keepdim), bool_dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a):
+        return all_(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("all", a)
 
 def any_(a, dim=None, keepdim=False):
     if _can_use_gpu(a) and a.is_contiguous():
@@ -246,7 +263,10 @@ def any_(a, dim=None, keepdim=False):
         out_shape = (1,) * ndim if keepdim else ()
         out_stride = (1,) * ndim if keepdim else ()
         return _from_metal_buffer(out_buf, out_shape, out_stride, bool_dtype, a.device)
-    return _from_numpy(np.any(_to_numpy(a), axis=dim, keepdims=keepdim), bool_dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a):
+        return any_(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("any", a)
 
 def argmax(a, dim=None, keepdim=False):
     # GPU path: full-tensor argmax (dim=None)
@@ -266,15 +286,10 @@ def argmax(a, dim=None, keepdim=False):
     if dim is not None and _can_use_gpu(a) and a.is_contiguous():
         return _gpu_reduce_single_dim(a, dim, "argmax", keepdim)
 
-    arr = _to_numpy(a)
-    if dim is None:
-        out = np.array(np.argmax(arr), dtype=np.int64)
-    else:
-        out = np.argmax(arr, axis=dim)
-        if keepdim:
-            out = np.expand_dims(out, axis=dim)
-        out = out.astype(np.int64)
-    return _from_numpy(out, int64_dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a):
+        return argmax(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("argmax", a)
 
 def argmin(a, dim=None, keepdim=False):
     # GPU path: full-tensor argmin (dim=None)
@@ -294,15 +309,10 @@ def argmin(a, dim=None, keepdim=False):
     if dim is not None and _can_use_gpu(a) and a.is_contiguous():
         return _gpu_reduce_single_dim(a, dim, "argmin", keepdim)
 
-    arr = _to_numpy(a)
-    if dim is None:
-        out = np.array(np.argmin(arr), dtype=np.int64)
-    else:
-        out = np.argmin(arr, axis=dim)
-        if keepdim:
-            out = np.expand_dims(out, axis=dim)
-        out = out.astype(np.int64)
-    return _from_numpy(out, int64_dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a):
+        return argmin(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("argmin", a)
 
 def count_nonzero(a, dim=None, keepdim=False):
     if (_can_use_gpu(a) and a.is_contiguous()
@@ -317,16 +327,10 @@ def count_nonzero(a, dim=None, keepdim=False):
         # Convert to int64 via numpy (small result)
         s_np = _to_numpy(s).astype(np.int64)
         return _from_numpy(np.ascontiguousarray(s_np), int64_dtype, a.device)
-    arr = _to_numpy(a)
-    if dim is None:
-        count = np.count_nonzero(arr)
-        if keepdim:
-            out = np.array(count, dtype=np.int64).reshape((1,) * arr.ndim)
-        else:
-            out = np.array(count, dtype=np.int64)
-    else:
-        out = np.count_nonzero(arr, axis=dim, keepdims=keepdim).astype(np.int64)
-    return _from_numpy(out, int64_dtype, a.device)
+    # Non-contiguous or unsupported dtype: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
+        return count_nonzero(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("count_nonzero", a)
 
 def cumsum(a, dim=0):
     # GPU path: float32/float16, contiguous
@@ -350,7 +354,10 @@ def cumsum(a, dim=0):
                           outer_size, dim_size, inner_size)
         return _from_metal_buffer(out_buf, tuple(a.shape),
                                   tuple(a.stride()), a.dtype, a.device)
-    return _from_numpy(np.cumsum(_to_numpy(a), axis=dim), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return cumsum(a.contiguous(), dim=dim)
+    _unsupported_dtype("cumsum", a)
 
 def cumprod(a, dim=0):
     # GPU path: float32/float16, contiguous (same dispatch as cumsum)
@@ -374,7 +381,10 @@ def cumprod(a, dim=0):
                           outer_size, dim_size, inner_size)
         return _from_metal_buffer(out_buf, tuple(a.shape),
                                   tuple(a.stride()), a.dtype, a.device)
-    return _from_numpy(np.cumprod(_to_numpy(a), axis=dim), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return cumprod(a.contiguous(), dim=dim)
+    _unsupported_dtype("cumprod", a)
 
 def cummax(a, dim=0):
     arr = _to_numpy(a)
@@ -471,13 +481,10 @@ def argsort(a, dim=-1, descending=False, stable=False):
             _metal_buf_to_bytes(indices_buf, numel * 4),
             dtype=np.int32).astype(np.int64).reshape(a.shape)
         return _from_numpy(idx_np, int64_dtype, a.device)
-    arr = _to_numpy(a)
-    kind = "stable" if stable else "quicksort"
-    if descending:
-        idx = np.argsort(-arr, axis=dim, kind=kind)
-    else:
-        idx = np.argsort(arr, axis=dim, kind=kind)
-    return _from_numpy(idx.astype(np.int64), int64_dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return argsort(a.contiguous(), dim=dim, descending=descending, stable=stable)
+    _unsupported_dtype("argsort", a)
 
 def sort(a, dim=-1, descending=False, stable=False):
     if (_can_use_gpu(a) and a.is_contiguous()
@@ -494,17 +501,10 @@ def sort(a, dim=-1, descending=False, stable=False):
             dtype=np.int32).astype(np.int64).reshape(a.shape)
         indices = _from_numpy(idx_np, int64_dtype, a.device)
         return (values, indices)
-    arr = _to_numpy(a)
-    kind = "stable" if stable else "quicksort"
-    if descending:
-        idx = np.argsort(-arr, axis=dim, kind=kind)
-    else:
-        idx = np.argsort(arr, axis=dim, kind=kind)
-    values = np.take_along_axis(arr, idx, axis=dim)
-    return (
-        _from_numpy(values, a.dtype, a.device),
-        _from_numpy(idx.astype(np.int64), int64_dtype, a.device),
-    )
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return sort(a.contiguous(), dim=dim, descending=descending, stable=stable)
+    _unsupported_dtype("sort", a)
 
 def topk(a, k, dim=-1, largest=True, sorted=True):
     if (_can_use_gpu(a) and a.is_contiguous()
@@ -517,23 +517,24 @@ def topk(a, k, dim=-1, largest=True, sorted=True):
         slices = [slice(None)] * ndim
         slices[dim] = slice(0, k)
         return (values[tuple(slices)], indices[tuple(slices)])
-    arr = _to_numpy(a)
-    if largest:
-        idx = np.argsort(-arr, axis=dim)
-    else:
-        idx = np.argsort(arr, axis=dim)
-    idx = np.take(idx, np.arange(k), axis=dim)
-    values = np.take_along_axis(arr, idx, axis=dim)
-    return (
-        _from_numpy(values, a.dtype, a.device),
-        _from_numpy(idx.astype(np.int64), int64_dtype, a.device),
-    )
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return topk(a.contiguous(), k=k, dim=dim, largest=largest, sorted=sorted)
+    _unsupported_dtype("topk", a)
 
 def min_(a, b):
-    return _from_numpy(np.minimum(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
+    if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
+        return _dispatch_binary_gpu(a, b, "min")
+    if _can_use_gpu(a) and not isinstance(b, Tensor):
+        return _dispatch_binary_gpu(a, float(b), "min")
+    _unsupported_dtype("min", a)
 
 def max_(a, b):
-    return _from_numpy(np.maximum(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
+    if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
+        return _dispatch_binary_gpu(a, b, "max")
+    if _can_use_gpu(a) and not isinstance(b, Tensor):
+        return _dispatch_binary_gpu(a, float(b), "max")
+    _unsupported_dtype("max", a)
 
 def amin(a, dim=None, keepdim=False):
     if dim is not None and _can_use_gpu(a) and a.is_contiguous():
@@ -544,9 +545,21 @@ def amin(a, dim=None, keepdim=False):
         for d in sorted([x % ndim for x in dim], reverse=True):
             result = _gpu_reduce_single_dim(result, d, "min", keepdim)
         return result
-    arr = _to_numpy(a)
-    out = np.amin(arr, axis=dim, keepdims=keepdim)
-    return _from_numpy(out, a.dtype, a.device)
+    # dim=None full reduction: use GPU reduce
+    if dim is None and _can_use_gpu(a) and a.is_contiguous():
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        out_buf = _alloc_output_buf(1, a.dtype)
+        d.dispatch_reduction(f"min_partial_{sfx}", f"min_final_{sfx}",
+                             _metal_buf(a), out_buf, a.numel())
+        ndim = len(a.shape)
+        out_shape = (1,) * ndim if keepdim else ()
+        out_stride = (1,) * ndim if keepdim else ()
+        return _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a):
+        return amin(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("amin", a)
 
 def amax(a, dim=None, keepdim=False):
     if dim is not None and _can_use_gpu(a) and a.is_contiguous():
@@ -557,29 +570,47 @@ def amax(a, dim=None, keepdim=False):
         for d in sorted([x % ndim for x in dim], reverse=True):
             result = _gpu_reduce_single_dim(result, d, "max", keepdim)
         return result
-    arr = _to_numpy(a)
-    out = np.amax(arr, axis=dim, keepdims=keepdim)
-    return _from_numpy(out, a.dtype, a.device)
+    # dim=None full reduction: use GPU reduce
+    if dim is None and _can_use_gpu(a) and a.is_contiguous():
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        out_buf = _alloc_output_buf(1, a.dtype)
+        d.dispatch_reduction(f"max_partial_{sfx}", f"max_final_{sfx}",
+                             _metal_buf(a), out_buf, a.numel())
+        ndim = len(a.shape)
+        out_shape = (1,) * ndim if keepdim else ()
+        out_stride = (1,) * ndim if keepdim else ()
+        return _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a):
+        return amax(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("amax", a)
 
 def fmin(a, b):
-    return _from_numpy(np.fmin(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
+    # fmin ignores NaN (returns the non-NaN value) — use GPU min composite
+    if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
+        return _dispatch_binary_gpu(a, b, "min")
+    if _can_use_gpu(a) and not isinstance(b, Tensor):
+        return _dispatch_binary_gpu(a, float(b), "min")
+    _unsupported_dtype("fmin", a)
 
 def fmax(a, b):
-    return _from_numpy(np.fmax(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
+    # fmax ignores NaN (returns the non-NaN value) — use GPU max composite
+    if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
+        return _dispatch_binary_gpu(a, b, "max")
+    if _can_use_gpu(a) and not isinstance(b, Tensor):
+        return _dispatch_binary_gpu(a, float(b), "max")
+    _unsupported_dtype("fmax", a)
 
 def maximum(a, b):
     if _can_use_gpu(a):
         return _dispatch_binary_gpu(a, b, "maximum")
-    a_np = _to_numpy(a)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.maximum(a_np, b_np), a.dtype, a.device)
+    _unsupported_dtype("maximum", a)
 
 def minimum(a, b):
     if _can_use_gpu(a):
         return _dispatch_binary_gpu(a, b, "minimum")
-    a_np = _to_numpy(a)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.minimum(a_np, b_np), a.dtype, a.device)
+    _unsupported_dtype("minimum", a)
 
 def logsumexp(a, dim, keepdim=False):
     """Numerically stable logsumexp: log(sum(exp(x), dim))."""
@@ -602,25 +633,32 @@ def logsumexp(a, dim, keepdim=False):
             result = add(log_sum, max_squeezed)
         return result
 
-    arr = _to_numpy(a)
-    max_val = np.max(arr, axis=dim, keepdims=True)
-    exp_shifted = np.exp(arr - max_val)
-    sum_exp = np.sum(exp_shifted, axis=dim, keepdims=keepdim)
-    if keepdim:
-        out = np.log(sum_exp) + max_val
-    else:
-        out = np.log(sum_exp) + np.squeeze(max_val, axis=dim)
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype.is_floating_point:
+        return logsumexp(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("logsumexp", a)
 
 def renorm(a, p, dim, maxnorm):
     """Renormalize tensor: each sub-tensor along dim has norm <= maxnorm."""
-    arr = _to_numpy(a)
-    # Compute the norm along all axes except dim
-    norm = np.linalg.norm(arr, ord=p, axis=dim, keepdims=True)
-    # Scale: if norm > maxnorm, scale down; otherwise keep unchanged
-    scale = np.where(norm > maxnorm, maxnorm / (norm + 1e-7), 1.0)
-    out = arr * scale
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    # GPU composite: compute norm along all axes except dim, then scale
+    if _can_use_gpu(a) and a.dtype.is_floating_point:
+        a_c = a.contiguous() if not a.is_contiguous() else a
+        n = norm_(a_c, p=p, dim=dim, keepdim=True)
+        # scale = where(norm > maxnorm, maxnorm / (norm + eps), 1.0)
+        eps_t = _dispatch_binary_gpu(n, 1e-7, "add")
+        ratio = _dispatch_binary_gpu(
+            _from_numpy(np.array(float(maxnorm), dtype=np.float32), float32_dtype, a.device),
+            eps_t, "div") if a.dtype == float32_dtype else _dispatch_binary_gpu(
+            _from_numpy(np.array(float(maxnorm), dtype=np.float32), float32_dtype, a.device),
+            eps_t, "div")
+        from .comparison import gt
+        cond = gt(n, float(maxnorm))
+        ones_shape = tuple(n.shape)
+        ones_np = np.ones(ones_shape, dtype=to_numpy_dtype(a.dtype))
+        ones_t = _from_numpy(ones_np, a.dtype, a.device)
+        scale = where(cond, ratio, ones_t)
+        return mul(a_c, scale)
+    _unsupported_dtype("renorm", a)
 
 def nansum(a, dim=None, keepdim=False):
     """Sum ignoring NaN values."""
@@ -631,13 +669,10 @@ def nansum(a, dim=None, keepdim=False):
         not_nan = logical_not(mask)
         cleaned = where(not_nan, a, 0.0)
         return sum_(cleaned, dim=dim, keepdim=keepdim)
-    arr = _to_numpy(a)
-    if dim is None:
-        out = np.nansum(arr)
-        return _from_numpy(np.array(out, dtype=to_numpy_dtype(a.dtype)), a.dtype, a.device)
-    else:
-        out = np.nansum(arr, axis=dim, keepdims=keepdim)
-        return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return nansum(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("nansum", a)
 
 def nanmean(a, dim=None, keepdim=False):
     """Mean ignoring NaN values."""
@@ -647,35 +682,21 @@ def nanmean(a, dim=None, keepdim=False):
         not_nan = logical_not(mask)
         cleaned = where(not_nan, a, 0.0)
         s = sum_(cleaned, dim=dim, keepdim=keepdim)
-        # Count non-NaN: use add_scalar(0*a, 1) to get float ones, then mask
-        zeros = _dispatch_binary_gpu(a, 0.0, "mul")  # 0*a = 0 everywhere (incl NaN→0*NaN=NaN... no)
-        # Simplest: fall back to numpy for count since composite is tricky
-        arr = _to_numpy(a)
-        cnt_val = np.sum(~np.isnan(arr), axis=dim, keepdims=keepdim).astype(arr.dtype)
-        cnt = _from_numpy(np.ascontiguousarray(cnt_val), a.dtype, a.device)
+        # Count non-NaN via GPU: cast not_nan bool to float, then sum
+        not_nan_f = where(not_nan, 1.0, 0.0)
+        cnt = sum_(not_nan_f, dim=dim, keepdim=keepdim)
         return div(s, cnt)
-    arr = _to_numpy(a)
-    if dim is None:
-        out = np.nanmean(arr)
-        return _from_numpy(np.array(out, dtype=to_numpy_dtype(a.dtype)), a.dtype, a.device)
-    else:
-        out = np.nanmean(arr, axis=dim, keepdims=keepdim)
-        return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    # Non-contiguous: make contiguous and retry
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return nanmean(a.contiguous(), dim=dim, keepdim=keepdim)
+    _unsupported_dtype("nanmean", a)
 
 def aminmax(a, dim=None, keepdim=False):
     """Returns the min and max of a tensor."""
     from collections import namedtuple
-    arr = _to_numpy(a)
-    if dim is None:
-        mn = np.min(arr)
-        mx = np.max(arr)
-        mn_t = _from_numpy(np.array(mn, dtype=to_numpy_dtype(a.dtype)), a.dtype, a.device)
-        mx_t = _from_numpy(np.array(mx, dtype=to_numpy_dtype(a.dtype)), a.dtype, a.device)
-    else:
-        mn = np.min(arr, axis=dim, keepdims=keepdim)
-        mx = np.max(arr, axis=dim, keepdims=keepdim)
-        mn_t = _from_numpy(np.ascontiguousarray(mn), a.dtype, a.device)
-        mx_t = _from_numpy(np.ascontiguousarray(mx), a.dtype, a.device)
+    # GPU composite: just call amin and amax
+    mn_t = amin(a, dim=dim, keepdim=keepdim)
+    mx_t = amax(a, dim=dim, keepdim=keepdim)
     AminmaxResult = namedtuple("aminmax", ["min", "max"])
     return AminmaxResult(mn_t, mx_t)
 

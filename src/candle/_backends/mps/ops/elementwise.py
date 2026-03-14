@@ -4,7 +4,8 @@ import struct
 import numpy as np
 
 from ._helpers import (
-    _can_use_gpu, _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
+    _can_use_gpu, _empty_like, _unsupported_dtype,
+    _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
     _alloc_output_buf, _metal_buf_to_bytes, _from_metal_buffer,
     _get_dispatcher, _dispatch_unary_gpu, _dispatch_unary_predicate_gpu,
     _scalar_value, _dispatch_binary_gpu,
@@ -50,23 +51,20 @@ def where(cond, x, y):
                                     _metal_buf(x), scalar_val, out_buf,
                                     numel, scalar_fmt=_scalar_fmt(x.dtype))
         else:
-            # Fallback to numpy
-            cond_arr = _to_numpy(cond)
-            x_arr = _to_numpy(x)
-            y_arr = _to_numpy(y)
-            out = np.where(cond_arr, x_arr, y_arr)
-            return _from_numpy(out, x.dtype, x.device)
+            # y is a tensor but non-contiguous or different shape — make contiguous and retry
+            y_c = y.contiguous() if not y.is_contiguous() else y
+            if y_c.shape != x.shape:
+                _unsupported_dtype("where (shape mismatch)", x)
+            d.dispatch_where(f"where_{sfx}", cond_buf, _metal_buf(x),
+                             _metal_buf(y_c), out_buf, numel)
         return _from_metal_buffer(out_buf, x.shape, x.stride, x.dtype, x.device)
 
-    # numpy fallback
-    cond_arr = _to_numpy(cond)
-    x_arr = _to_numpy(x)
-    if isinstance(y, Tensor):
-        y_arr = _to_numpy(y)
-    else:
-        y_arr = y
-    out = np.where(cond_arr, x_arr, y_arr)
-    return _from_numpy(out, x.dtype, x.device)
+    # Non-contiguous inputs: make contiguous and retry
+    if isinstance(x, Tensor) and _can_use_gpu(x) and isinstance(cond, Tensor) and _can_use_gpu(cond):
+        cond_c = cond.contiguous() if not cond.is_contiguous() else cond
+        x_c = x.contiguous() if not x.is_contiguous() else x
+        return where(cond_c, x_c, y)
+    _unsupported_dtype("where", x)
 
 def lerp(a, b, weight):
     if _can_use_gpu(a) and _can_use_gpu(b):
@@ -76,14 +74,7 @@ def lerp(a, b, weight):
             return add(a, mul(diff, weight))
         else:
             return add(a, mul(diff, weight))
-    arr_a = _to_numpy(a)
-    arr_b = _to_numpy(b)
-    if isinstance(weight, Tensor):
-        w = _to_numpy(weight)
-    else:
-        w = weight
-    out = arr_a + w * (arr_b - arr_a)
-    return _from_numpy(out, a.dtype, a.device)
+    _unsupported_dtype("lerp", a)
 
 def addcmul(a, b, c, value=1.0):
     if _can_use_gpu(a) and _can_use_gpu(b) and _can_use_gpu(c):
