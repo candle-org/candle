@@ -1531,6 +1531,7 @@ _UNARY_NUMERIC_OPS = (
     ("neg", "-x"),
     ("abs", "abs(x)"),
     ("relu", "max(x, ({type})0)"),
+    ("identity", "x"),
 )
 
 _UNARY_FLOAT_OPS = (
