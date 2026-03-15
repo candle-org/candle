@@ -289,6 +289,50 @@ def copy_(a, src):
     return a
 
 def erfinv_(a):
+    # GPU composite: Beasley-Springer-Moro rational approximation on-device
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype in (float32_dtype, float16_dtype):
+        from .math import mul, add, sub, div, sqrt, log, neg, abs as abs_
+        from .comparison import le, ge, gt, lt
+        from .elementwise import where
+        _sqrt2 = 1.4142135623730951
+        # Map erfinv domain [-1,1] to probit domain [0,1]: p = (a+1)/2
+        p = div(add(a, 1.0), 2.0)
+        q = sub(p, 0.5)
+        abs_q = abs_(q)
+        central_mask = le(abs_q, 0.425)
+        # --- Central region: rational approx in q ---
+        r2 = mul(q, q)
+        # num = ((a3*r2 + a2)*r2 + a1)*r2 + a0
+        t = add(mul(r2, -25.44106049637), 41.39119773534)
+        t = add(mul(t, r2), -18.61500062529)
+        num = add(mul(t, r2), 2.50662823884)
+        # den = (((b3*r2 + b2)*r2 + b1)*r2 + b0)*r2 + 1
+        t = add(mul(r2, 3.13082909833), -21.06224101826)
+        t = add(mul(t, r2), 23.08336743743)
+        t = add(mul(t, r2), -8.47351093090)
+        den = add(mul(t, r2), 1.0)
+        central_val = div(mul(q, num), den)
+        # --- Tail region ---
+        one_minus_p = add(neg(p), 1.0)  # 1 - p
+        p_lt_half = le(p, 0.5)
+        pp = where(p_lt_half, p, one_minus_p)
+        r = sqrt(mul(log(pp), -2.0))
+        # t_num = (c2*r + c1)*r + c0
+        t = add(mul(r, 0.010328), 0.802853)
+        t_num = add(mul(t, r), 2.515517)
+        # t_den = ((d2*r + d1)*r + d0)*r + 1
+        t = add(mul(r, 0.001308), 0.189269)
+        t = add(mul(t, r), 1.432788)
+        t_den = add(mul(t, r), 1.0)
+        tail_abs = sub(r, div(t_num, t_den))
+        tail_val = where(p_lt_half, neg(tail_abs), tail_abs)
+        # Combine central + tail, scale by 1/sqrt(2)
+        result = div(where(central_mask, central_val, tail_val), _sqrt2)
+        # Boundary: erfinv(-1)=-inf, erfinv(1)=inf (scalar must be y in where)
+        result = where(gt(a, -1.0), result, float('-inf'))
+        result = where(lt(a, 1.0), result, float('inf'))
+        copy_(a, result)
+        return a
     arr = _to_numpy(a)
     arr[:] = _ndtr_inv((arr + 1.0) / 2.0) / np.sqrt(2.0)
     return a

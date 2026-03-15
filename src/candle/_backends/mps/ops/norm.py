@@ -257,22 +257,26 @@ def instance_norm(input, weight=None, bias=None, running_mean=None, running_var=
             and len(input.shape) >= 2):
         C = input.shape[1]
         result = group_norm(input, num_groups=C, weight=weight, bias=bias, eps=eps)
-        # Update running stats if needed
+        # Update running stats on GPU — only read back small (C,) results
         if use_input_stats and (running_mean is not None or running_var is not None):
-            arr = _to_numpy(input)
-            ndim = len(arr.shape)
-            N = arr.shape[0]
-            spatial_axes = tuple(range(2, ndim))
-            mean = arr.mean(axis=spatial_axes, keepdims=True)
-            var = arr.var(axis=spatial_axes, keepdims=True)
+            from .reduce import mean_, var_
+            from ...common.view import reshape
+            ndim = len(input.shape)
+            N = input.shape[0]
+            spatial_axes = list(range(2, ndim))
             if running_mean is not None:
-                rm = _to_numpy(running_mean)
-                batch_mean = mean.reshape(N, C).mean(axis=0)
-                rm[:] = (1 - momentum) * rm + momentum * batch_mean
+                # GPU reduce over spatial dims, then average over batch
+                mean_gpu = mean_(input, dim=spatial_axes, keepdim=True)
+                batch_mean = mean_(reshape(mean_gpu, (N, C)), dim=[0], keepdim=False)
+                rm = running_mean._storage.data.ravel()
+                bm = _to_numpy(batch_mean)
+                rm[:] = ((1 - momentum) * rm + momentum * bm).astype(rm.dtype)
             if running_var is not None:
-                rv = _to_numpy(running_var)
-                batch_var = var.reshape(N, C).mean(axis=0)
-                rv[:] = (1 - momentum) * rv + momentum * batch_var
+                var_gpu = var_(input, dim=spatial_axes, unbiased=False, keepdim=True)
+                batch_var = mean_(reshape(var_gpu, (N, C)), dim=[0], keepdim=False)
+                rv = running_var._storage.data.ravel()
+                bv = _to_numpy(batch_var)
+                rv[:] = ((1 - momentum) * rv + momentum * bv).astype(rv.dtype)
         return result
 
     arr = _to_numpy(input)

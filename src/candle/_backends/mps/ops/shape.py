@@ -370,6 +370,25 @@ def diag(a, diagonal_offset=0):
     # GPU composite for 2D input: delegate to diagonal()
     if _can_use_gpu(a) and len(a.shape) == 2:
         return diagonal(a, offset=diagonal_offset)
+    # GPU composite for 1D input: create diagonal matrix on MPS
+    if _can_use_gpu(a) and len(a.shape) == 1:
+        n = a.shape[0]
+        sz = n + (diagonal_offset if diagonal_offset >= 0 else -diagonal_offset)
+        total = sz * sz
+        out_buf = _alloc_output_buf(total, a.dtype)
+        from ...._tensor import _compute_strides
+        out_shape = (sz, sz)
+        out_stride = _compute_strides(out_shape)
+        out = _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
+        # Write via unified memory (storage.data is the metal buffer numpy view)
+        out_data = out._storage.data.reshape(sz, sz)
+        out_data[:] = 0
+        src_data = a._storage.data
+        row_off = max(-diagonal_offset, 0)
+        col_off = max(diagonal_offset, 0)
+        for i in range(n):
+            out_data[row_off + i, col_off + i] = src_data[i]
+        return out
     arr = _to_numpy(a)
     if arr.ndim not in (1, 2):
         raise ValueError("diag expects 1D or 2D tensor")
