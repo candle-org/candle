@@ -31,6 +31,7 @@ _FALLBACK_OPS = {
         "instance_norm",    # aclnnInstanceNorm returns 161002
         "avg_pool2d",           # aclnnAvgPool2d returns 161002
         "adaptive_avg_pool2d",  # cross-op contamination (cubeMathType=1 corrupts state)
+        "upsample_nearest1d",  # aclnnUpsampleNearest1d broken; composite always used
         "einsum",           # aclnnEinsum returns 161002
         "isinf",            # aclnnIsInf returns 161001 (unavailable)
         "im2col",           # aclnnIm2col returns 561103
