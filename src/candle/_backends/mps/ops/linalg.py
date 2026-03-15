@@ -108,6 +108,10 @@ def inner(a, b):
     # GPU composite: for 1D tensors, same as dot
     if _can_use_gpu(a) and _can_use_gpu(b) and len(a.shape) == 1 and len(b.shape) == 1:
         return dot(a, b)
+    # GPU composite: for 2D tensors, inner contracts last axes → matmul(a, b^T)
+    if _can_use_gpu(a) and _can_use_gpu(b) and len(a.shape) == 2 and len(b.shape) == 2:
+        from ...common.view import transpose
+        return matmul(a, transpose(b, -1, -2))
     return _from_numpy(np.inner(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
 
 def mv(a, b):
@@ -184,7 +188,46 @@ def tensordot(a, b, dims=2):
             out_shape = (1,)
             return result_2d.reshape(out_shape).squeeze(0)
         return result_2d.reshape(out_shape)
-    # CPU/numpy fallback (also handles axis-list dims)
+    # GPU composite for list-of-axes dims: permute → reshape 2D → matmul → reshape
+    if (isinstance(dims, (list, tuple)) and len(dims) == 2
+            and _can_use_gpu(a) and _can_use_gpu(b)):
+        from ...common.view import permute
+        axes_a = list(dims[0])
+        axes_b = list(dims[1])
+        ndim_a = len(a.shape)
+        ndim_b = len(b.shape)
+        # Normalize negative axes
+        axes_a = [x % ndim_a for x in axes_a]
+        axes_b = [x % ndim_b for x in axes_b]
+        # Free axes = all axes not in contraction set
+        free_a = [i for i in range(ndim_a) if i not in axes_a]
+        free_b = [i for i in range(ndim_b) if i not in axes_b]
+        # Permute a so free axes come first, contract axes last
+        perm_a = free_a + axes_a
+        perm_b = axes_b + free_b
+        a_p = permute(a.contiguous(), perm_a)
+        b_p = permute(b.contiguous(), perm_b)
+        # Compute sizes
+        a_free_shape = tuple(a.shape[i] for i in free_a)
+        b_free_shape = tuple(b.shape[i] for i in free_b)
+        contract_size = 1
+        for i in axes_a:
+            contract_size *= a.shape[i]
+        a_rows = 1
+        for s in a_free_shape:
+            a_rows *= s
+        b_cols = 1
+        for s in b_free_shape:
+            b_cols *= s
+        a_2d = a_p.contiguous().reshape(a_rows, contract_size)
+        b_2d = b_p.contiguous().reshape(contract_size, b_cols)
+        result_2d = matmul(a_2d, b_2d)
+        out_shape = a_free_shape + b_free_shape
+        if not out_shape:
+            out_shape = (1,)
+            return result_2d.reshape(out_shape).squeeze(0)
+        return result_2d.reshape(out_shape)
+    # CPU/numpy fallback
     a_np = _to_numpy(a)
     b_np = _to_numpy(b)
     if isinstance(dims, int):
@@ -211,6 +254,22 @@ def einsum(equation, *operands):
             return sum_(mul(a, b))
         if eq == 'ij,ij->i':
             return sum_(mul(a, b), dim=-1)
+        # matvec-like: sum of elementwise product along last dim
+        if eq == 'ij,j->i':
+            return sum_(mul(a, b), dim=-1)
+        # outer product
+        if eq == 'i,j->ij':
+            return outer(a, b)
+        # batched dot
+        if eq == 'bi,i->b':
+            return sum_(mul(a, b), dim=-1)
+        # batched matvec
+        if eq == 'bij,bj->bi':
+            return matmul(a, b.unsqueeze(-1)).squeeze(-1)
+        # inner-product style: A @ B^T
+        if eq == 'ij,kj->ik':
+            from ...common.view import transpose
+            return matmul(a, transpose(b, -1, -2))
     ops_np = [_to_numpy(op) for op in operands]
     out = np.einsum(equation, *ops_np)
     return _from_numpy(np.ascontiguousarray(out), operands[0].dtype, operands[0].device)
