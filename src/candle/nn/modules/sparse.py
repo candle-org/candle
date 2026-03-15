@@ -1,7 +1,8 @@
 from ..module import Module
 from ..parameter import Parameter
-from ..._creation import tensor
+from ..._creation import empty
 from .. import functional as F
+from .. import init
 
 
 class Embedding(Module):
@@ -19,9 +20,19 @@ class Embedding(Module):
         if _weight is not None:
             self.weight = Parameter(_weight) if not isinstance(_weight, Parameter) else _weight
         else:
-            self.weight = Parameter(tensor([[0.0] * embedding_dim for _ in range(num_embeddings)]))
+            self.weight = Parameter(empty(num_embeddings, embedding_dim))
+            self.reset_parameters()
         if _freeze:
             self.weight.requires_grad = False
+
+    def reset_parameters(self):
+        init.normal_(self.weight)
+        self._fill_padding_idx_with_zero()
+
+    def _fill_padding_idx_with_zero(self):
+        if self.padding_idx is not None:
+            from ..._creation import zeros
+            self.weight.data[self.padding_idx] = zeros(self.embedding_dim)
 
     def forward(self, input):
         return F.embedding(input, self.weight, self.padding_idx, self.max_norm,
@@ -54,7 +65,8 @@ class EmbeddingBag(Module):
         if _weight is not None:
             self.weight = Parameter(_weight)
         else:
-            self.weight = Parameter(tensor([[0.0] * embedding_dim for _ in range(num_embeddings)]))
+            self.weight = Parameter(empty(num_embeddings, embedding_dim))
+            init.normal_(self.weight)
 
     def forward(self, input, offsets=None, per_sample_weights=None):
         return F.embedding_bag(input, self.weight, offsets=offsets,

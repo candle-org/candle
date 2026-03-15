@@ -2,9 +2,10 @@ import math
 
 from ..module import Module
 from ..parameter import Parameter
-from ..._creation import zeros, randn
+from ..._creation import zeros, empty
 from ..._functional import stack, cat
 from .. import functional as F
+from .. import init
 
 
 def _rnn_cell_forward(input, hidden, weight_ih, weight_hh, bias_ih, bias_hh, nonlinearity='tanh'):
@@ -95,15 +96,21 @@ class RNNBase(Module):
                     gate_size *= 4
                 elif mode == 'GRU':
                     gate_size *= 3
-                w_ih = zeros(gate_size, layer_input_size)
-                w_hh = zeros(gate_size, hidden_size)
+                w_ih = empty(gate_size, layer_input_size)
+                w_hh = empty(gate_size, hidden_size)
                 setattr(self, f'weight_ih_l{layer}{suffix}', Parameter(w_ih))
                 setattr(self, f'weight_hh_l{layer}{suffix}', Parameter(w_hh))
                 if bias:
-                    b_ih = zeros(gate_size)
-                    b_hh = zeros(gate_size)
+                    b_ih = empty(gate_size)
+                    b_hh = empty(gate_size)
                     setattr(self, f'bias_ih_l{layer}{suffix}', Parameter(b_ih))
                     setattr(self, f'bias_hh_l{layer}{suffix}', Parameter(b_hh))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        stdv = 1.0 / math.sqrt(self.hidden_size) if self.hidden_size > 0 else 0
+        for weight in self.parameters():
+            init.uniform_(weight, -stdv, stdv)
 
     def _get_weight(self, name):
         return getattr(self, name)
@@ -239,11 +246,11 @@ class RNNCellBase(Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.bias = bias
-        self.weight_ih = Parameter(zeros(num_chunks * hidden_size, input_size))
-        self.weight_hh = Parameter(zeros(num_chunks * hidden_size, hidden_size))
+        self.weight_ih = Parameter(empty(num_chunks * hidden_size, input_size))
+        self.weight_hh = Parameter(empty(num_chunks * hidden_size, hidden_size))
         if bias:
-            self.bias_ih = Parameter(zeros(num_chunks * hidden_size))
-            self.bias_hh = Parameter(zeros(num_chunks * hidden_size))
+            self.bias_ih = Parameter(empty(num_chunks * hidden_size))
+            self.bias_hh = Parameter(empty(num_chunks * hidden_size))
         else:
             self.register_parameter('bias_ih', None)
             self.register_parameter('bias_hh', None)
@@ -252,8 +259,7 @@ class RNNCellBase(Module):
     def reset_parameters(self):
         stdv = 1.0 / math.sqrt(self.hidden_size) if self.hidden_size > 0 else 0
         for weight in self.parameters():
-            new_data = randn(*weight.data.shape) * stdv
-            weight.data.copy_(new_data)
+            init.uniform_(weight, -stdv, stdv)
 
     def extra_repr(self):
         s = f'{self.input_size}, {self.hidden_size}'
