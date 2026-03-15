@@ -1020,7 +1020,16 @@ def multi_head_attention_forward(
         # q_scaled = q * sqrt(1/E)
         _, _, E = q.shape
         q_scaled = _mul(q, _tensor(math.sqrt(1.0 / float(E)), device=q.device))
-        assert not (is_causal and attn_mask is None), "FIXME: is_causal not implemented for need_weights"
+        if is_causal and attn_mask is None:
+            from .._creation import ones, tensor as _mk_tensor
+            from .._dtype import bool as _bool_dtype
+            from .._dispatch import dispatch as _disp
+            from .._functional import where as _whr
+            causal = ones((tgt_len, src_len), dtype=_bool_dtype, device=q.device).tril()
+            inv = _disp("eq", q.device.type, causal, False)
+            neg_inf = _mk_tensor(float('-inf'), device=q.device)
+            attn_mask = _whr(inv, neg_inf, _mk_tensor(0.0, device=q.device))
+            attn_mask = attn_mask.unsqueeze(0)
 
         if attn_mask is not None:
             attn_output_weights = _baddbmm(attn_mask, q_scaled, k.transpose(-2, -1))
