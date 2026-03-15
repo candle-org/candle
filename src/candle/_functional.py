@@ -1553,3 +1553,139 @@ def numel(input):
 
 def square(a):
     return dispatch("square", a.device.type, a)
+
+
+# ---------------------------------------------------------------------------
+# Top-level wrappers for ops that exist as Tensor methods but lack torch.* API
+# ---------------------------------------------------------------------------
+
+def clone(a, *, memory_format=None):
+    return a.clone(memory_format=memory_format) if memory_format else a.clone()
+
+
+def detach(a):
+    return a.detach()
+
+
+def contiguous(a, memory_format=None):
+    return a.contiguous(memory_format=memory_format) if memory_format else a.contiguous()
+
+
+def index_add(a, dim, index, source, *, alpha=1.0):
+    return a.clone().index_add_(dim, index, source, alpha=alpha)
+
+
+def index_copy(a, dim, index, source):
+    return a.clone().index_copy_(dim, index, source)
+
+
+def index_fill(a, dim, index, value):
+    return a.clone().index_fill_(dim, index, value)
+
+
+def scatter_add(a, dim, index, src):
+    return a.clone().scatter_add_(dim, index, src)
+
+
+def tensor_split(a, indices_or_sections, dim=0):
+    _range = _builtins.range
+    size = a.shape[dim]
+    if isinstance(indices_or_sections, (int,)):
+        n = indices_or_sections
+        chunk_size, remainder = divmod(size, n)
+        indices = []
+        offset = 0
+        for i in _range(n):
+            length = chunk_size + (1 if i < remainder else 0)
+            indices.append(offset)
+            offset += length
+        indices.append(size)
+        return tuple(
+            narrow(a, dim, indices[i], indices[i + 1] - indices[i])
+            for i in _range(n)
+        )
+    # indices_or_sections is a list/tuple of split points
+    pts = list(indices_or_sections)
+    pts = [0] + [p if p >= 0 else size + p for p in pts] + [size]
+    return tuple(
+        narrow(a, dim, pts[i], pts[i + 1] - pts[i])
+        for i in _range(len(pts) - 1)
+        if pts[i + 1] - pts[i] > 0
+    )
+
+
+def split_with_sizes(a, split_sizes, dim=0):
+    return split(a, split_sizes, dim)
+
+
+def hann_window(window_length, periodic=True, *, dtype=None, device=None):
+    import math as _math
+    from ._creation import arange, tensor as _tensor
+    if dtype is None:
+        from . import get_default_dtype
+        dtype = get_default_dtype()
+    if window_length <= 0:
+        return _tensor([], dtype=dtype, device=device)
+    if window_length == 1:
+        return ones(1, dtype=dtype, device=device)
+    N = window_length if periodic else window_length - 1
+    n = arange(window_length, dtype=dtype, device=device)
+    return mul(sub(_tensor(0.5, dtype=dtype, device=device),
+                   mul(_tensor(0.5, dtype=dtype, device=device),
+                       cos(mul(_tensor(2.0 * _math.pi / N, dtype=dtype, device=device), n)))),
+               _tensor(1.0, dtype=dtype, device=device))
+
+
+def hamming_window(window_length, periodic=True, alpha=0.54, beta=0.46, *, dtype=None, device=None):
+    import math as _math
+    from ._creation import arange, tensor as _tensor
+    if dtype is None:
+        from . import get_default_dtype
+        dtype = get_default_dtype()
+    if window_length <= 0:
+        return _tensor([], dtype=dtype, device=device)
+    if window_length == 1:
+        return ones(1, dtype=dtype, device=device)
+    N = window_length if periodic else window_length - 1
+    n = arange(window_length, dtype=dtype, device=device)
+    return sub(_tensor(alpha, dtype=dtype, device=device),
+               mul(_tensor(beta, dtype=dtype, device=device),
+                   cos(mul(_tensor(2.0 * _math.pi / N, dtype=dtype, device=device), n))))
+
+
+def bartlett_window(window_length, periodic=True, *, dtype=None, device=None):
+    from ._creation import arange, tensor as _tensor
+    if dtype is None:
+        from . import get_default_dtype
+        dtype = get_default_dtype()
+    if window_length <= 0:
+        return _tensor([], dtype=dtype, device=device)
+    if window_length == 1:
+        return ones(1, dtype=dtype, device=device)
+    N = window_length if periodic else window_length - 1
+    n = arange(window_length, dtype=dtype, device=device)
+    half = _tensor(N / 2.0, dtype=dtype, device=device)
+    return sub(_tensor(1.0, dtype=dtype, device=device),
+               abs(sub(mul(_tensor(2.0, dtype=dtype, device=device),
+                           div(n, _tensor(float(N), dtype=dtype, device=device))),
+                       _tensor(1.0, dtype=dtype, device=device))))
+
+
+def blackman_window(window_length, periodic=True, *, dtype=None, device=None):
+    import math as _math
+    from ._creation import arange, tensor as _tensor
+    if dtype is None:
+        from . import get_default_dtype
+        dtype = get_default_dtype()
+    if window_length <= 0:
+        return _tensor([], dtype=dtype, device=device)
+    if window_length == 1:
+        return ones(1, dtype=dtype, device=device)
+    N = window_length if periodic else window_length - 1
+    n = arange(window_length, dtype=dtype, device=device)
+    a0, a1, a2 = 0.42, 0.5, 0.08
+    t1 = mul(_tensor(2.0 * _math.pi / N, dtype=dtype, device=device), n)
+    t2 = mul(_tensor(4.0 * _math.pi / N, dtype=dtype, device=device), n)
+    return sub(add(_tensor(a0, dtype=dtype, device=device),
+                   mul(_tensor(a2, dtype=dtype, device=device), cos(t2))),
+               mul(_tensor(a1, dtype=dtype, device=device), cos(t1)))

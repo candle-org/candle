@@ -142,6 +142,10 @@ from ._functional import histc, histogram, bucketize
 from ._functional import isneginf, isposinf, isreal, isin, heaviside
 # P0 dtype utilities & query functions
 from ._functional import is_tensor, is_floating_point, is_complex, numel, square
+from ._functional import clone, detach, contiguous
+from ._functional import index_add, index_copy, index_fill, scatter_add
+from ._functional import tensor_split, split_with_sizes
+from ._functional import hann_window, hamming_window, bartlett_window, blackman_window
 from ._printing import set_printoptions, get_printoptions
 from ._dispatch import (
     pipeline_context,
