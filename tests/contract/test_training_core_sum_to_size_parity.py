@@ -49,6 +49,22 @@ def test_sum_to_size_invalid_shape_message_matches_torch_contract():
     assert candle_msg == torch_msg
 
 
+def _normalize_size_errmsg(msg):
+    """Normalize sum_to_size type error messages across PyTorch versions.
+
+    PyTorch 2.8 uses 'but found element of type X at pos 0' for bare scalars,
+    while PyTorch 2.10+ uses 'not X'. Normalize to the shorter form.
+    """
+    if msg is None:
+        return None
+    import re
+    return re.sub(
+        r"but found element of type (\w+) at pos 0",
+        r"not \1",
+        msg,
+    )
+
+
 def test_sum_to_size_type_error_matches_torch_contract():
     import torch as real_torch
 
@@ -74,7 +90,7 @@ def test_sum_to_size_type_error_matches_torch_contract():
         candle_msg = None
 
     assert candle_type is torch_type
-    assert candle_msg == torch_msg
+    assert _normalize_size_errmsg(candle_msg) == _normalize_size_errmsg(torch_msg)
 
 
 def test_sum_to_size_type_error_matrix_matches_torch_contract():
@@ -127,7 +143,7 @@ def test_sum_to_size_type_error_matrix_matches_torch_contract():
             candle_msg = None
 
         assert candle_type is torch_type, f"{name} type mismatch"
-        assert candle_msg == torch_msg, f"{name} message mismatch"
+        assert _normalize_size_errmsg(candle_msg) == _normalize_size_errmsg(torch_msg), f"{name} message mismatch"
 
 
 def test_sum_to_size_valid_sizes_match_torch_contract():
