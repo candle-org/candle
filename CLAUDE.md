@@ -167,7 +167,7 @@ Resolve any conflicts before proceeding.
 Run pylint locally and confirm zero errors before pushing or creating a PR:
 
 ```bash
-pylint src/candle/ --rcfile=pyproject.toml
+pylint src/candle/ --rcfile=.github/pylint.conf
 ```
 
 Do NOT open a PR if pylint fails. Fix all issues first.
