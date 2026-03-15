@@ -280,6 +280,18 @@ def fft_ihfft(a, n=None, dim=-1, norm=None):
 
 def fft_fftshift(a, dim=None):
     """Shift zero-frequency component to center."""
+    # GPU composite: roll by n//2 per dim
+    if _can_use_gpu(a):
+        from .shape import roll
+        ndim = len(a.shape)
+        if dim is None:
+            dims = list(range(ndim))
+        elif isinstance(dim, int):
+            dims = [dim]
+        else:
+            dims = list(dim)
+        shifts = [a.shape[d if d >= 0 else d + ndim] // 2 for d in dims]
+        return roll(a, shifts, dims)
     arr = _to_numpy(a)
     axes = None if dim is None else (tuple(dim) if isinstance(dim, (list, tuple)) else (dim,))
     out = np.fft.fftshift(arr, axes=axes)
@@ -287,6 +299,18 @@ def fft_fftshift(a, dim=None):
 
 def fft_ifftshift(a, dim=None):
     """Inverse of fftshift."""
+    # GPU composite: roll by -(n//2) per dim
+    if _can_use_gpu(a):
+        from .shape import roll
+        ndim = len(a.shape)
+        if dim is None:
+            dims = list(range(ndim))
+        elif isinstance(dim, int):
+            dims = [dim]
+        else:
+            dims = list(dim)
+        shifts = [-(a.shape[d if d >= 0 else d + ndim] // 2) for d in dims]
+        return roll(a, shifts, dims)
     arr = _to_numpy(a)
     axes = None if dim is None else (tuple(dim) if isinstance(dim, (list, tuple)) else (dim,))
     out = np.fft.ifftshift(arr, axes=axes)

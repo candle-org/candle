@@ -366,11 +366,14 @@ def triu(a, diagonal=0):
     out = np.triu(_to_numpy(a), k=diagonal)
     return _from_numpy(out, a.dtype, a.device)
 
-def diag(a, diagonal=0):
+def diag(a, diagonal_offset=0):
+    # GPU composite for 2D input: delegate to diagonal()
+    if _can_use_gpu(a) and len(a.shape) == 2:
+        return diagonal(a, offset=diagonal_offset)
     arr = _to_numpy(a)
     if arr.ndim not in (1, 2):
         raise ValueError("diag expects 1D or 2D tensor")
-    out = np.diag(arr, k=diagonal).copy()
+    out = np.diag(arr, k=diagonal_offset).copy()
     return _from_numpy(out, a.dtype, a.device)
 
 def cartesian_prod(*tensors):

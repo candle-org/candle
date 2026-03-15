@@ -18,7 +18,7 @@ from ._helpers import (
     mps_typed_storage_from_numpy, _MPSUntypedStorage, TypedStorage,
     _accel,
 )
-from .math import mul, add, abs as gpu_abs, sqrt as gpu_sqrt, pow as gpu_pow
+from .math import mul, add, sub, abs as gpu_abs, sqrt as gpu_sqrt, pow as gpu_pow, div
 
 
 def matmul(a, b):
@@ -132,6 +132,21 @@ def mv(a, b):
 def cross(a, b, dim=-1):
     if a.dtype != b.dtype:
         raise RuntimeError("cross: expected both inputs to have same dtype")
+    # GPU composite: extract 3 components via narrow, compute cross product
+    if _can_use_gpu(a) and _can_use_gpu(b):
+        from .shape import narrow, cat
+        ndim = len(a.shape)
+        d = dim if dim >= 0 else dim + ndim
+        a0 = narrow(a, d, 0, 1)
+        a1 = narrow(a, d, 1, 1)
+        a2 = narrow(a, d, 2, 1)
+        b0 = narrow(b, d, 0, 1)
+        b1 = narrow(b, d, 1, 1)
+        b2 = narrow(b, d, 2, 1)
+        c0 = sub(mul(a1, b2), mul(a2, b1))
+        c1 = sub(mul(a2, b0), mul(a0, b2))
+        c2 = sub(mul(a0, b1), mul(a1, b0))
+        return cat([c0, c1, c2], dim=d)
     a_np = np.moveaxis(_to_numpy(a), dim, -1)
     b_np = np.moveaxis(_to_numpy(b), dim, -1)
     out = np.cross(a_np, b_np)
@@ -183,6 +198,19 @@ def tensordot(a, b, dims=2):
 def einsum(equation, *operands):
     if len(operands) == 1 and isinstance(operands[0], (list, tuple)):
         operands = operands[0]
+    # GPU composite for common 2-operand patterns
+    if len(operands) == 2 and _can_use_gpu(operands[0]) and _can_use_gpu(operands[1]):
+        from .reduce import sum_
+        a, b = operands
+        eq = equation.replace(' ', '')
+        if eq in ('ij,jk->ik', 'bij,bjk->bik'):
+            return matmul(a, b)
+        if eq == 'ij,ij->ij':
+            return mul(a, b)
+        if eq == 'ij,ij->':
+            return sum_(mul(a, b))
+        if eq == 'ij,ij->i':
+            return sum_(mul(a, b), dim=-1)
     ops_np = [_to_numpy(op) for op in operands]
     out = np.einsum(equation, *ops_np)
     return _from_numpy(np.ascontiguousarray(out), operands[0].dtype, operands[0].device)
@@ -314,6 +342,14 @@ def linalg_vector_norm(a, ord=2, dim=None, keepdim=False):
 
 def linalg_norm(a, ord=None, dim=None, keepdim=False):
     """Vector or matrix norm."""
+    # GPU composite: delegate to vector_norm or matrix_norm
+    if _can_use_gpu(a):
+        if isinstance(dim, (list, tuple)) and len(dim) == 2:
+            return linalg_matrix_norm(a, ord=ord if ord is not None else 'fro',
+                                      dim=dim, keepdim=keepdim)
+        # vector norm: ord=None means ord=2
+        return linalg_vector_norm(a, ord=ord if ord is not None else 2,
+                                  dim=dim, keepdim=keepdim)
     arr = _to_numpy(a).astype(np.float64)
     if dim is not None:
         if isinstance(dim, (list, tuple)):
@@ -327,6 +363,10 @@ def linalg_norm(a, ord=None, dim=None, keepdim=False):
 
 def linalg_matrix_norm(a, ord='fro', dim=(-2, -1), keepdim=False):
     """Matrix norm."""
+    # GPU composite for Frobenius norm
+    if _can_use_gpu(a) and ord == 'fro':
+        from .reduce import sum_
+        return gpu_sqrt(sum_(mul(a, a), dim=list(dim), keepdim=keepdim))
     arr = _to_numpy(a).astype(np.float64)
     if isinstance(dim, (list, tuple)) and len(dim) == 2:
         axis = tuple(dim)
@@ -342,7 +382,13 @@ def linalg_matrix_norm(a, ord='fro', dim=(-2, -1), keepdim=False):
     return _from_numpy(np.ascontiguousarray(np.atleast_1d(out).astype(to_numpy_dtype(a.dtype))), a.dtype, a.device)
 
 def linalg_multi_dot(tensors):
-    """Efficiently multiply 2+ matrices using np.linalg.multi_dot."""
+    """Efficiently multiply 2+ matrices using chained matmul."""
+    # GPU composite: left-to-right chain of GPU matmul
+    if all(_can_use_gpu(t) for t in tensors):
+        result = tensors[0]
+        for t in tensors[1:]:
+            result = matmul(result, t)
+        return result
     arrays = [_to_numpy(t).astype(np.float64) for t in tensors]
     out = np.linalg.multi_dot(arrays)
     dt = tensors[0].dtype
@@ -617,16 +663,26 @@ def det(a):
 
 def trace(a):
     """Sum of diagonal elements (2D only)."""
-    arr = _to_numpy(a)
-    if arr.ndim != 2:
+    arr_ndim = len(a.shape)
+    if arr_ndim != 2:
         raise RuntimeError(
-            f"trace: expected a matrix (2-D tensor), but got {arr.ndim}-D tensor"
+            f"trace: expected a matrix (2-D tensor), but got {arr_ndim}-D tensor"
         )
+    # GPU composite: sum(diagonal(a))
+    if _can_use_gpu(a):
+        from .shape import diagonal
+        from .reduce import sum_
+        return sum_(diagonal(a))
+    arr = _to_numpy(a)
     out = np.trace(arr)
     return _from_numpy(np.array(out, dtype=arr.dtype), a.dtype, a.device)
 
 def dist(a, b, p=2):
     """p-norm distance between two tensors (flattened)."""
+    # GPU composite: linalg_vector_norm(flatten(a) - flatten(b), p)
+    if _can_use_gpu(a) and _can_use_gpu(b):
+        from .shape import flatten
+        return linalg_vector_norm(sub(flatten(a), flatten(b)), ord=p)
     a_np = _to_numpy(a)
     b_np = _to_numpy(b)
     diff = a_np.ravel() - b_np.ravel()
@@ -635,6 +691,27 @@ def dist(a, b, p=2):
 
 def cdist(x1, x2, p=2.0):
     """Batched pairwise distance between two sets of vectors."""
+    # GPU composite via broadcasting
+    if _can_use_gpu(x1) and _can_use_gpu(x2):
+        from .reduce import sum_, amax
+        ndim = len(x1.shape)
+        if ndim == 2:
+            # (M, D) → (M, 1, D) - (1, N, D) → (M, N, D)
+            diff = sub(x1.unsqueeze(1), x2.unsqueeze(0))
+        elif ndim == 3:
+            # (B, M, D) → (B, M, 1, D) - (B, 1, N, D) → (B, M, N, D)
+            diff = sub(x1.unsqueeze(2), x2.unsqueeze(1))
+        else:
+            diff = None
+        if diff is not None:
+            if p == 2.0:
+                return gpu_sqrt(sum_(mul(diff, diff), dim=-1))
+            if p == 1.0:
+                return sum_(gpu_abs(diff), dim=-1)
+            if p == float('inf'):
+                return amax(gpu_abs(diff), dim=-1)
+            # General p
+            return gpu_pow(sum_(gpu_pow(gpu_abs(diff), p), dim=-1), 1.0 / p)
     a = _to_numpy(x1).astype(np.float64)
     b = _to_numpy(x2).astype(np.float64)
     if a.ndim == 2:
