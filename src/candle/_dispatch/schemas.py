@@ -137,6 +137,7 @@ CORE_SCHEMA_OPS = (
     "unsqueeze",
     "permute",
     "var",
+    "var_mean",
     "norm",
     "prod",
     "floor_divide",
@@ -194,6 +195,8 @@ def register_schemas():
         },
     )
     registry.register_schema("view", "view(Tensor(a) input, int[] shape) -> Tensor(a)")
+    registry.register_schema("view_as_real", "view_as_real(Tensor(a) input) -> Tensor(a)")
+    registry.register_schema("view_as_complex", "view_as_complex(Tensor(a) input) -> Tensor(a)")
     registry.register_error_overrides(
         "view",
         {
@@ -331,6 +334,10 @@ def register_schemas():
     registry.register_schema("index_select", "index_select(Tensor input, int dim, Tensor index) -> Tensor")
     registry.register_schema("gather", "gather(Tensor input, int dim, Tensor index) -> Tensor")
     registry.register_schema("scatter", "scatter(Tensor input, int dim, Tensor index, Any src) -> Tensor")
+    registry.register_schema(
+        "scatter_reduce",
+        "scatter_reduce(Tensor input, int dim, Tensor index, Tensor src, str reduce, bool include_self=True) -> Tensor",
+    )
 
     registry.register_schema("tril", "tril(Tensor input, int diagonal=0) -> Tensor")
     registry.register_schema("triu", "triu(Tensor input, int diagonal=0) -> Tensor")
@@ -406,6 +413,10 @@ def register_schemas():
     registry.register_schema("scatter_add_", "scatter_add_(Tensor(a!) self, int dim, Tensor index, Tensor src) -> Tensor")
 
     registry.register_schema("var", "var(Tensor input, int[]? dim=None, bool unbiased=True, bool keepdim=False) -> Tensor")
+    registry.register_schema(
+        "var_mean",
+        "var_mean(Tensor input, int[]? dim=None, bool unbiased=True, bool keepdim=False) -> (Tensor, Tensor)",
+    )
     registry.register_error_overrides(
         "var",
         {

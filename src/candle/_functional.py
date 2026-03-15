@@ -77,6 +77,14 @@ def reshape(*args, **kwargs):
     return dispatch("reshape", None, *args, **kwargs)
 
 
+def view_as_real(a):
+    return dispatch("view_as_real", a.device.type, a)
+
+
+def view_as_complex(a):
+    return dispatch("view_as_complex", a.device.type, a)
+
+
 def mul(*args, **kwargs):
     r = _handle_torch_function(mul, args, kwargs)
     if r is not NotImplemented:
@@ -375,6 +383,10 @@ def mean(a, dim=None, keepdim=False, *, dtype=None, axis=None):
         a = a.to(dtype=dtype)
     result = dispatch("mean", a.device.type, a, dim=dim, keepdim=keepdim)
     return result
+
+
+def var_mean(a, dim=None, keepdim=False, unbiased=True):
+    return dispatch("var_mean", a.device.type, a, dim=dim, unbiased=unbiased, keepdim=keepdim)
 
 
 def std(a, dim=None, keepdim=False, unbiased=True, *, axis=None):
@@ -985,6 +997,19 @@ def scatter_(a, dim, index, src):
 
 def scatter_add_(a, dim, index, src):
     return dispatch("scatter_add_", a.device.type, a, dim, index, src)
+
+
+def scatter_reduce(a, dim, index, src, reduce, *, include_self=True):
+    return dispatch(
+        "scatter_reduce",
+        a.device.type,
+        a,
+        dim,
+        index,
+        src,
+        reduce,
+        include_self=include_self,
+    )
 
 
 def masked_scatter_(a, mask, source):

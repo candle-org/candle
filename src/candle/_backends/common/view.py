@@ -1,5 +1,6 @@
 from ..._tensor import Tensor
 from ...autograd.grad_mode import current_creation_mode
+from ... import _dtype as _dtype
 
 
 def _get_base(tensor):
@@ -198,3 +199,45 @@ def permute(a, dims):
     stride = [a.stride[d] for d in dims]
     base = _get_base(a)
     return _make_view(base, shape, stride, a.offset, "permute", source=a)
+
+
+def view_as_real(a):
+    if not a.is_complex():
+        raise RuntimeError("view_as_real expects a complex tensor")
+    if a.dtype.itemsize % 2 != 0:
+        raise RuntimeError("view_as_real expects complex dtype with even itemsize")
+    if a.dtype == _dtype.complex64:
+        out_dtype = _dtype.float32
+    elif a.dtype == _dtype.complex128:
+        out_dtype = _dtype.float64
+    elif a.dtype == _dtype.complex32:
+        out_dtype = _dtype.float16
+    else:
+        raise RuntimeError("view_as_real expects a supported complex dtype")
+    shape = tuple(a.shape) + (2,)
+    stride = tuple(s * 2 for s in a.stride) + (1,)
+    base = _get_base(a)
+    view = _make_view(base, shape, stride, a.offset * 2, "view_as_real", source=a)
+    view._storage = base._storage._reinterpret(out_dtype)
+    return view
+
+
+def view_as_complex(a):
+    if a.is_complex():
+        raise RuntimeError("view_as_complex expects a non-complex tensor")
+    if len(a.shape) == 0 or a.shape[-1] != 2:
+        raise RuntimeError("view_as_complex expects last dimension of size 2")
+    if a.dtype == _dtype.float16:
+        out_dtype = _dtype.complex32
+    elif a.dtype == _dtype.float32:
+        out_dtype = _dtype.complex64
+    elif a.dtype == _dtype.float64:
+        out_dtype = _dtype.complex128
+    else:
+        raise RuntimeError("view_as_complex is only supported for half, float and double tensors")
+    shape = tuple(a.shape[:-1])
+    stride = tuple(s // 2 for s in a.stride[:-1])
+    base = _get_base(a)
+    view = _make_view(base, shape, stride, a.offset // 2, "view_as_complex", source=a)
+    view._storage = base._storage._reinterpret(out_dtype)
+    return view
