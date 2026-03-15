@@ -353,10 +353,11 @@ def soc_profile():
     if _SOC_PROFILE is not None:
         return _SOC_PROFILE
     name = soc_name().lower()
-    if "910b" in name:
+    # Only "ascend910b<digit>" (e.g. 910b1, 910b2, 910b3, 910b4) is true 910B.
+    # Plain "ascend910b" without a trailing digit is 910A hardware.
+    import re
+    if re.search(r"910b\d", name):
         _SOC_PROFILE = "910b"
-    elif "910a" in name:
-        _SOC_PROFILE = "910a"
     elif "910" in name:
         _SOC_PROFILE = "910a"
     elif "310p" in name:
