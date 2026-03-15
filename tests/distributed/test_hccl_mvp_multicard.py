@@ -15,7 +15,9 @@ from tests.distributed.worker_utils import write_worker_script
 
 SCRIPT = r'''
 import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+src_dir = os.environ.get("CANDLE_SRC")
+if src_dir:
+    sys.path.insert(0, src_dir)
 
 import candle as torch
 import candle.nn as nn
@@ -71,7 +73,9 @@ def test_hccl_mvp_2card():
     env["MASTER_ADDR"] = "127.0.0.1"
     env["MASTER_PORT"] = "29621"
     env["WORLD_SIZE"] = "2"
-    env["PYTHONPATH"] = os.path.join(os.path.dirname(__file__), "src") + ((":" + env["PYTHONPATH"]) if "PYTHONPATH" in env else "")
+    src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+    env["CANDLE_SRC"] = src_dir
+    env["PYTHONPATH"] = src_dir + ((":" + env["PYTHONPATH"]) if "PYTHONPATH" in env else "")
 
     worker_file = write_worker_script(SCRIPT, name="hccl_mvp_2card")
 

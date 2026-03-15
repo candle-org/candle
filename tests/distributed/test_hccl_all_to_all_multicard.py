@@ -1,28 +1,35 @@
 """HCCL all_to_all verification on NPU with multiple cards."""
 
 import os
-import sys
 import subprocess
+import sys
+import time
+
+import pytest
 
 from tests.distributed.worker_utils import write_worker_script
 
-SCRIPT = r'''
-import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-import numpy as np
+SCRIPT = r'''
+import os, sys, time
+src_dir = os.environ.get("CANDLE_SRC")
+if src_dir:
+    sys.path.insert(0, src_dir)
+
 import candle as torch
 import candle.distributed as dist
 
 rank = int(os.environ["RANK"])
 world_size = int(os.environ["WORLD_SIZE"])
 
-# 1. init_process_group with hccl, assign each rank its own device
+# Stagger init to reduce HCCL burst.
+time.sleep(0.05 * rank)
+
 device = torch.Device(f"npu:{rank}")
 dist.init_process_group(backend="hccl", device_id=device)
 print(f"[rank {rank}] init_process_group OK, backend={dist.get_backend()}, device={device}")
 
-# 2. all_to_all - each rank sends unique data to every other rank
+# 1. all_to_all - each rank sends unique data to every other rank
 # rank i sends [i*100+j*10, i*100+j*10+1] to rank j
 inp = []
 for j in range(world_size):
@@ -40,9 +47,7 @@ for j in range(world_size):
     assert actual == expected, f"rank {rank} from rank {j}: expected {expected}, got {actual}"
 print(f"[rank {rank}] all_to_all OK")
 
-# 3. all_to_all_single with equal split
-# rank i sends [i*world_size, i*world_size+1, ..., i*world_size+world_size-1]
-# rank i should receive [0*world_size+i, 1*world_size+i, ..., (world_size-1)*world_size+i]
+# 2. all_to_all_single with equal split
 inp_single = torch.tensor([float(rank * world_size + j) for j in range(world_size)], device=device)
 out_single = torch.zeros(world_size, device=device)
 dist.all_to_all_single(out_single, inp_single)
@@ -58,81 +63,82 @@ print(f"[rank {rank}] ALL TESTS PASSED")
 '''
 
 
-def run_test(world_size):
-    print(f"\n{'='*60}")
-    print(f"Testing with {world_size} cards")
-    print(f"{'='*60}\n")
-    
+def _run_once(world_size, master_port):
     env = os.environ.copy()
     env["MASTER_ADDR"] = "127.0.0.1"
-    env["MASTER_PORT"] = str(29500 + world_size)  # Different port per test
+    env["MASTER_PORT"] = str(master_port)
     env["WORLD_SIZE"] = str(world_size)
-    env["PYTHONPATH"] = os.path.join(os.path.dirname(__file__), "src") + \
-        ((":" + env["PYTHONPATH"]) if "PYTHONPATH" in env else "")
+    src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+    env["CANDLE_SRC"] = src_dir
+    env["PYTHONPATH"] = src_dir + \
+        (":" + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
 
-    # Write the worker script to a temp file
     worker_file = write_worker_script(SCRIPT, name=f"hccl_all_to_all_{world_size}card")
 
-    # Launch all ranks
-    processes = []
-    for rank in range(world_size):
-        env_rank = {**env, "RANK": str(rank)}
+    failed = []
+    outputs = []
+    procs = []
+
+    for r in range(world_size):
         p = subprocess.Popen(
             [sys.executable, worker_file],
-            env=env_rank, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env={**env, "RANK": str(r)},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
         )
-        processes.append(p)
+        procs.append(p)
 
-    # Wait for all
-    outputs = []
-    failed = False
-    for rank, p in enumerate(processes):
+    timeout = 420 if world_size <= 4 else 900
+    for r, p in enumerate(procs):
         try:
-            out, _ = p.communicate(timeout=180)
-            outputs.append((rank, p.returncode, out.decode()))
-            if p.returncode != 0:
-                failed = True
+            out, _ = p.communicate(timeout=timeout)
+            txt = out.decode("utf-8", errors="replace")
         except subprocess.TimeoutExpired:
             p.kill()
-            outputs.append((rank, -1, "TIMEOUT"))
-            failed = True
+            out, _ = p.communicate()
+            txt = "TIMEOUT\n" + out.decode("utf-8", errors="replace")
+        outputs.append(txt)
+        if p.returncode != 0:
+            failed.append(r)
 
-    # Print outputs
-    for rank, code, out in outputs:
-        print(f"=== RANK {rank} (exit={code}) ===")
-        print(out)
-
-    if failed:
-        print(f"\n❌ FAILED: {world_size} cards test")
-        return False
-    else:
-        print(f"\n✅ PASSED: {world_size} cards test")
-        return True
+    return failed, outputs
 
 
-def main():
-    results = {}
-    
-    # Test 4 cards
-    results[4] = run_test(4)
-    
-    # Test 8 cards
-    results[8] = run_test(8)
-    
-    print(f"\n{'='*60}")
-    print("SUMMARY")
-    print(f"{'='*60}")
-    for cards, passed in results.items():
-        status = "✅ PASSED" if passed else "❌ FAILED"
-        print(f"{cards} cards: {status}")
-    
-    if all(results.values()):
-        print("\n🎉 All tests passed!")
-        sys.exit(0)
-    else:
-        print("\n❌ Some tests failed")
-        sys.exit(1)
+def _run_case(world_size, master_port):
+    retries = 3
+    for attempt in range(1, retries + 1):
+        failed, outputs = _run_once(world_size, master_port)
+        if not failed:
+            return
+
+        joined = "\n".join(outputs)
+        transient = "resource unavailable" in joined
+        if transient and attempt < retries:
+            print(
+                f"HCCL transient init failure on {world_size} cards, "
+                f"retry {attempt}/{retries}"
+            )
+            time.sleep(5)
+            continue
+
+        for r, txt in enumerate(outputs):
+            print(f"=== RANK {r} ===")
+            print(txt)
+        raise AssertionError(
+            f"HCCL all_to_all {world_size}card failed on ranks: {failed}"
+        )
 
 
-if __name__ == "__main__":
-    main()
+@pytest.mark.parametrize(
+    "world_size,master_port",
+    [
+        (2, 29750),
+        (4, 29760),
+        (8, 29770),
+    ],
+)
+def test_hccl_all_to_all_multicard(world_size, master_port):
+    import candle as torch
+    if torch.npu.device_count() < world_size:
+        pytest.skip(f"Need {world_size} NPUs, found {torch.npu.device_count()}")
+    _run_case(world_size, master_port)

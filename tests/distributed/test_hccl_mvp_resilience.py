@@ -95,7 +95,9 @@ def test_distributed_sampler_rank_partition_2way():
 
 SCRIPT_FAIL_FAST = r'''
 import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+src_dir = os.environ.get("CANDLE_SRC")
+if src_dir:
+    sys.path.insert(0, src_dir)
 
 import candle as torch
 import candle.distributed as dist
@@ -125,7 +127,9 @@ def test_hccl_rank_failure_does_not_hang_parent():
     env["MASTER_PORT"] = "29631"
     env["WORLD_SIZE"] = "2"
     env["PYTHONNOUSERSITE"] = "1"
-    env["PYTHONPATH"] = os.path.join(os.path.dirname(__file__), "..", "..", "src")
+    src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+    env["CANDLE_SRC"] = src_dir
+    env["PYTHONPATH"] = src_dir
 
     worker = write_worker_script(SCRIPT_FAIL_FAST, name="hccl_rank_fail_fast")
 

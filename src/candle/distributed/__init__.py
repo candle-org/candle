@@ -730,54 +730,12 @@ def all_to_all_single(output, input, output_split_sizes=None,
                 return None
             return work
         else:
-            # Unequal split: split into tensor lists, use all_to_all
-            from .._backends.npu import runtime as npu_runtime
-            ACL_MEMCPY_D2D = 3
-            itemsize = input.dtype.itemsize
-
-            # Split input into tensor list via D2D memcpy
-            input_list = []
-            src_base = input.storage().data_ptr()
-            offset = 0
-            for size in input_split_sizes:
-                t = torch.empty(size, dtype=input.dtype, device=input.device)
-                nbytes = size * itemsize
-                npu_runtime.memcpy_d2d(
-                    t.storage().data_ptr(), nbytes,
-                    src_base + offset, runtime=npu_runtime.get_runtime(input.device.index or 0),
-                )
-                input_list.append(t)
-                offset += nbytes
-
-            output_list = [torch.empty(s, dtype=output.dtype,
-                                       device=output.device)
-                           for s in output_split_sizes]
-            work = pg.all_to_all(output_list, input_list)
+            # Unequal split: use HcclAlltoAllV directly on contiguous buffers
+            work = pg.all_to_all_single_v(
+                output, input, input_split_sizes, output_split_sizes)
             if not async_op:
                 work.wait()
-                dst_base = output.storage().data_ptr()
-                dst_offset = 0
-                for t, out_size in zip(output_list, output_split_sizes):
-                    nbytes = out_size * output.dtype.itemsize
-                    npu_runtime.memcpy_d2d(
-                        dst_base + dst_offset, nbytes,
-                        t.storage().data_ptr(),
-                        runtime=npu_runtime.get_runtime(output.device.index or 0),
-                    )
-                    dst_offset += nbytes
                 return None
-            def _writeback_npu_output():
-                dst_base = output.storage().data_ptr()
-                dst_offset = 0
-                for t, out_size in zip(output_list, output_split_sizes):
-                    nbytes = out_size * output.dtype.itemsize
-                    npu_runtime.memcpy_d2d(
-                        dst_base + dst_offset, nbytes,
-                        t.storage().data_ptr(),
-                        runtime=npu_runtime.get_runtime(output.device.index or 0),
-                    )
-                    dst_offset += nbytes
-            work._on_wait = _writeback_npu_output
             return work
     else:
         # Gloo / CPU path: use numpy views

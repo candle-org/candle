@@ -16,7 +16,7 @@ from tests.distributed.worker_utils import write_worker_script
 
 SCRIPT_UNUSED = r'''
 import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+sys.path.insert(0, os.environ.get("CANDLE_SRC", ""))
 
 import candle as torch
 import candle.nn as nn
@@ -67,7 +67,7 @@ print(f"[rank {rank}] HCCL unused-params PASS")
 
 SCRIPT_STATIC_BUCKET = r'''
 import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+sys.path.insert(0, os.environ.get("CANDLE_SRC", ""))
 
 import candle as torch
 import candle.nn as nn
@@ -124,7 +124,7 @@ print(f"[rank {rank}] HCCL static+bucket PASS")
 
 SCRIPT_NOSYNC = r'''
 import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+sys.path.insert(0, os.environ.get("CANDLE_SRC", ""))
 
 import candle as torch
 import candle.nn as nn
@@ -158,7 +158,7 @@ print(f"[rank {rank}] HCCL no_sync PASS")
 
 SCRIPT_COMM_HOOK = r'''
 import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+sys.path.insert(0, os.environ.get("CANDLE_SRC", ""))
 
 import candle as torch
 import candle.nn as nn
@@ -220,6 +220,7 @@ def _run_two_rank_worker(script_text, worker_name, master_port, timeout_sec=240)
     env["WORLD_SIZE"] = "2"
 
     src_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src"))
+    env["CANDLE_SRC"] = src_root
     env["PYTHONPATH"] = src_root + ((":" + env["PYTHONPATH"]) if "PYTHONPATH" in env else "")
 
     worker_file = write_worker_script(script_text, name=worker_name)

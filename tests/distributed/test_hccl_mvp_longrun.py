@@ -23,7 +23,9 @@ def _require_npu_cards(min_cards):
 
 SCRIPT_MULTI_STEP = r'''
 import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+src_dir = os.environ.get("CANDLE_SRC")
+if src_dir:
+    sys.path.insert(0, src_dir)
 
 import candle as torch
 import candle.nn as nn
@@ -83,7 +85,9 @@ print(f"[rank {rank}] HCCL multi-step PASS")
 
 SCRIPT_TIMEOUT_GUARD = r'''
 import os, sys, time
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+src_dir = os.environ.get("CANDLE_SRC")
+if src_dir:
+    sys.path.insert(0, src_dir)
 
 import candle as torch
 import candle.distributed as dist
@@ -111,7 +115,9 @@ def _run_two_rank_worker(script_text, worker_name, timeout_sec=240):
     env["MASTER_PORT"] = "29651"
     env["PYTHONNOUSERSITE"] = "1"
     env["WORLD_SIZE"] = "2"
-    env["PYTHONPATH"] = os.path.join(os.path.dirname(__file__), "..", "..", "src")
+    src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+    env["CANDLE_SRC"] = src_dir
+    env["PYTHONPATH"] = src_dir
 
     worker_file = write_worker_script(script_text, name=worker_name)
 

@@ -150,4 +150,7 @@ def _run_case(world_size, master_port, mode):
 )
 @pytest.mark.parametrize("mode", ["input_sum_mismatch", "output_sum_mismatch"])
 def test_hccl_all_to_all_single_split_numel_validation_multicard(world_size, master_port, mode):
+    import candle as torch
+    if torch.npu.device_count() < world_size:
+        pytest.skip(f"Need {world_size} NPUs, found {torch.npu.device_count()}")
     _run_case(world_size, master_port, mode)

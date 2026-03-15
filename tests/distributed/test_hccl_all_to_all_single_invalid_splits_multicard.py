@@ -140,4 +140,7 @@ def _run_case(world_size, master_port):
     ],
 )
 def test_hccl_all_to_all_single_invalid_split_pairing_multicard(world_size, master_port):
+    import candle as torch
+    if torch.npu.device_count() < world_size:
+        pytest.skip(f"Need {world_size} NPUs, found {torch.npu.device_count()}")
     _run_case(world_size, master_port)
