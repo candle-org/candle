@@ -37,18 +37,29 @@ _FALLBACK_OPS = {
         "im2col",           # aclnnIm2col returns 561103
     }),
     "310b": frozenset({
-        "atan2", "where", "flip", "argsort", "sort", "topk",
-        "diag", "lerp", "remainder", "isclose", "softplus",
-        "uniform_", "normal_", "layer_norm", "mish",
-        "batch_norm", "dropout", "take_along_dim", "gather",
-        "isinf",    # aclnnIsInf returns 161001 (unavailable) on 310B
-        "matmul",   # aclnnMatmul on 310B only supports float16; float32 inputs are cast
-        "addmm",    # aclnnAddmm on 310B only supports float16; float32 inputs are cast
-        "mv",       # aclnnMv on 310B only supports float16; float32 inputs are cast
-        "dot",      # aclnnDot returns 561103 for all dtypes on 310B; use mul+sum composite
+        # Confirmed broken/missing native kernels on 310B (locally tested):
+        "isinf",        # aclnnIsInf returns 161001 (unavailable)
+        "dot",          # aclnnDot returns 561103
+        "matmul",       # aclnnMatmul float32 unsupported; cast to float16
+        "addmm",        # aclnnAddmm float32 unsupported; cast to float16
+        "mv",           # aclnnMv float32 unsupported; cast to float16
+        "remainder",    # aclnnRemainderTensorTensor returns 161002; composite uses where
+        "where",        # aclnnSWhere returns 561000 on 310B
+        "softplus",     # aclnnSoftplus returns 561103; mish composite depends on this
+        "isclose",      # aclnnIsClose returns 561103 on 310B
+        "flip",         # aclnnFlip returns 561000
+        "argsort",      # aclnnTopk (used by argsort) returns 561103
+        "sort",         # aclnnTopk returns 561103
+        "topk",         # aclnnTopk returns 561103
+        "diag",         # aclnnDiag returns 561103
+        "gather",       # aclnnGather returns 561103
+        "take_along_dim",  # aclnnGather returns 561103
+        "layer_norm",   # aclnnLayerNorm returns 561103 for float32 (float16 works)
+        "mish",         # aclnnMish returns 561103
+        "batch_norm",   # aclnnBatchNorm returns 161002
         "avg_pool2d",           # aclnnAvgPool2d returns 161002 (same as 910B)
-        "adaptive_avg_pool2d",  # aclnnAdaptiveAvgPool2d cubeMathType contamination (same as 910B)
-        "einsum",   # aclnnEinsum untested on 310B; composite already works
+        "adaptive_avg_pool2d",  # aclnnAdaptiveAvgPool2d cubeMathType contamination
+        "einsum",       # aclnnEinsum untested on 310B; composite works
     }),
     "310p": frozenset(),
 }
