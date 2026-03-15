@@ -347,6 +347,9 @@ def linalg_norm(a, ord=None, dim=None, keepdim=False):
         if isinstance(dim, (list, tuple)) and len(dim) == 2:
             return linalg_matrix_norm(a, ord=ord if ord is not None else 'fro',
                                       dim=dim, keepdim=keepdim)
+        # String ords ('fro', 'nuc') are matrix norms — route to matrix_norm for 2D
+        if isinstance(ord, str) and len(a.shape) == 2:
+            return linalg_matrix_norm(a, ord=ord, dim=(-2, -1), keepdim=keepdim)
         # vector norm: ord=None means ord=2
         return linalg_vector_norm(a, ord=ord if ord is not None else 2,
                                   dim=dim, keepdim=keepdim)
