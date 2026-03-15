@@ -180,6 +180,13 @@ def bernoulli_(a, p=0.5, generator=None):
     return a
 
 def exponential_(a, lambd=1.0, generator=None):
+    # GPU composite: uniform_(a) → -log(a)/λ → copy back
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype in (float32_dtype, float16_dtype):
+        from .math import neg, log, div
+        uniform_(a, 0.0, 1.0, generator=generator)
+        result = div(neg(log(a)), lambd)
+        copy_(a, result)
+        return a
     from ...._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = _to_numpy(a)
@@ -187,6 +194,13 @@ def exponential_(a, lambd=1.0, generator=None):
     return a
 
 def log_normal_(a, mean=1.0, std=2.0, generator=None):
+    # GPU composite: normal_(a,0,1) → exp(a*σ + μ) → copy back
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype in (float32_dtype, float16_dtype):
+        from .math import mul, add, exp
+        normal_(a, 0.0, 1.0, generator=generator)
+        result = exp(add(mul(a, std), mean))
+        copy_(a, result)
+        return a
     from ...._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = _to_numpy(a)
@@ -194,6 +208,14 @@ def log_normal_(a, mean=1.0, std=2.0, generator=None):
     return a
 
 def cauchy_(a, median=0.0, sigma=1.0, generator=None):
+    # GPU composite: uniform_(a) → median + σ*tan(π*(a-0.5)) → copy back
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype in (float32_dtype, float16_dtype):
+        import math as _math
+        from .math import mul, add, sub, tan
+        uniform_(a, 0.0, 1.0, generator=generator)
+        result = add(median, mul(sigma, tan(mul(_math.pi, sub(a, 0.5)))))
+        copy_(a, result)
+        return a
     from ...._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = _to_numpy(a)
@@ -201,6 +223,14 @@ def cauchy_(a, median=0.0, sigma=1.0, generator=None):
     return a
 
 def geometric_(a, p, generator=None):
+    # GPU composite: uniform_(a) → ceil(log(1-a)/log(1-p)) → copy back
+    if _can_use_gpu(a) and a.is_contiguous() and a.dtype in (float32_dtype, float16_dtype):
+        import math as _math
+        from .math import sub, log, div, ceil
+        uniform_(a, 0.0, 1.0, generator=generator)
+        result = ceil(div(log(sub(1.0, a)), _math.log(1.0 - p)))
+        copy_(a, result)
+        return a
     from ...._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = _to_numpy(a)
