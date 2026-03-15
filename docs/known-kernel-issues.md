@@ -34,6 +34,8 @@ The official Ascend PyTorch backend (`torch_npu`) does not implement the 910B fa
 | `mv` | npu (310B) | `aclnnMv` returns error 561103 for float32 inputs on 310B; float16 works natively. | Cast float32 inputs to float16, run native `aclnnMv`, cast result back to float32. Gate: `_use_soc_fallback("mv")`. | CANN 8.5 / Ascend310B | open |
 | `dot` | npu (310B) | `aclnnDot` returns error 561103 for all dtypes (float16/float32) on 310B. | Composite: `mul(a, b)` then `sum()`. Gate: `_use_soc_fallback("dot")`. | CANN 8.5 / Ascend310B | open |
 | `im2col` | npu (910B) | `aclnnIm2col` returns error 561103 on 910B series. | Manual sliding-window extraction via slice + reshape + cat. Gate: `_use_soc_fallback("im2col")`. | CANN 8.5 / Ascend910B | open |
+| `frac` | npu (910A) | `aclnnFrac` returns error 561000 (unsupported) on 910A. | Composite: `a - trunc(a)`. Gate: `_use_soc_fallback("frac")`. | CANN 8.5 / Ascend910A | open |
+| `gather` | npu (910A) | `aclnnGather` returns error 561103 on multi-dimensional inputs on 910A. | Scatter-based one-hot + sum composite (reuses `_gather_310b_fallback`). Gate: `_use_soc_fallback("gather")`. | CANN 8.5 / Ascend910A | open |
 
 <!--
 Entry template:

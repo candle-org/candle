@@ -56,6 +56,12 @@ def test_soc_910b_fallback_ops_cover_expected_watchlist_set():
 def test_soc_910a_fallback_ops_cover_expected_watchlist_set():
     expected = {
         "allclose",
+        "isinf",
+        "frac",
+        "gather",
+        "matmul",
+        "addmm",
+        "mv",
     }
     got = set(ops_soc.fallback_ops("910a"))
     assert got == expected

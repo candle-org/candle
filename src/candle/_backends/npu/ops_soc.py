@@ -23,6 +23,12 @@ _FALLBACK_OPS = {
         # 6-op allclose composite (abs/sub/mul/add/le/all_) triggers ACLNN 561000
         # after executor pool pressure; use isclose (single kernel) + all_ instead.
         "allclose",
+        "isinf",            # aclnnIsInf returns 161001 (unavailable)
+        "frac",             # aclnnFrac returns 561000 (unsupported)
+        "gather",           # aclnnGather returns 561103 on multi-dim inputs
+        "matmul",           # aclnnMatmul on 910A only supports float16; float32 inputs are cast
+        "addmm",            # aclnnAddmm on 910A only supports float16; float32 inputs are cast
+        "mv",               # aclnnMv on 910A only supports float16; float32 inputs are cast
     }),
     "910b": frozenset({
         # torch_npu: CPU fallback; candle: on-device composite
@@ -56,7 +62,7 @@ _FALLBACK_OPS = {
 # ── 2. Dtype support ─────────────────────────────────────────────────
 # 2a. Dtypes globally unsupported on a chip (all ops).
 _UNSUPPORTED_DTYPES_GLOBAL = {
-    "910a": frozenset(),
+    "910a": frozenset({"bfloat16"}),
     "910b": frozenset(),
     "310b": frozenset({"bfloat16"}),
     "310p": frozenset(),

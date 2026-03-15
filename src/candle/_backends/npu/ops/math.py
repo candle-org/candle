@@ -458,6 +458,10 @@ def trunc(a):
 
 
 def frac(a):
+    if _use_soc_fallback("frac"):
+        # TODO: re-enable native kernel when CANN fixes aclnnFrac on 910A (561000)
+        out = trunc(a)
+        return add(a, neg(out))
     try:
         return _unary_op(a, aclnn.frac, "frac")
     except RuntimeError as exc:
