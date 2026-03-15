@@ -745,6 +745,42 @@ def quantile(a, q, dim=None, keepdim=False):
 
 def nanquantile(a, q, dim=None, keepdim=False):
     """Compute the q-th quantile ignoring NaN values."""
+    # GPU composite for dim specified: NaN→+inf, sort, count, interpolate
+    if (dim is not None and _can_use_gpu(a)
+            and a.dtype in (float32_dtype, float16_dtype)):
+        from ...common.view import squeeze as _squeeze
+        a_c = a.contiguous() if not a.is_contiguous() else a
+        ndim = len(a.shape)
+        if dim < 0:
+            dim = dim + ndim
+        # Extract scalar q value
+        if isinstance(q, Tensor):
+            q_val = float(_scalar_value(q))
+        else:
+            q_val = float(q)
+        # Replace NaN with +inf so they sort to the end
+        nan_mask = isnan(a_c)
+        not_nan_mask = logical_not(nan_mask)
+        cleaned = where(not_nan_mask, a_c, float('inf'))
+        sorted_vals, _ = sort(cleaned, dim=dim)
+        # Count non-NaN per slice: create ones tensor via GPU, then mask+sum
+        ones = add(mul(a_c, 0.0), 1.0)
+        not_nan_f = where(not_nan_mask, ones, 0.0)
+        count = sum_(not_nan_f, dim=dim, keepdim=True)
+        # Quantile index = q * (count - 1), linear interpolation
+        count_np = _to_numpy(count)
+        idx_f_np = q_val * (count_np - 1.0)
+        lo_np = np.floor(idx_f_np).astype(np.intp)
+        hi_np = np.minimum(lo_np + 1, (count_np - 1).astype(np.intp))
+        frac_np = idx_f_np - lo_np.astype(np.float64)
+        sorted_np = _to_numpy(sorted_vals)
+        v_lo = np.take_along_axis(sorted_np, lo_np, axis=dim)
+        v_hi = np.take_along_axis(sorted_np, hi_np, axis=dim)
+        result_np = v_lo + frac_np * (v_hi - v_lo)
+        if not keepdim:
+            result_np = np.squeeze(result_np, axis=dim)
+        return _from_numpy(np.ascontiguousarray(result_np.astype(to_numpy_dtype(a.dtype))), a.dtype, a.device)
+    # Fallback for dim=None or non-GPU
     arr = _to_numpy(a).astype(np.float64)
     q_val = _to_numpy(q) if hasattr(q, '_numpy_view') else np.asarray(q, dtype=np.float64)
     if dim is None:
@@ -755,32 +791,62 @@ def nanquantile(a, q, dim=None, keepdim=False):
 
 def nanmedian(a, dim=None, keepdim=False):
     """Median ignoring NaN values. Returns (values, indices) when dim is given."""
+    # GPU composite for dim specified: NaN→+inf, sort, count non-NaN, pick middle
+    if (dim is not None and _can_use_gpu(a)
+            and a.dtype in (float32_dtype, float16_dtype)):
+        from ...common.view import squeeze as _squeeze
+        a_c = a.contiguous() if not a.is_contiguous() else a
+        ndim = len(a.shape)
+        if dim < 0:
+            dim = dim + ndim
+        # Replace NaN with +inf so they sort to the end
+        nan_mask = isnan(a_c)
+        not_nan_mask = logical_not(nan_mask)
+        cleaned = where(not_nan_mask, a_c, float('inf'))
+        sorted_vals, sorted_idx = sort(cleaned, dim=dim)
+        # Count non-NaN per slice: create ones tensor via GPU, then mask+sum
+        ones = add(mul(a_c, 0.0), 1.0)
+        not_nan_f = where(not_nan_mask, ones, 0.0)
+        count = sum_(not_nan_f, dim=dim, keepdim=True)
+        # Median index = (count - 1) // 2; use floor(mul(sub(count, 1), 0.5))
+        from .math import floor
+        med_idx_f = floor(mul(sub(count, 1.0), 0.5))
+        # Convert to int for gather — small scalar, use numpy for index extraction
+        med_idx_np = _to_numpy(med_idx_f).astype(np.intp)
+        sorted_vals_np = _to_numpy(sorted_vals)
+        sorted_idx_np = _to_numpy(sorted_idx)
+        values_np = np.take_along_axis(sorted_vals_np, med_idx_np, axis=dim)
+        indices_np = np.take_along_axis(sorted_idx_np, med_idx_np, axis=dim)
+        if not keepdim:
+            values_np = np.squeeze(values_np, axis=dim)
+            indices_np = np.squeeze(indices_np, axis=dim)
+        from collections import namedtuple
+        NanmedianResult = namedtuple("nanmedian", ["values", "indices"])
+        return NanmedianResult(
+            _from_numpy(np.ascontiguousarray(values_np.astype(to_numpy_dtype(a.dtype))), a.dtype, a.device),
+            _from_numpy(np.ascontiguousarray(indices_np.astype(np.int64)), int64_dtype, a.device),
+        )
+    # Fallback for dim=None or non-GPU
     arr = _to_numpy(a).astype(np.float64)
     if dim is None:
         out = np.nanmedian(arr)
         return _from_numpy(np.array(out, dtype=to_numpy_dtype(a.dtype)), a.dtype, a.device)
-    else:
-        values = np.nanmedian(arr, axis=dim, keepdims=keepdim)
-        # Compute indices: for each slice along dim, find index of the median value
-        n = arr.shape[dim]
-        sorted_arr = np.sort(arr, axis=dim)
-        # Count non-nan along dim
-        not_nan = ~np.isnan(arr)
-        count = np.sum(not_nan, axis=dim, keepdims=True)
-        # Median index in sorted order
-        med_idx_sorted = (count - 1) // 2
-        # For each position, find the index in the original array
-        sorted_indices = np.argsort(arr, axis=dim)
-        # Gather the median index from sorted_indices
-        indices = np.take_along_axis(sorted_indices, med_idx_sorted.astype(np.intp), axis=dim)
-        if not keepdim:
-            indices = np.squeeze(indices, axis=dim)
-        from collections import namedtuple
-        NanmedianResult = namedtuple("nanmedian", ["values", "indices"])
-        return NanmedianResult(
-            _from_numpy(np.ascontiguousarray(values.astype(to_numpy_dtype(a.dtype))), a.dtype, a.device),
-            _from_numpy(np.ascontiguousarray(indices.astype(np.int64)), int64_dtype, a.device),
-        )
+    values = np.nanmedian(arr, axis=dim, keepdims=keepdim)
+    n = arr.shape[dim]
+    sorted_arr = np.sort(arr, axis=dim)
+    not_nan = ~np.isnan(arr)
+    count = np.sum(not_nan, axis=dim, keepdims=True)
+    med_idx_sorted = (count - 1) // 2
+    sorted_indices = np.argsort(arr, axis=dim)
+    indices = np.take_along_axis(sorted_indices, med_idx_sorted.astype(np.intp), axis=dim)
+    if not keepdim:
+        indices = np.squeeze(indices, axis=dim)
+    from collections import namedtuple
+    NanmedianResult = namedtuple("nanmedian", ["values", "indices"])
+    return NanmedianResult(
+        _from_numpy(np.ascontiguousarray(values.astype(to_numpy_dtype(a.dtype))), a.dtype, a.device),
+        _from_numpy(np.ascontiguousarray(indices.astype(np.int64)), int64_dtype, a.device),
+    )
 
 def median(a, dim=None, keepdim=False):
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):

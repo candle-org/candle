@@ -167,6 +167,19 @@ def bernoulli_(a, p=0.5, generator=None):
             f"philox_bernoulli_{sfx}", _metal_buf(a), float(p),
             seed_lo, seed_hi, offset, numel)
         return a
+    # GPU composite for tensor p: uniform_(a) → lt(a, p) → cast to float → copy_
+    if (not is_scalar_p and _can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)
+            and isinstance(p, Tensor) and _can_use_gpu(p)):
+        from .comparison import lt
+        from .elementwise import where
+        uniform_(a, 0.0, 1.0, generator=generator)
+        mask = lt(a, p)
+        # where needs x as Tensor; fill a with 1.0 to use as the "true" branch
+        fill_(a, 1.0)
+        result = where(mask, a, 0.0)
+        copy_(a, result)
+        return a
     from ...._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = _to_numpy(a)
