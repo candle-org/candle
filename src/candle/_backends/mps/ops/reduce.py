@@ -319,21 +319,28 @@ def argmin(a, dim=None, keepdim=False):
 def count_nonzero(a, dim=None, keepdim=False):
     if (_can_use_gpu(a) and a.is_contiguous()
             and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype)):
-        # composite: ne(a, 0) → sum as float → cast to int64
+        # composite: ne(a, 0) → where(mask, 1.0, 0.0) → sum → cast to int64
         mask = ne(a, 0)
-        # Create float ones tensor on GPU without numpy
         if a.dtype in (float32_dtype, float16_dtype):
             ones_t = add(mul(a, 0.0), 1.0)
         else:
-            # int types: create float32 ones via alloc + fill
-            ones_np = np.ones(a.shape, dtype=np.float32)
-            ones_t = _from_numpy(ones_np, float32_dtype, a.device)
+            # int types: create float32 ones via GPU fill
+            numel = a.numel()
+            buf = _alloc_output_buf(numel, float32_dtype)
+            d = _get_dispatcher()
+            sfx = _kernel_suffix(float32_dtype)
+            d.dispatch_fill(f"fill_{sfx}", buf, 1.0, numel,
+                            _itemsize(float32_dtype))
+            from ...._tensor import _compute_strides
+            ones_t = _from_metal_buffer(buf, tuple(a.shape),
+                                        _compute_strides(tuple(a.shape)),
+                                        float32_dtype, a.device)
         count_f = where(mask, ones_t, 0.0)
         s = sum_(count_f, dim=dim, keepdim=keepdim)
-        # Convert to int64 via numpy (small result after reduction)
+        # NOTE: int64 cast via numpy — result is already reduced, negligible overhead
         s_np = _to_numpy(s).astype(np.int64)
         return _from_numpy(np.ascontiguousarray(s_np), int64_dtype, a.device)
-    # Non-contiguous or unsupported dtype: make contiguous and retry
+    # Non-contiguous: make contiguous and retry
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype):
         return count_nonzero(a.contiguous(), dim=dim, keepdim=keepdim)
     _unsupported_dtype("count_nonzero", a)
@@ -392,65 +399,57 @@ def cumprod(a, dim=0):
         return cumprod(a.contiguous(), dim=dim)
     _unsupported_dtype("cumprod", a)
 
-def cummax(a, dim=0):
-    arr = _to_numpy(a)
+def _cumextreme_gpu(a, dim, mode):
+    """GPU cummax/cummin helper. mode is 'cummax' or 'cummin'."""
+    ndim = len(a.shape)
     if dim < 0:
-        dim += arr.ndim
-    moved = np.moveaxis(arr, dim, 0)
-    values = np.empty_like(moved)
-    indices = np.empty(moved.shape, dtype=np.int64)
-    max_vals = moved[0].copy()
-    values[0] = max_vals
-    indices[0] = 0
-    for i in range(1, moved.shape[0]):
-        mask = moved[i] > max_vals
-        max_vals = np.where(mask, moved[i], max_vals)
-        values[i] = max_vals
-        indices[i] = np.where(mask, i, indices[i - 1])
-    values = np.ascontiguousarray(np.moveaxis(values, 0, dim))
-    indices = np.ascontiguousarray(np.moveaxis(indices, 0, dim))
-    return (
-        _from_numpy(values, a.dtype, a.device),
-        _from_numpy(indices, int64_dtype, a.device),
-    )
+        dim = ndim + dim
+    outer_size = 1
+    for i in range(dim):
+        outer_size *= a.shape[i]
+    dim_size = a.shape[dim]
+    inner_size = 1
+    for i in range(dim + 1, ndim):
+        inner_size *= a.shape[i]
+    sfx = _kernel_suffix(a.dtype)
+    d = _get_dispatcher()
+    numel = outer_size * dim_size * inner_size
+    values_buf = _alloc_output_buf(numel, a.dtype)
+    indices_buf = _alloc_output_buf(numel, int32_dtype)
+    dispatch = d.dispatch_cummax if mode == "cummax" else d.dispatch_cummin
+    dispatch(f"{mode}_{sfx}", _metal_buf(a), values_buf, indices_buf,
+             outer_size, dim_size, inner_size)
+    from ...._tensor import _compute_strides
+    out_shape = tuple(a.shape)
+    out_stride = _compute_strides(out_shape)
+    values = _from_metal_buffer(values_buf, out_shape, out_stride, a.dtype, a.device)
+    # Convert int32 indices to int64
+    idx_np = np.frombuffer(
+        _metal_buf_to_bytes(indices_buf, numel * 4),
+        dtype=np.int32).astype(np.int64).reshape(a.shape)
+    indices = _from_numpy(idx_np, int64_dtype, a.device)
+    return values, indices
+
+
+def cummax(a, dim=0):
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)):
+        return _cumextreme_gpu(a, dim, "cummax")
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return cummax(a.contiguous(), dim=dim)
+    _unsupported_dtype("cummax", a)
 
 def cummin(a, dim):
     """Cumulative minimum along a dimension, returns (values, indices) namedtuple."""
-    arr = _to_numpy(a)
-    ndim = arr.ndim
-    if dim < 0:
-        dim = dim + ndim
-
-    values = np.minimum.accumulate(arr, axis=dim)
-
-    # Compute indices: for each position i along dim, index is where min first occurred
-    n = arr.shape[dim]
-    indices = np.zeros_like(arr, dtype=np.int64)
-
-    # Iterate over the dimension to compute the argmin up to each point
-    idx_shape = list(arr.shape)
-    idx_shape[dim] = 1
-    running_min = np.take(arr, [0], axis=dim)
-    running_idx = np.zeros(idx_shape, dtype=np.int64)
-
-    slc_base = [slice(None)] * ndim
-    for i in range(n):
-        slc = slc_base[:]
-        slc[dim] = slice(i, i + 1)
-        current = arr[tuple(slc)]
-        new_min_mask = current < running_min
-        running_idx = np.where(new_min_mask, i, running_idx)
-        running_min = np.minimum(running_min, current)
-        indices_slc = slc_base[:]
-        indices_slc[dim] = i
-        indices[tuple(indices_slc)] = running_idx.squeeze(axis=dim)
-
-    from collections import namedtuple
-    CumminResult = namedtuple("cummin", ["values", "indices"])
-    return CumminResult(
-        _from_numpy(np.ascontiguousarray(values), a.dtype, a.device),
-        _from_numpy(np.ascontiguousarray(indices), int64_dtype, a.device),
-    )
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)):
+        from collections import namedtuple
+        CumminResult = namedtuple("cummin", ["values", "indices"])
+        vals, idxs = _cumextreme_gpu(a, dim, "cummin")
+        return CumminResult(vals, idxs)
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        return cummin(a.contiguous(), dim=dim)
+    _unsupported_dtype("cummin", a)
 
 
 # ---------------------------------------------------------------------------
@@ -703,13 +702,46 @@ def aminmax(a, dim=None, keepdim=False):
 
 def quantile(a, q, dim=None, keepdim=False):
     """Compute the q-th quantile of the input tensor."""
-    arr = _to_numpy(a).astype(np.float64)
-    q_val = _to_numpy(q) if hasattr(q, '_numpy_view') else np.asarray(q, dtype=np.float64)
-    if dim is None:
-        out = np.quantile(arr, q_val)
-    else:
-        out = np.quantile(arr, q_val, axis=dim, keepdims=keepdim)
-    return _from_numpy(np.ascontiguousarray(out.astype(to_numpy_dtype(a.dtype))), a.dtype, a.device)
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        from ...common.view import reshape, squeeze
+        # Extract scalar q value
+        if isinstance(q, Tensor):
+            q_val = _scalar_value(q)
+        else:
+            q_val = float(q)
+        if dim is None:
+            flat = reshape(a.contiguous(), (-1,))
+            sorted_vals, _ = sort(flat, dim=0)
+            n = flat.shape[0]
+            idx_f = q_val * (n - 1)
+            lo = int(idx_f)
+            hi = min(lo + 1, n - 1)
+            frac = idx_f - lo
+            v_lo = sorted_vals[(slice(lo, lo + 1),)]
+            v_hi = sorted_vals[(slice(hi, hi + 1),)]
+            result = add(v_lo, mul(sub(v_hi, v_lo), frac))
+            return squeeze(result, 0)
+        else:
+            ndim = len(a.shape)
+            if dim < 0:
+                dim = dim + ndim
+            sorted_vals, _ = sort(a.contiguous(), dim=dim)
+            n = a.shape[dim]
+            idx_f = q_val * (n - 1)
+            lo = int(idx_f)
+            hi = min(lo + 1, n - 1)
+            frac = idx_f - lo
+            slices_lo = [slice(None)] * ndim
+            slices_lo[dim] = slice(lo, lo + 1)
+            slices_hi = [slice(None)] * ndim
+            slices_hi[dim] = slice(hi, hi + 1)
+            v_lo = sorted_vals[tuple(slices_lo)]
+            v_hi = sorted_vals[tuple(slices_hi)]
+            result = add(v_lo, mul(sub(v_hi, v_lo), frac))
+            if not keepdim:
+                result = squeeze(result, dim)
+            return result
+    _unsupported_dtype("quantile", a)
 
 def nanquantile(a, q, dim=None, keepdim=False):
     """Compute the q-th quantile ignoring NaN values."""
@@ -751,25 +783,30 @@ def nanmedian(a, dim=None, keepdim=False):
         )
 
 def median(a, dim=None, keepdim=False):
-    arr = _to_numpy(a)
-    if dim is None:
-        out = np.median(arr.flatten())
-        return _from_numpy(np.array(out, dtype=arr.dtype), a.dtype, a.device)
-    else:
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        from ...common.view import reshape, squeeze
+        if dim is None:
+            flat = reshape(a.contiguous(), (-1,))
+            sorted_vals, sorted_idx = sort(flat, dim=0)
+            n = flat.shape[0]
+            mid = n // 2
+            val = sorted_vals[(slice(mid, mid + 1),)]
+            return squeeze(val, 0)
+        ndim = len(a.shape)
         if dim < 0:
-            dim = dim + arr.ndim
-        sorted_idx = np.argsort(arr, axis=dim)
-        n = arr.shape[dim]
+            dim = dim + ndim
+        sorted_vals, sorted_idx = sort(a.contiguous(), dim=dim)
+        n = a.shape[dim]
         mid = n // 2
-        med_idx = np.take(sorted_idx, [mid], axis=dim)
-        values = np.take_along_axis(arr, med_idx, axis=dim)
+        slices = [slice(None)] * ndim
+        slices[dim] = slice(mid, mid + 1)
+        values = sorted_vals[tuple(slices)]
+        indices = sorted_idx[tuple(slices)]
         if not keepdim:
-            values = np.squeeze(values, axis=dim)
-            med_idx = np.squeeze(med_idx, axis=dim)
-        return (
-            _from_numpy(np.ascontiguousarray(values), a.dtype, a.device),
-            _from_numpy(np.ascontiguousarray(med_idx.astype(np.int64)), int64_dtype, a.device),
-        )
+            values = squeeze(values, dim)
+            indices = squeeze(indices, dim)
+        return (values, indices)
+    _unsupported_dtype("median", a)
 
 
 # ---------------------------------------------------------------------------
@@ -777,19 +814,21 @@ def median(a, dim=None, keepdim=False):
 # ---------------------------------------------------------------------------
 
 def kthvalue(a, k, dim=-1, keepdim=False):
-    arr = _to_numpy(a)
-    if dim < 0:
-        dim = dim + arr.ndim
-    sorted_idx = np.argsort(arr, axis=dim)
-    kth_idx = np.take(sorted_idx, [k - 1], axis=dim)
-    values = np.take_along_axis(arr, kth_idx, axis=dim)
-    if not keepdim:
-        values = np.squeeze(values, axis=dim)
-        kth_idx = np.squeeze(kth_idx, axis=dim)
-    return (
-        _from_numpy(np.ascontiguousarray(values), a.dtype, a.device),
-        _from_numpy(np.ascontiguousarray(kth_idx.astype(np.int64)), int64_dtype, a.device),
-    )
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        from ...common.view import squeeze
+        ndim = len(a.shape)
+        if dim < 0:
+            dim = dim + ndim
+        sorted_vals, sorted_idx = sort(a.contiguous(), dim=dim)
+        slices = [slice(None)] * ndim
+        slices[dim] = slice(k - 1, k)
+        values = sorted_vals[tuple(slices)]
+        indices = sorted_idx[tuple(slices)]
+        if not keepdim:
+            values = squeeze(values, dim)
+            indices = squeeze(indices, dim)
+        return (values, indices)
+    _unsupported_dtype("kthvalue", a)
 
 def unique(a, sorted=True, return_inverse=False, return_counts=False, dim=None):
     arr = _to_numpy(a)

@@ -1175,6 +1175,101 @@ def _gen_cumprod(types=None):
 
 
 # ---------------------------------------------------------------------------
+# Cummax / Cummin Metal compute shaders (per-row sequential scan)
+# ---------------------------------------------------------------------------
+
+_CUMMAX_TEMPLATE = """
+kernel void cummax_{suffix}(
+    device const {type}* input   [[buffer(0)]],
+    device {type}* out_values    [[buffer(1)]],
+    device int*   out_indices    [[buffer(2)]],
+    constant uint& outer_size    [[buffer(3)]],
+    constant uint& dim_size      [[buffer(4)]],
+    constant uint& inner_size    [[buffer(5)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    uint total = outer_size * inner_size;
+    if (gid >= total) return;
+
+    uint outer = gid / inner_size;
+    uint inner = gid % inner_size;
+    uint base = outer * (dim_size * inner_size) + inner;
+
+    float running = (float)input[base];
+    int   best_idx = 0;
+    out_values[base] = input[base];
+    out_indices[base] = 0;
+
+    for (uint d = 1; d < dim_size; d++) {{
+        uint pos = base + d * inner_size;
+        float val = (float)input[pos];
+        if (val > running) {{
+            running = val;
+            best_idx = (int)d;
+        }}
+        out_values[pos] = ({type})running;
+        out_indices[pos] = best_idx;
+    }}
+}}
+"""
+
+_CUMMIN_TEMPLATE = """
+kernel void cummin_{suffix}(
+    device const {type}* input   [[buffer(0)]],
+    device {type}* out_values    [[buffer(1)]],
+    device int*   out_indices    [[buffer(2)]],
+    constant uint& outer_size    [[buffer(3)]],
+    constant uint& dim_size      [[buffer(4)]],
+    constant uint& inner_size    [[buffer(5)]],
+    uint gid [[thread_position_in_grid]])
+{{
+    uint total = outer_size * inner_size;
+    if (gid >= total) return;
+
+    uint outer = gid / inner_size;
+    uint inner = gid % inner_size;
+    uint base = outer * (dim_size * inner_size) + inner;
+
+    float running = (float)input[base];
+    int   best_idx = 0;
+    out_values[base] = input[base];
+    out_indices[base] = 0;
+
+    for (uint d = 1; d < dim_size; d++) {{
+        uint pos = base + d * inner_size;
+        float val = (float)input[pos];
+        if (val < running) {{
+            running = val;
+            best_idx = (int)d;
+        }}
+        out_values[pos] = ({type})running;
+        out_indices[pos] = best_idx;
+    }}
+}}
+"""
+
+
+def _gen_cummax(types=None):
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_CUMMAX_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+def _gen_cummin(types=None):
+    if types is None:
+        types = _FLOAT_TYPES
+    parts = []
+    for t in types:
+        suffix = _SUFFIX[t]
+        parts.append(_CUMMIN_TEMPLATE.format(type=t, suffix=suffix))
+    return "".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Adaptive avg pool2d Metal compute shader
 # ---------------------------------------------------------------------------
 
@@ -2159,6 +2254,10 @@ def _build_msl_source():
 
     # Cumprod kernel
     parts.append(_gen_cumprod())
+
+    # Cummax / Cummin kernels
+    parts.append(_gen_cummax())
+    parts.append(_gen_cummin())
 
     # Sort kernel
     parts.append(_gen_sort())
