@@ -363,8 +363,8 @@ def baddbmm(self_tensor, batch1, batch2, beta=1.0, alpha=1.0):
 def einsum_(equation, operands):
     """Compute einsum.
 
-    When fallback is active (910B): aclnnEinsum returns 161002,
-    so we use composite implementation for supported patterns.
+    When fallback is active (910B, 310B): aclnnEinsum returns 161002 on 910B;
+    untested on 310B — composite is used for both.
 
     Supported patterns:
     - matmul:  ...ij,...jk->...ik
@@ -373,8 +373,9 @@ def einsum_(equation, operands):
     - batch diagonal sum: ...ii->...i (trace-like)
     """
     if not _use_soc_fallback("einsum"):
-        # TODO: re-enable native aclnnEinsum when CANN fixes 161002
-        pass
+        # TODO: re-enable native aclnnEinsum when CANN fixes 161002 on 910B
+        #       and once aclnnEinsum availability is confirmed on 310B.
+        raise NotImplementedError("native aclnnEinsum not yet enabled")
     from ...._dispatch import dispatch as _dispatch
 
     eq = equation.replace(' ', '')
