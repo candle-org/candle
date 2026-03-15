@@ -118,13 +118,11 @@ class _GraphTask:
         return grad
 
     def _accumulate_node_grad(self, node, grad):
-        existing = self.node_grads.get(node)
-        if existing is None:
-            self.node_grads[node] = grad
-        else:
-            from .._functional import add
-            with self._grad_accum_context():
-                self.node_grads[node] = add(existing, grad)
+        bucket = self.node_grads.get(node)
+        if bucket is None:
+            bucket = []
+            self.node_grads[node] = bucket
+        bucket.append(grad)
         self.received[node] = self.received.get(node, 0) + 1
         if self.received[node] >= self.dependencies.get(node, 0):
             self.ready.append(node)
@@ -132,9 +130,15 @@ class _GraphTask:
     def run(self):
         while self.ready:
             node = self.ready.popleft()
-            grad = self.node_grads.pop(node, None)
-            if grad is None:
+            grads = self.node_grads.pop(node, None)
+            if not grads:
                 continue
+            grad = grads[0]
+            if len(grads) > 1:
+                from .._functional import add
+                with self._grad_accum_context():
+                    for extra in grads[1:]:
+                        grad = add(grad, extra)
             try:
                 with evaluating_node(node):
                     grads = node.backward(grad)
@@ -143,10 +147,21 @@ class _GraphTask:
                 raise
             if grads is None:
                 grads = ()
+            elif not isinstance(grads, (tuple, list)):
+                grads = (grads,)
             _check_anomaly_nan(node, grads)
+            grad_counts = None
+            if grads:
+                from .._tensor import Tensor
+                grad_counts = {}
+                for g in grads:
+                    if isinstance(g, Tensor):
+                        grad_counts[id(g)] = grad_counts.get(id(g), 0) + 1
             for (t, g), (next_fn, _output_nr) in zip(zip(node.inputs, grads), node.next_functions):
                 if g is None:
                     continue
+                if grad_counts is not None and grad_counts.get(id(g), 0) > 1:
+                    g = g.clone()
                 should_visit = (
                     self.inputs is None or next_fn is not None or id(t) in self.input_ids
                 )
