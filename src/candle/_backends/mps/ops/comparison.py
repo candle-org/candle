@@ -9,7 +9,7 @@ from ._helpers import (
     _alloc_output_buf, _metal_buf_to_bytes, _from_metal_buffer,
     _get_dispatcher, _dispatch_unary_gpu, _dispatch_unary_predicate_gpu,
     _scalar_value, _dispatch_binary_gpu,
-    _to_numpy, _from_numpy,
+    _to_numpy, _from_numpy, _read_scalar,
     _compute_reduce_dims, _reduce_shape, _gpu_reduce_single_dim,
     _normalize_tensor_sequence_args,
     _can_use_blas, _blas_gemm,
@@ -59,8 +59,8 @@ def eq(a, b):
         if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
             d.dispatch_comparison(f"eq_{sfx}", _metal_buf(a), _metal_buf(b),
                                   out_buf, numel)
-        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
-            scalar = _scalar_value(float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0]), a.dtype)
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b) or a.shape != b.shape:
+            scalar = _scalar_value(float(b) if not isinstance(b, Tensor) else _read_scalar(b), a.dtype)
             if a.is_contiguous():
                 d.dispatch_comparison_scalar(f"eq_scalar_{sfx}", _metal_buf(a),
                                              scalar, out_buf, numel,
@@ -84,8 +84,8 @@ def ne(a, b):
         if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
             d.dispatch_comparison(f"ne_{sfx}", _metal_buf(a), _metal_buf(b),
                                   out_buf, numel)
-        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
-            scalar = _scalar_value(float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0]), a.dtype)
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b) or a.shape != b.shape:
+            scalar = _scalar_value(float(b) if not isinstance(b, Tensor) else _read_scalar(b), a.dtype)
             if a.is_contiguous():
                 d.dispatch_comparison_scalar(f"ne_scalar_{sfx}", _metal_buf(a),
                                              scalar, out_buf, numel,
@@ -109,8 +109,8 @@ def lt(a, b):
         if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
             d.dispatch_comparison(f"lt_{sfx}", _metal_buf(a), _metal_buf(b),
                                   out_buf, numel)
-        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b) or a.shape != b.shape:
+            scalar = float(b) if not isinstance(b, Tensor) else _read_scalar(b)
             if a.is_contiguous():
                 d.dispatch_comparison_scalar(f"lt_scalar_{sfx}", _metal_buf(a),
                                              scalar, out_buf, numel,
@@ -134,8 +134,8 @@ def le(a, b):
         if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
             d.dispatch_comparison(f"le_{sfx}", _metal_buf(a), _metal_buf(b),
                                   out_buf, numel)
-        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b) or a.shape != b.shape:
+            scalar = float(b) if not isinstance(b, Tensor) else _read_scalar(b)
             if a.is_contiguous():
                 d.dispatch_comparison_scalar(f"le_scalar_{sfx}", _metal_buf(a),
                                              scalar, out_buf, numel,
@@ -159,8 +159,8 @@ def gt(a, b):
         if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
             d.dispatch_comparison(f"gt_{sfx}", _metal_buf(a), _metal_buf(b),
                                   out_buf, numel)
-        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b) or a.shape != b.shape:
+            scalar = float(b) if not isinstance(b, Tensor) else _read_scalar(b)
             if a.is_contiguous():
                 d.dispatch_comparison_scalar(f"gt_scalar_{sfx}", _metal_buf(a),
                                              scalar, out_buf, numel,
@@ -184,8 +184,8 @@ def ge(a, b):
         if isinstance(b, Tensor) and _can_use_gpu(b) and a.shape == b.shape and a.is_contiguous() and b.is_contiguous():
             d.dispatch_comparison(f"ge_{sfx}", _metal_buf(a), _metal_buf(b),
                                   out_buf, numel)
-        elif not isinstance(b, Tensor) or not _can_use_gpu(b):
-            scalar = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+        elif not isinstance(b, Tensor) or not _can_use_gpu(b) or a.shape != b.shape:
+            scalar = float(b) if not isinstance(b, Tensor) else _read_scalar(b)
             if a.is_contiguous():
                 d.dispatch_comparison_scalar(f"ge_scalar_{sfx}", _metal_buf(a),
                                              scalar, out_buf, numel,

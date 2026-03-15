@@ -264,6 +264,21 @@ def softshrink(a, lambd=0.5):
     _unsupported_dtype("softshrink", a)
 
 def rrelu(a, lower=1.0 / 8, upper=1.0 / 3, training=False):
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        from ._helpers import _empty_like
+        from .random import uniform_, fill_
+        from .comparison import ge
+        a_c = a.contiguous() if not a.is_contiguous() else a
+        slope = _empty_like(a_c)
+        if training:
+            uniform_(slope, lower, upper)
+        else:
+            fill_(slope, (lower + upper) / 2.0)
+        mask = ge(a_c, 0)
+        neg = mul(a_c, slope)
+        result = where(mask, a_c, neg)
+        result._rrelu_slope = slope
+        return result
     arr = _to_numpy(a)
     if training:
         slope = np.random.uniform(lower, upper, size=arr.shape).astype(arr.dtype)

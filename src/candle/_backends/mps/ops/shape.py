@@ -60,6 +60,12 @@ def flip(a, dims):
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
 
 def roll(a, shifts, dims=None):
+    # GPU path for dims=None: flatten → roll(flat, shifts, 0) → reshape
+    if _can_use_gpu(a) and dims is None:
+        orig_shape = tuple(a.shape)
+        flat = flatten(a)
+        rolled = roll(flat, shifts, dims=0)
+        return rolled.reshape(orig_shape)
     if (_can_use_gpu(a) and a.is_contiguous()
             and a.dtype in (float32_dtype, float16_dtype, int32_dtype, int64_dtype)
             and len(a.shape) <= 8 and dims is not None):
