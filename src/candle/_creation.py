@@ -121,6 +121,9 @@ def rand(*shape, dtype=None, device=None, memory_format=None, generator=None, re
 
 
 def randint(low, high=None, size=None, *, dtype=None, device=None, generator=None):
+    if size is None and isinstance(high, (tuple, list)):
+        size = high
+        high = None
     return randint_dispatch(low, high=high, size=size, dtype=dtype, device=device, generator=generator)
 
 
