@@ -155,6 +155,27 @@ def repeat(a, repeats):
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
 
 def repeat_interleave(a, repeats, dim=None):
+    # GPU composite for integer repeats: unsqueeze → expand → reshape
+    if _can_use_gpu(a) and isinstance(repeats, int):
+        if dim is None:
+            # Flatten first, then repeat along dim=0
+            flat = flatten(a)
+            n = flat.shape[0]
+            # unsqueeze to (n, 1), expand to (n, repeats), reshape to (n*repeats,)
+            return expand(flat.unsqueeze(1), (n, repeats)).contiguous().reshape(-1)
+        d = dim if dim >= 0 else dim + len(a.shape)
+        shape = list(a.shape)
+        n = shape[d]
+        # Insert a new dim after d: unsqueeze at d+1
+        unsq = a.unsqueeze(d + 1)
+        # Expand that new dim to repeats
+        exp_shape = list(unsq.shape)
+        exp_shape[d + 1] = repeats
+        expanded = expand(unsq, tuple(exp_shape))
+        # Reshape: merge dims d and d+1
+        new_shape = shape[:d] + [n * repeats] + shape[d + 1:]
+        return expanded.contiguous().reshape(new_shape)
+    # CPU/numpy fallback (also handles tensor repeats)
     arr = _to_numpy(a)
     axis = None if dim is None else dim
     out = np.repeat(arr, repeats, axis=axis)
@@ -821,6 +842,21 @@ def masked_fill(a, mask, value):
     return _from_numpy(arr, a.dtype, a.device)
 
 def masked_fill_(a, mask, value):
+    # GPU path: use non-inplace masked_fill (has Metal kernel), then copy back
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and isinstance(mask, Tensor) and _can_use_gpu(mask)):
+        # Broadcast mask to a's shape if needed
+        if mask.shape != a.shape:
+            mask = broadcast_to(mask, a.shape).contiguous()
+        result = masked_fill(a, mask, value)
+        # Copy result buffer back into a's storage via identity kernel
+        if result.numel() > 0:
+            d = _get_dispatcher()
+            sfx = _kernel_suffix(a.dtype)
+            d.dispatch_unary(f"identity_{sfx}", _metal_buf(result),
+                             _metal_buf(a), a.numel())
+        return a
+    # CPU/numpy fallback
     arr = _to_numpy(a)
     m = _to_numpy(mask).astype(bool)
     arr[m] = value
@@ -924,6 +960,33 @@ def masked_scatter_(a, mask, source):
     return a
 
 def unfold(a, dimension, size, step):
+    # GPU composite: narrow windows → stack
+    if _can_use_gpu(a):
+        ndim = len(a.shape)
+        d = dimension if dimension >= 0 else dimension + ndim
+        dim_size = a.shape[d]
+        n_windows = max(0, (dim_size - size) // step + 1)
+        if n_windows == 0:
+            new_shape = list(a.shape)
+            new_shape[d] = 0
+            new_shape.append(size)
+            return _from_numpy(np.empty(new_shape, dtype=to_numpy_dtype(a.dtype)),
+                               a.dtype, a.device)
+        windows = []
+        for i in range(n_windows):
+            # narrow along dim d: start=i*step, length=size
+            win = narrow(a, d, i * step, size)
+            # Move the window dim to the end: transpose d with last, but we
+            # need to keep other dims intact. Use movedim equivalent.
+            # Actually, we need to move dim d to the last position.
+            # permute: move d to end
+            perm = list(range(ndim))
+            perm.pop(d)
+            perm.append(d)
+            win = win.permute(*perm)
+            windows.append(win)
+        return stack(windows, dim=d)
+    # CPU/numpy fallback
     arr = _to_numpy(a)
     d = dimension if dimension >= 0 else dimension + arr.ndim
     dim_size = arr.shape[d]
@@ -1028,6 +1091,37 @@ def movedim(a, source, destination):
     return a.permute(*order)
 
 def diagonal(a, offset=0, dim1=0, dim2=1):
+    # GPU composite: select along dim1 and dim2 in loop, then stack
+    if _can_use_gpu(a):
+        ndim = len(a.shape)
+        d1 = dim1 if dim1 >= 0 else dim1 + ndim
+        d2 = dim2 if dim2 >= 0 else dim2 + ndim
+        size1 = a.shape[d1]
+        size2 = a.shape[d2]
+        if offset >= 0:
+            diag_len = max(0, min(size1, size2 - offset))
+        else:
+            diag_len = max(0, min(size1 + offset, size2))
+        if diag_len == 0:
+            # Empty diagonal
+            out_shape = [s for i, s in enumerate(a.shape) if i not in (d1, d2)] + [0]
+            return _from_numpy(np.empty(out_shape, dtype=to_numpy_dtype(a.dtype)),
+                               a.dtype, a.device)
+        elements = []
+        for i in range(diag_len):
+            row = i if offset >= 0 else i - offset
+            col = i + offset if offset >= 0 else i
+            # Select along the higher dim first to keep lower dim index valid
+            if d1 < d2:
+                t = select(a, d1, row)
+                t = select(t, d2 - 1, col)  # d2 shifts by -1 after removing d1
+            else:
+                t = select(a, d2, col)
+                t = select(t, d1 - 1, row)  # d1 shifts by -1 after removing d2
+            elements.append(t)
+        # Stack along last dim (PyTorch convention: diagonal goes to last dim)
+        return stack(elements, dim=-1)
+    # CPU/numpy fallback
     arr = _to_numpy(a)
     out = np.diagonal(arr, offset=offset, axis1=dim1, axis2=dim2)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)

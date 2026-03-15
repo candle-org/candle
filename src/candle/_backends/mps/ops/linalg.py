@@ -18,7 +18,7 @@ from ._helpers import (
     mps_typed_storage_from_numpy, _MPSUntypedStorage, TypedStorage,
     _accel,
 )
-from .math import mul, add
+from .math import mul, add, abs as gpu_abs, sqrt as gpu_sqrt, pow as gpu_pow
 
 
 def matmul(a, b):
@@ -41,6 +41,17 @@ def matmul(a, b):
                     out_stride = _compute_strides(out_shape)
                     return _from_metal_buffer(out_buf, out_shape, out_stride,
                                              a.dtype, a.device)
+    # GPU path: 3D batched matmul — loop GPU 2D matmul per batch, then stack
+    if (_can_use_gpu(a) and _can_use_gpu(b)
+            and len(a.shape) == 3 and len(b.shape) == 3):
+        from .shape import stack as gpu_stack, select
+        batch = a.shape[0]
+        slices = []
+        for i in range(batch):
+            ai = select(a, 0, i)  # a[i] — 2D view
+            bi = select(b, 0, i)  # b[i] — 2D view
+            slices.append(matmul(ai, bi))
+        return gpu_stack(slices, dim=0)
     # CPU path (Accelerate BLAS or numpy)
     a_np = _to_numpy(a)
     b_np = _to_numpy(b)
@@ -71,6 +82,11 @@ def bmm(a, b):
 def dot(a, b):
     if a.dtype != b.dtype:
         raise RuntimeError("dot: expected both vectors to have same dtype")
+    # GPU composite: sum(mul(a, b))
+    if _can_use_gpu(a) and _can_use_gpu(b):
+        from .reduce import sum_
+        return sum_(mul(a, b))
+    # CPU path (Accelerate BLAS or numpy)
     a_np = np.ascontiguousarray(_to_numpy(a))
     b_np = np.ascontiguousarray(_to_numpy(b))
     if _can_use_blas(a_np) and _can_use_blas(b_np):
@@ -83,12 +99,22 @@ def dot(a, b):
     return _from_numpy(np.dot(a_np, b_np), a.dtype, a.device)
 
 def outer(a, b):
+    # GPU composite: matmul(a.reshape(-1,1), b.reshape(1,-1))
+    if _can_use_gpu(a) and _can_use_gpu(b):
+        return matmul(a.reshape(-1, 1), b.reshape(1, -1))
     return _from_numpy(np.outer(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
 
 def inner(a, b):
+    # GPU composite: for 1D tensors, same as dot
+    if _can_use_gpu(a) and _can_use_gpu(b) and len(a.shape) == 1 and len(b.shape) == 1:
+        return dot(a, b)
     return _from_numpy(np.inner(_to_numpy(a), _to_numpy(b)), a.dtype, a.device)
 
 def mv(a, b):
+    # GPU composite: matmul(a, b.reshape(-1,1)).reshape(-1)
+    if _can_use_gpu(a) and _can_use_gpu(b) and len(a.shape) == 2 and len(b.shape) == 1:
+        return matmul(a, b.reshape(-1, 1)).reshape(-1)
+    # CPU path (Accelerate BLAS or numpy)
     a_np = np.ascontiguousarray(_to_numpy(a))
     b_np = np.ascontiguousarray(_to_numpy(b))
     if a_np.ndim == 2 and b_np.ndim == 1 and _can_use_blas(a_np) and _can_use_blas(b_np):
@@ -115,6 +141,35 @@ def cross(a, b, dim=-1):
 def tensordot(a, b, dims=2):
     if a.dtype != b.dtype:
         raise RuntimeError("tensordot: expected both inputs to have same dtype")
+    # GPU composite for integer dims: reshape to 2D → matmul → reshape
+    if isinstance(dims, int) and _can_use_gpu(a) and _can_use_gpu(b):
+        ndim_a = len(a.shape)
+        ndim_b = len(b.shape)
+        # Contract last `dims` of a with first `dims` of b
+        a_free = a.shape[:ndim_a - dims]
+        a_contract = a.shape[ndim_a - dims:]
+        b_contract = b.shape[:dims]
+        b_free = b.shape[dims:]
+        if a_contract != b_contract:
+            raise RuntimeError("tensordot: contraction dimensions mismatch")
+        contract_size = 1
+        for s in a_contract:
+            contract_size *= s
+        a_rows = 1
+        for s in a_free:
+            a_rows *= s
+        b_cols = 1
+        for s in b_free:
+            b_cols *= s
+        a_2d = a.contiguous().reshape(a_rows, contract_size)
+        b_2d = b.contiguous().reshape(contract_size, b_cols)
+        result_2d = matmul(a_2d, b_2d)
+        out_shape = a_free + b_free
+        if not out_shape:
+            out_shape = (1,)
+            return result_2d.reshape(out_shape).squeeze(0)
+        return result_2d.reshape(out_shape)
+    # CPU/numpy fallback (also handles axis-list dims)
     a_np = _to_numpy(a)
     b_np = _to_numpy(b)
     if isinstance(dims, int):
@@ -217,6 +272,23 @@ def linalg_inv(a):
 
 def linalg_vector_norm(a, ord=2, dim=None, keepdim=False):
     """Vector norm."""
+    # GPU composite for common orders
+    if _can_use_gpu(a) and ord != 0:
+        from .reduce import sum_, amax, amin
+        abs_a = gpu_abs(a)
+        if ord == 2:
+            return gpu_sqrt(sum_(mul(a, a), dim=dim, keepdim=keepdim))
+        if ord == 1:
+            return sum_(abs_a, dim=dim, keepdim=keepdim)
+        if ord == float('inf'):
+            return amax(abs_a, dim=dim, keepdim=keepdim)
+        if ord == float('-inf'):
+            return amin(abs_a, dim=dim, keepdim=keepdim)
+        # General p-norm: pow(sum(pow(abs(a), p), dim), 1/p)
+        powered = gpu_pow(abs_a, ord)
+        summed = sum_(powered, dim=dim, keepdim=keepdim)
+        return gpu_pow(summed, 1.0 / ord)
+    # CPU/numpy fallback (also handles ord=0)
     arr = _to_numpy(a).astype(np.float64)
     if dim is not None:
         if isinstance(dim, (list, tuple)):
