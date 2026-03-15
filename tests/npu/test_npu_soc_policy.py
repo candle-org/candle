@@ -69,33 +69,15 @@ def test_soc_910a_fallback_ops_cover_expected_watchlist_set():
 
 def test_soc_310b_fallback_ops_cover_expected_watchlist_set():
     expected = {
-        "atan2",
-        "where",
-        "flip",
-        "argsort",
-        "sort",
-        "topk",
-        "diag",
-        "lerp",
-        "remainder",
-        "isclose",
-        "softplus",
-        "uniform_",
-        "normal_",
-        "layer_norm",
-        "mish",
-        "batch_norm",
-        "dropout",
-        "take_along_dim",
-        "gather",
         "isinf",
+        "dot",
         "matmul",
         "addmm",
         "mv",
-        "dot",
         "avg_pool2d",
         "adaptive_avg_pool2d",
         "einsum",
+        "take_along_dim",
     }
     got = set(ops_soc.fallback_ops("310b"))
     assert got == expected

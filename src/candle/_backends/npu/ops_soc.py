@@ -43,18 +43,18 @@ _FALLBACK_OPS = {
         "im2col",           # aclnnIm2col returns 561103
     }),
     "310b": frozenset({
-        "atan2", "where", "flip", "argsort", "sort", "topk",
-        "diag", "lerp", "remainder", "isclose", "softplus",
-        "uniform_", "normal_", "layer_norm", "mish",
-        "batch_norm", "dropout", "take_along_dim", "gather",
+        # Confirmed broken/missing native kernels on 310B:
         "isinf",    # aclnnIsInf returns 161001 (unavailable) on 310B
+        "dot",      # aclnnDot returns 561103 for all dtypes on 310B; use mul+sum composite
         "matmul",   # aclnnMatmul on 310B only supports float16; float32 inputs are cast
         "addmm",    # aclnnAddmm on 310B only supports float16; float32 inputs are cast
         "mv",       # aclnnMv on 310B only supports float16; float32 inputs are cast
-        "dot",      # aclnnDot returns 561103 for all dtypes on 310B; use mul+sum composite
         "avg_pool2d",           # aclnnAvgPool2d returns 161002 (same as 910B)
         "adaptive_avg_pool2d",  # aclnnAdaptiveAvgPool2d cubeMathType contamination (same as 910B)
         "einsum",   # aclnnEinsum untested on 310B; composite already works
+        # take_along_dim: fallback avoids SWhere which depends on where; keep until
+        # where is confirmed stable on 310B in production.
+        "take_along_dim",
     }),
     "310p": frozenset(),
 }
