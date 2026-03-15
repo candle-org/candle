@@ -95,6 +95,19 @@ def _metal_buf_to_bytes(metal_buf, nbytes):
     return bytes((ctypes.c_char * nbytes).from_address(ptr))
 
 
+def _read_scalar(t):
+    """Read a single scalar from a GPU tensor without numpy.
+
+    Uses buffer_contents + struct.unpack to extract the value directly
+    from the Metal buffer.
+    """
+    from ..runtime import buffer_contents
+    nbytes = _itemsize(t.dtype)
+    ptr = buffer_contents(_metal_buf(t))
+    raw = bytes((ctypes.c_char * nbytes).from_address(ptr))
+    return struct.unpack(_scalar_fmt(t.dtype), raw)[0]
+
+
 def _from_metal_buffer(metal_buf, shape, stride, dtype, device):
     """Wrap an existing Metal buffer into a Tensor without copying data."""
     from ..runtime import buffer_contents
@@ -183,7 +196,7 @@ def _dispatch_binary_gpu(a, b, kernel_base):
                 out_buf, numel, list(a.shape), list(a.stride),
                 list(b.stride), len(a.shape))
     else:
-        raw = float(b) if not isinstance(b, Tensor) else float(_to_numpy(b).ravel()[0])
+        raw = float(b) if not isinstance(b, Tensor) else _read_scalar(b)
         scalar = _scalar_value(raw, a.dtype)
         if a.is_contiguous():
             d.dispatch_binary_scalar(f"{kernel_base}_scalar_{sfx}",

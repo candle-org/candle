@@ -219,6 +219,15 @@ def fill_(a, value):
     return a
 
 def clamp_(a, min_val=None, max_val=None):
+    if _can_use_gpu(a):
+        from .activation import clamp
+        clamped = clamp(a, min_val, max_val)
+        # Copy result back into a's buffer using identity kernel
+        d = _get_dispatcher()
+        sfx = _kernel_suffix(a.dtype)
+        d.dispatch_unary(f"identity_{sfx}", _metal_buf(clamped),
+                         _metal_buf(a), a.numel())
+        return a
     arr = _to_numpy(a)
     np.clip(arr, min_val, max_val, out=arr)
     return a
@@ -228,7 +237,8 @@ def copy_(a, src):
         d = _get_dispatcher()
         sfx = _kernel_suffix(a.dtype)
         numel = min(a.numel(), src.numel())
-        d.dispatch_copy(f"copy_{sfx}", _metal_buf(src), _metal_buf(a), numel)
+        # Use identity kernel (unary copy) — dispatch_copy has a bug
+        d.dispatch_unary(f"identity_{sfx}", _metal_buf(src), _metal_buf(a), numel)
         return a
     arr = _to_numpy(a)
     src_arr = _to_numpy(src)

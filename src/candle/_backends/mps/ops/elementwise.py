@@ -164,8 +164,29 @@ def heaviside(a, values):
 
 def diff(a, n=1, dim=-1, prepend=None, append=None):
     """Compute the n-th discrete difference along the given dim."""
-    # NOTE: GPU composite blocked by _metal_buf not handling storage offsets;
-    # narrow views share the underlying buffer so sub() reads wrong data.
+    if _can_use_gpu(a):
+        from .shape import narrow, cat
+        ndim = len(a.shape)
+        d = dim if dim >= 0 else dim + ndim
+        # Handle prepend/append by concatenating on-device
+        src = a
+        if prepend is not None or append is not None:
+            pieces = []
+            if prepend is not None:
+                pieces.append(prepend)
+            pieces.append(src)
+            if append is not None:
+                pieces.append(append)
+            src = cat(pieces, dim=d)
+        # Iterate n times: diff = src[1:] - src[:-1] along dim
+        for _ in range(n):
+            size = src.shape[d]
+            # .contiguous() on narrow views creates separate GPU buffers,
+            # avoiding aliased _metal_buf issues with sub()
+            head = narrow(src, d, 1, size - 1).contiguous()
+            tail = narrow(src, d, 0, size - 1).contiguous()
+            src = sub(head, tail)
+        return src
     arr = _to_numpy(a)
     if prepend is not None or append is not None:
         pieces = []
@@ -220,6 +241,16 @@ def bucketize(a, boundaries, out_int32=False, right=False):
 
 def isin(elements, test_elements):
     """Tests if each element is in test_elements."""
+    if _can_use_gpu(elements):
+        from .comparison import eq, logical_or
+        from ._helpers import _read_scalar
+        # Iterate over test_elements, accumulate eq() with logical_or()
+        te_flat = test_elements.contiguous().reshape((-1,))
+        n_test = te_flat.numel()
+        result = eq(elements, _read_scalar(te_flat[0]) if n_test > 0 else 0)
+        for i in range(1, n_test):
+            result = logical_or(result, eq(elements, _read_scalar(te_flat[i])))
+        return result
     e = _to_numpy(elements)
     te = _to_numpy(test_elements)
     out = np.isin(e, te)
@@ -227,6 +258,12 @@ def isin(elements, test_elements):
 
 def uniform(a):
     """Return tensor of same shape filled with Uniform(0,1) samples."""
+    from ._helpers import _empty_like
+    if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
+        from .random import uniform_
+        out = _empty_like(a)
+        uniform_(out, 0.0, 1.0)
+        return out
     from ...._random import _get_cpu_rng
     rng = _get_cpu_rng()
     arr = rng.uniform(0.0, 1.0, _to_numpy(a).shape).astype(_to_numpy(a).dtype)
