@@ -998,20 +998,13 @@ def upsample_linear1d_op(a, output_size, align_corners=False, scales=None):
 
 
 def upsample_nearest1d_op(a, output_size, scales=None):
-    """Upsample nearest 1D.
+    """Upsample nearest 1D via 2D composite.
 
-    When fallback is active (910B): ACLNN upsample nearest 1D is broken,
-    so we route through 2D upsample (reshape to 4D, upsample, reshape back).
-    """
-    if _use_soc_fallback("upsample_nearest1d"):
-        from ...._dispatch.dispatcher import dispatch
-        from ...common import view as view_backend
-        N, C, W = a.shape
-        oW = output_size[0] if isinstance(output_size, (list, tuple)) else output_size
-        a_4d = view_backend.reshape(a, (N, C, 1, W))
-        out_4d = dispatch("upsample_nearest2d", "npu", a_4d, [1, oW])
-        return view_backend.reshape(out_4d, (N, C, oW))
+    aclnnUpsampleNearest1d is broken on all tested chips (910B: returns error,
+    310B: untested).  Route through upsample_nearest2d by temporarily adding a
+    height-1 spatial dim.
     # TODO: re-enable native aclnnUpsampleNearest1d when CANN fixes it
+    """
     from ...._dispatch.dispatcher import dispatch
     from ...common import view as view_backend
     N, C, W = a.shape

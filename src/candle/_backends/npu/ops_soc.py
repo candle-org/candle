@@ -31,7 +31,6 @@ _FALLBACK_OPS = {
         "instance_norm",    # aclnnInstanceNorm returns 161002
         "avg_pool2d",           # aclnnAvgPool2d returns 161002
         "adaptive_avg_pool2d",  # cross-op contamination (cubeMathType=1 corrupts state)
-        "upsample_nearest1d",  # aclnnUpsampleNearest1d broken
         "einsum",           # aclnnEinsum returns 161002
         "isinf",            # aclnnIsInf returns 161001 (unavailable)
         "im2col",           # aclnnIm2col returns 561103
@@ -46,6 +45,9 @@ _FALLBACK_OPS = {
         "addmm",    # aclnnAddmm on 310B only supports float16; float32 inputs are cast
         "mv",       # aclnnMv on 310B only supports float16; float32 inputs are cast
         "dot",      # aclnnDot returns 561103 for all dtypes on 310B; use mul+sum composite
+        "avg_pool2d",           # aclnnAvgPool2d returns 161002 (same as 910B)
+        "adaptive_avg_pool2d",  # aclnnAdaptiveAvgPool2d cubeMathType contamination (same as 910B)
+        "einsum",   # aclnnEinsum untested on 310B; composite already works
     }),
     "310p": frozenset(),
 }
