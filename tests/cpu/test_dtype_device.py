@@ -3,8 +3,11 @@ import candle as torch
 
 def test_default_dtype_and_device():
     x = torch.tensor([1, 2, 3])
-    assert x.dtype == torch.float32
+    assert x.dtype == torch.int64  # PyTorch infers int64 from integer data
     assert x.device.type == "cpu"
+    # Float data should infer the default dtype (float32)
+    y = torch.tensor([1.0, 2.0, 3.0])
+    assert y.dtype == torch.float32
 
 
 def test_default_device_set_get_affects_creation():

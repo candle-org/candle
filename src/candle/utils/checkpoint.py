@@ -96,16 +96,14 @@ def checkpoint(function, *args, use_reentrant=True, preserve_rng_state=True, **k
             out_with_grad.append(r)
             grad_outputs.append(grad if len(recomputed) == 1 else None)
 
-        result = _run_backward(
+        _run_backward(
             tuple(out_with_grad), tuple(grad_outputs),
             retain_graph=False, create_graph=False,
-            accumulate_grad=False, inputs=detached,
+            accumulate_grad=True, inputs=None,
             allow_unused=True,
         )
-        # Map back to original tensor_inputs order
-        all_grads = [None] * len(tensor_inputs)
-        for i, g in enumerate(result):
-            all_grads[i] = g
+        # Retrieve grads from the detached input copies
+        all_grads = [d.grad for d in detached]
         return tuple(all_grads)
 
     def _recompute_saved_result():

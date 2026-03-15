@@ -17,6 +17,20 @@ class Module:
         self._next_hook_id = 0
         self.training = True
 
+    def __getattr__(self, name):
+        _parameters = self.__dict__.get('_parameters', {})
+        if name in _parameters:
+            return _parameters[name]
+        _buffers = self.__dict__.get('_buffers', {})
+        if name in _buffers:
+            return _buffers[name]
+        _modules = self.__dict__.get('_modules', {})
+        if name in _modules:
+            return _modules[name]
+        raise AttributeError(
+            f"'{type(self).__name__}' object has no attribute '{name}'"
+        )
+
     def __setattr__(self, name, value):
         if isinstance(value, Parameter):
             self._parameters[name] = value

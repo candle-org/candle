@@ -17,7 +17,8 @@ def _to_numpy(t):
 
 def _write_back(t, arr):
     """Write numpy array back into a Tensor's storage."""
-    t.storage()._data[:] = arr
+    storage_data = t.storage()._data
+    storage_data[:] = np.asarray(arr).reshape(storage_data.shape)
 
 
 def _sgd_step(param, grad, buf, lr, momentum, dampening, weight_decay, nesterov, maximize):

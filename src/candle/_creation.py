@@ -20,14 +20,22 @@ from ._functional import normal as normal_dispatch
 
 def _infer_creation_dtype(data):
     if isinstance(data, (np.ndarray, np.generic)):
-        return bool_dtype if data.dtype == np.bool_ else None
+        if data.dtype == np.bool_:
+            return bool_dtype
+        if np.issubdtype(data.dtype, np.integer):
+            return int64
+        return None
     if hasattr(data, "dtype"):
         return None
     try:
         arr = np.asarray(data)
     except Exception:
         return None
-    return bool_dtype if arr.dtype == np.bool_ else None
+    if arr.dtype == np.bool_:
+        return bool_dtype
+    if np.issubdtype(arr.dtype, np.integer):
+        return int64
+    return None
 
 
 def _get_default_dtype():
