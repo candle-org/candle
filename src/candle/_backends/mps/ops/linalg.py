@@ -400,12 +400,30 @@ def linalg_multi_dot(tensors):
 
 def linalg_matrix_power(a, n):
     """Matrix raised to integer power n."""
+    # GPU composite for n > 0: binary exponentiation via matmul
+    if _can_use_gpu(a) and n > 0:
+        result = None
+        base = a
+        exp = n
+        while exp > 0:
+            if exp % 2 == 1:
+                result = matmul(result, base) if result is not None else base
+            base = matmul(base, base) if exp > 1 else base
+            exp //= 2
+        return result
+    # n==0 (identity) and n<0 (inverse) fall through to numpy
     arr = _to_numpy(a).astype(np.float64)
     out = np.linalg.matrix_power(arr, n)
     return _from_numpy(np.ascontiguousarray(out.astype(to_numpy_dtype(a.dtype))), a.dtype, a.device)
 
 def linalg_vander(x, N=None):
     """Vandermonde matrix."""
+    # GPU composite: build columns x^0..x^(N-1) via pow, then stack
+    if _can_use_gpu(x):
+        from .shape import stack as gpu_stack
+        n = N if N is not None else x.shape[0]
+        cols = [gpu_pow(x, i) for i in range(n)]
+        return gpu_stack(cols, dim=-1)
     arr = _to_numpy(x)
     n = N if N is not None else len(arr)
     out = np.vander(arr, N=n, increasing=True)

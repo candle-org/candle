@@ -28,6 +28,15 @@ def special_digamma(a):
 
 def special_entr(a):
     """Entropy: -x * ln(x), 0 for x=0, -inf for x<0."""
+    # GPU composite
+    if _can_use_gpu(a):
+        from .math import mul, neg, log
+        from .comparison import gt, ge
+        from .activation import clamp_min
+        from .elementwise import where
+        pos_result = neg(mul(a, log(clamp_min(a, 1e-20))))
+        result = where(gt(a, 0), pos_result, 0.0)
+        return where(ge(a, 0), result, float('-inf'))
     arr = _to_numpy(a).astype(np.float64)
     out = np.where(arr > 0, -arr * np.log(arr), np.where(arr == 0, 0.0, -np.inf))
     return _from_numpy(np.ascontiguousarray(out.astype(to_numpy_dtype(a.dtype))), a.dtype, a.device)
@@ -106,6 +115,14 @@ def special_log_ndtr(a):
 
 def special_logit(a, eps=None):
     """Logit function: log(x / (1 - x))."""
+    # GPU composite: clamp then log(a) - log(1-a)
+    if _can_use_gpu(a):
+        from .math import log, sub
+        from .activation import clamp
+        x = a
+        if eps is not None:
+            x = clamp(x, min_val=eps, max_val=1.0 - eps)
+        return sub(log(x), log(sub(1.0, x)))
     arr = _to_numpy(a).astype(np.float64)
     if eps is not None:
         arr = np.clip(arr, eps, 1.0 - eps)
@@ -122,6 +139,10 @@ def special_multigammaln(a, p):
 
 def special_ndtr(a):
     """Area under the standard Gaussian PDF from -inf to x (normal CDF)."""
+    # GPU composite: 0.5 * (1 + erf(a / sqrt(2)))
+    if _can_use_gpu(a):
+        from .math import mul, add, div, erf
+        return mul(0.5, add(1.0, erf(div(a, math.sqrt(2.0)))))
     from scipy import special as sp
     arr = _to_numpy(a).astype(np.float64)
     out = sp.ndtr(arr)
@@ -143,12 +164,26 @@ def special_polygamma(n, a):
 
 def special_sinc(a):
     """Normalized sinc function: sin(pi*x) / (pi*x)."""
+    # GPU composite: where(a==0, 1, sin(π*a) / (π*a))
+    if _can_use_gpu(a):
+        from .math import mul, sin, div
+        from .comparison import ne
+        from .elementwise import where
+        pi_a = mul(a, math.pi)
+        sinc_val = div(sin(pi_a), pi_a)
+        return where(ne(a, 0), sinc_val, 1.0)
     arr = _to_numpy(a).astype(np.float64)
     out = np.sinc(arr)  # np.sinc already computes sin(pi*x)/(pi*x)
     return _from_numpy(np.ascontiguousarray(out.astype(to_numpy_dtype(a.dtype))), a.dtype, a.device)
 
 def special_xlog1py(a, b):
     """x * log1p(y), with 0 when x=0."""
+    # GPU composite: where(eq(a, 0), 0, a * log1p(b))
+    if _can_use_gpu(a) and _can_use_gpu(b):
+        from .math import mul, log1p
+        from .comparison import ne
+        from .elementwise import where
+        return where(ne(a, 0), mul(a, log1p(b)), 0.0)
     from scipy import special as sp
     a_np = _to_numpy(a).astype(np.float64)
     b_np = _to_numpy(b).astype(np.float64)
@@ -157,6 +192,12 @@ def special_xlog1py(a, b):
 
 def special_xlogy(a, b):
     """x * log(y), with 0 when x=0."""
+    # GPU composite: where(eq(a, 0), 0, a * log(b))
+    if _can_use_gpu(a) and _can_use_gpu(b):
+        from .math import mul, log
+        from .comparison import ne
+        from .elementwise import where
+        return where(ne(a, 0), mul(a, log(b)), 0.0)
     from scipy import special as sp
     a_np = _to_numpy(a).astype(np.float64)
     b_np = _to_numpy(b).astype(np.float64)
