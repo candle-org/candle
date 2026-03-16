@@ -1,4 +1,6 @@
 import inspect
+import functools
+import os
 import numpy as np
 
 from .registry import registry
@@ -12,6 +14,11 @@ from ..autograd import forward_ad
 from ..amp.state import is_autocast_enabled
 from ..amp.policy import apply_autocast_policy
 from ..profiler.profiler import is_profiler_enabled, dispatch_op_enter, dispatch_op_exit
+
+# Runtime schema validation — disabled by default for performance (PyTorch C++
+# dispatcher does not validate schemas at call time).  Set the environment
+# variable ``CANDLE_DEBUG_DISPATCH=1`` to enable.
+_DEBUG_DISPATCH = os.environ.get("CANDLE_DEBUG_DISPATCH", "") == "1"
 
 
 _DISPATCH_STATE = threading.local()
@@ -49,6 +56,7 @@ def _pop_dispatch_context():
         stack.pop()
 
 
+@functools.lru_cache(maxsize=256)
 def _accepts_device(func):
     try:
         sig = inspect.signature(func)
@@ -62,15 +70,18 @@ def _accepts_device(func):
 
 def _prepare_kwargs(func, kwargs, device):
     if not kwargs:
-        kwargs = {}
-    filtered = {k: v for k, v in kwargs.items() if k != "device"}
-    if "device" in kwargs and _accepts_device(func):
-        return kwargs
+        if _accepts_device(func):
+            return {"device": device}
+        return {}
+    if "device" in kwargs:
+        if _accepts_device(func):
+            return kwargs
+        return {k: v for k, v in kwargs.items() if k != "device"}
     if _accepts_device(func):
-        merged = dict(filtered)
+        merged = dict(kwargs)
         merged["device"] = device
         return merged
-    return filtered
+    return kwargs
 
 
 def _mutating_args(schema_obj, args, kwargs):
@@ -99,6 +110,8 @@ def _mutating_args(schema_obj, args, kwargs):
 
 def _bump_versions(schema_obj, args, kwargs):
     if schema_obj is None:
+        return
+    if not schema_obj.has_mutating_params:
         return
     mutated = _mutating_args(schema_obj, args, kwargs)
     seen = set()
@@ -287,6 +300,12 @@ def _key_order(keyset):
 
 
 def _extract_tensors(args, kwargs):
+    # Fast path: common binary op case (2 tensor args, no kwargs with tensors)
+    if len(args) == 2 and not kwargs:
+        a, b = args
+        if hasattr(a, "device") and hasattr(b, "device"):
+            return [a, b]
+
     tensors = []
 
     def _visit(value):
@@ -396,11 +415,11 @@ def _dispatch_torch_dispatch(func_name, tensors, args, kwargs):
     return NotImplemented
 
 
-def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
-    tensors = _extract_tensors(args, kwargs)
+def dispatch_with_keyset(name, keyset, dispatch_device, *args, _tensors=None, _pipeline=None, **kwargs):
+    tensors = _tensors if _tensors is not None else _extract_tensors(args, kwargs)
     _validate_tensor_devices(tensors)
     keyset = apply_tls_masks(keyset)
-    pipe = current_pipeline()
+    pipe = _pipeline if _pipeline is not None else current_pipeline()
     dispatch_device = _infer_dispatch_device(dispatch_device, tensors, keyset)
     alias_name = name
     try:
@@ -420,62 +439,6 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
             return pending
         return functionalize_op(name, alias_name, entry, keyset, args, kwargs, redispatch, dispatch_device=dispatch_device)
 
-    def _run_kernel():
-        kernel, key = _kernel_for_entry(entry, _key_order(keyset))
-        if kernel is None:
-            exc = RuntimeError(
-                f"could not find kernel for op {name} with keys {[k.name for k in _key_order(keyset)]}"
-            )
-            raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
-        impl_kwargs = _prepare_kwargs(kernel, kwargs, dispatch_device)
-        token = None
-        if is_profiler_enabled():
-            token = dispatch_op_enter(alias_name, dispatch_device, args, impl_kwargs)
-        _push_dispatch_context(keyset, key)
-        try:
-            result = kernel(*args, **impl_kwargs)
-        except Exception as exc:
-            raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
-        finally:
-            _pop_dispatch_context()
-            if token is not None:
-                dispatch_op_exit(token)
-        _bump_versions(entry.schema_obj, args, impl_kwargs)
-
-        level = forward_ad._current_level()
-        if level >= 0:
-            tangents = [forward_ad.get_tangent(t, level) for t in tensors]
-            if any(t is not None for t in tangents):
-                jvp = forward_ad.get_jvp(alias_name)
-                if jvp is None:
-                    raise RuntimeError(f"no forward-mode rule registered for op {alias_name}")
-                inner_keyset = keyset.without({DispatchKey.Autograd, DispatchKey.AutogradCPU, DispatchKey.AutogradCUDA, DispatchKey.AutogradNPU, DispatchKey.AutogradMeta, DispatchKey.AutogradXPU, DispatchKey.AutogradOther})
-                jvp_key = key
-                if jvp_key in inner_keyset:
-                    inner_keyset = inner_keyset.without(jvp_key)
-
-                def _eval_jvp():
-                    _push_dispatch_context(inner_keyset, jvp_key)
-                    try:
-                        return jvp(*args, **impl_kwargs, _tangents=tangents)
-                    finally:
-                        _pop_dispatch_context()
-
-                try:
-                    with forward_ad.temporarily_disable(level):
-                        out_tangent = _eval_jvp()
-                except Exception:
-                    out_tangent = _eval_jvp()
-                if isinstance(result, (tuple, list)):
-                    for out, t in zip(result, out_tangent):
-                        if hasattr(out, "_fw_set"):
-                            out._fw_set(level, t)
-                else:
-                    if hasattr(result, "_fw_set"):
-                        result._fw_set(level, out_tangent)
-
-        return result
-
     # __torch_dispatch__ subclass protocol: fires after autograd, before backend
     if keyset.has(DispatchKey.Python):
         result = _dispatch_torch_dispatch(alias_name, tensors, args, kwargs)
@@ -494,7 +457,7 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
 
     if pipe is not None and keyset.has(DispatchKey.Pipeline):
         if not pipe.should_defer_next():
-            return _run_kernel()
+            return _run_kernel_inline(entry, keyset, name, alias_name, dispatch_device, tensors, args, kwargs)
         meta = entry.kernels.get(DispatchKey.Meta)
         if meta is None:
             raise RuntimeError(f"pipeline requires meta kernel for op {name}")
@@ -527,7 +490,64 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
         return out
     if pipe is not None and keyset.has(DispatchKey.Pipeline):
         pipe.flush()
-    return _run_kernel()
+    return _run_kernel_inline(entry, keyset, name, alias_name, dispatch_device, tensors, args, kwargs)
+
+
+def _run_kernel_inline(entry, keyset, name, alias_name, dispatch_device, tensors, args, kwargs):
+    kernel, key = _kernel_for_entry(entry, _key_order(keyset))
+    if kernel is None:
+        exc = RuntimeError(
+            f"could not find kernel for op {name} with keys {[k.name for k in _key_order(keyset)]}"
+        )
+        raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
+    impl_kwargs = _prepare_kwargs(kernel, kwargs, dispatch_device)
+    token = None
+    if is_profiler_enabled():
+        token = dispatch_op_enter(alias_name, dispatch_device, args, impl_kwargs)
+    _push_dispatch_context(keyset, key)
+    try:
+        result = kernel(*args, **impl_kwargs)
+    except Exception as exc:
+        raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
+    finally:
+        _pop_dispatch_context()
+        if token is not None:
+            dispatch_op_exit(token)
+    _bump_versions(entry.schema_obj, args, impl_kwargs)
+
+    level = forward_ad._current_level()
+    if level >= 0:
+        tangents = [forward_ad.get_tangent(t, level) for t in tensors]
+        if any(t is not None for t in tangents):
+            jvp = forward_ad.get_jvp(alias_name)
+            if jvp is None:
+                raise RuntimeError(f"no forward-mode rule registered for op {alias_name}")
+            inner_keyset = keyset.without({DispatchKey.Autograd, DispatchKey.AutogradCPU, DispatchKey.AutogradCUDA, DispatchKey.AutogradNPU, DispatchKey.AutogradMeta, DispatchKey.AutogradXPU, DispatchKey.AutogradOther})
+            jvp_key = key
+            if jvp_key in inner_keyset:
+                inner_keyset = inner_keyset.without(jvp_key)
+
+            def _eval_jvp():
+                _push_dispatch_context(inner_keyset, jvp_key)
+                try:
+                    return jvp(*args, **impl_kwargs, _tangents=tangents)
+                finally:
+                    _pop_dispatch_context()
+
+            try:
+                with forward_ad.temporarily_disable(level):
+                    out_tangent = _eval_jvp()
+            except Exception:
+                out_tangent = _eval_jvp()
+            if isinstance(result, (tuple, list)):
+                for out, t in zip(result, out_tangent):
+                    if hasattr(out, "_fw_set"):
+                        out._fw_set(level, t)
+            else:
+                if hasattr(result, "_fw_set"):
+                    result._fw_set(level, out_tangent)
+
+    return result
 
 
 def dispatch(name, dispatch_device, *args, **kwargs):
@@ -545,7 +565,7 @@ def dispatch(name, dispatch_device, *args, **kwargs):
         device=dispatch_device,
         autocast_enabled=is_autocast_enabled(autocast_device_type),
     )
-    return dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs)
+    return dispatch_with_keyset(name, keyset, dispatch_device, *args, _tensors=tensors, _pipeline=pipe, **kwargs)
 
 
 def redispatch(name, keyset, *args, **kwargs):

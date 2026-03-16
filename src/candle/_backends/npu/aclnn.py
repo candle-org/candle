@@ -3922,11 +3922,19 @@ def _normalize_dtype(dtype):
     return str(dtype)
 
 
+_acl_dtype_cache = {}
+
+
 def _dtype_to_acl(dtype):
-    dtype = _normalize_dtype(dtype)
-    if dtype not in _ACL_DTYPE:
-        raise ValueError(f"Unsupported dtype for ACLNN: {dtype}")
-    return _ACL_DTYPE[dtype]
+    cached = _acl_dtype_cache.get(dtype)
+    if cached is not None:
+        return cached
+    name = _normalize_dtype(dtype)
+    if name not in _ACL_DTYPE:
+        raise ValueError(f"Unsupported dtype for ACLNN: {name}")
+    val = _ACL_DTYPE[name]
+    _acl_dtype_cache[dtype] = val
+    return val
 
 
 def _float32_bits(value):
@@ -4010,12 +4018,20 @@ def _scalar_bytes(value, dtype):
     raise ValueError(f"Unsupported scalar dtype for ACLNN: {dtype}")
 
 
+_int64_array_cache = {}
+_INT64_ARRAY_CACHE_MAX = 256
+
+
 def _make_int64_array(values):
     if not values:
         return None
-    data = (ctypes.c_int64 * len(values))()
-    for i, v in enumerate(values):
-        data[i] = int(v)
+    key = tuple(int(v) for v in values)
+    cached = _int64_array_cache.get(key)
+    if cached is not None:
+        return cached
+    data = (ctypes.c_int64 * len(key))(*key)
+    if len(_int64_array_cache) < _INT64_ARRAY_CACHE_MAX:
+        _int64_array_cache[key] = data
     return data
 
 
@@ -4029,36 +4045,70 @@ def _make_bool_array(values):
     return data
 
 
+# Pre-allocated ctypes constants to avoid repeated construction
+_C_INT64_ZERO = ctypes.c_int64(0)
+_C_INT32_FMT_ND = ctypes.c_int32(_ACL_FORMAT_ND)
+_c_uint64_cache = {}
+_c_int32_dtype_cache = {}
+
+
+def _c_uint64(val):
+    cached = _c_uint64_cache.get(val)
+    if cached is None:
+        cached = ctypes.c_uint64(val)
+        _c_uint64_cache[val] = cached
+    return cached
+
+
+def _c_int32_dtype(dtype):
+    cached = _c_int32_dtype_cache.get(dtype)
+    if cached is None:
+        cached = ctypes.c_int32(_dtype_to_acl(dtype))
+        _c_int32_dtype_cache[dtype] = cached
+    return cached
+
+
 def _create_tensor(bindings, shape, stride, dtype, data_ptr, fmt=_ACL_FORMAT_ND):
     view_dims = _make_int64_array(shape)
     stride_dims = _make_int64_array(stride)
-    storage_dims = _make_int64_array(shape)
-    view_num = ctypes.c_uint64(len(shape))
-    storage_num = ctypes.c_uint64(len(shape))
+    ndim = len(shape)
     tensor = bindings.acl_create_tensor(
         view_dims,
-        view_num,
-        ctypes.c_int32(_dtype_to_acl(dtype)),
+        _c_uint64(ndim),
+        _c_int32_dtype(dtype),
         stride_dims,
-        ctypes.c_int64(0),
-        ctypes.c_int32(fmt),
-        storage_dims,
-        storage_num,
+        _C_INT64_ZERO,
+        _C_INT32_FMT_ND if fmt == _ACL_FORMAT_ND else ctypes.c_int32(fmt),
+        view_dims,       # storage_dims == view_dims for contiguous
+        _c_uint64(ndim),
         ctypes.c_void_p(int(data_ptr)),
     )
     if not tensor:
         raise RuntimeError("aclCreateTensor returned null")
-    keepalive = (view_dims, stride_dims, storage_dims)
-    return tensor, keepalive
+    return tensor, (view_dims, stride_dims)
 
 
 def _create_scalar(bindings, value, dtype):
     data = _scalar_bytes(value, dtype)
     buf = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
     ptr = ctypes.c_void_p(ctypes.addressof(buf))
-    scalar = bindings.acl_create_scalar(ptr, ctypes.c_int32(_dtype_to_acl(dtype)))
+    scalar = bindings.acl_create_scalar(ptr, _c_int32_dtype(dtype))
     if not scalar:
         raise RuntimeError("aclCreateScalar returned null")
+    return scalar, buf
+
+
+# Cache alpha=1 scalars per dtype — these are the most common scalars
+# (used by add, sub, etc.). They are never destroyed.
+_alpha_one_cache = {}
+
+
+def _get_alpha_one(bindings, dtype):
+    cached = _alpha_one_cache.get(dtype)
+    if cached is not None:
+        return cached
+    scalar, buf = _create_scalar(bindings, 1, dtype)
+    _alpha_one_cache[dtype] = (scalar, buf)
     return scalar, buf
 
 
@@ -4263,17 +4313,15 @@ def add(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     self_tensor, self_keep = _create_tensor(bindings, self_shape, self_stride, dtype, self_ptr)
     other_tensor, other_keep = _create_tensor(bindings, other_shape, other_stride, dtype, other_ptr)
     out_tensor, out_keep = _create_tensor(bindings, out_shape, out_stride, dtype, out_ptr)
-    scalar = None
-    alpha_arr = None
     executor = ctypes.c_void_p()
     workspace_size = ctypes.c_uint64(0)
     workspace = None
     try:
-        scalar, alpha_arr = _create_scalar(bindings, 1, dtype)
+        alpha, _alpha_buf = _get_alpha_one(bindings, dtype)
         ret = bindings.aclnn_add_get_workspace(
             self_tensor,
             other_tensor,
-            scalar,
+            alpha,
             out_tensor,
             ctypes.byref(workspace_size),
             ctypes.byref(executor),
@@ -4296,14 +4344,12 @@ def add(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
         _maybe_sync(runtime)
     finally:
         _defer_executor(executor)
-        if scalar:
-            bindings.acl_destroy_scalar(scalar)
         bindings.acl_destroy_tensor(self_tensor)
         bindings.acl_destroy_tensor(other_tensor)
         bindings.acl_destroy_tensor(out_tensor)
         if workspace is not None:
             runtime.defer_raw_free(workspace)
-        _ = (self_keep, other_keep, out_keep, alpha_arr)
+        _ = (self_keep, other_keep, out_keep)
 
 
 def mul(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, other_stride,
@@ -4363,17 +4409,15 @@ def sub(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     self_tensor, self_keep = _create_tensor(bindings, self_shape, self_stride, dtype, self_ptr)
     other_tensor, other_keep = _create_tensor(bindings, other_shape, other_stride, dtype, other_ptr)
     out_tensor, out_keep = _create_tensor(bindings, out_shape, out_stride, dtype, out_ptr)
-    scalar = None
-    alpha_arr = None
     executor = ctypes.c_void_p()
     workspace_size = ctypes.c_uint64(0)
     workspace = None
     try:
-        scalar, alpha_arr = _create_scalar(bindings, 1, dtype)
+        alpha, _alpha_buf = _get_alpha_one(bindings, dtype)
         ret = bindings.aclnn_sub_get_workspace(
             self_tensor,
             other_tensor,
-            scalar,
+            alpha,
             out_tensor,
             ctypes.byref(workspace_size),
             ctypes.byref(executor),
@@ -4396,14 +4440,12 @@ def sub(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
         _maybe_sync(runtime)
     finally:
         _defer_executor(executor)
-        if scalar:
-            bindings.acl_destroy_scalar(scalar)
         bindings.acl_destroy_tensor(self_tensor)
         bindings.acl_destroy_tensor(other_tensor)
         bindings.acl_destroy_tensor(out_tensor)
         if workspace is not None:
             runtime.defer_raw_free(workspace)
-        _ = (self_keep, other_keep, out_keep, alpha_arr)
+        _ = (self_keep, other_keep, out_keep)
 
 
 def div(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, other_stride,
@@ -4464,7 +4506,7 @@ def add_scalar(self_ptr, scalar_value, out_ptr, shape, stride, dtype, runtime, s
     self_tensor, self_keep = _create_tensor(bindings, shape, stride, dtype, self_ptr)
     out_tensor, out_keep = _create_tensor(bindings, shape, stride, dtype, out_ptr)
     scalar, scalar_keep = _create_scalar(bindings, scalar_value, dtype)
-    alpha, alpha_keep = _create_scalar(bindings, 1, dtype)
+    alpha, _alpha_buf = _get_alpha_one(bindings, dtype)
     executor = ctypes.c_void_p()
     workspace_size = ctypes.c_uint64(0)
     workspace = None
@@ -4498,7 +4540,6 @@ def add_scalar(self_ptr, scalar_value, out_ptr, shape, stride, dtype, runtime, s
         bindings.acl_destroy_tensor(self_tensor)
         bindings.acl_destroy_tensor(out_tensor)
         bindings.acl_destroy_scalar(scalar)
-        bindings.acl_destroy_scalar(alpha)
         if workspace is not None:
             runtime.defer_raw_free(workspace)
         _ = (self_keep, out_keep, scalar_keep)

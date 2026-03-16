@@ -1,5 +1,8 @@
 from enum import IntEnum
 import threading
+
+# Cached reference to base Tensor class (set on first use to avoid circular import)
+_BaseTensor = None
 class DispatchKey(IntEnum):
     BackendSelect = 1 << 0
     Pipeline = 1 << 1
@@ -206,13 +209,18 @@ class DispatchKeySet:
             # Check if any tensor is a subclass with a custom __torch_dispatch__
             if not has_dispatch_subclass:
                 tensor_cls = type(tensor)
-                td = getattr(tensor_cls, "__torch_dispatch__", None)
-                if td is not None:
-                    # Lazy import to avoid circular imports
-                    from .._tensor import Tensor as _BaseTensor
-                    base_td = getattr(_BaseTensor, "__torch_dispatch__", None)
-                    if td is not base_td:
-                        has_dispatch_subclass = True
+                global _BaseTensor
+                if _BaseTensor is None:
+                    from .._tensor import Tensor
+                    _BaseTensor = Tensor
+                if tensor_cls is not _BaseTensor:
+                    td = getattr(tensor_cls, "__torch_dispatch__", None)
+                    if td is not None:
+                        base_td = _BaseTensor.__dict__.get("__torch_dispatch__")
+                        actual_func = getattr(td, "__func__", td)
+                        base_func = getattr(base_td, "__func__", base_td)
+                        if actual_func is not base_func:
+                            has_dispatch_subclass = True
         if (not saw_device) and device is not None:
             dev_type = device.type if hasattr(device, "type") else device
             if dev_type == "meta":

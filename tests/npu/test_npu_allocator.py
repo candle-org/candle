@@ -188,7 +188,9 @@ def test_allocator_record_stream(monkeypatch):
     ptr = alloc.malloc(512, stream="s0")
     alloc.record_stream(ptr, stream="s1")
 
-    assert alloc._active[ptr].stream == "s1"
+    block = alloc._active[ptr]
+    assert block.stream == "s0"  # allocation stream unchanged
+    assert "s1" in block.stream_uses  # cross-stream usage tracked
 
 
 def test_npu_storage_free_updates_allocator(monkeypatch):

@@ -209,6 +209,8 @@ class Block:
         self.pool = pool
         self.stream = stream
         self.event = None
+        self.stream_uses = set()  # streams other than allocation stream
+        self.event_count = 0
 
 
 def _round_size(size):
@@ -225,7 +227,7 @@ class NpuAllocator:
         self._stats = {}
         self._active = {}
         self._cached = {"small_pool": [], "large_pool": []}
-        self._pending = []
+        self._pending_events = []  # list of (event, block) pairs
         self._init_stats()
 
     def _pool_for_size(self, size):
@@ -290,18 +292,18 @@ class NpuAllocator:
         return block, remainder
 
     def _drain_pending(self):
-        ready = []
-        pending = []
-        for block in self._pending:
-            if self._event_complete(block.event):
-                ready.append(block)
+        still_pending = []
+        for event, block in self._pending_events:
+            if self._event_complete(event):
+                block.event_count -= 1
+                if block.event_count == 0:
+                    self._cached[block.pool].append(block)
+                    self._bump("inactive_split_bytes", block.pool,
+                                current=block.size, allocated=block.size)
+                    self._bump("inactive_split", block.pool, current=1, allocated=1)
             else:
-                pending.append(block)
-        self._pending = pending
-        for block in ready:
-            self._cached[block.pool].append(block)
-            self._bump("inactive_split_bytes", block.pool, current=block.size, allocated=block.size)
-            self._bump("inactive_split", block.pool, current=1, allocated=1)
+                still_pending.append((event, block))
+        self._pending_events = still_pending
 
     def _record_event(self, stream):
         from . import runtime as npu_runtime
@@ -424,12 +426,44 @@ class NpuAllocator:
             return
         if stream is None:
             stream = block.stream
-        block.event = self._record_event(stream)
-        if block.event is None:
-            self._sync_device()
-            self._stats["num_sync_all_streams"] += 1
-        self._pending.append(block)
         self._track_free(block)
+
+        if not block.stream_uses:
+            # Single-stream fast path: stream ordering guarantees safety,
+            # no event needed — matches torch_npu's NPUCachingAllocator.
+            self._cached[block.pool].append(block)
+            self._bump("inactive_split_bytes", block.pool,
+                        current=block.size, allocated=block.size)
+            self._bump("inactive_split", block.pool, current=1, allocated=1)
+            return
+
+        # Multi-stream slow path: record an event on each extra stream
+        # so we know when it's safe to reuse the block.
+        self._insert_events(block)
+
+    def _insert_events(self, block):
+        """Record events on all extra streams the block was used on."""
+        streams = block.stream_uses
+        block.stream_uses = set()
+        for s in streams:
+            event = self._record_event(s)
+            if event is None:
+                # Event creation failed — fall back to full sync
+                self._sync_device()
+                self._stats["num_sync_all_streams"] += 1
+                block.event_count = 0
+                self._cached[block.pool].append(block)
+                self._bump("inactive_split_bytes", block.pool,
+                            current=block.size, allocated=block.size)
+                self._bump("inactive_split", block.pool, current=1, allocated=1)
+                return
+            block.event_count += 1
+            self._pending_events.append((event, block))
+        # Also record on the allocation stream itself
+        event = self._record_event(block.stream)
+        if event is not None:
+            block.event_count += 1
+            self._pending_events.append((event, block))
 
     def synchronize(self):
         self._sync_device()
@@ -440,7 +474,9 @@ class NpuAllocator:
         block = self._active.get(int(ptr))
         if block is None:
             return
-        block.stream = stream
+        # Only track if it's a different stream from the allocation stream
+        if stream != block.stream:
+            block.stream_uses.add(stream)
 
     def empty_cache(self):
         for pool, blocks in self._cached.items():

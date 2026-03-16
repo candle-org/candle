@@ -32,83 +32,80 @@ def _parse_type_name(type_part):
     return text
 
 
+def _format_type_static(value):
+    if hasattr(value, "device") and hasattr(value, "dtype"):
+        return "Tensor"
+    if isinstance(value, bool):
+        return "bool"
+    if isinstance(value, int):
+        return "int"
+    if isinstance(value, float):
+        return "float"
+    if isinstance(value, str):
+        return "str"
+    return type(value).__name__
+
+
+def _format_got_static(args, kwargs):
+    parts = []
+    for value in args:
+        parts.append(_format_type_static(value))
+    for key, value in kwargs.items():
+        parts.append(f"{key}={_format_type_static(value)}")
+    if not parts:
+        return "()"
+    return f"({', '.join(parts)})"
+
+
 class OpSchema:
     def __init__(self, schema):
         self.schema = schema
         self.name, self.params, self.returns = _parse_schema(schema)
+        self._positional_params = [p for p in self.params if not p.kw_only]
+        self._param_names = {p.name for p in self.params}
+        self._required_names = {p.name for p in self.params if not p.has_default}
+        # If all params are Tensor type, _validate_types is a no-op on the happy path
+        self._simple_tensor_op = all(
+            p.type_name == "Tensor" for p in self.params if not p.has_default
+        ) and len(self.params) > 0
+        # Pre-compute whether any param is mutating (for fast _bump_versions skip)
+        self.has_mutating_params = any(
+            p.mutates and getattr(p, "alias_set", None) not in (None, "")
+            for p in self.params
+        )
 
     def bind(self, args, kwargs, *, op_name=None, error_overrides=None):
+        # Ultra-fast path: no kwargs, correct arg count, simple tensor op
+        if (not kwargs and self._simple_tensor_op
+                and len(args) == len(self._required_names)):
+            return True
+
         name = op_name or self.name
         if kwargs is None:
             kwargs = {}
-        params = self.params
-        positional_params = [p for p in params if not p.kw_only]
+        positional_params = self._positional_params
 
-        def _format_type(value):
-            if hasattr(value, "device") and hasattr(value, "dtype"):
-                return "Tensor"
-            if isinstance(value, bool):
-                return "bool"
-            if isinstance(value, int):
-                return "int"
-            if isinstance(value, float):
-                return "float"
-            if isinstance(value, str):
-                return "str"
-            return type(value).__name__
+        # Fast path: check counts and required params without creating closures
+        nargs = len(args)
+        if nargs > len(positional_params):
+            return self._bind_error(args, kwargs, name, error_overrides, "too_many")
 
-        def _format_got():
-            parts = []
-            for value in args:
-                parts.append(_format_type(value))
-            for key, value in kwargs.items():
-                parts.append(f"{key}={_format_type(value)}")
-            if not parts:
-                return "()"
-            return f"({', '.join(parts)})"
+        if kwargs:
+            for key in kwargs:
+                if key not in self._param_names:
+                    return self._bind_error(args, kwargs, name, error_overrides, "unexpected", key=key)
 
-        def _maybe_override(kind):
-            if not error_overrides:
-                return False
-            template = error_overrides.get(kind)
-            if template is None:
-                return False
-            message = template.format(name=name, got=_format_got())
-            raise TypeError(message)
+        for idx in range(nargs):
+            if positional_params[idx].name in kwargs:
+                return self._bind_error(args, kwargs, name, error_overrides, "duplicate", key=positional_params[idx].name)
 
-        if len(args) > len(positional_params):
-            expected = len(positional_params)
-            plural = "s" if expected != 1 else ""
-            _maybe_override("too_many")
-            raise TypeError(
-                f"{name}() takes {expected} positional argument{plural} but {len(args)} were given"
-            )
-
-        for key in kwargs:
-            if key == "device" and key not in {p.name for p in params}:
-                _maybe_override("unexpected")
-                raise TypeError(f"{name}() got an unexpected keyword argument '{key}'")
-            if key not in {p.name for p in params}:
-                _maybe_override("unexpected")
-                raise TypeError(f"{name}() got an unexpected keyword argument '{key}'")
-
-        for idx, _ in enumerate(args):
-            param = positional_params[idx]
-            if param.name in kwargs:
-                arg_name = _torch_param_name(param.name)
-                _maybe_override("duplicate")
-                raise TypeError(f"{name}() got multiple values for argument '{arg_name}'")
-
-        provided = {p.name for p in positional_params[: len(args)]} | {
-            k for k in kwargs.keys() if k != "device" or k in {p.name for p in params}
-        }
-        missing = [p.name for p in params if p.name not in provided and not p.has_default]
-        if missing:
-            _maybe_override("missing")
-            missing_fmt = ", ".join(f'"{_torch_param_name(m)}"' for m in missing)
-            raise TypeError(
-                f"{name}() missing {len(missing)} required positional arguments: {missing_fmt}"
-            )
+        if self._required_names:
+            provided = {p.name for p in positional_params[:nargs]}
+            for k in kwargs:
+                if k != "device" or k in self._param_names:
+                    provided.add(k)
+            if not self._required_names <= provided:
+                return self._bind_error(args, kwargs, name, error_overrides, "missing")
 
         # Minimal type checks for high-frequency schema mismatches that must
         # match torch call-site validation paths.
@@ -117,23 +114,77 @@ class OpSchema:
             kwargs,
             name=name,
             error_overrides=error_overrides,
-            got=_format_got(),
+            got=lambda: _format_got_static(args, kwargs),
         )
         return True
 
+    def _bind_error(self, args, kwargs, name, error_overrides, kind, *, key=None):
+        """Slow path for bind errors — only called when validation fails."""
+        positional_params = self._positional_params
+        got_str = _format_got_static(args, kwargs)
+
+        def _maybe_override(k):
+            if not error_overrides:
+                return False
+            template = error_overrides.get(k)
+            if template is None:
+                return False
+            raise TypeError(template.format(name=name, got=got_str))
+
+        if kind == "too_many":
+            expected = len(positional_params)
+            plural = "s" if expected != 1 else ""
+            _maybe_override("too_many")
+            raise TypeError(
+                f"{name}() takes {expected} positional argument{plural} but {len(args)} were given"
+            )
+        if kind == "unexpected":
+            _maybe_override("unexpected")
+            raise TypeError(f"{name}() got an unexpected keyword argument '{key}'")
+        if kind == "duplicate":
+            arg_name = _torch_param_name(key)
+            _maybe_override("duplicate")
+            raise TypeError(f"{name}() got multiple values for argument '{arg_name}'")
+        if kind == "missing":
+            provided = {p.name for p in positional_params[:len(args)]}
+            for k in kwargs:
+                if k != "device" or k in self._param_names:
+                    provided.add(k)
+            missing = self._required_names - provided
+            _maybe_override("missing")
+            missing_fmt = ", ".join(f'"{_torch_param_name(m)}"' for m in missing)
+            raise TypeError(
+                f"{name}() missing {len(missing)} required positional arguments: {missing_fmt}"
+            )
+
     def _validate_types(self, args, kwargs, *, name, error_overrides, got):  # pylint: disable=too-many-statements
+        # Fast path: for ops where all required params are Tensors and all args
+        # are indeed tensors, skip the expensive validation (which creates ~10 closures).
+        if self._simple_tensor_op:
+            all_tensors = True
+            for a in args:
+                if not (hasattr(a, 'device') and hasattr(a, 'dtype')):
+                    all_tensors = False
+                    break
+            if all_tensors:
+                return
+
         if kwargs is None:
             kwargs = {}
 
         op_short_name = name.split("::", 1)[-1]
 
+        def _resolve_got():
+            return got() if callable(got) else got
+
         def _raise_invalid_combo(extra=None):
+            g = _resolve_got()
             if error_overrides and error_overrides.get("unexpected") is not None:
-                payload = {"name": name, "got": got}
+                payload = {"name": name, "got": g}
                 if extra:
                     payload.update(extra)
                 raise TypeError(error_overrides["unexpected"].format(**payload))
-            raise TypeError(f"{name}() received an invalid combination of arguments - got {got}")
+            raise TypeError(f"{name}() received an invalid combination of arguments - got {g}")
 
         params = self.params
         positional = [p for p in params if not p.kw_only]
