@@ -56,6 +56,14 @@ DEF MAX_NDIM = 16
 # Stored dlopen handles (as uintptr_t) for op symbol resolution
 _lib_handles = []
 
+# Handle for libopapi.so — preferred for arithmetic ops (add/sub/mul/div)
+_opapi_handle = 0  # uintptr_t, 0 means not found
+
+# Ops that must prefer libopapi.so (matches _bind_symbol logic in aclnn.py)
+_PREFER_OPAPI = frozenset({
+    "Add", "Sub", "Mul", "Div", "Adds", "Subs",
+})
+
 # Cache: op_name -> (getws_ptr, exec_ptr) as uintptr_t
 _op_cache = {}
 
@@ -123,6 +131,15 @@ def init(list lib_paths):
     # Store handles for later op resolution
     _lib_handles.clear()
     _lib_handles.extend(handles)
+
+    # Identify the libopapi.so handle for arithmetic op preference
+    global _opapi_handle
+    for i, path in enumerate(lib_paths):
+        p = path if isinstance(path, str) else path.decode("utf-8")
+        if p.endswith("libopapi.so"):
+            _opapi_handle = handles[i]
+            break
+
     _initialized = 1
 
 
@@ -244,6 +261,8 @@ def resolve_op(str op_name):
     """Resolve GetWorkspaceSize and Execute function pointers for an op.
 
     Returns (getws_ptr, exec_ptr) as ints.  Cached after first call.
+    For arithmetic ops (Add/Sub/Mul/Div), prefers libopapi.so to match
+    the ctypes _bind_symbol preference in aclnn.py.
     """
     cached = _op_cache.get(op_name)
     if cached is not None:
@@ -252,8 +271,22 @@ def resolve_op(str op_name):
     ws_name = f"aclnn{op_name}GetWorkspaceSize".encode("utf-8")
     exec_name = f"aclnn{op_name}".encode("utf-8")
 
-    cdef void* ws_sym = _find_symbol(_lib_handles, ws_name)
-    cdef void* exec_sym = _find_symbol(_lib_handles, exec_name)
+    cdef void* ws_sym = NULL
+    cdef void* exec_sym = NULL
+    cdef void* h
+
+    # For arithmetic ops, try libopapi.so first
+    if op_name in _PREFER_OPAPI and _opapi_handle != 0:
+        h = <void*><uintptr_t>_opapi_handle
+        dlerror()
+        ws_sym = dlsym(h, ws_name)
+        exec_sym = dlsym(h, exec_name)
+
+    # Fall back to searching all handles
+    if ws_sym == NULL:
+        ws_sym = _find_symbol(_lib_handles, ws_name)
+    if exec_sym == NULL:
+        exec_sym = _find_symbol(_lib_handles, exec_name)
 
     result = (<uintptr_t>ws_sym, <uintptr_t>exec_sym)
     _op_cache[op_name] = result

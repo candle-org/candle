@@ -18,7 +18,13 @@ import os
 
 _initialized = False
 _lib_handles = []   # list of ctypes.CDLL
+_opapi_handle = None  # ctypes.CDLL for libopapi.so, preferred for arithmetic ops
 _op_cache = {}      # op_name -> (getws_ctypes_func, exec_ctypes_func)
+
+# Ops that must prefer libopapi.so (matches _bind_symbol logic in aclnn.py)
+_PREFER_OPAPI = frozenset({
+    "Add", "Sub", "Mul", "Div", "Adds", "Subs",
+})
 
 # Core function bindings (set by init())
 _fn_create_tensor = None
@@ -49,6 +55,13 @@ def init(lib_paths):
 
     _lib_handles.clear()
     _lib_handles.extend(handles)
+
+    # Identify the libopapi.so handle for arithmetic op preference
+    global _opapi_handle
+    for i, path in enumerate(lib_paths):
+        if path.endswith("libopapi.so"):
+            _opapi_handle = handles[i]
+            break
 
     _fn_create_tensor = _bind(handles, "aclCreateTensor", ctypes.c_void_p, [
         ctypes.POINTER(ctypes.c_int64), ctypes.c_uint64, ctypes.c_int32,
@@ -172,6 +185,7 @@ def resolve_op(op_name):
     """Resolve GetWorkspaceSize and Execute function pointers for an op.
 
     Returns (getws_func, exec_func) as ctypes function objects.
+    For arithmetic ops (Add/Sub/Mul/Div), prefers libopapi.so.
     """
     cached = _op_cache.get(op_name)
     if cached is not None:
@@ -182,13 +196,23 @@ def resolve_op(op_name):
 
     ws_func = None
     exec_func = None
-    for lib in _lib_handles:
-        if ws_func is None and hasattr(lib, ws_name):
-            ws_func = getattr(lib, ws_name)
-        if exec_func is None and hasattr(lib, exec_name):
-            exec_func = getattr(lib, exec_name)
-        if ws_func is not None and exec_func is not None:
-            break
+
+    # For arithmetic ops, try libopapi.so first
+    if op_name in _PREFER_OPAPI and _opapi_handle is not None:
+        if hasattr(_opapi_handle, ws_name):
+            ws_func = getattr(_opapi_handle, ws_name)
+        if hasattr(_opapi_handle, exec_name):
+            exec_func = getattr(_opapi_handle, exec_name)
+
+    # Fall back to searching all handles
+    if ws_func is None or exec_func is None:
+        for lib in _lib_handles:
+            if ws_func is None and hasattr(lib, ws_name):
+                ws_func = getattr(lib, ws_name)
+            if exec_func is None and hasattr(lib, exec_name):
+                exec_func = getattr(lib, exec_name)
+            if ws_func is not None and exec_func is not None:
+                break
 
     if ws_func is None or exec_func is None:
         raise RuntimeError(
