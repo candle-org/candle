@@ -6,6 +6,12 @@ import struct
 from .acl_loader import ensure_acl
 from . import cann_discovery
 
+# Try to import the Cython FFI hot-path; fall back to pure-Python ctypes.
+try:
+    from . import _aclnn_ffi as _ffi
+except ImportError:
+    from . import _aclnn_ffi_fallback as _ffi  # pylint: disable=ungrouped-imports
+
 acl = None
 
 
@@ -4105,6 +4111,7 @@ def _load_libs():
     lib_dirs = _get_lib_dirs()
     base_libs, preload_libs, main_libs = _get_lib_names()
     libs = []
+    resolved_paths = []  # absolute paths for FFI init
     for lib_name in base_libs:
         lib_path = None
         for base in lib_dirs:
@@ -4115,6 +4122,7 @@ def _load_libs():
         if lib_path is None:
             raise FileNotFoundError(f"ACLNN base library not found: {lib_name}")
         libs.append(ctypes.CDLL(lib_path))
+        resolved_paths.append(lib_path)
     for lib_name in preload_libs:
         lib_path = None
         for base in lib_dirs:
@@ -4134,7 +4142,13 @@ def _load_libs():
         if lib_path is None:
             raise FileNotFoundError(f"ACLNN library not found: {lib_name}")
         libs.append(ctypes.CDLL(lib_path))
+        resolved_paths.append(lib_path)
     _LIB_HANDLES = libs
+    # Initialize the Cython/fallback FFI layer with resolved library paths
+    try:
+        _ffi.init(resolved_paths)
+    except Exception:  # pylint: disable=broad-except
+        pass  # FFI init failure is non-fatal; ops fall back to ctypes path
     return libs
 
 
@@ -4260,6 +4274,44 @@ def add(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     if acl is None:
         acl = ensure_acl()
     bindings = get_bindings()
+    stream_ptr = int(runtime.stream if stream is None else stream)
+    dtype_code = _dtype_to_acl(dtype)
+
+    if _ffi.is_initialized():
+        # Create alpha=1 scalar via FFI
+        alpha_bytes = _scalar_bytes(1, dtype)
+        alpha_handle = _ffi.create_scalar(alpha_bytes, dtype_code)
+        executor = 0
+        workspace = None
+        try:
+            getws_ptr, exec_ptr = _ffi.resolve_op("Add")
+            ws_size, executor = _ffi.binary_op_with_alpha(
+                getws_ptr, exec_ptr,
+                self_shape, self_stride,
+                other_shape, other_stride,
+                out_shape, out_stride,
+                dtype_code, _ACL_FORMAT_ND,
+                int(self_ptr), int(other_ptr), int(out_ptr),
+                alpha_handle, stream_ptr)
+            workspace = None
+            if ws_size:
+                workspace_ptr, ret = acl.rt.malloc(ws_size, 0)
+                if ret != 0:
+                    raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                workspace = workspace_ptr
+                ret = _ffi.execute(exec_ptr, int(workspace), ws_size,
+                                   executor, stream_ptr)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnAdd failed: {ret}")
+            _maybe_sync(runtime)
+        finally:
+            _defer_executor(ctypes.c_void_p(executor))
+            _ffi.destroy_scalar(alpha_handle)
+            if workspace is not None:
+                runtime.defer_raw_free(workspace)
+        return
+
+    # Fallback: original ctypes path
     self_tensor, self_keep = _create_tensor(bindings, self_shape, self_stride, dtype, self_ptr)
     other_tensor, other_keep = _create_tensor(bindings, other_shape, other_stride, dtype, other_ptr)
     out_tensor, out_keep = _create_tensor(bindings, out_shape, out_stride, dtype, out_ptr)
@@ -4271,12 +4323,8 @@ def add(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     try:
         scalar, alpha_arr = _create_scalar(bindings, 1, dtype)
         ret = bindings.aclnn_add_get_workspace(
-            self_tensor,
-            other_tensor,
-            scalar,
-            out_tensor,
-            ctypes.byref(workspace_size),
-            ctypes.byref(executor),
+            self_tensor, other_tensor, scalar, out_tensor,
+            ctypes.byref(workspace_size), ctypes.byref(executor),
         )
         if ret != 0:
             raise RuntimeError(f"aclnnAddGetWorkspaceSize failed: {ret}")
@@ -4289,7 +4337,7 @@ def add(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
             ctypes.c_void_p(0 if workspace is None else int(workspace)),
             ctypes.c_uint64(workspace_size.value),
             executor,
-            ctypes.c_void_p(int(runtime.stream if stream is None else stream)),
+            ctypes.c_void_p(stream_ptr),
         )
         if ret != 0:
             raise RuntimeError(f"aclnnAdd failed: {ret}")
@@ -4312,6 +4360,40 @@ def mul(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     if acl is None:
         acl = ensure_acl()
     bindings = get_bindings()
+    stream_ptr = int(runtime.stream if stream is None else stream)
+    dtype_code = _dtype_to_acl(dtype)
+
+    if _ffi.is_initialized():
+        executor = 0
+        workspace = None
+        try:
+            getws_ptr, exec_ptr = _ffi.resolve_op("Mul")
+            ws_size, executor = _ffi.binary_op_no_alpha(
+                getws_ptr, exec_ptr,
+                self_shape, self_stride,
+                other_shape, other_stride,
+                out_shape, out_stride,
+                dtype_code, _ACL_FORMAT_ND,
+                int(self_ptr), int(other_ptr), int(out_ptr),
+                stream_ptr)
+            workspace = None
+            if ws_size:
+                workspace_ptr, ret = acl.rt.malloc(ws_size, 0)
+                if ret != 0:
+                    raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                workspace = workspace_ptr
+                ret = _ffi.execute(exec_ptr, int(workspace), ws_size,
+                                   executor, stream_ptr)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnMul failed: {ret}")
+            _maybe_sync(runtime)
+        finally:
+            _defer_executor(ctypes.c_void_p(executor))
+            if workspace is not None:
+                runtime.defer_raw_free(workspace)
+        return
+
+    # Fallback: original ctypes path
     self_tensor, self_keep = _create_tensor(bindings, self_shape, self_stride, dtype, self_ptr)
     other_tensor, other_keep = _create_tensor(bindings, other_shape, other_stride, dtype, other_ptr)
     out_tensor, out_keep = _create_tensor(bindings, out_shape, out_stride, dtype, out_ptr)
@@ -4320,11 +4402,8 @@ def mul(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     workspace = None
     try:
         ret = bindings.aclnn_mul_get_workspace(
-            self_tensor,
-            other_tensor,
-            out_tensor,
-            ctypes.byref(workspace_size),
-            ctypes.byref(executor),
+            self_tensor, other_tensor, out_tensor,
+            ctypes.byref(workspace_size), ctypes.byref(executor),
         )
         if ret != 0:
             raise RuntimeError(f"aclnnMulGetWorkspaceSize failed: {ret}")
@@ -4337,7 +4416,7 @@ def mul(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
             ctypes.c_void_p(0 if workspace is None else int(workspace)),
             ctypes.c_uint64(workspace_size.value),
             executor,
-            ctypes.c_void_p(int(runtime.stream if stream is None else stream)),
+            ctypes.c_void_p(stream_ptr),
         )
         if ret != 0:
             raise RuntimeError(f"aclnnMul failed: {ret}")
@@ -4358,6 +4437,43 @@ def sub(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     if acl is None:
         acl = ensure_acl()
     bindings = get_bindings()
+    stream_ptr = int(runtime.stream if stream is None else stream)
+    dtype_code = _dtype_to_acl(dtype)
+
+    if _ffi.is_initialized():
+        alpha_bytes = _scalar_bytes(1, dtype)
+        alpha_handle = _ffi.create_scalar(alpha_bytes, dtype_code)
+        executor = 0
+        workspace = None
+        try:
+            getws_ptr, exec_ptr = _ffi.resolve_op("Sub")
+            ws_size, executor = _ffi.binary_op_with_alpha(
+                getws_ptr, exec_ptr,
+                self_shape, self_stride,
+                other_shape, other_stride,
+                out_shape, out_stride,
+                dtype_code, _ACL_FORMAT_ND,
+                int(self_ptr), int(other_ptr), int(out_ptr),
+                alpha_handle, stream_ptr)
+            workspace = None
+            if ws_size:
+                workspace_ptr, ret = acl.rt.malloc(ws_size, 0)
+                if ret != 0:
+                    raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                workspace = workspace_ptr
+                ret = _ffi.execute(exec_ptr, int(workspace), ws_size,
+                                   executor, stream_ptr)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnSub failed: {ret}")
+            _maybe_sync(runtime)
+        finally:
+            _defer_executor(ctypes.c_void_p(executor))
+            _ffi.destroy_scalar(alpha_handle)
+            if workspace is not None:
+                runtime.defer_raw_free(workspace)
+        return
+
+    # Fallback: original ctypes path
     if bindings.aclnn_sub_get_workspace is None or bindings.aclnn_sub is None:
         raise RuntimeError("aclnnSub symbols not available")
     self_tensor, self_keep = _create_tensor(bindings, self_shape, self_stride, dtype, self_ptr)
@@ -4371,12 +4487,8 @@ def sub(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     try:
         scalar, alpha_arr = _create_scalar(bindings, 1, dtype)
         ret = bindings.aclnn_sub_get_workspace(
-            self_tensor,
-            other_tensor,
-            scalar,
-            out_tensor,
-            ctypes.byref(workspace_size),
-            ctypes.byref(executor),
+            self_tensor, other_tensor, scalar, out_tensor,
+            ctypes.byref(workspace_size), ctypes.byref(executor),
         )
         if ret != 0:
             raise RuntimeError(f"aclnnSubGetWorkspaceSize failed: {ret}")
@@ -4389,7 +4501,7 @@ def sub(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
             ctypes.c_void_p(0 if workspace is None else int(workspace)),
             ctypes.c_uint64(workspace_size.value),
             executor,
-            ctypes.c_void_p(int(runtime.stream if stream is None else stream)),
+            ctypes.c_void_p(stream_ptr),
         )
         if ret != 0:
             raise RuntimeError(f"aclnnSub failed: {ret}")
@@ -4412,6 +4524,40 @@ def div(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     if acl is None:
         acl = ensure_acl()
     bindings = get_bindings()
+    stream_ptr = int(runtime.stream if stream is None else stream)
+    dtype_code = _dtype_to_acl(dtype)
+
+    if _ffi.is_initialized():
+        executor = 0
+        workspace = None
+        try:
+            getws_ptr, exec_ptr = _ffi.resolve_op("Div")
+            ws_size, executor = _ffi.binary_op_no_alpha(
+                getws_ptr, exec_ptr,
+                self_shape, self_stride,
+                other_shape, other_stride,
+                out_shape, out_stride,
+                dtype_code, _ACL_FORMAT_ND,
+                int(self_ptr), int(other_ptr), int(out_ptr),
+                stream_ptr)
+            workspace = None
+            if ws_size:
+                workspace_ptr, ret = acl.rt.malloc(ws_size, 0)
+                if ret != 0:
+                    raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                workspace = workspace_ptr
+                ret = _ffi.execute(exec_ptr, int(workspace), ws_size,
+                                   executor, stream_ptr)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnDiv failed: {ret}")
+            _maybe_sync(runtime)
+        finally:
+            _defer_executor(ctypes.c_void_p(executor))
+            if workspace is not None:
+                runtime.defer_raw_free(workspace)
+        return
+
+    # Fallback: original ctypes path
     if bindings.aclnn_div_get_workspace is None or bindings.aclnn_div is None:
         raise RuntimeError("aclnnDiv symbols not available")
     self_tensor, self_keep = _create_tensor(bindings, self_shape, self_stride, dtype, self_ptr)
@@ -4422,11 +4568,8 @@ def div(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     workspace = None
     try:
         ret = bindings.aclnn_div_get_workspace(
-            self_tensor,
-            other_tensor,
-            out_tensor,
-            ctypes.byref(workspace_size),
-            ctypes.byref(executor),
+            self_tensor, other_tensor, out_tensor,
+            ctypes.byref(workspace_size), ctypes.byref(executor),
         )
         if ret != 0:
             raise RuntimeError(f"aclnnDivGetWorkspaceSize failed: {ret}")
@@ -4439,7 +4582,7 @@ def div(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
             ctypes.c_void_p(0 if workspace is None else int(workspace)),
             ctypes.c_uint64(workspace_size.value),
             executor,
-            ctypes.c_void_p(int(runtime.stream if stream is None else stream)),
+            ctypes.c_void_p(stream_ptr),
         )
         if ret != 0:
             raise RuntimeError(f"aclnnDiv failed: {ret}")
