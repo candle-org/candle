@@ -670,14 +670,28 @@ def _validate_hccl_all_to_all_single_pairwise(pg, input_split_sizes, output_spli
     local_out = ",".join(str(int(x)) for x in output_split_sizes)
     store.set(f"{key_prefix}/in/{rank}", local_in.encode("utf-8"))
     store.set(f"{key_prefix}/out/{rank}", local_out.encode("utf-8"))
-    store.wait([f"{key_prefix}/in/{r}" for r in range(world_size)])
-    store.wait([f"{key_prefix}/out/{r}" for r in range(world_size)])
+    try:
+        store.wait([f"{key_prefix}/in/{r}" for r in range(world_size)])
+        store.wait([f"{key_prefix}/out/{r}" for r in range(world_size)])
+    except (ConnectionResetError, ConnectionError, OSError):
+        # Another rank detected the mismatch first and exited, tearing
+        # down the store connection.  Surface a clear error.
+        raise ValueError(  # pylint: disable=raise-missing-from
+            "all_to_all_single split mismatch: a peer exited during "
+            "pairwise validation (likely detected inconsistent splits)"
+        )
 
     all_in = []
     all_out = []
     for peer in range(world_size):
-        raw_in = store.get(f"{key_prefix}/in/{peer}")
-        raw_out = store.get(f"{key_prefix}/out/{peer}")
+        try:
+            raw_in = store.get(f"{key_prefix}/in/{peer}")
+            raw_out = store.get(f"{key_prefix}/out/{peer}")
+        except (ConnectionResetError, ConnectionError, OSError):
+            raise ValueError(  # pylint: disable=raise-missing-from
+                "all_to_all_single split mismatch: a peer exited during "
+                "pairwise validation (likely detected inconsistent splits)"
+            )
         peer_in = [int(x) for x in (raw_in.decode("utf-8") if isinstance(raw_in, bytes) else str(raw_in)).split(",") if x != ""]
         peer_out = [int(x) for x in (raw_out.decode("utf-8") if isinstance(raw_out, bytes) else str(raw_out)).split(",") if x != ""]
         if len(peer_in) != world_size or len(peer_out) != world_size:
