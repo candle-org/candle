@@ -317,7 +317,17 @@ def conv_transpose3d(input, weight, bias, stride, padding, output_padding, group
     return _from_numpy(out, input.dtype, input.device)
 
 def max_pool1d(input, kernel_size, stride, padding, dilation, ceil_mode=False, return_indices=False):
-    """Max pooling 1D via numpy sliding window."""
+    """Max pooling 1D — GPU composite via lift to max_pool2d."""
+    # GPU path: lift (N,C,W) → (N,C,1,W), use 2D shader, squeeze back
+    if (_can_use_gpu(input) and input.is_contiguous()
+            and input.dtype in (float32_dtype, float16_dtype)
+            and not return_indices and input.ndim == 3):
+        from ...common.view import reshape
+        N, C, W = input.shape
+        inp4d = reshape(input, (N, C, 1, W))
+        out4d = max_pool2d(inp4d, (1, kernel_size[0]), (1, stride[0]),
+                           (0, padding[0]), (1, dilation[0]), ceil_mode)
+        return reshape(out4d, (N, C, out4d.shape[3]))
     a = _to_numpy(input)
     kW = kernel_size[0]
     sW = stride[0]
@@ -466,7 +476,17 @@ def max_pool3d(input, kernel_size, stride, padding, dilation, ceil_mode=False, r
     return _from_numpy(out, input.dtype, input.device)
 
 def avg_pool1d(input, kernel_size, stride, padding, ceil_mode=False, count_include_pad=True):
-    """Avg pooling 1D via numpy sliding window."""
+    """Avg pooling 1D — GPU composite via lift to avg_pool2d."""
+    # GPU path: lift (N,C,W) → (N,C,1,W), use 2D shader, squeeze back
+    if (_can_use_gpu(input) and input.is_contiguous()
+            and input.dtype in (float32_dtype, float16_dtype)
+            and count_include_pad and input.ndim == 3):
+        from ...common.view import reshape
+        N, C, W = input.shape
+        inp4d = reshape(input, (N, C, 1, W))
+        out4d = avg_pool2d(inp4d, (1, kernel_size[0]), (1, stride[0]),
+                           (0, padding[0]), ceil_mode)
+        return reshape(out4d, (N, C, out4d.shape[3]))
     a = _to_numpy(input)
     kW = kernel_size[0]
     sW = stride[0]
@@ -616,7 +636,17 @@ def avg_pool3d(input, kernel_size, stride, padding, ceil_mode=False, count_inclu
     return _from_numpy(out, input.dtype, input.device)
 
 def adaptive_avg_pool1d(input, output_size):
-    """Adaptive avg pool 1D: compute kernel and stride from output_size."""
+    """Adaptive avg pool 1D — GPU composite via lift to adaptive_avg_pool2d."""
+    # GPU path: lift (N,C,W) → (N,C,1,W), use 2D shader, squeeze back
+    oW = output_size[0]
+    if (_can_use_gpu(input) and input.is_contiguous()
+            and input.dtype in (float32_dtype, float16_dtype)
+            and input.ndim == 3):
+        from ...common.view import reshape
+        N, C, W = input.shape
+        inp4d = reshape(input, (N, C, 1, W))
+        out4d = adaptive_avg_pool2d(inp4d, (1, oW))
+        return reshape(out4d, (N, C, oW))
     a = _to_numpy(input)
     N, C, W = a.shape
     oW = output_size[0]
@@ -759,7 +789,17 @@ def adaptive_max_pool2d(input, output_size, return_indices=False):
     return _from_numpy(out, input.dtype, input.device)
 
 def upsample_nearest1d(a, output_size):
-    """Nearest-neighbor 1D upsampling. Input: (N, C, W_in) -> (N, C, W_out)."""
+    """Nearest-neighbor 1D upsampling — GPU composite via lift to upsample_nearest2d."""
+    W_out = output_size[0]
+    # GPU path: lift (N,C,W) → (N,C,1,W), use 2D shader, squeeze back
+    if (_can_use_gpu(a) and a.is_contiguous()
+            and a.dtype in (float32_dtype, float16_dtype)
+            and len(a.shape) == 3):
+        from ...common.view import reshape
+        N, C, W_in = a.shape
+        inp4d = reshape(a, (N, C, 1, W_in))
+        out4d = upsample_nearest2d(inp4d, (1, W_out))
+        return reshape(out4d, (N, C, W_out))
     arr = _to_numpy(a)
     W_out = output_size[0]
     W_in = arr.shape[2]
