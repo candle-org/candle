@@ -153,3 +153,19 @@
 - name: prelu(Tensor self, Tensor weight) -> Tensor
   self: "_prelu_grad_input(grad, self, weight, keyset)"
   weight: "reduce_grad(_prelu_grad_weight(grad, self, weight, keyset), weight.shape)"
+
+# ===== Norm ops (Phase 1) =====
+# Norm backward is complex (multi-output grads for input/weight/bias).
+# We declare them here and delegate to helper functions.
+
+- name: layer_norm(Tensor input, int[] normalized_shape, Tensor? weight, Tensor? bias, float eps=1e-5) -> Tensor
+  input: "_layer_norm_grad_input(grad, input, normalized_shape, weight, eps, keyset)"
+
+- name: batch_norm(Tensor input, Tensor? running_mean, Tensor? running_var, Tensor? weight, Tensor? bias, bool training=False, float momentum=0.1, float eps=1e-5) -> Tensor
+  input: "_batch_norm_grad_input(grad, input, weight, eps, keyset)"
+
+- name: group_norm(Tensor input, int num_groups, Tensor? weight, Tensor? bias, float eps=1e-5) -> Tensor
+  input: "_group_norm_grad_input(grad, input, num_groups, weight, eps, keyset)"
+
+- name: rms_norm(Tensor input, int[] normalized_shape, Tensor? weight, float eps=1e-6) -> Tensor
+  input: "_rms_norm_grad_input(grad, input, normalized_shape, weight, eps, keyset)"

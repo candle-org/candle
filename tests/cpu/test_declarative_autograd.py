@@ -360,3 +360,76 @@ class TestActivationBackwardNumerical:
         # grad_w = sum of x[i] where x[i] <= 0
         expected_w = -2.0 + (-0.5)  # = -2.5
         assert abs(w.grad.item() - expected_w) < 1e-4
+
+
+# ---------------------------------------------------------------------------
+# Part 4: Phase 1 — Norm backward numerical checks
+# ---------------------------------------------------------------------------
+
+class TestNormBackwardNumerical:
+    """Test generated norm backward formulas against numerical gradients."""
+
+    def test_layer_norm(self):
+        x = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                         dtype=torch.float64, requires_grad=True)
+        y = torch.nn.functional.layer_norm(x, (3,))
+        y.sum().backward()
+        assert x.grad is not None
+        assert x.grad.shape == (2, 3)
+        # Numerical check
+        eps = 1e-5
+        x_np = x.tolist()
+        grads = []
+        for i in range(2):
+            for j in range(3):
+                xp = [row[:] for row in x_np]
+                xm = [row[:] for row in x_np]
+                xp[i][j] += eps
+                xm[i][j] -= eps
+                tp = torch.tensor(xp, dtype=torch.float64)
+                tm = torch.tensor(xm, dtype=torch.float64)
+                fp = torch.nn.functional.layer_norm(tp, (3,)).sum().item()
+                fm = torch.nn.functional.layer_norm(tm, (3,)).sum().item()
+                grads.append((fp - fm) / (2 * eps))
+        analytic = [x.grad[i][j].item() for i in range(2) for j in range(3)]
+        for a, n in zip(analytic, grads):
+            assert abs(a - n) < 1e-4, f"analytic={a}, numerical={n}"
+
+    def test_layer_norm_with_weight(self):
+        x = torch.tensor([[1.0, 2.0, 3.0]], dtype=torch.float64, requires_grad=True)
+        w = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64)
+        b = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float64)
+        y = torch.nn.functional.layer_norm(x, (3,), weight=w, bias=b)
+        y.sum().backward()
+        assert x.grad is not None
+        assert x.grad.shape == (1, 3)
+
+    def test_batch_norm(self):
+        x = torch.tensor([[[1.0, 2.0], [3.0, 4.0]],
+                          [[5.0, 6.0], [7.0, 8.0]]],
+                         dtype=torch.float64, requires_grad=True)
+        # x shape: (2, 2, 2) — N=2, C=2, spatial=2
+        y = torch.nn.functional.batch_norm(x, None, None, training=True)
+        y.sum().backward()
+        assert x.grad is not None
+        assert x.grad.shape == (2, 2, 2)
+
+    def test_group_norm(self):
+        x = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]],
+                           [[5.0, 6.0], [7.0, 8.0]]]],
+                         dtype=torch.float64, requires_grad=True)
+        # x shape: (1, 2, 2, 2) — N=1, C=2, H=2, W=2
+        y = torch.nn.functional.group_norm(x, num_groups=2)
+        y.sum().backward()
+        assert x.grad is not None
+        assert x.grad.shape == (1, 2, 2, 2)
+
+    def test_rms_norm(self):
+        # rms_norm is not in torch.nn.functional, use candle directly
+        x = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                         dtype=torch.float64, requires_grad=True)
+        from candle._functional import rms_norm
+        y = rms_norm(x, (3,))
+        y.sum().backward()
+        assert x.grad is not None
+        assert x.grad.shape == (2, 3)

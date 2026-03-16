@@ -551,3 +551,64 @@ def prelu_autograd(self, weight):
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
+
+
+def layer_norm_autograd(input, normalized_shape, weight, bias, eps=1e-5):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("layer_norm", raw_keyset, input, normalized_shape, weight, bias, eps)
+    if GradMode.enabled and (input.requires_grad):
+        grad_fn = _F.Layer_normBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(input=input, weight=weight)
+        grad_fn._normalized_shape = normalized_shape
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def batch_norm_autograd(input, running_mean, running_var, weight, bias, training=False, momentum=0.1, eps=1e-5):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("batch_norm", raw_keyset, input, running_mean, running_var, weight, bias, training, momentum, eps)
+    if GradMode.enabled and (input.requires_grad):
+        grad_fn = _F.Batch_normBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(input=input, weight=weight)
+        grad_fn._training = training
+        grad_fn._momentum = momentum
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def group_norm_autograd(input, num_groups, weight, bias, eps=1e-5):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("group_norm", raw_keyset, input, num_groups, weight, bias, eps)
+    if GradMode.enabled and (input.requires_grad):
+        grad_fn = _F.Group_normBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(input=input, weight=weight)
+        grad_fn._num_groups = num_groups
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def rms_norm_autograd(input, normalized_shape, weight, eps=1e-6):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("rms_norm", raw_keyset, input, normalized_shape, weight, eps)
+    if GradMode.enabled and (input.requires_grad):
+        grad_fn = _F.Rms_normBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(input=input, weight=weight)
+        grad_fn._normalized_shape = normalized_shape
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result

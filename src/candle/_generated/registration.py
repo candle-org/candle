@@ -50,3 +50,7 @@ def register_generated_autograd_kernels():
     register_autograd_kernels('softmax', default=_VT.softmax_autograd, cpu=_VT.softmax_autograd, cuda=_VT.softmax_autograd, meta=_VT.softmax_autograd)
     register_autograd_kernels('log_softmax', default=_VT.log_softmax_autograd, cpu=_VT.log_softmax_autograd, cuda=_VT.log_softmax_autograd, meta=_VT.log_softmax_autograd)
     register_autograd_kernels('prelu', default=_VT.prelu_autograd, cpu=_VT.prelu_autograd, cuda=_VT.prelu_autograd, meta=_VT.prelu_autograd)
+    register_autograd_kernels('layer_norm', default=_VT.layer_norm_autograd, cpu=_VT.layer_norm_autograd, cuda=_VT.layer_norm_autograd, meta=_VT.layer_norm_autograd)
+    register_autograd_kernels('batch_norm', default=_VT.batch_norm_autograd, cpu=_VT.batch_norm_autograd, cuda=_VT.batch_norm_autograd, meta=_VT.batch_norm_autograd)
+    register_autograd_kernels('group_norm', default=_VT.group_norm_autograd, cpu=_VT.group_norm_autograd, cuda=_VT.group_norm_autograd, meta=_VT.group_norm_autograd)
+    register_autograd_kernels('rms_norm', default=_VT.rms_norm_autograd, cpu=_VT.rms_norm_autograd, cuda=_VT.rms_norm_autograd, meta=_VT.rms_norm_autograd)

@@ -190,6 +190,111 @@ def _prelu_grad_weight(grad, self_, weight, keyset):
     return redispatch("mul", keyset, grad, w_input)
 
 
+# ---------------------------------------------------------------------------
+# Norm backward helpers (called from generated formulas)
+# ---------------------------------------------------------------------------
+
+def _norm_stats(x, axes, eps, keyset):
+    """Shared: compute mean, diff, inv_std, x_hat for norm backward."""
+    mean = redispatch("mean", keyset, x, dim=axes, keepdim=True)
+    diff = redispatch("add", keyset, x, redispatch("neg", keyset, mean))
+    var = redispatch("mean", keyset, redispatch("mul", keyset, diff, diff), dim=axes, keepdim=True)
+    eps_t = _scalar_tensor_like(x, eps)
+    inv_std = redispatch("rsqrt", keyset, redispatch("add", keyset, var, eps_t))
+    x_hat = redispatch("mul", keyset, diff, inv_std)
+    return inv_std, x_hat
+
+
+def _norm_grad_core(dl_dxhat, x_hat, inv_std, axes, n, keyset):
+    """Shared: compute grad_input from dl_dxhat, x_hat, inv_std."""
+    n_t = _scalar_tensor_like(x_hat, float(n))
+    mean_dl = redispatch("div", keyset,
+        redispatch("sum", keyset, dl_dxhat, dim=axes, keepdim=True), n_t)
+    mean_dl_xhat = redispatch("div", keyset,
+        redispatch("sum", keyset, redispatch("mul", keyset, dl_dxhat, x_hat),
+                   dim=axes, keepdim=True), n_t)
+    return redispatch("mul", keyset, inv_std,
+        redispatch("add", keyset,
+            redispatch("add", keyset, dl_dxhat, redispatch("neg", keyset, mean_dl)),
+            redispatch("neg", keyset, redispatch("mul", keyset, x_hat, mean_dl_xhat))))
+
+
+def _layer_norm_grad_input(grad, input_, normalized_shape, weight, eps, keyset):
+    norm_shape = tuple(normalized_shape)
+    ndim = len(input_.shape)
+    n_norm = len(norm_shape)
+    axes = tuple(range(ndim - n_norm, ndim))
+    inv_std, x_hat = _norm_stats(input_, axes, eps, keyset)
+    dl_dxhat = redispatch("mul", keyset, grad, weight) if weight is not None else grad
+    n = 1
+    for d in axes:
+        n *= input_.shape[d]
+    return _norm_grad_core(dl_dxhat, x_hat, inv_std, axes, n, keyset)
+
+
+def _batch_norm_grad_input(grad, input_, weight, eps, keyset):
+    ndim = len(input_.shape)
+    axes = (0,) + tuple(range(2, ndim))
+    shape_for_stats = [1, input_.shape[1]] + [1] * (ndim - 2)
+    inv_std, x_hat = _norm_stats(input_, axes, eps, keyset)
+    if weight is not None:
+        dl_dxhat = redispatch("mul", keyset, grad, weight.reshape(shape_for_stats))
+    else:
+        dl_dxhat = grad
+    n = 1
+    for ax in axes:
+        n *= input_.shape[ax]
+    return _norm_grad_core(dl_dxhat, x_hat, inv_std, axes, n, keyset)
+
+
+def _group_norm_grad_input(grad, input_, num_groups, weight, eps, keyset):
+    N = input_.shape[0]
+    C = input_.shape[1]
+    spatial = input_.shape[2:]
+    channels_per_group = C // num_groups
+    group_size = channels_per_group
+    for s in spatial:
+        group_size *= s
+    reshaped = redispatch("reshape", keyset, input_,
+                          (N, num_groups, channels_per_group, *spatial))
+    axes = tuple(range(2, len(reshaped.shape)))
+    inv_std, x_hat = _norm_stats(reshaped, axes, eps, keyset)
+    grad_reshaped = redispatch("reshape", keyset, grad,
+                               (N, num_groups, channels_per_group, *spatial))
+    if weight is not None:
+        w_shape = [1, num_groups, channels_per_group] + [1] * len(spatial)
+        w_reshaped = redispatch("reshape", keyset, weight, tuple(w_shape))
+        dl_dxhat = redispatch("mul", keyset, grad_reshaped, w_reshaped)
+    else:
+        dl_dxhat = grad_reshaped
+    grad_out = _norm_grad_core(dl_dxhat, x_hat, inv_std, axes, group_size, keyset)
+    return redispatch("reshape", keyset, grad_out, input_.shape)
+
+
+def _rms_norm_grad_input(grad, input_, normalized_shape, weight, eps, keyset):
+    norm_shape = tuple(normalized_shape)
+    ndim = len(input_.shape)
+    n_norm = len(norm_shape)
+    axes = tuple(range(ndim - n_norm, ndim))
+    x_sq = redispatch("mul", keyset, input_, input_)
+    variance = redispatch("mean", keyset, x_sq, dim=axes, keepdim=True)
+    eps_t = _scalar_tensor_like(input_, eps)
+    rms = redispatch("sqrt", keyset, redispatch("add", keyset, variance, eps_t))
+    x_hat = redispatch("div", keyset, input_, rms)
+    dl_dxhat = redispatch("mul", keyset, grad, weight) if weight is not None else grad
+    n = 1
+    for d in axes:
+        n *= input_.shape[d]
+    n_t = _scalar_tensor_like(input_, float(n))
+    dot = redispatch("sum", keyset,
+        redispatch("mul", keyset, dl_dxhat, x_hat), dim=axes, keepdim=True)
+    return redispatch("div", keyset,
+        redispatch("add", keyset, dl_dxhat,
+            redispatch("neg", keyset, redispatch("mul", keyset, x_hat,
+                redispatch("div", keyset, dot, n_t)))),
+        rms)
+
+
 class ExpBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         super().__init__(self.apply, inputs, name='ExpBackward0')
@@ -1180,3 +1285,137 @@ class PreluBackward0(Node):
             grad_self = _prelu_grad_input(grad, self_, weight, keyset)
             grad_weight = reduce_grad(_prelu_grad_weight(grad, self_, weight, keyset), weight.shape)
         return (grad_self, grad_weight,)
+
+class Layer_normBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Layer_normBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_input_idx = None
+        self._saved_weight_idx = None
+        self._normalized_shape = None
+        self._eps = None
+
+    def _save(self, *, input=None, weight=None):
+        tensors = []
+        if input is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input)
+        if weight is not None:
+            self._saved_weight_idx = len(tensors)
+            tensors.append(weight)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        input = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx]
+        normalized_shape = self._normalized_shape
+        eps = self._eps
+        with _grad_context(keyset):
+            grad_input = _layer_norm_grad_input(grad, input, normalized_shape, weight, eps, keyset)
+        return (grad_input, None, None,)
+
+class Batch_normBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Batch_normBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_input_idx = None
+        self._saved_weight_idx = None
+        self._training = None
+        self._momentum = None
+        self._eps = None
+
+    def _save(self, *, input=None, weight=None):
+        tensors = []
+        if input is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input)
+        if weight is not None:
+            self._saved_weight_idx = len(tensors)
+            tensors.append(weight)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        input = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx]
+        training = self._training
+        momentum = self._momentum
+        eps = self._eps
+        with _grad_context(keyset):
+            grad_input = _batch_norm_grad_input(grad, input, weight, eps, keyset)
+        return (grad_input, None, None, None, None,)
+
+class Group_normBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Group_normBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_input_idx = None
+        self._saved_weight_idx = None
+        self._num_groups = None
+        self._eps = None
+
+    def _save(self, *, input=None, weight=None):
+        tensors = []
+        if input is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input)
+        if weight is not None:
+            self._saved_weight_idx = len(tensors)
+            tensors.append(weight)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        input = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx]
+        num_groups = self._num_groups
+        eps = self._eps
+        with _grad_context(keyset):
+            grad_input = _group_norm_grad_input(grad, input, num_groups, weight, eps, keyset)
+        return (grad_input, None, None,)
+
+class Rms_normBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Rms_normBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_input_idx = None
+        self._saved_weight_idx = None
+        self._normalized_shape = None
+        self._eps = None
+
+    def _save(self, *, input=None, weight=None):
+        tensors = []
+        if input is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input)
+        if weight is not None:
+            self._saved_weight_idx = len(tensors)
+            tensors.append(weight)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        input = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx]
+        normalized_shape = self._normalized_shape
+        eps = self._eps
+        with _grad_context(keyset):
+            grad_input = _rms_norm_grad_input(grad, input, normalized_shape, weight, eps, keyset)
+        return (grad_input, None,)
