@@ -308,11 +308,149 @@ def _rms_norm_grad_input(grad, input_, normalized_shape, weight, eps, keyset):
             redispatch("neg", keyset, redispatch("mul", keyset, x_hat,
                 redispatch("div", keyset, dot, n_t)))),
         rms)
+
+
+# ---------------------------------------------------------------------------
+# Conv backward helpers (Phase 2)
+# ---------------------------------------------------------------------------
+
+class _ConvGradCache:
+    """Cache conv backward results to avoid recomputation across grad formulas."""
+    _cache = {}
+
+    @classmethod
+    def get(cls, key, compute_fn):
+        if key not in cls._cache:
+            cls._cache[key] = compute_fn()
+        return cls._cache[key]
+
+    @classmethod
+    def clear(cls):
+        cls._cache.clear()
+
+
+def _conv_backward_all(grad, input_, weight, bias, stride, padding, dilation, groups, name, keyset):
+    """Compute all conv gradients, returning (grad_input, grad_weight, grad_bias).
+
+    Delegates to the existing _conv_backward implementation.
+    Always returns a 3-tuple (grad_bias is None when bias is None).
+    """
+    from .._backends.autograd import _conv_backward
+    args = (stride, padding, dilation, groups)
+    result = _conv_backward(name, grad, input_, weight, bias,
+                            input_, weight, bias, keyset, args, {})
+    if len(result) == 2:
+        return result[0], result[1], None
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Pool backward helpers (Phase 2)
+# ---------------------------------------------------------------------------
+
+def _max_pool1d_backward_helper(grad, self_, result, kernel_size, stride, padding, dilation, ceil_mode, keyset):
+    from .._backends.autograd import _max_pool1d_backward
+    args = (kernel_size, stride, padding, dilation, ceil_mode)
+    return _max_pool1d_backward(grad, self_, self_, result, keyset, args, {})[0]
+
+
+def _max_pool2d_backward_helper(grad, self_, result, kernel_size, stride, padding, dilation, ceil_mode, keyset):
+    from .._backends.autograd import _max_pool2d_backward
+    args = (kernel_size, stride, padding, dilation, ceil_mode)
+    return _max_pool2d_backward(grad, self_, self_, result, keyset, args, {})[0]
+
+
+def _max_pool3d_backward_helper(grad, self_, result, kernel_size, stride, padding, dilation, ceil_mode, keyset):
+    from .._backends.autograd import _max_pool3d_backward
+    args = (kernel_size, stride, padding, dilation, ceil_mode)
+    return _max_pool3d_backward(grad, self_, self_, result, keyset, args, {})[0]
+
+
+def _avg_pool1d_backward_helper(grad, self_, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset):
+    from .._backends.autograd import _avg_pool1d_backward
+    args = (kernel_size, stride, padding, ceil_mode, count_include_pad)
+    return _avg_pool1d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _avg_pool2d_backward_helper(grad, self_, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset):
+    from .._backends.autograd import _avg_pool2d_backward
+    args = (kernel_size, stride, padding, ceil_mode, count_include_pad)
+    return _avg_pool2d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _avg_pool3d_backward_helper(grad, self_, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset):
+    from .._backends.autograd import _avg_pool3d_backward
+    args = (kernel_size, stride, padding, ceil_mode, count_include_pad)
+    return _avg_pool3d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _adaptive_avg_pool1d_backward_helper(grad, self_, output_size, keyset):
+    from .._backends.autograd import _adaptive_avg_pool1d_backward
+    args = (output_size,)
+    return _adaptive_avg_pool1d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _adaptive_avg_pool2d_backward_helper(grad, self_, output_size, keyset):
+    from .._backends.autograd import _adaptive_avg_pool2d_backward
+    args = (output_size,)
+    return _adaptive_avg_pool2d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _adaptive_avg_pool3d_backward_helper(grad, self_, output_size, keyset):
+    from .._backends.autograd import _adaptive_avg_pool3d_backward
+    args = (output_size,)
+    return _adaptive_avg_pool3d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _adaptive_max_pool1d_backward_helper(grad, self_, result, output_size, keyset):
+    from .._backends.autograd import _adaptive_max_pool1d_backward
+    args = (output_size,)
+    return _adaptive_max_pool1d_backward(grad, self_, self_, result, keyset, args, {})[0]
+
+
+def _adaptive_max_pool2d_backward_helper(grad, self_, result, output_size, keyset):
+    from .._backends.autograd import _adaptive_max_pool2d_backward
+    args = (output_size,)
+    return _adaptive_max_pool2d_backward(grad, self_, self_, result, keyset, args, {})[0]
+
+
+# ---------------------------------------------------------------------------
+# Upsample backward helpers (Phase 2)
+# ---------------------------------------------------------------------------
+
+def _upsample_nearest1d_backward_helper(grad, self_, output_size, keyset):
+    from .._backends.autograd import _upsample_nearest1d_backward
+    args = (output_size,)
+    return _upsample_nearest1d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _upsample_nearest2d_backward_helper(grad, self_, output_size, keyset):
+    from .._backends.autograd import _upsample_nearest2d_backward
+    args = (output_size,)
+    return _upsample_nearest2d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _upsample_bilinear2d_backward_helper(grad, self_, output_size, align_corners, keyset):
+    from .._backends.autograd import _upsample_bilinear2d_backward
+    args = (output_size, align_corners)
+    return _upsample_bilinear2d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _upsample_linear1d_backward_helper(grad, self_, output_size, align_corners, keyset):
+    from .._backends.autograd import _upsample_linear1d_backward
+    args = (output_size, align_corners)
+    return _upsample_linear1d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _upsample_bicubic2d_backward_helper(grad, self_, output_size, align_corners, keyset):
+    from .._backends.autograd import _upsample_bicubic2d_backward
+    args = (output_size, align_corners)
+    return _upsample_bicubic2d_backward(grad, self_, self_, None, keyset, args, {})[0]
 '''
 
 
 # Python keywords that cannot be used as parameter names
-_PYTHON_KEYWORDS = {"self", "cls", "None", "True", "False", "return", "class", "def", "if", "else", "for", "while", "import", "from", "in", "is", "not", "and", "or"}
+_PYTHON_KEYWORDS = {"self", "cls", "input", "None", "True", "False", "return", "class", "def", "if", "else", "for", "while", "import", "from", "in", "is", "not", "and", "or"}
 
 
 def _safe_param(name: str) -> str:
@@ -372,11 +510,16 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     lines.append("        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)")
 
     # Retrieve saved tensors — use safe local names
+    # Build set of optional tensor names for conditional access
+    optional_tensor_names = {a.name for a in info.args if a.is_optional_tensor}
     if all_saved:
         lines.append("        _saved = self.saved_tensors()")
     for name in saved_inputs:
         local = _safe_local(name)
-        lines.append(f"        {local} = _saved[self._saved_{name}_idx]")
+        if name in optional_tensor_names:
+            lines.append(f"        {local} = _saved[self._saved_{name}_idx] if self._saved_{name}_idx is not None else None")
+        else:
+            lines.append(f"        {local} = _saved[self._saved_{name}_idx]")
     for name in saved_outputs:
         local = _safe_local(name)
         lines.append(f"        {local} = _saved[self._saved_{name}_idx]")
@@ -390,13 +533,21 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
 
     grad_vars: dict[str, str] = {}
     for deriv in info.derivatives:
-        for var_name in deriv.var_names:
+        formula = deriv.formula
+        # Replace bare `self` references with `self_` in the formula
+        formula = _rewrite_keyword_refs(formula)
+        if len(deriv.var_names) == 1:
+            var_name = deriv.var_names[0]
             grad_var = f"grad_{var_name}"
             grad_vars[var_name] = grad_var
-            formula = deriv.formula
-            # Replace bare `self` references with `self_` in the formula
-            formula = _rewrite_self_refs(formula)
             lines.append(f"            {grad_var} = {formula}")
+        else:
+            # Multi-output: tuple unpacking (e.g. conv backward returns all grads at once)
+            grad_var_names = [f"grad_{v}" for v in deriv.var_names]
+            for v, gv in zip(deriv.var_names, grad_var_names):
+                grad_vars[v] = gv
+            lhs = ", ".join(grad_var_names)
+            lines.append(f"            {lhs} = {formula}")
 
     # Build return tuple in argument order
     diff_inputs = info.differentiable_inputs
@@ -416,10 +567,15 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     return "\n".join(lines)
 
 
-def _rewrite_self_refs(formula: str) -> str:
-    """Replace `self` with `self_` in formula, but not inside string literals or `self.` method calls that are actually on the saved tensor."""
+def _rewrite_keyword_refs(formula: str) -> str:
+    """Replace Python keywords used as parameter names with their safe versions.
+
+    e.g. `self` -> `self_`, `input` -> `input_` in formulas,
+    so they match the local variable names generated by _safe_local().
+    """
     import re
-    # Replace `self.` with `self_.` and bare `self` (word boundary) with `self_`
-    # But NOT `self._` (which would be instance attribute access)
-    # We want: self.shape -> self_.shape, self._ones_like() -> self_._ones_like()
-    return re.sub(r'\bself\b', 'self_', formula)
+    for kw in _PYTHON_KEYWORDS:
+        if kw in ("None", "True", "False"):
+            continue  # These are actual Python constants, not parameter names
+        formula = re.sub(r'\b' + kw + r'\b', kw + '_', formula)
+    return formula

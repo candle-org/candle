@@ -295,6 +295,144 @@ def _rms_norm_grad_input(grad, input_, normalized_shape, weight, eps, keyset):
         rms)
 
 
+# ---------------------------------------------------------------------------
+# Conv backward helpers (Phase 2)
+# ---------------------------------------------------------------------------
+
+class _ConvGradCache:
+    """Cache conv backward results to avoid recomputation across grad formulas."""
+    _cache = {}
+
+    @classmethod
+    def get(cls, key, compute_fn):
+        if key not in cls._cache:
+            cls._cache[key] = compute_fn()
+        return cls._cache[key]
+
+    @classmethod
+    def clear(cls):
+        cls._cache.clear()
+
+
+def _conv_backward_all(grad, input_, weight, bias, stride, padding, dilation, groups, name, keyset):
+    """Compute all conv gradients, returning (grad_input, grad_weight, grad_bias).
+
+    Delegates to the existing _conv_backward implementation.
+    Always returns a 3-tuple (grad_bias is None when bias is None).
+    """
+    from .._backends.autograd import _conv_backward
+    args = (stride, padding, dilation, groups)
+    result = _conv_backward(name, grad, input_, weight, bias,
+                            input_, weight, bias, keyset, args, {})
+    if len(result) == 2:
+        return result[0], result[1], None
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Pool backward helpers (Phase 2)
+# ---------------------------------------------------------------------------
+
+def _max_pool1d_backward_helper(grad, self_, result, kernel_size, stride, padding, dilation, ceil_mode, keyset):
+    from .._backends.autograd import _max_pool1d_backward
+    args = (kernel_size, stride, padding, dilation, ceil_mode)
+    return _max_pool1d_backward(grad, self_, self_, result, keyset, args, {})[0]
+
+
+def _max_pool2d_backward_helper(grad, self_, result, kernel_size, stride, padding, dilation, ceil_mode, keyset):
+    from .._backends.autograd import _max_pool2d_backward
+    args = (kernel_size, stride, padding, dilation, ceil_mode)
+    return _max_pool2d_backward(grad, self_, self_, result, keyset, args, {})[0]
+
+
+def _max_pool3d_backward_helper(grad, self_, result, kernel_size, stride, padding, dilation, ceil_mode, keyset):
+    from .._backends.autograd import _max_pool3d_backward
+    args = (kernel_size, stride, padding, dilation, ceil_mode)
+    return _max_pool3d_backward(grad, self_, self_, result, keyset, args, {})[0]
+
+
+def _avg_pool1d_backward_helper(grad, self_, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset):
+    from .._backends.autograd import _avg_pool1d_backward
+    args = (kernel_size, stride, padding, ceil_mode, count_include_pad)
+    return _avg_pool1d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _avg_pool2d_backward_helper(grad, self_, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset):
+    from .._backends.autograd import _avg_pool2d_backward
+    args = (kernel_size, stride, padding, ceil_mode, count_include_pad)
+    return _avg_pool2d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _avg_pool3d_backward_helper(grad, self_, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset):
+    from .._backends.autograd import _avg_pool3d_backward
+    args = (kernel_size, stride, padding, ceil_mode, count_include_pad)
+    return _avg_pool3d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _adaptive_avg_pool1d_backward_helper(grad, self_, output_size, keyset):
+    from .._backends.autograd import _adaptive_avg_pool1d_backward
+    args = (output_size,)
+    return _adaptive_avg_pool1d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _adaptive_avg_pool2d_backward_helper(grad, self_, output_size, keyset):
+    from .._backends.autograd import _adaptive_avg_pool2d_backward
+    args = (output_size,)
+    return _adaptive_avg_pool2d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _adaptive_avg_pool3d_backward_helper(grad, self_, output_size, keyset):
+    from .._backends.autograd import _adaptive_avg_pool3d_backward
+    args = (output_size,)
+    return _adaptive_avg_pool3d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _adaptive_max_pool1d_backward_helper(grad, self_, result, output_size, keyset):
+    from .._backends.autograd import _adaptive_max_pool1d_backward
+    args = (output_size,)
+    return _adaptive_max_pool1d_backward(grad, self_, self_, result, keyset, args, {})[0]
+
+
+def _adaptive_max_pool2d_backward_helper(grad, self_, result, output_size, keyset):
+    from .._backends.autograd import _adaptive_max_pool2d_backward
+    args = (output_size,)
+    return _adaptive_max_pool2d_backward(grad, self_, self_, result, keyset, args, {})[0]
+
+
+# ---------------------------------------------------------------------------
+# Upsample backward helpers (Phase 2)
+# ---------------------------------------------------------------------------
+
+def _upsample_nearest1d_backward_helper(grad, self_, output_size, keyset):
+    from .._backends.autograd import _upsample_nearest1d_backward
+    args = (output_size,)
+    return _upsample_nearest1d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _upsample_nearest2d_backward_helper(grad, self_, output_size, keyset):
+    from .._backends.autograd import _upsample_nearest2d_backward
+    args = (output_size,)
+    return _upsample_nearest2d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _upsample_bilinear2d_backward_helper(grad, self_, output_size, align_corners, keyset):
+    from .._backends.autograd import _upsample_bilinear2d_backward
+    args = (output_size, align_corners)
+    return _upsample_bilinear2d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _upsample_linear1d_backward_helper(grad, self_, output_size, align_corners, keyset):
+    from .._backends.autograd import _upsample_linear1d_backward
+    args = (output_size, align_corners)
+    return _upsample_linear1d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
+def _upsample_bicubic2d_backward_helper(grad, self_, output_size, align_corners, keyset):
+    from .._backends.autograd import _upsample_bicubic2d_backward
+    args = (output_size, align_corners)
+    return _upsample_bicubic2d_backward(grad, self_, self_, None, keyset, args, {})[0]
+
+
 class ExpBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         super().__init__(self.apply, inputs, name='ExpBackward0')
@@ -1296,11 +1434,11 @@ class Layer_normBackward0(Node):
         self._normalized_shape = None
         self._eps = None
 
-    def _save(self, *, input=None, weight=None):
+    def _save(self, *, input_=None, weight=None):
         tensors = []
-        if input is not None:
+        if input_ is not None:
             self._saved_input_idx = len(tensors)
-            tensors.append(input)
+            tensors.append(input_)
         if weight is not None:
             self._saved_weight_idx = len(tensors)
             tensors.append(weight)
@@ -1311,12 +1449,12 @@ class Layer_normBackward0(Node):
         from .._dispatch.dispatcher import current_dispatch_keyset
         keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
         _saved = self.saved_tensors()
-        input = _saved[self._saved_input_idx]
-        weight = _saved[self._saved_weight_idx]
+        input_ = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx] if self._saved_weight_idx is not None else None
         normalized_shape = self._normalized_shape
         eps = self._eps
         with _grad_context(keyset):
-            grad_input = _layer_norm_grad_input(grad, input, normalized_shape, weight, eps, keyset)
+            grad_input = _layer_norm_grad_input(grad, input_, normalized_shape, weight, eps, keyset)
         return (grad_input, None, None,)
 
 class Batch_normBackward0(Node):
@@ -1330,11 +1468,11 @@ class Batch_normBackward0(Node):
         self._momentum = None
         self._eps = None
 
-    def _save(self, *, input=None, weight=None):
+    def _save(self, *, input_=None, weight=None):
         tensors = []
-        if input is not None:
+        if input_ is not None:
             self._saved_input_idx = len(tensors)
-            tensors.append(input)
+            tensors.append(input_)
         if weight is not None:
             self._saved_weight_idx = len(tensors)
             tensors.append(weight)
@@ -1345,13 +1483,13 @@ class Batch_normBackward0(Node):
         from .._dispatch.dispatcher import current_dispatch_keyset
         keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
         _saved = self.saved_tensors()
-        input = _saved[self._saved_input_idx]
-        weight = _saved[self._saved_weight_idx]
+        input_ = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx] if self._saved_weight_idx is not None else None
         training = self._training
         momentum = self._momentum
         eps = self._eps
         with _grad_context(keyset):
-            grad_input = _batch_norm_grad_input(grad, input, weight, eps, keyset)
+            grad_input = _batch_norm_grad_input(grad, input_, weight, eps, keyset)
         return (grad_input, None, None, None, None,)
 
 class Group_normBackward0(Node):
@@ -1364,11 +1502,11 @@ class Group_normBackward0(Node):
         self._num_groups = None
         self._eps = None
 
-    def _save(self, *, input=None, weight=None):
+    def _save(self, *, input_=None, weight=None):
         tensors = []
-        if input is not None:
+        if input_ is not None:
             self._saved_input_idx = len(tensors)
-            tensors.append(input)
+            tensors.append(input_)
         if weight is not None:
             self._saved_weight_idx = len(tensors)
             tensors.append(weight)
@@ -1379,12 +1517,12 @@ class Group_normBackward0(Node):
         from .._dispatch.dispatcher import current_dispatch_keyset
         keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
         _saved = self.saved_tensors()
-        input = _saved[self._saved_input_idx]
-        weight = _saved[self._saved_weight_idx]
+        input_ = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx] if self._saved_weight_idx is not None else None
         num_groups = self._num_groups
         eps = self._eps
         with _grad_context(keyset):
-            grad_input = _group_norm_grad_input(grad, input, num_groups, weight, eps, keyset)
+            grad_input = _group_norm_grad_input(grad, input_, num_groups, weight, eps, keyset)
         return (grad_input, None, None,)
 
 class Rms_normBackward0(Node):
@@ -1397,11 +1535,11 @@ class Rms_normBackward0(Node):
         self._normalized_shape = None
         self._eps = None
 
-    def _save(self, *, input=None, weight=None):
+    def _save(self, *, input_=None, weight=None):
         tensors = []
-        if input is not None:
+        if input_ is not None:
             self._saved_input_idx = len(tensors)
-            tensors.append(input)
+            tensors.append(input_)
         if weight is not None:
             self._saved_weight_idx = len(tensors)
             tensors.append(weight)
@@ -1412,10 +1550,785 @@ class Rms_normBackward0(Node):
         from .._dispatch.dispatcher import current_dispatch_keyset
         keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
         _saved = self.saved_tensors()
-        input = _saved[self._saved_input_idx]
-        weight = _saved[self._saved_weight_idx]
+        input_ = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx] if self._saved_weight_idx is not None else None
         normalized_shape = self._normalized_shape
         eps = self._eps
         with _grad_context(keyset):
-            grad_input = _rms_norm_grad_input(grad, input, normalized_shape, weight, eps, keyset)
+            grad_input = _rms_norm_grad_input(grad, input_, normalized_shape, weight, eps, keyset)
         return (grad_input, None,)
+
+class Conv1dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Conv1dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_bias_idx = None
+        self._saved_input_idx = None
+        self._saved_weight_idx = None
+        self._stride = None
+        self._padding = None
+        self._dilation = None
+        self._groups = None
+
+    def _save(self, *, bias=None, input_=None, weight=None):
+        tensors = []
+        if bias is not None:
+            self._saved_bias_idx = len(tensors)
+            tensors.append(bias)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if weight is not None:
+            self._saved_weight_idx = len(tensors)
+            tensors.append(weight)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        bias = _saved[self._saved_bias_idx] if self._saved_bias_idx is not None else None
+        input_ = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx]
+        stride = self._stride
+        padding = self._padding
+        dilation = self._dilation
+        groups = self._groups
+        with _grad_context(keyset):
+            grad_input, grad_weight, grad_bias = _conv_backward_all(grad, input_, weight, bias, stride, padding, dilation, groups, 'conv1d', keyset)
+        return (grad_input, grad_weight, grad_bias,)
+
+class Conv2dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Conv2dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_bias_idx = None
+        self._saved_input_idx = None
+        self._saved_weight_idx = None
+        self._stride = None
+        self._padding = None
+        self._dilation = None
+        self._groups = None
+
+    def _save(self, *, bias=None, input_=None, weight=None):
+        tensors = []
+        if bias is not None:
+            self._saved_bias_idx = len(tensors)
+            tensors.append(bias)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if weight is not None:
+            self._saved_weight_idx = len(tensors)
+            tensors.append(weight)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        bias = _saved[self._saved_bias_idx] if self._saved_bias_idx is not None else None
+        input_ = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx]
+        stride = self._stride
+        padding = self._padding
+        dilation = self._dilation
+        groups = self._groups
+        with _grad_context(keyset):
+            grad_input, grad_weight, grad_bias = _conv_backward_all(grad, input_, weight, bias, stride, padding, dilation, groups, 'conv2d', keyset)
+        return (grad_input, grad_weight, grad_bias,)
+
+class Conv3dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Conv3dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_bias_idx = None
+        self._saved_input_idx = None
+        self._saved_weight_idx = None
+        self._stride = None
+        self._padding = None
+        self._dilation = None
+        self._groups = None
+
+    def _save(self, *, bias=None, input_=None, weight=None):
+        tensors = []
+        if bias is not None:
+            self._saved_bias_idx = len(tensors)
+            tensors.append(bias)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if weight is not None:
+            self._saved_weight_idx = len(tensors)
+            tensors.append(weight)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        bias = _saved[self._saved_bias_idx] if self._saved_bias_idx is not None else None
+        input_ = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx]
+        stride = self._stride
+        padding = self._padding
+        dilation = self._dilation
+        groups = self._groups
+        with _grad_context(keyset):
+            grad_input, grad_weight, grad_bias = _conv_backward_all(grad, input_, weight, bias, stride, padding, dilation, groups, 'conv3d', keyset)
+        return (grad_input, grad_weight, grad_bias,)
+
+class Conv_transpose1dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Conv_transpose1dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_bias_idx = None
+        self._saved_input_idx = None
+        self._saved_weight_idx = None
+        self._stride = None
+        self._padding = None
+        self._output_padding = None
+        self._groups = None
+        self._dilation = None
+
+    def _save(self, *, bias=None, input_=None, weight=None):
+        tensors = []
+        if bias is not None:
+            self._saved_bias_idx = len(tensors)
+            tensors.append(bias)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if weight is not None:
+            self._saved_weight_idx = len(tensors)
+            tensors.append(weight)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        bias = _saved[self._saved_bias_idx] if self._saved_bias_idx is not None else None
+        input_ = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx]
+        stride = self._stride
+        padding = self._padding
+        output_padding = self._output_padding
+        groups = self._groups
+        dilation = self._dilation
+        with _grad_context(keyset):
+            grad_input, grad_weight, grad_bias = _conv_backward_all(grad, input_, weight, bias, stride, padding, dilation, groups, 'conv_transpose1d', keyset)
+        return (grad_input, grad_weight, grad_bias,)
+
+class Conv_transpose2dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Conv_transpose2dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_bias_idx = None
+        self._saved_input_idx = None
+        self._saved_weight_idx = None
+        self._stride = None
+        self._padding = None
+        self._output_padding = None
+        self._groups = None
+        self._dilation = None
+
+    def _save(self, *, bias=None, input_=None, weight=None):
+        tensors = []
+        if bias is not None:
+            self._saved_bias_idx = len(tensors)
+            tensors.append(bias)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if weight is not None:
+            self._saved_weight_idx = len(tensors)
+            tensors.append(weight)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        bias = _saved[self._saved_bias_idx] if self._saved_bias_idx is not None else None
+        input_ = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx]
+        stride = self._stride
+        padding = self._padding
+        output_padding = self._output_padding
+        groups = self._groups
+        dilation = self._dilation
+        with _grad_context(keyset):
+            grad_input, grad_weight, grad_bias = _conv_backward_all(grad, input_, weight, bias, stride, padding, dilation, groups, 'conv_transpose2d', keyset)
+        return (grad_input, grad_weight, grad_bias,)
+
+class Conv_transpose3dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Conv_transpose3dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_bias_idx = None
+        self._saved_input_idx = None
+        self._saved_weight_idx = None
+        self._stride = None
+        self._padding = None
+        self._output_padding = None
+        self._groups = None
+        self._dilation = None
+
+    def _save(self, *, bias=None, input_=None, weight=None):
+        tensors = []
+        if bias is not None:
+            self._saved_bias_idx = len(tensors)
+            tensors.append(bias)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if weight is not None:
+            self._saved_weight_idx = len(tensors)
+            tensors.append(weight)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        bias = _saved[self._saved_bias_idx] if self._saved_bias_idx is not None else None
+        input_ = _saved[self._saved_input_idx]
+        weight = _saved[self._saved_weight_idx]
+        stride = self._stride
+        padding = self._padding
+        output_padding = self._output_padding
+        groups = self._groups
+        dilation = self._dilation
+        with _grad_context(keyset):
+            grad_input, grad_weight, grad_bias = _conv_backward_all(grad, input_, weight, bias, stride, padding, dilation, groups, 'conv_transpose3d', keyset)
+        return (grad_input, grad_weight, grad_bias,)
+
+class Max_pool1dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Max_pool1dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_result_idx = None
+        self._kernel_size = None
+        self._stride = None
+        self._padding = None
+        self._dilation = None
+        self._ceil_mode = None
+        self._return_indices = None
+
+    def _save(self, *, self_=None, result=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if result is not None:
+            self._saved_result_idx = len(tensors)
+            tensors.append(result)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        result = _saved[self._saved_result_idx]
+        kernel_size = self._kernel_size
+        stride = self._stride
+        padding = self._padding
+        dilation = self._dilation
+        ceil_mode = self._ceil_mode
+        return_indices = self._return_indices
+        with _grad_context(keyset):
+            grad_self = _max_pool1d_backward_helper(grad, self_, result, kernel_size, stride, padding, dilation, ceil_mode, keyset)
+        return (grad_self,)
+
+class Max_pool2dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Max_pool2dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_result_idx = None
+        self._kernel_size = None
+        self._stride = None
+        self._padding = None
+        self._dilation = None
+        self._ceil_mode = None
+        self._return_indices = None
+
+    def _save(self, *, self_=None, result=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if result is not None:
+            self._saved_result_idx = len(tensors)
+            tensors.append(result)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        result = _saved[self._saved_result_idx]
+        kernel_size = self._kernel_size
+        stride = self._stride
+        padding = self._padding
+        dilation = self._dilation
+        ceil_mode = self._ceil_mode
+        return_indices = self._return_indices
+        with _grad_context(keyset):
+            grad_self = _max_pool2d_backward_helper(grad, self_, result, kernel_size, stride, padding, dilation, ceil_mode, keyset)
+        return (grad_self,)
+
+class Max_pool3dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Max_pool3dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_result_idx = None
+        self._kernel_size = None
+        self._stride = None
+        self._padding = None
+        self._dilation = None
+        self._ceil_mode = None
+        self._return_indices = None
+
+    def _save(self, *, self_=None, result=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if result is not None:
+            self._saved_result_idx = len(tensors)
+            tensors.append(result)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        result = _saved[self._saved_result_idx]
+        kernel_size = self._kernel_size
+        stride = self._stride
+        padding = self._padding
+        dilation = self._dilation
+        ceil_mode = self._ceil_mode
+        return_indices = self._return_indices
+        with _grad_context(keyset):
+            grad_self = _max_pool3d_backward_helper(grad, self_, result, kernel_size, stride, padding, dilation, ceil_mode, keyset)
+        return (grad_self,)
+
+class Avg_pool1dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Avg_pool1dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._kernel_size = None
+        self._stride = None
+        self._padding = None
+        self._ceil_mode = None
+        self._count_include_pad = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        kernel_size = self._kernel_size
+        stride = self._stride
+        padding = self._padding
+        ceil_mode = self._ceil_mode
+        count_include_pad = self._count_include_pad
+        with _grad_context(keyset):
+            grad_self = _avg_pool1d_backward_helper(grad, self_, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset)
+        return (grad_self,)
+
+class Avg_pool2dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Avg_pool2dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._kernel_size = None
+        self._stride = None
+        self._padding = None
+        self._ceil_mode = None
+        self._count_include_pad = None
+        self._divisor_override = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        kernel_size = self._kernel_size
+        stride = self._stride
+        padding = self._padding
+        ceil_mode = self._ceil_mode
+        count_include_pad = self._count_include_pad
+        divisor_override = self._divisor_override
+        with _grad_context(keyset):
+            grad_self = _avg_pool2d_backward_helper(grad, self_, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset)
+        return (grad_self,)
+
+class Avg_pool3dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Avg_pool3dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._kernel_size = None
+        self._stride = None
+        self._padding = None
+        self._ceil_mode = None
+        self._count_include_pad = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        kernel_size = self._kernel_size
+        stride = self._stride
+        padding = self._padding
+        ceil_mode = self._ceil_mode
+        count_include_pad = self._count_include_pad
+        with _grad_context(keyset):
+            grad_self = _avg_pool3d_backward_helper(grad, self_, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset)
+        return (grad_self,)
+
+class Adaptive_avg_pool1dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Adaptive_avg_pool1dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._output_size = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        output_size = self._output_size
+        with _grad_context(keyset):
+            grad_self = _adaptive_avg_pool1d_backward_helper(grad, self_, output_size, keyset)
+        return (grad_self,)
+
+class Adaptive_avg_pool2dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Adaptive_avg_pool2dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._output_size = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        output_size = self._output_size
+        with _grad_context(keyset):
+            grad_self = _adaptive_avg_pool2d_backward_helper(grad, self_, output_size, keyset)
+        return (grad_self,)
+
+class Adaptive_avg_pool3dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Adaptive_avg_pool3dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._output_size = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        output_size = self._output_size
+        with _grad_context(keyset):
+            grad_self = _adaptive_avg_pool3d_backward_helper(grad, self_, output_size, keyset)
+        return (grad_self,)
+
+class Adaptive_max_pool1dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Adaptive_max_pool1dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_result_idx = None
+        self._output_size = None
+        self._return_indices = None
+
+    def _save(self, *, self_=None, result=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if result is not None:
+            self._saved_result_idx = len(tensors)
+            tensors.append(result)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        result = _saved[self._saved_result_idx]
+        output_size = self._output_size
+        return_indices = self._return_indices
+        with _grad_context(keyset):
+            grad_self = _adaptive_max_pool1d_backward_helper(grad, self_, result, output_size, keyset)
+        return (grad_self,)
+
+class Adaptive_max_pool2dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Adaptive_max_pool2dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_result_idx = None
+        self._output_size = None
+        self._return_indices = None
+
+    def _save(self, *, self_=None, result=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if result is not None:
+            self._saved_result_idx = len(tensors)
+            tensors.append(result)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        result = _saved[self._saved_result_idx]
+        output_size = self._output_size
+        return_indices = self._return_indices
+        with _grad_context(keyset):
+            grad_self = _adaptive_max_pool2d_backward_helper(grad, self_, result, output_size, keyset)
+        return (grad_self,)
+
+class Upsample_nearest1dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Upsample_nearest1dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._output_size = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        output_size = self._output_size
+        with _grad_context(keyset):
+            grad_self = _upsample_nearest1d_backward_helper(grad, self_, output_size, keyset)
+        return (grad_self,)
+
+class Upsample_nearest2dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Upsample_nearest2dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._output_size = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        output_size = self._output_size
+        with _grad_context(keyset):
+            grad_self = _upsample_nearest2d_backward_helper(grad, self_, output_size, keyset)
+        return (grad_self,)
+
+class Upsample_bilinear2dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Upsample_bilinear2dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._output_size = None
+        self._align_corners = None
+        self._scales_h = None
+        self._scales_w = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        output_size = self._output_size
+        align_corners = self._align_corners
+        scales_h = self._scales_h
+        scales_w = self._scales_w
+        with _grad_context(keyset):
+            grad_self = _upsample_bilinear2d_backward_helper(grad, self_, output_size, align_corners, keyset)
+        return (grad_self,)
+
+class Upsample_linear1dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Upsample_linear1dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._output_size = None
+        self._align_corners = None
+        self._scales = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        output_size = self._output_size
+        align_corners = self._align_corners
+        scales = self._scales
+        with _grad_context(keyset):
+            grad_self = _upsample_linear1d_backward_helper(grad, self_, output_size, align_corners, keyset)
+        return (grad_self,)
+
+class Upsample_bicubic2dBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(self.apply, inputs, name='Upsample_bicubic2dBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._output_size = None
+        self._align_corners = None
+        self._scales_h = None
+        self._scales_w = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        output_size = self._output_size
+        align_corners = self._align_corners
+        scales_h = self._scales_h
+        scales_w = self._scales_w
+        with _grad_context(keyset):
+            grad_self = _upsample_bicubic2d_backward_helper(grad, self_, output_size, align_corners, keyset)
+        return (grad_self,)

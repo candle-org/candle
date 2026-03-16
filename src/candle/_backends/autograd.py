@@ -7289,14 +7289,7 @@ for _entry in (
     ("pad", lambda: _autograd_unary_args("pad", _pad_backward, save_input=False)),
     ("prod", lambda: _autograd_unary_args("prod", _prod_backward)),
     ("norm", lambda: _autograd_unary_args("norm", _norm_backward)),
-    # Phase 6: Conv/pool ops
-    ("conv2d", lambda: _autograd_conv("conv2d")),
-    ("conv1d", lambda: _autograd_conv("conv1d")),
-    ("conv_transpose2d", lambda: _autograd_conv("conv_transpose2d")),
-    ("conv_transpose1d", lambda: _autograd_conv("conv_transpose1d")),
-    ("max_pool2d", lambda: _autograd_pool("max_pool2d", _max_pool2d_backward)),
-    ("avg_pool2d", lambda: _autograd_pool("avg_pool2d", _avg_pool2d_backward)),
-    ("adaptive_avg_pool2d", lambda: _autograd_pool("adaptive_avg_pool2d", _adaptive_avg_pool2d_backward)),
+    # Phase 6: Conv/pool ops — migrated to derivatives.yaml (Phase 2 codegen)
     # Phase 7: Utility ops
     ("roll", lambda: _autograd_unary_args("roll", _roll_backward, save_input=False)),
     ("tile", lambda: _autograd_unary_args("tile", _tile_backward, save_input=False)),
@@ -7371,24 +7364,9 @@ for _entry in (
     # P0 Gap Fix — Round 3
     # Task 1: addmm
     ("addmm", lambda: _autograd_addmm("addmm")),
-    # Task 2: Upsample backward
-    ("upsample_nearest2d", lambda: _autograd_pool("upsample_nearest2d", _upsample_nearest2d_backward)),
-    ("upsample_nearest1d", lambda: _autograd_pool("upsample_nearest1d", _upsample_nearest1d_backward)),
-    ("upsample_bilinear2d", lambda: _autograd_pool("upsample_bilinear2d", _upsample_bilinear2d_backward)),
-    ("upsample_linear1d", lambda: _autograd_pool("upsample_linear1d", _upsample_linear1d_backward)),
-    ("upsample_bicubic2d", lambda: _autograd_pool("upsample_bicubic2d", _upsample_bicubic2d_backward)),
-    # Task 3: Pool 1d/3d backward
-    ("max_pool1d", lambda: _autograd_pool("max_pool1d", _max_pool1d_backward)),
-    ("max_pool3d", lambda: _autograd_pool("max_pool3d", _max_pool3d_backward)),
-    ("avg_pool1d", lambda: _autograd_pool("avg_pool1d", _avg_pool1d_backward)),
-    ("avg_pool3d", lambda: _autograd_pool("avg_pool3d", _avg_pool3d_backward)),
-    ("adaptive_avg_pool1d", lambda: _autograd_pool("adaptive_avg_pool1d", _adaptive_avg_pool1d_backward)),
-    ("adaptive_avg_pool3d", lambda: _autograd_pool("adaptive_avg_pool3d", _adaptive_avg_pool3d_backward)),
-    ("adaptive_max_pool1d", lambda: _autograd_pool("adaptive_max_pool1d", _adaptive_max_pool1d_backward)),
-    ("adaptive_max_pool2d", lambda: _autograd_pool("adaptive_max_pool2d", _adaptive_max_pool2d_backward)),
-    # Task 4: Conv 3d
-    ("conv3d", lambda: _autograd_conv("conv3d")),
-    ("conv_transpose3d", lambda: _autograd_conv("conv_transpose3d")),
+    # Task 2: Upsample backward — migrated to derivatives.yaml (Phase 2 codegen)
+    # Task 3: Pool 1d/3d backward — migrated to derivatives.yaml (Phase 2 codegen)
+    # Task 4: Conv 3d — migrated to derivatives.yaml (Phase 2 codegen)
     # Task 5: Indexing backward
     ("index_put", lambda: _autograd_index_put("index_put")),
     ("index_put_", lambda: _autograd_index_put_inplace("index_put_")),
@@ -7564,6 +7542,23 @@ for _entry in (
     else:
         _name, _factory, _include_meta = _entry
         _register_autograd_op(_name, _factory, include_meta=_include_meta)
+
+# Register declarative autograd kernels generated from derivatives.yaml
+# Only register Phase 2+ ops that have been removed from the manual registry above.
+# Phase 1 ops (exp, sum, relu, etc.) still use the manual registry because their
+# dispatch signatures accept **kwargs that the generated positional-only wrappers don't handle.
+from .._generated.registration import register_generated_autograd_kernels  # pylint: disable=wrong-import-position
+_PHASE2_GENERATED_OPS = frozenset({
+    "conv1d", "conv2d", "conv3d",
+    "conv_transpose1d", "conv_transpose2d", "conv_transpose3d",
+    "max_pool1d", "max_pool2d", "max_pool3d",
+    "avg_pool1d", "avg_pool2d", "avg_pool3d",
+    "adaptive_avg_pool1d", "adaptive_avg_pool2d", "adaptive_avg_pool3d",
+    "adaptive_max_pool1d", "adaptive_max_pool2d",
+    "upsample_nearest1d", "upsample_nearest2d",
+    "upsample_bilinear2d", "upsample_linear1d", "upsample_bicubic2d",
+})
+register_generated_autograd_kernels(only_ops=_PHASE2_GENERATED_OPS)
 
 
 # ---------------------------------------------------------------------------

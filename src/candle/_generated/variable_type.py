@@ -560,7 +560,7 @@ def layer_norm_autograd(input, normalized_shape, weight, bias, eps=1e-5):
     if GradMode.enabled and (input.requires_grad):
         grad_fn = _F.Layer_normBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
-        grad_fn._save(input=input, weight=weight)
+        grad_fn._save(input_=input, weight=weight)
         grad_fn._normalized_shape = normalized_shape
         grad_fn._eps = eps
         result.grad_fn = grad_fn
@@ -575,7 +575,7 @@ def batch_norm_autograd(input, running_mean, running_var, weight, bias, training
     if GradMode.enabled and (input.requires_grad):
         grad_fn = _F.Batch_normBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
-        grad_fn._save(input=input, weight=weight)
+        grad_fn._save(input_=input, weight=weight)
         grad_fn._training = training
         grad_fn._momentum = momentum
         grad_fn._eps = eps
@@ -591,7 +591,7 @@ def group_norm_autograd(input, num_groups, weight, bias, eps=1e-5):
     if GradMode.enabled and (input.requires_grad):
         grad_fn = _F.Group_normBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
-        grad_fn._save(input=input, weight=weight)
+        grad_fn._save(input_=input, weight=weight)
         grad_fn._num_groups = num_groups
         grad_fn._eps = eps
         result.grad_fn = grad_fn
@@ -606,9 +606,382 @@ def rms_norm_autograd(input, normalized_shape, weight, eps=1e-6):
     if GradMode.enabled and (input.requires_grad):
         grad_fn = _F.Rms_normBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
-        grad_fn._save(input=input, weight=weight)
+        grad_fn._save(input_=input, weight=weight)
         grad_fn._normalized_shape = normalized_shape
         grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv1d_autograd(input, weight, bias=None, stride=None, padding=None, dilation=None, groups=1):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("conv1d", raw_keyset, input, weight, bias, stride, padding, dilation, groups)
+    if GradMode.enabled and (getattr(input, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input, weight, bias,) if x is not None]
+        grad_fn = _F.Conv1dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._groups = groups
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv2d_autograd(input, weight, bias=None, stride=None, padding=None, dilation=None, groups=1):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("conv2d", raw_keyset, input, weight, bias, stride, padding, dilation, groups)
+    if GradMode.enabled and (getattr(input, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input, weight, bias,) if x is not None]
+        grad_fn = _F.Conv2dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._groups = groups
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv3d_autograd(input, weight, bias, stride, padding, dilation, groups=1):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("conv3d", raw_keyset, input, weight, bias, stride, padding, dilation, groups)
+    if GradMode.enabled and (getattr(input, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input, weight, bias,) if x is not None]
+        grad_fn = _F.Conv3dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._groups = groups
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv_transpose1d_autograd(input, weight, bias=None, stride=None, padding=None, output_padding=None, groups=1, dilation=None):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("conv_transpose1d", raw_keyset, input, weight, bias, stride, padding, output_padding, groups, dilation)
+    if GradMode.enabled and (getattr(input, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input, weight, bias,) if x is not None]
+        grad_fn = _F.Conv_transpose1dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._output_padding = output_padding
+        grad_fn._groups = groups
+        grad_fn._dilation = dilation
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv_transpose2d_autograd(input, weight, bias=None, stride=None, padding=None, output_padding=None, groups=1, dilation=None):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("conv_transpose2d", raw_keyset, input, weight, bias, stride, padding, output_padding, groups, dilation)
+    if GradMode.enabled and (getattr(input, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input, weight, bias,) if x is not None]
+        grad_fn = _F.Conv_transpose2dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._output_padding = output_padding
+        grad_fn._groups = groups
+        grad_fn._dilation = dilation
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv_transpose3d_autograd(input, weight, bias=None, stride=None, padding=None, output_padding=None, groups=1, dilation=None):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("conv_transpose3d", raw_keyset, input, weight, bias, stride, padding, output_padding, groups, dilation)
+    if GradMode.enabled and (getattr(input, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input, weight, bias,) if x is not None]
+        grad_fn = _F.Conv_transpose3dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._output_padding = output_padding
+        grad_fn._groups = groups
+        grad_fn._dilation = dilation
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def max_pool1d_autograd(self, kernel_size, stride, padding, dilation, ceil_mode=False, return_indices=False):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("max_pool1d", raw_keyset, self, kernel_size, stride, padding, dilation, ceil_mode, return_indices)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Max_pool1dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self, result=result)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def max_pool2d_autograd(self, kernel_size, stride, padding=None, dilation=None, ceil_mode=False, return_indices=False):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("max_pool2d", raw_keyset, self, kernel_size, stride, padding, dilation, ceil_mode, return_indices)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Max_pool2dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self, result=result)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def max_pool3d_autograd(self, kernel_size, stride, padding=None, dilation=None, ceil_mode=False, return_indices=False):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("max_pool3d", raw_keyset, self, kernel_size, stride, padding, dilation, ceil_mode, return_indices)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Max_pool3dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self, result=result)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def avg_pool1d_autograd(self, kernel_size, stride, padding, ceil_mode=False, count_include_pad=True):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("avg_pool1d", raw_keyset, self, kernel_size, stride, padding, ceil_mode, count_include_pad)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Avg_pool1dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._count_include_pad = count_include_pad
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def avg_pool2d_autograd(self, kernel_size, stride, padding=None, ceil_mode=False, count_include_pad=True, divisor_override=None):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("avg_pool2d", raw_keyset, self, kernel_size, stride, padding, ceil_mode, count_include_pad, divisor_override)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Avg_pool2dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._count_include_pad = count_include_pad
+        grad_fn._divisor_override = divisor_override
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def avg_pool3d_autograd(self, kernel_size, stride, padding=None, ceil_mode=False, count_include_pad=True):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("avg_pool3d", raw_keyset, self, kernel_size, stride, padding, ceil_mode, count_include_pad)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Avg_pool3dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._count_include_pad = count_include_pad
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_avg_pool1d_autograd(self, output_size):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("adaptive_avg_pool1d", raw_keyset, self, output_size)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Adaptive_avg_pool1dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_avg_pool2d_autograd(self, output_size):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("adaptive_avg_pool2d", raw_keyset, self, output_size)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Adaptive_avg_pool2dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_avg_pool3d_autograd(self, output_size):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("adaptive_avg_pool3d", raw_keyset, self, output_size)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Adaptive_avg_pool3dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_max_pool1d_autograd(self, output_size, return_indices=False):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("adaptive_max_pool1d", raw_keyset, self, output_size, return_indices)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Adaptive_max_pool1dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self, result=result)
+        grad_fn._output_size = output_size
+        grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_max_pool2d_autograd(self, output_size, return_indices=False):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("adaptive_max_pool2d", raw_keyset, self, output_size, return_indices)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Adaptive_max_pool2dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self, result=result)
+        grad_fn._output_size = output_size
+        grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def upsample_nearest1d_autograd(self, output_size):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("upsample_nearest1d", raw_keyset, self, output_size)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Upsample_nearest1dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def upsample_nearest2d_autograd(self, output_size):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("upsample_nearest2d", raw_keyset, self, output_size)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Upsample_nearest2dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def upsample_bilinear2d_autograd(self, output_size, align_corners=False, scales_h=None, scales_w=None):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("upsample_bilinear2d", raw_keyset, self, output_size, align_corners, scales_h, scales_w)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Upsample_bilinear2dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._output_size = output_size
+        grad_fn._align_corners = align_corners
+        grad_fn._scales_h = scales_h
+        grad_fn._scales_w = scales_w
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def upsample_linear1d_autograd(self, output_size, align_corners=False, scales=None):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("upsample_linear1d", raw_keyset, self, output_size, align_corners, scales)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Upsample_linear1dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._output_size = output_size
+        grad_fn._align_corners = align_corners
+        grad_fn._scales = scales
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def upsample_bicubic2d_autograd(self, output_size, align_corners=False, scales_h=None, scales_w=None):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("upsample_bicubic2d", raw_keyset, self, output_size, align_corners, scales_h, scales_w)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Upsample_bicubic2dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._output_size = output_size
+        grad_fn._align_corners = align_corners
+        grad_fn._scales_h = scales_h
+        grad_fn._scales_w = scales_w
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result

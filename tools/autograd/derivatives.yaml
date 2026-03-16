@@ -169,3 +169,76 @@
 
 - name: rms_norm(Tensor input, int[] normalized_shape, Tensor? weight, float eps=1e-6) -> Tensor
   input: "_rms_norm_grad_input(grad, input, normalized_shape, weight, eps, keyset)"
+
+# ===== Conv ops (Phase 2) =====
+# Schemas must match the dispatch schemas in _dispatch/schemas.py exactly.
+
+- name: conv1d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any dilation=None, int groups=1) -> Tensor
+  input, weight, bias: "_conv_backward_all(grad, input, weight, bias, stride, padding, dilation, groups, 'conv1d', keyset)"
+
+- name: conv2d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any dilation=None, int groups=1) -> Tensor
+  input, weight, bias: "_conv_backward_all(grad, input, weight, bias, stride, padding, dilation, groups, 'conv2d', keyset)"
+
+- name: conv3d(Tensor input, Tensor weight, Tensor? bias, Any stride, Any padding, Any dilation, int groups=1) -> Tensor
+  input, weight, bias: "_conv_backward_all(grad, input, weight, bias, stride, padding, dilation, groups, 'conv3d', keyset)"
+
+- name: conv_transpose1d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any output_padding=None, int groups=1, Any dilation=None) -> Tensor
+  input, weight, bias: "_conv_backward_all(grad, input, weight, bias, stride, padding, dilation, groups, 'conv_transpose1d', keyset)"
+
+- name: conv_transpose2d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any output_padding=None, int groups=1, Any dilation=None) -> Tensor
+  input, weight, bias: "_conv_backward_all(grad, input, weight, bias, stride, padding, dilation, groups, 'conv_transpose2d', keyset)"
+
+- name: conv_transpose3d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any output_padding=None, int groups=1, Any dilation=None) -> Tensor
+  input, weight, bias: "_conv_backward_all(grad, input, weight, bias, stride, padding, dilation, groups, 'conv_transpose3d', keyset)"
+
+# ===== Pool ops (Phase 2) =====
+
+- name: max_pool1d(Tensor self, Any kernel_size, Any stride, Any padding, Any dilation, bool ceil_mode=False, bool return_indices=False) -> Tensor
+  self: "_max_pool1d_backward_helper(grad, self, result, kernel_size, stride, padding, dilation, ceil_mode, keyset)"
+
+- name: max_pool2d(Tensor self, Any kernel_size, Any stride, Any padding=None, Any dilation=None, bool ceil_mode=False, bool return_indices=False) -> Tensor
+  self: "_max_pool2d_backward_helper(grad, self, result, kernel_size, stride, padding, dilation, ceil_mode, keyset)"
+
+- name: max_pool3d(Tensor self, Any kernel_size, Any stride, Any padding=None, Any dilation=None, bool ceil_mode=False, bool return_indices=False) -> Tensor
+  self: "_max_pool3d_backward_helper(grad, self, result, kernel_size, stride, padding, dilation, ceil_mode, keyset)"
+
+- name: avg_pool1d(Tensor self, Any kernel_size, Any stride, Any padding, bool ceil_mode=False, bool count_include_pad=True) -> Tensor
+  self: "_avg_pool1d_backward_helper(grad, self, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset)"
+
+- name: avg_pool2d(Tensor self, Any kernel_size, Any stride, Any padding=None, bool ceil_mode=False, bool count_include_pad=True, Any divisor_override=None) -> Tensor
+  self: "_avg_pool2d_backward_helper(grad, self, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset)"
+
+- name: avg_pool3d(Tensor self, Any kernel_size, Any stride, Any padding=None, bool ceil_mode=False, bool count_include_pad=True) -> Tensor
+  self: "_avg_pool3d_backward_helper(grad, self, kernel_size, stride, padding, ceil_mode, count_include_pad, keyset)"
+
+- name: adaptive_avg_pool1d(Tensor self, Any output_size) -> Tensor
+  self: "_adaptive_avg_pool1d_backward_helper(grad, self, output_size, keyset)"
+
+- name: adaptive_avg_pool2d(Tensor self, Any output_size) -> Tensor
+  self: "_adaptive_avg_pool2d_backward_helper(grad, self, output_size, keyset)"
+
+- name: adaptive_avg_pool3d(Tensor self, Any output_size) -> Tensor
+  self: "_adaptive_avg_pool3d_backward_helper(grad, self, output_size, keyset)"
+
+- name: adaptive_max_pool1d(Tensor self, Any output_size, bool return_indices=False) -> Tensor
+  self: "_adaptive_max_pool1d_backward_helper(grad, self, result, output_size, keyset)"
+
+- name: adaptive_max_pool2d(Tensor self, Any output_size, bool return_indices=False) -> Tensor
+  self: "_adaptive_max_pool2d_backward_helper(grad, self, result, output_size, keyset)"
+
+# ===== Upsample ops (Phase 2) =====
+
+- name: upsample_nearest1d(Tensor self, Any output_size) -> Tensor
+  self: "_upsample_nearest1d_backward_helper(grad, self, output_size, keyset)"
+
+- name: upsample_nearest2d(Tensor self, Any output_size) -> Tensor
+  self: "_upsample_nearest2d_backward_helper(grad, self, output_size, keyset)"
+
+- name: upsample_bilinear2d(Tensor self, Any output_size, bool align_corners=False, Any scales_h=None, Any scales_w=None) -> Tensor
+  self: "_upsample_bilinear2d_backward_helper(grad, self, output_size, align_corners, keyset)"
+
+- name: upsample_linear1d(Tensor self, Any output_size, bool align_corners=False, Any scales=None) -> Tensor
+  self: "_upsample_linear1d_backward_helper(grad, self, output_size, align_corners, keyset)"
+
+- name: upsample_bicubic2d(Tensor self, Any output_size, bool align_corners=False, Any scales_h=None, Any scales_w=None) -> Tensor
+  self: "_upsample_bicubic2d_backward_helper(grad, self, output_size, align_corners, keyset)"
