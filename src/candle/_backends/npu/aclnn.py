@@ -4281,6 +4281,8 @@ def add(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
         # Create alpha=1 scalar via FFI
         alpha_bytes = _scalar_bytes(1, dtype)
         alpha_handle = _ffi.create_scalar(alpha_bytes, dtype_code)
+        executor = 0
+        workspace = None
         try:
             getws_ptr, exec_ptr = _ffi.resolve_op("Add")
             ws_size, executor = _ffi.binary_op_with_alpha(
@@ -4362,6 +4364,8 @@ def mul(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     dtype_code = _dtype_to_acl(dtype)
 
     if _ffi.is_initialized():
+        executor = 0
+        workspace = None
         try:
             getws_ptr, exec_ptr = _ffi.resolve_op("Mul")
             ws_size, executor = _ffi.binary_op_no_alpha(
@@ -4439,6 +4443,8 @@ def sub(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     if _ffi.is_initialized():
         alpha_bytes = _scalar_bytes(1, dtype)
         alpha_handle = _ffi.create_scalar(alpha_bytes, dtype_code)
+        executor = 0
+        workspace = None
         try:
             getws_ptr, exec_ptr = _ffi.resolve_op("Sub")
             ws_size, executor = _ffi.binary_op_with_alpha(
@@ -4522,6 +4528,8 @@ def div(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
     dtype_code = _dtype_to_acl(dtype)
 
     if _ffi.is_initialized():
+        executor = 0
+        workspace = None
         try:
             getws_ptr, exec_ptr = _ffi.resolve_op("Div")
             ws_size, executor = _ffi.binary_op_no_alpha(
