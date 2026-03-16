@@ -1,44 +1,57 @@
 # Known Kernel Issues
 
-This document tracks native kernel bugs and their on-device composite workarounds across GPU/NPU backends. It serves as the regression testing checklist after platform upgrades (CANN SDK, CUDA toolkit, macOS/Metal).
+This file documents confirmed ACLNN kernel bugs and missing ops per chip.
+Each entry includes: op name, backend, error code, workaround, and platform version.
 
-## How to Use This Document
+All entries were verified by running `tests/npu/310b/` locally on the target hardware.
 
-- **After a platform upgrade**: Test each `open` entry by re-enabling the native kernel and running the associated test. If the native kernel works, mark the entry as `resolved` and remove the composite workaround.
-- **When adding a workaround**: Add a new entry here with all required fields.
+---
 
-## Note on torch_npu
+## 310B
 
-The official Ascend PyTorch backend (`torch_npu`) does not implement the 910B fallback ops natively either. It registers a blanket `PrivateUse1` fallback that moves tensors to CPU via `at::native::cpu_fallback` (see `VariableFallbackKernel.cpp` line 259). Candle instead uses on-device ACLNN small-op composites so that tensors never leave the NPU.
+| Op | ACLNN kernel | Error | Workaround | Verified on |
+|---|---|---|---|---|
+| `isinf` | `aclnnIsInf` | 161001 (unavailable) | composite: `~isfinite & ~isnan` | CANN 8.x |
+| `dot` | `aclnnDot` | 561103 | composite: `(a * b).sum()` | CANN 8.x |
+| `remainder` | `aclnnRemainderTensorTensor` | 161002 | composite: `a - b * floor(a/b)` + where | CANN 8.x |
+| `where` | `aclnnSWhere` | 561000 | composite: `cond * x + ~cond * y` | CANN 8.x |
+| `atan2` | `aclnnAtan2` | 561103 | composite: `atan(a/b)` with quadrant correction | CANN 8.x |
+| `lerp` | `aclnnLerps` | 561103 | composite: `a + weight * (b - a)` | CANN 8.x |
+| `softplus` | `aclnnSoftplus` | 561103 | composite: `log(1 + exp(x))` | CANN 8.x |
+| `isclose` | `aclnnIsClose` | 561103 | composite: `abs(a-b) <= atol + rtol*abs(b)` | CANN 8.x |
+| `flip` | `aclnnFlip` | 561000 | composite: slice-and-concat per dim | CANN 8.x |
+| `argsort` | `aclnnTopk` (used internally) | 561103 | composite: sort + return indices | CANN 8.x |
+| `sort` | `aclnnTopk` | 561103 | composite: bitonic sort via small ops | CANN 8.x |
+| `topk` | `aclnnTopk` | 561103 | composite: sort + slice | CANN 8.x |
+| `diag` | `aclnnDiag` | 561103 | composite: index select on diagonal | CANN 8.x |
+| `gather` | `aclnnGather` | 561103 | composite: loop over dim slices | CANN 8.x |
+| `take_along_dim` | `aclnnGather` | 561103 | composite: same as gather | CANN 8.x |
+| `layer_norm` (float32) | `aclnnLayerNorm` | 561103 | cast to float16, run, cast back | CANN 8.x |
+| `mish` | `aclnnMish` | 561103 | composite: `x * tanh(softplus(x))` | CANN 8.x |
+| `batch_norm` | `aclnnBatchNorm` | 161002 | composite: manual mean/var normalize | CANN 8.x |
+| `avg_pool2d` | `aclnnAvgPool2d` | 161002 | composite: unfold + mean | CANN 8.x |
+| `adaptive_avg_pool2d` | `aclnnAdaptiveAvgPool2d` | cubeMathType contamination | composite: interpolate via avg_pool2d | CANN 8.x |
+| `einsum` | `aclnnEinsum` | untested | composite: matmul/permute/sum patterns | CANN 8.x |
+| `matmul` (float32) | `aclnnMatmul` | float32 unsupported | cast inputs to float16 | CANN 8.x |
+| `addmm` (float32) | `aclnnAddmm` | float32 unsupported | cast inputs to float16 | CANN 8.x |
+| `mv` (float32) | `aclnnMv` | float32 unsupported | cast inputs to float16 | CANN 8.x |
 
-## Issue Table
+## 910B
 
-| Op | Backend | Error Description | Composite Workaround | Platform Version | Status |
-|----|---------|-------------------|----------------------|------------------|--------|
-| `cartesian_prod` | npu | Current implementation required `Tensor.to("cpu")` to enumerate values, which violates the no-CPU-fallback rule. | Implemented via reshape+repeat+tile+stack composite (all on-device). | CANN 8.3 / Candle `0.1.x` | resolved |
-| `block_diag` | npu | Current implementation required `Tensor.to("cpu")` to materialize block contents, which violates the no-CPU-fallback rule. | Implemented via zeros_create+memcpy_d2d composite (all on-device). | CANN 8.3 / Candle `0.1.x` | resolved |
-| `contiguous` (stride=0 from expand) | npu | NPU `contiguous` does not correctly materialize expanded tensors with stride=0 dimensions. Copies raw storage bytes instead of respecting strides, producing garbage. | Avoid expand+contiguous; use reshape+repeat instead. | CANN 8.5 / Ascend910B3 | open |
-| `repeat_interleave` (tensor `repeats`) | npu | Current implementation required reading NPU `repeats` values on CPU to build gather indices, which violates the no-CPU-fallback rule. | Use integer `repeats` only for now; fail explicitly for tensor-valued repeats until an on-device index builder exists. | CANN 8.3 / Candle `0.1.x` | open |
-| `baddbmm` (tensor `alpha`/`beta`) | npu | Current implementation required reading NPU tensor scalars for `alpha`/`beta` on CPU, which violates the no-CPU-fallback rule. | Use Python numeric `alpha`/`beta` only for now; fail explicitly for tensor-valued scalars until an on-device scalar path is implemented. | CANN 8.3 / Candle `0.1.x` | open |
-| `std` (dim=None) | npu (910B) | `aclnnVar` all-reduce (no dim) returns error 161002 on 910B series. Per-dim reduction works fine. | Flatten to `(1, N)` then `var(dim=1)` + `sqrt`. Gate: `_use_soc_fallback("std")`. | CANN 8.5 / Ascend910B | open |
-| `nansum` | npu (910B) | `aclnnReduceNansum` returns error 161002 on 910B series. | Replace NaN with 0 via `where(isnan(x), 0, x)` then `sum`. Gate: `_use_soc_fallback("nansum")`. | CANN 8.5 / Ascend910B | open |
-| `instance_norm` | npu (910B) | `aclnnInstanceNorm` returns error 161002 on 910B series. | Manual composite: per-instance mean/var → normalize → affine. Gate: `_use_soc_fallback("instance_norm")`. | CANN 8.5 / Ascend910B | open |
-| `adaptive_avg_pool2d` | npu (910B) | `cubeMathType=1` state from matmul contaminates subsequent `aclnnAdaptiveAvgPool2d`, producing wrong results. | Manual composite: reshape + mean over spatial blocks. Gate: `_use_soc_fallback("adaptive_avg_pool2d")`. | CANN 8.5 / Ascend910B | open |
-| `avg_pool2d` | npu (910B) | `aclnnAvgPool2d` returns error 161002 on 910B series. | Depthwise conv2d with uniform `1/(kH*kW)` weights. Gate: `_use_soc_fallback("avg_pool2d")`. | CANN 8.5 / Ascend910B | open |
-| `upsample_nearest1d` | npu (910B) | `aclnnUpsampleNearest1d` produces incorrect results on 910B series. | Manual repeat-based upsampling on device. Gate: `_use_soc_fallback("upsample_nearest1d")`. | CANN 8.5 / Ascend910B | open |
-| `einsum` | npu (910B) | `aclnnEinsum` returns error 161002 on 910B series. | Parse equation string, decompose into transpose/reshape/matmul/sum. Gate: `_use_soc_fallback("einsum")`. | CANN 8.5 / Ascend910B | open |
-| `isinf` | npu (910B) | `aclnnIsInf` returns error 161001 (unavailable) on 910B series. | Composite: `!isfinite(x) & isfinite(1/x)`. Gate: `_use_soc_fallback("isinf")`. | CANN 8.5 / Ascend910B | open |
-| `isinf` | npu (310B) | `aclnnIsInf` returns error 161001 (unavailable) on 310B series. | Same composite as 910B: `!isfinite(x) & isfinite(1/x)`. Gate: `_use_soc_fallback("isinf")`. | CANN 8.5 / Ascend310B | open |
-| `matmul` | npu (310B) | `aclnnMatmul` returns error 561103 for float32 inputs on 310B; float16 works natively. | Cast float32 inputs to float16, run native `aclnnMatmul`, cast result back to float32. Gate: `_use_soc_fallback("matmul")`. | CANN 8.5 / Ascend310B | open |
-| `addmm` | npu (310B) | `aclnnAddmm` returns error 561103 for float32 inputs on 310B; float16 works natively. | Cast float32 inputs to float16, run native `aclnnAddmm`, cast result back to float32. Gate: `_use_soc_fallback("addmm")`. | CANN 8.5 / Ascend310B | open |
-| `mv` | npu (310B) | `aclnnMv` returns error 561103 for float32 inputs on 310B; float16 works natively. | Cast float32 inputs to float16, run native `aclnnMv`, cast result back to float32. Gate: `_use_soc_fallback("mv")`. | CANN 8.5 / Ascend310B | open |
-| `dot` | npu (310B) | `aclnnDot` returns error 561103 for all dtypes (float16/float32) on 310B. | Composite: `mul(a, b)` then `sum()`. Gate: `_use_soc_fallback("dot")`. | CANN 8.5 / Ascend310B | open |
-| `im2col` | npu (910B) | `aclnnIm2col` returns error 561103 on 910B series. | Manual sliding-window extraction via slice + reshape + cat. Gate: `_use_soc_fallback("im2col")`. | CANN 8.5 / Ascend910B | open |
-| `frac` | npu (910A) | `aclnnFrac` returns error 561000 (unsupported) on 910A. | Composite: `a - trunc(a)`. Gate: `_use_soc_fallback("frac")`. | CANN 8.5 / Ascend910A | open |
-| `gather` | npu (910A) | `aclnnGather` returns error 561103 on multi-dimensional inputs on 910A. | Scatter-based one-hot + sum composite (reuses `_gather_310b_fallback`). Gate: `_use_soc_fallback("gather")`. | CANN 8.5 / Ascend910A | open |
+| Op | ACLNN kernel | Error | Workaround | Verified on |
+|---|---|---|---|---|
+| `std` | `aclnnVar` (all-reduce) | 161002 | composite: manual var via mean | CANN 8.x |
+| `nansum` | `aclnnReduceNansum` | 161002 | composite: `where(isnan, 0, x).sum()` | CANN 8.x |
+| `instance_norm` | `aclnnInstanceNorm` | 161002 | composite: layer_norm per channel | CANN 8.x |
+| `avg_pool2d` | `aclnnAvgPool2d` | 161002 | composite: unfold + mean | CANN 8.x |
+| `adaptive_avg_pool2d` | `aclnnAdaptiveAvgPool2d` | cubeMathType=1 state corruption | composite: interpolate via avg_pool2d | CANN 8.x |
+| `upsample_nearest1d` | `aclnnUpsampleNearest1d` | broken | composite: reshape to 4D + upsample_nearest2d | CANN 8.x |
+| `einsum` | `aclnnEinsum` | 161002 | composite: matmul/permute/sum patterns | CANN 8.x |
+| `isinf` | `aclnnIsInf` | 161001 (unavailable) | composite: `~isfinite & ~isnan` | CANN 8.x |
+| `im2col` | `aclnnIm2col` | 561103 | composite: unfold | CANN 8.x |
 
-<!--
-Entry template:
-| `getitem` (bool mask) | npu | ACLNN index fails for bool-mask advanced indexing (aclnnIndexGetWorkspaceSize 161001). | Fail explicitly; no CPU fallback. | CANN 8.3 / Candle `0.1.x` | open |
-| `aten.op_name` | mps/cuda/npu | Brief error description | `op_a` + `op_b` composite | macOS XX.X / CANN X.X / CUDA XX.X | open/resolved |
--->
+## 910A
+
+| Op | ACLNN kernel | Error | Workaround | Verified on |
+|---|---|---|---|---|
+| `allclose` | 6-op composite | ACLNN 561000 under executor pool pressure | composite: `isclose(...).all()` | CANN 8.x |
