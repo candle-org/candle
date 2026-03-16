@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# Cython generated C files
+src/candle/_backends/npu/_aclnn_ffi.c
+
 # Distribution / packaging
 .Python
 build/

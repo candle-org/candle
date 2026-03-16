@@ -7,10 +7,35 @@ standalone ``_candle_torch_compat`` bootstrap module and its ``.pth`` trigger.
 """
 
 import os
+import platform
 import shutil
 
-from setuptools import setup, find_packages
+from setuptools import setup, find_packages, Extension
 from setuptools.command.build_py import build_py
+
+# ---------------------------------------------------------------------------
+# Cython extension (optional — only built on Linux where CANN is available)
+# ---------------------------------------------------------------------------
+ext_modules = []
+if platform.system() == "Linux":
+    try:
+        from Cython.Build import cythonize
+        ext_modules = cythonize(
+            [
+                Extension(
+                    "candle._backends.npu._aclnn_ffi",
+                    ["src/candle/_backends/npu/_aclnn_ffi.pyx"],
+                    libraries=["dl"],
+                ),
+            ],
+            compiler_directives={
+                "language_level": "3",
+                "boundscheck": False,
+                "wraparound": False,
+            },
+        )
+    except ImportError:
+        pass  # Cython not installed — skip extension, use fallback at runtime
 
 
 class _BuildPy(build_py):
@@ -28,5 +53,6 @@ setup(
     package_dir={"": "src"},
     package_data={"candle": ["*.py", "*/*.py", "*/*/*.py", "*/*/*/*.py"]},
     py_modules=["_candle_torch_compat"],
+    ext_modules=ext_modules,
     cmdclass={"build_py": _BuildPy},
 )
