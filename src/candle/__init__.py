@@ -298,6 +298,10 @@ from .nn.functional import (
 )
 from ._functional import rms_norm
 
+def selu_(input): return copy_(input, selu(input))
+def celu_(input, alpha=1.0): return copy_(input, celu(input, alpha=alpha))
+def threshold_(input, threshold_val, value): return copy_(input, threshold(input, threshold_val, value))
+
 # as_strided (view op)
 def as_strided(input, size, stride, storage_offset=None):
     from ._functional import dispatch
