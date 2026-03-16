@@ -71,6 +71,7 @@ from .ops import (
     _meta_dsplit_meta,
     _meta_unbind_meta,
 )
+from .infer import infer_view_as_real, infer_view_as_complex
 
 registry.register("add", "meta", _meta_binary_meta)
 registry.register("mul", "meta", _meta_binary_meta)
@@ -160,6 +161,7 @@ registry.register("take_along_dim", "meta", _meta_take_along_dim_meta)
 registry.register("index_select", "meta", _meta_index_select_meta)
 registry.register("gather", "meta", _meta_gather_meta)
 registry.register("scatter", "meta", _meta_scatter_meta)
+registry.register("scatter_reduce", "meta", _meta_scatter_meta)
 registry.register("cartesian_prod", "meta", _meta_cartesian_prod_meta)
 registry.register("chunk", "meta", _meta_chunk_meta)
 registry.register("split", "meta", _meta_split_meta)
@@ -188,8 +190,11 @@ registry.register("fmod", "meta", _meta_binary_meta)
 registry.register("contiguous", "meta", _meta_contiguous_meta)
 registry.register("sum", "meta", _meta_sum_meta)
 registry.register("std", "meta", _meta_sum_meta)
+registry.register("var_mean", "meta", _meta_sum_meta)
 registry.register("reshape", "meta", view_backend.reshape, meta=_meta_view_meta)
 registry.register("view", "meta", view_backend.view, meta=_meta_view_meta)
+registry.register("view_as_real", "meta", view_backend.view_as_real, meta=infer_view_as_real)
+registry.register("view_as_complex", "meta", view_backend.view_as_complex, meta=infer_view_as_complex)
 registry.register("transpose", "meta", view_backend.transpose, meta=_meta_transpose_meta)
 registry.register("to", "meta", convert_backend.to_device)
 

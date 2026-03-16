@@ -162,6 +162,7 @@ from .ops import (
     masked_select,
     gather,
     scatter,
+    scatter_reduce,
     take,
     take_along_dim,
     index_select,
@@ -202,6 +203,7 @@ from .ops import (
     as_strided_scatter,
     embedding,
     var_,
+    var_mean,
     norm_,
     prod_,
     floor_divide,
@@ -425,6 +427,8 @@ registry.register("erfinv_", "cpu", erfinv_, meta=meta_infer.infer_unary)
 registry.register("sub_", "cpu", sub_, meta=meta_infer.infer_binary)
 registry.register("reshape", "cpu", view_backend.reshape, meta=meta_infer.infer_view)
 registry.register("view", "cpu", view_backend.view, meta=meta_infer.infer_view)
+registry.register("view_as_real", "cpu", view_backend.view_as_real, meta=meta_infer.infer_view)
+registry.register("view_as_complex", "cpu", view_backend.view_as_complex, meta=meta_infer.infer_view)
 registry.register("transpose", "cpu", view_backend.transpose, meta=meta_infer.infer_transpose)
 registry.register("squeeze", "cpu", view_backend.squeeze, meta=meta_infer.infer_view)
 registry.register("unsqueeze", "cpu", view_backend.unsqueeze, meta=meta_infer.infer_view)
@@ -461,6 +465,7 @@ registry.register("index_fill_", "cpu", index_fill_)
 registry.register("index_add_", "cpu", index_add_)
 registry.register("scatter_", "cpu", scatter_)
 registry.register("scatter_add_", "cpu", scatter_add_)
+registry.register("scatter_reduce", "cpu", scatter_reduce, meta=meta_infer.infer_scatter)
 registry.register("masked_scatter_", "cpu", masked_scatter_)
 registry.register("unfold", "cpu", unfold)
 registry.register("slice", "cpu", slice_op)
@@ -472,6 +477,7 @@ registry.register("as_strided_copy", "cpu", as_strided_copy)
 registry.register("as_strided_scatter", "cpu", as_strided_scatter)
 
 registry.register("var", "cpu", var_, meta=meta_infer.infer_sum)
+registry.register("var_mean", "cpu", var_mean)
 registry.register("norm", "cpu", norm_, meta=meta_infer.infer_sum)
 registry.register("prod", "cpu", prod_, meta=meta_infer.infer_sum)
 registry.register("floor_divide", "cpu", floor_divide, meta=meta_infer.infer_binary)

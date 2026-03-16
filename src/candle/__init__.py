@@ -103,10 +103,10 @@ from ._functional import clamp, clamp_min, clamp_max, relu6, hardtanh
 from ._functional import add_, mul_, relu_, zero_, clamp_, copy_
 from ._functional import min, max, amin, amax, fmin, fmax, where
 from ._functional import atan, atan2, asin, acos, lerp, addcmul, addcdiv
-from ._functional import reshape, transpose
+from ._functional import reshape, transpose, view_as_real, view_as_complex
 from ._functional import logaddexp, logaddexp2, hypot, remainder, fmod
 from ._functional import squeeze, unsqueeze, permute
-from ._functional import var, norm, prod
+from ._functional import var, var_mean, norm, prod
 from ._functional import reciprocal, addmm, einsum
 from ._functional import mm, bmm
 from ._functional import floor_divide
@@ -125,7 +125,7 @@ from ._functional import select, expand, masked_fill, unfold
 from ._functional import sum_to_size
 from ._functional import slice, slice_copy, slice_scatter, expand_copy
 from ._functional import as_strided_, as_strided_copy, as_strided_scatter
-from ._functional import scatter_, scatter_add_
+from ._functional import scatter_, scatter_add_, scatter_reduce
 from ._functional import index_add_, index_copy_, index_fill_
 from ._functional import index_put, index_put_
 from ._functional import masked_fill_, masked_scatter_
@@ -410,10 +410,13 @@ __all__ = [
     "std",
     "reshape",
     "transpose",
+    "view_as_real",
+    "view_as_complex",
     "squeeze",
     "unsqueeze",
     "permute",
     "var",
+    "var_mean",
     "norm",
     "prod",
     "mm",
@@ -541,6 +544,7 @@ __all__ = [
     "unfold",
     "scatter_",
     "scatter_add_",
+    "scatter_reduce",
     "index_add_",
     "index_copy_",
     "index_fill_",

@@ -533,6 +533,31 @@ class TypedStorage:
             return self
         raise NotImplementedError(f"Unsupported device: {self.device}")
 
+    def _reinterpret(self, dtype):
+        if dtype == self.dtype:
+            return self
+        if self.device.type == "cpu":
+            itemsize = np.dtype(to_numpy_dtype(dtype)).itemsize
+            size = int(self.nbytes() // itemsize)
+            data = self._data.view(to_numpy_dtype(dtype))
+            data = data.reshape(size)
+            return TypedStorage(self._untyped, dtype, size, data=data)
+        if self.device.type == "mps":
+            itemsize = np.dtype(to_numpy_dtype(dtype)).itemsize
+            size = int(self.nbytes() // itemsize)
+            data = self._data.view(to_numpy_dtype(dtype))
+            data = data.reshape(size)
+            return TypedStorage(self._untyped, dtype, size, data=data)
+        if self.device.type in ("npu", "cuda"):
+            itemsize = np.dtype(to_numpy_dtype(dtype)).itemsize
+            size = int(self.nbytes() // itemsize)
+            return TypedStorage(self._untyped, dtype, size)
+        if self.device.type == "meta":
+            itemsize = np.dtype(to_numpy_dtype(dtype)).itemsize
+            size = int(self.nbytes() // itemsize)
+            return TypedStorage(self._untyped, dtype, size)
+        raise NotImplementedError(f"Unsupported device: {self.device}")
+
     def resize_(self, new_size):
         itemsize = np.dtype(to_numpy_dtype(self.dtype)).itemsize
         self._untyped.resize_(int(new_size) * itemsize)

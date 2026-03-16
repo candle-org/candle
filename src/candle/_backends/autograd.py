@@ -7398,6 +7398,8 @@ for _entry in (
     ("reshape", lambda: _autograd_view("reshape", _reshape_backward)),
     ("transpose", lambda: _autograd_view("transpose", _transpose_backward)),
     ("view", lambda: _autograd_view("view", _reshape_backward)),
+    ("view_as_real", lambda: _autograd_view("view_as_real", _reshape_backward)),
+    ("view_as_complex", lambda: _autograd_view("view_as_complex", _reshape_backward)),
     ("squeeze", lambda: _autograd_view("squeeze", _squeeze_backward)),
     ("unsqueeze", lambda: _autograd_view("unsqueeze", _unsqueeze_backward)),
     ("expand", lambda: _autograd_view("expand", _expand_backward)),
@@ -7450,6 +7452,7 @@ for _entry in (
     ("unbind", lambda: _autograd_multi_output("unbind", _unbind_backward, save_input=False)),
     # Phase 5: Transformer-critical ops
     ("masked_fill", lambda: _autograd_unary_args("masked_fill", _masked_fill_backward, save_input=False)),
+    ("var_mean", lambda: _autograd_unary_args("var_mean", _var_backward)),
     ("var", lambda: _autograd_unary_args("var", _var_backward)),
     ("std", lambda: _autograd_unary_args("std", _std_backward)),
     ("gather", lambda: _autograd_unary_args("gather", _gather_backward, save_input=False)),

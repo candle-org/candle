@@ -124,6 +124,10 @@ _NUMPY_DTYPE_MAP = {
     complex32: np.complex64,
     complex64: np.complex64,
     complex128: np.complex128,
+    float16: np.float16,
+    float32: np.float32,
+    float64: np.float64,
+    bfloat16: np.uint16,
 }
 
 # Reverse map: numpy dtype -> DType

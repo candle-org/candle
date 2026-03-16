@@ -434,6 +434,10 @@ class Tensor:
         """Reshape this tensor to the same shape as other."""
         return self.view(other.shape)
 
+    def var_mean(self, dim=None, keepdim=False, unbiased=True):
+        from ._functional import var_mean
+        return var_mean(self, dim=dim, keepdim=keepdim, unbiased=unbiased)
+
     def new_empty(self, size, *, dtype=None, device=None, requires_grad=False):
         """Create a new empty tensor with the same dtype and device as self."""
         from ._creation import empty

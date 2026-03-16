@@ -558,6 +558,74 @@ def scatter(a, dim, index, src):
     return _from_numpy(arr, a.dtype, a.device)
 
 
+def scatter_reduce(a, dim, index, src, reduce, *, include_self=True):
+    arr = _to_numpy(a)
+    idx = _ensure_integer_indices(_to_numpy(index), "index").astype(np.int64, copy=False)
+    if dim < 0:
+        dim += arr.ndim
+    if dim < 0 or dim >= arr.ndim:
+        raise ValueError("dim out of range")
+    if idx.ndim != arr.ndim:
+        raise ValueError("index shape mismatch")
+    for i, size in enumerate(idx.shape):
+        if i != dim and size != arr.shape[i]:
+            raise ValueError("index shape mismatch")
+    _check_index_range(idx, arr.shape[dim])
+
+    if hasattr(src, "shape"):
+        src_arr = _to_numpy(src)
+    else:
+        src_arr = np.array(src, dtype=arr.dtype)
+    src_arr = np.broadcast_to(src_arr, idx.shape)
+
+    reduce = str(reduce)
+    if reduce not in ("sum", "prod", "mean", "amax", "amin"):
+        raise ValueError(f"unsupported reduction '{reduce}'")
+
+    if include_self:
+        out = arr.copy()
+    else:
+        if reduce in ("sum", "mean"):
+            out = np.zeros_like(arr)
+        elif reduce == "prod":
+            out = np.ones_like(arr)
+        elif reduce == "amax":
+            fill = np.finfo(arr.dtype).min if arr.dtype.kind in ("f", "c") else np.iinfo(arr.dtype).min
+            out = np.full_like(arr, fill)
+        else:
+            fill = np.finfo(arr.dtype).max if arr.dtype.kind in ("f", "c") else np.iinfo(arr.dtype).max
+            out = np.full_like(arr, fill)
+
+    if reduce == "mean":
+        counts = np.ones_like(arr, dtype=np.int64) if include_self else np.zeros_like(arr, dtype=np.int64)
+
+    it = np.nditer(idx, flags=['multi_index'])
+    while not it.finished:
+        mi = it.multi_index
+        dst_idx = list(mi)
+        dst_idx[dim] = int(it[0])
+        dst_idx = tuple(dst_idx)
+        value = src_arr[mi]
+        if reduce == "sum":
+            out[dst_idx] += value
+        elif reduce == "prod":
+            out[dst_idx] *= value
+        elif reduce == "mean":
+            out[dst_idx] += value
+            counts[dst_idx] += 1
+        elif reduce == "amax":
+            out[dst_idx] = value if value > out[dst_idx] else out[dst_idx]
+        else:
+            out[dst_idx] = value if value < out[dst_idx] else out[dst_idx]
+        it.iternext()
+
+    if reduce == "mean":
+        with np.errstate(divide="ignore", invalid="ignore"):
+            out = out / np.maximum(counts, 1)
+
+    return _from_numpy(out, a.dtype, a.device)
+
+
 def tril_indices(row, col, offset=0, dtype=None, device=None, layout=None):
     _check_indices_layout(layout)
     if row < 0 or col < 0:
@@ -2028,6 +2096,12 @@ def var_(a, dim=None, unbiased=True, keepdim=False):
         if keepdim:
             out = np.full([1] * arr.ndim, out)
     return _from_numpy(np.ascontiguousarray(np.atleast_1d(out).astype(arr.dtype, copy=False)), a.dtype, a.device)
+
+
+def var_mean(a, dim=None, unbiased=True, keepdim=False):
+    var_out = var_(a, dim=dim, unbiased=unbiased, keepdim=keepdim)
+    mean_out = mean_(a, dim=dim, keepdim=keepdim)
+    return var_out, mean_out
 
 
 def norm_(a, p=2, dim=None, keepdim=False):
