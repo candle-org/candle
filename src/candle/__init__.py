@@ -146,6 +146,104 @@ from ._functional import clone, detach, contiguous
 from ._functional import index_add, index_copy, index_fill, scatter_add
 from ._functional import tensor_split, split_with_sizes
 from ._functional import hann_window, hamming_window, bartlett_window, blackman_window
+# Aliases matching torch top-level names
+absolute = abs
+arccos = acos
+arccosh = acosh
+arcsin = asin
+arcsinh = asinh
+arctan = atan
+arctan2 = atan2
+arctanh = atanh
+clip = clamp
+clip_ = clamp_
+divide = div
+multiply = mul
+subtract = sub
+negative = neg
+greater = gt
+greater_equal = ge
+less = lt
+less_equal = le
+not_equal = ne
+swapaxes = transpose
+swapdims = transpose
+fix = trunc
+def msort(input):
+    """Sort along dim 0, returning values only (no indices)."""
+    return sort(input, dim=0)[0]
+vdot = dot
+ger = outer
+
+
+def t(input):
+    """2-D transpose (alias for transpose(input, 0, 1))."""
+    if input.ndim != 2:
+        raise RuntimeError(f"t() expects a 2-D tensor, got {input.ndim}-D")
+    return transpose(input, 0, 1)
+
+
+def fliplr(input):
+    """Flip tensor left-right (along dim 1)."""
+    if input.ndim < 2:
+        raise RuntimeError("fliplr requires at least 2-D input")
+    return flip(input, [1])
+
+
+def flipud(input):
+    """Flip tensor upside-down (along dim 0)."""
+    return flip(input, [0])
+
+
+def std_mean(input, dim=None, *, unbiased=True, keepdim=False):
+    """Return (std, mean) tuple."""
+    s = std(input, dim=dim, unbiased=unbiased, keepdim=keepdim)
+    m = mean(input, dim=dim, keepdim=keepdim)
+    return s, m
+
+
+def rsub(input, other, alpha=1):
+    """Subtract input from other: other - alpha * input."""
+    return sub(other, input if alpha == 1 else mul(input, alpha))
+
+
+def nan_to_num(input, nan=0.0, posinf=None, neginf=None):
+    """Replace NaN/inf/-inf with finite values."""
+    import builtins as _b
+    out = where(isnan(input), full(input.shape, nan, dtype=input.dtype, device=input.device), input)
+    if posinf is not None:
+        out = where(isposinf(out), full(input.shape, posinf, dtype=input.dtype, device=input.device), out)
+    if neginf is not None:
+        out = where(isneginf(out), full(input.shape, neginf, dtype=input.dtype, device=input.device), out)
+    return out
+
+
+def nan_to_num_(input, nan=0.0, posinf=None, neginf=None):
+    """In-place nan_to_num."""
+    result = nan_to_num(input, nan=nan, posinf=posinf, neginf=neginf)
+    copy_(input, result)
+    return input
+
+
+def diag_embed(input, offset=0, dim1=-2, dim2=-1):
+    """Embed input as diagonals of a new tensor."""
+    import builtins as _b
+    n = input.shape[-1]
+    out_size = n + _b.abs(offset)
+    shape = list(input.shape[:-1]) + [out_size, out_size]
+    out = zeros(shape, dtype=input.dtype, device=input.device)
+    row = _b.max(0, -offset)
+    col = _b.max(0, offset)
+    for i in _b.range(n):
+        out[..., row + i, col + i] = input[..., i]
+    return out
+
+
+def diagflat(input, offset=0):
+    """Flatten input and create a 2-D diagonal matrix."""
+    return diag(flatten(input), offset)
+
+
 from ._printing import set_printoptions, get_printoptions
 from ._dispatch import (
     pipeline_context,
