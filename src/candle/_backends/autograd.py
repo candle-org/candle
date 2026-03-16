@@ -777,15 +777,6 @@ def _layer_norm_backward(grad, _a, saved_a, keyset, args, kwargs, backward_data=
     bias = args[2] if len(args) > 2 else kwargs.get("bias", None)
     eps = args[3] if len(args) > 3 else kwargs.get("eps", 1e-5)
 
-    # NPU path: use ACLNN large kernel when backward_data is available
-    if grad.device.type == "npu" and backward_data is not None and "mean_ptr" in backward_data:
-        from .npu.backward import npu_layer_norm_backward
-        grad_input, grad_weight, grad_bias = npu_layer_norm_backward(
-            grad, saved_a, backward_data, normalized_shape,
-            weight=weight, bias=bias, eps=eps,
-        )
-        return (grad_input,)
-
     # CPU path: composite small ops
     with _grad_context(keyset):
         norm_shape = tuple(normalized_shape)
@@ -1074,33 +1065,6 @@ def _autograd_dropout():
             node_holder = {}
 
             def _backward(grad):
-                if backward_data is not None and grad.device.type == "npu":
-                    # NPU path: use aclnnDropoutDoMask with saved mask
-                    from .npu import aclnn, runtime as npu_runtime, state as npu_state
-                    runtime = npu_runtime.get_runtime((grad.device.index or 0))
-                    stream = npu_state.current_stream((grad.device.index or 0))
-                    out_shape = grad.shape
-                    out_stride = npu_runtime._contiguous_stride(out_shape)
-                    out_numel = 1
-                    for d in out_shape:
-                        out_numel *= d
-                    from .npu.ops import _dtype_itemsize, _unwrap_storage
-                    itemsize = _dtype_itemsize(grad.dtype)
-                    out_ptr = npu_runtime._alloc_device(max(out_numel, 1) * itemsize, runtime=runtime)
-                    grad_ptr = _unwrap_storage(grad).data_ptr()
-                    aclnn.dropout_do_mask(
-                        grad_ptr,
-                        backward_data["mask_ptr"],
-                        out_ptr,
-                        out_shape, grad.stride, grad.dtype,
-                        backward_data["mask_numel"],
-                        backward_data["p"],
-                        runtime, stream=stream.stream,
-                    )
-                    from .npu.ops import npu_typed_storage_from_ptr, _wrap_tensor
-                    out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1),
-                                                            grad.dtype, device=grad.device)
-                    return (_wrap_tensor(out_storage, out_shape, out_stride),)
                 if backward_data is not None and grad.device.type == "mps":
                     from .mps.ops._helpers import (
                         _metal_buf, _alloc_output_buf, _kernel_suffix,
@@ -1180,17 +1144,6 @@ def _batch_norm_backward(grad, _a, saved_a, keyset, args, kwargs, backward_data=
     weight = args[3] if len(args) > 3 else kwargs.get("weight", None)
     training = args[5] if len(args) > 5 else kwargs.get("training", False)
     eps = args[7] if len(args) > 7 else kwargs.get("eps", 1e-5)
-
-    # NPU path: use ACLNN large kernel when backward_data is available
-    if grad.device.type == "npu" and backward_data is not None and "save_mean_ptr" in backward_data:
-        running_mean = args[1] if len(args) > 1 else kwargs.get("running_mean", None)
-        running_var = args[2] if len(args) > 2 else kwargs.get("running_var", None)
-        from .npu.backward import npu_batch_norm_backward
-        grad_input, grad_weight, grad_bias = npu_batch_norm_backward(
-            grad, saved_a, backward_data, weight=weight,
-            running_mean=running_mean, running_var=running_var,
-        )
-        return (grad_input,)
 
     # CPU path: composite small ops
     with _grad_context(keyset):
@@ -1518,14 +1471,6 @@ def _rms_norm_backward(grad, _a, saved_a, keyset, args, kwargs, backward_data=No
     weight = args[1] if len(args) > 1 else kwargs.get("weight", None)
     eps = args[2] if len(args) > 2 else kwargs.get("eps", 1e-6)
 
-    # NPU path: use ACLNN large kernel when backward_data is available
-    if grad.device.type == "npu" and backward_data is not None and "rstd_ptr" in backward_data:
-        from .npu.backward import npu_rms_norm_backward
-        grad_input, grad_weight = npu_rms_norm_backward(
-            grad, saved_a, backward_data, weight=weight,
-        )
-        return (grad_input,)
-
     # CPU path: composite small ops
     with _grad_context(keyset):
         norm_shape = tuple(normalized_shape)
@@ -1676,28 +1621,6 @@ def _autograd_conv(name, *, has_bias=True):
 
 
 def _conv_backward(name, grad, input, weight, bias, saved_input, saved_weight, saved_bias, keyset, args, kwargs):  # pylint: disable=too-many-branches,too-many-nested-blocks
-    # NPU path: use aclnnConvolutionBackward large kernel
-    if grad.device.type == "npu":
-        from .npu.backward import npu_conv_backward
-        stride = kwargs.get("stride", args[0] if args else (1, 1))
-        padding = kwargs.get("padding", args[1] if len(args) > 1 else (0, 0))
-        dilation = kwargs.get("dilation", args[2] if len(args) > 2 else (1, 1))
-        groups = kwargs.get("groups", args[3] if len(args) > 3 else 1)
-        if isinstance(stride, int):
-            stride = (stride, stride)
-        if isinstance(padding, int):
-            padding = (padding, padding)
-        if isinstance(dilation, int):
-            dilation = (dilation, dilation)
-        gi, gw, gb = npu_conv_backward(
-            grad, saved_input, saved_weight, saved_bias,
-            name, stride, padding, dilation, groups,
-        )
-        results = [gi, gw]
-        if bias is not None:
-            results.append(gb)
-        return tuple(results)
-    # CPU path: existing numpy implementation below
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -2054,13 +1977,6 @@ def _autograd_pool(name, backward_impl):
 
 
 def _max_pool2d_backward(grad, input, saved_input, out, keyset, args, kwargs):
-    # NPU path: use aclnnMaxPool2dWithMaskBackward large kernel
-    if grad.device.type == "npu":
-        backward_data = getattr(out, "_backward_data", None)
-        if backward_data is not None and "mask_ptr" in backward_data:
-            from .npu.backward import npu_max_pool2d_backward
-            return (npu_max_pool2d_backward(grad, saved_input, backward_data),)
-    # CPU path: existing numpy implementation below
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -2111,18 +2027,6 @@ def _max_pool2d_backward(grad, input, saved_input, out, keyset, args, kwargs):
 
 
 def _avg_pool2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
-    # NPU path: use aclnnAvgPool2dBackward large kernel
-    if grad.device.type == "npu":
-        from .npu.backward import npu_avg_pool2d_backward
-        kernel_size = args[0] if args else kwargs.get("kernel_size")
-        stride = args[1] if len(args) > 1 else kwargs.get("stride", kernel_size)
-        padding = args[2] if len(args) > 2 else kwargs.get("padding", 0)
-        ceil_mode = args[3] if len(args) > 3 else kwargs.get("ceil_mode", False)
-        count_include_pad = args[4] if len(args) > 4 else kwargs.get("count_include_pad", True)
-        divisor_override = args[5] if len(args) > 5 else kwargs.get("divisor_override", None)
-        return (npu_avg_pool2d_backward(grad, saved_input, kernel_size, stride, padding,
-                                        ceil_mode, count_include_pad, divisor_override),)
-    # CPU path: existing numpy implementation below
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -2175,9 +2079,6 @@ def _avg_pool2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
 
 
 def _adaptive_avg_pool2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
-    if grad.device.type == "npu":
-        from .npu.backward import npu_adaptive_avg_pool2d_backward
-        return (npu_adaptive_avg_pool2d_backward(grad, saved_input),)
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -2998,9 +2899,6 @@ def _repeat_interleave_backward(grad, _a, saved_a, keyset, args, kwargs):
     """Backward for repeat_interleave: sum over interleaved groups."""
     repeats = args[0] if args else kwargs.get("repeats")
     dim = args[1] if len(args) > 1 else kwargs.get("dim", None)
-    if grad.device.type == "npu":
-        from .npu.backward import npu_repeat_interleave_backward
-        return (npu_repeat_interleave_backward(grad, saved_a, repeats, dim),)
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -3556,10 +3454,6 @@ def _autograd_addmm(name="addmm"):
 # ---- Task 2: Upsample backward (5 ops) ----
 
 def _upsample_nearest2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
-    if grad.device.type == "npu":
-        from .npu.backward import npu_upsample_nearest2d_backward
-        output_size = args[0]
-        return (npu_upsample_nearest2d_backward(grad, saved_input, output_size),)
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -3576,10 +3470,6 @@ def _upsample_nearest2d_backward(grad, input, saved_input, _out, keyset, args, k
 
 
 def _upsample_nearest1d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
-    if grad.device.type == "npu":
-        from .npu.backward import npu_upsample_nearest1d_backward
-        output_size = args[0]
-        return (npu_upsample_nearest1d_backward(grad, saved_input, output_size),)
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -3594,11 +3484,6 @@ def _upsample_nearest1d_backward(grad, input, saved_input, _out, keyset, args, k
 
 
 def _upsample_bilinear2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
-    if grad.device.type == "npu":
-        from .npu.backward import npu_upsample_bilinear2d_backward
-        output_size = args[0]
-        align_corners = args[1] if len(args) > 1 else kwargs.get("align_corners", False)
-        return (npu_upsample_bilinear2d_backward(grad, saved_input, output_size, align_corners),)
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -3645,11 +3530,6 @@ def _upsample_bilinear2d_backward(grad, input, saved_input, _out, keyset, args, 
 
 
 def _upsample_linear1d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
-    if grad.device.type == "npu":
-        from .npu.backward import npu_upsample_linear1d_backward
-        output_size = args[0]
-        align_corners = args[1] if len(args) > 1 else kwargs.get("align_corners", False)
-        return (npu_upsample_linear1d_backward(grad, saved_input, output_size, align_corners),)
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -3681,11 +3561,6 @@ def _upsample_linear1d_backward(grad, input, saved_input, _out, keyset, args, kw
 
 
 def _upsample_bicubic2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
-    if grad.device.type == "npu":
-        from .npu.backward import npu_upsample_bicubic2d_backward
-        output_size = args[0]
-        align_corners = args[1] if len(args) > 1 else kwargs.get("align_corners", False)
-        return (npu_upsample_bicubic2d_backward(grad, saved_input, output_size, align_corners),)
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -3781,14 +3656,6 @@ def _max_pool1d_backward(grad, input, saved_input, out, keyset, args, kwargs):
 
 
 def _max_pool3d_backward(grad, input, saved_input, out, keyset, args, kwargs):
-    # NPU path: use aclnnMaxPool3dWithArgmaxBackward large kernel
-    if grad.device.type == "npu":
-        pool_out = out[0] if isinstance(out, tuple) else out
-        backward_data = getattr(pool_out, "_backward_data", None)
-        if backward_data is not None and "indices_ptr" in backward_data:
-            from .npu.backward import npu_max_pool3d_backward
-            return (npu_max_pool3d_backward(grad, saved_input, backward_data),)
-    # CPU path: existing numpy implementation below
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -3873,22 +3740,6 @@ def _avg_pool1d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
 
 
 def _avg_pool3d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
-    if grad.device.type == "npu":
-        from .npu.backward import npu_avg_pool3d_backward
-        kernel_size = args[0] if args else kwargs.get("kernel_size")
-        stride = args[1] if len(args) > 1 else kwargs.get("stride", kernel_size)
-        padding = args[2] if len(args) > 2 else kwargs.get("padding", (0, 0, 0))
-        ceil_mode = args[3] if len(args) > 3 else kwargs.get("ceil_mode", False)
-        count_include_pad = args[4] if len(args) > 4 else kwargs.get("count_include_pad", True)
-        divisor_override = args[5] if len(args) > 5 else kwargs.get("divisor_override", None)
-        if isinstance(kernel_size, int):
-            kernel_size = (kernel_size, kernel_size, kernel_size)
-        if isinstance(stride, int):
-            stride = (stride, stride, stride)
-        if isinstance(padding, int):
-            padding = (padding, padding, padding)
-        return (npu_avg_pool3d_backward(grad, saved_input, kernel_size, stride, padding,
-                                        ceil_mode, count_include_pad, divisor_override),)
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -3961,9 +3812,6 @@ def _adaptive_avg_pool1d_backward(grad, input, saved_input, _out, keyset, args, 
 
 
 def _adaptive_avg_pool3d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
-    if grad.device.type == "npu":
-        from .npu.backward import npu_adaptive_avg_pool3d_backward
-        return (npu_adaptive_avg_pool3d_backward(grad, saved_input),)
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -4015,14 +3863,6 @@ def _adaptive_max_pool1d_backward(grad, input, saved_input, out, keyset, args, k
 
 
 def _adaptive_max_pool2d_backward(grad, input, saved_input, out, keyset, args, kwargs):
-    # NPU path: use aclnnAdaptiveMaxPool2dBackward large kernel
-    if grad.device.type == "npu":
-        pool_out = out[0] if isinstance(out, tuple) else out
-        backward_data = getattr(pool_out, "_backward_data", None)
-        if backward_data is not None and "indices_ptr" in backward_data:
-            from .npu.backward import npu_adaptive_max_pool2d_backward
-            return (npu_adaptive_max_pool2d_backward(grad, saved_input, backward_data),)
-    # CPU path: existing numpy implementation below
     with _grad_context(keyset):
         import numpy as np
         from .cpu.ops import _to_numpy, _from_numpy
@@ -4431,21 +4271,6 @@ def _grid_sample_backward(grad, input, grid, saved_input, saved_grid, keyset, ar
     mode = args[0] if args else kwargs.get("mode", "bilinear")
     padding_mode = args[1] if len(args) > 1 else kwargs.get("padding_mode", "zeros")
     align_corners = args[2] if len(args) > 2 else kwargs.get("align_corners", False)
-
-    if grad.device.type == "npu":
-        from .npu.backward import npu_grid_sample_backward
-        mode_map = {"bilinear": 0, "nearest": 1, "bicubic": 2}
-        pad_map = {"zeros": 0, "border": 1, "reflection": 2}
-        interp_mode = mode_map.get(mode, 0) if isinstance(mode, str) else int(mode)
-        pad_mode = pad_map.get(padding_mode, 0) if isinstance(padding_mode, str) else int(padding_mode)
-        grad_input, grad_grid = npu_grid_sample_backward(
-            grad, saved_input, saved_grid, interp_mode, pad_mode, align_corners)
-        results = []
-        if getattr(input, "requires_grad", False):
-            results.append(grad_input)
-        if getattr(grid, "requires_grad", False):
-            results.append(grad_grid)
-        return tuple(results) if results else (grad_input, grad_grid)
 
     with _grad_context(keyset):
         import numpy as np
@@ -4960,9 +4785,6 @@ def _unfold_backward(grad, a, _saved_a, keyset, args, kwargs):
     dim = args[0] if len(args) > 0 else kwargs.get("dimension", 0)
     size = args[1] if len(args) > 1 else kwargs.get("size")
     step = args[2] if len(args) > 2 else kwargs.get("step")
-    if grad.device.type == "npu":
-        from .npu.backward import npu_unfold_backward
-        return (npu_unfold_backward(grad, list(a.shape), dim, size, step),)
     import numpy as np
     from .cpu.ops import _to_numpy, _from_numpy
     grad_np = _to_numpy(grad)
@@ -7887,5 +7709,369 @@ for _npu_name, _npu_factory in (
     ("threshold", lambda: _autograd_unary_args("threshold", _npu_threshold_backward, save_input=True)),
     ("hardshrink", lambda: _autograd_unary_args("hardshrink", _npu_hardshrink_backward)),
     ("softshrink", lambda: _autograd_unary_args("softshrink", _npu_softshrink_backward)),
+):
+    register_autograd_kernels(_npu_name, npu=_npu_factory())
+
+
+# ---------------------------------------------------------------------------
+# NPU ACLNN fused backward — Round 2: norm, conv, pool, upsample, etc.
+# ---------------------------------------------------------------------------
+
+def _npu_layer_norm_backward(grad, _a, saved_a, keyset, args, kwargs, backward_data=None):
+    normalized_shape = args[0] if args else kwargs.get("normalized_shape")
+    weight = args[1] if len(args) > 1 else kwargs.get("weight", None)
+    bias = args[2] if len(args) > 2 else kwargs.get("bias", None)
+    eps = args[3] if len(args) > 3 else kwargs.get("eps", 1e-5)
+    if backward_data is not None and "mean_ptr" in backward_data:
+        from .npu.backward import npu_layer_norm_backward
+        gi, gw, gb = npu_layer_norm_backward(
+            grad, saved_a, backward_data, normalized_shape,
+            weight=weight, bias=bias, eps=eps,
+        )
+        return (gi, gw, gb)
+    # fallback to composite path
+    return _layer_norm_backward(grad, _a, saved_a, keyset, args, kwargs, backward_data)
+
+def _npu_batch_norm_backward(grad, _a, saved_a, keyset, args, kwargs, backward_data=None):
+    weight = args[3] if len(args) > 3 else kwargs.get("weight", None)
+    eps = args[7] if len(args) > 7 else kwargs.get("eps", 1e-5)
+    if backward_data is not None and "save_mean_ptr" in backward_data:
+        running_mean = args[1] if len(args) > 1 else kwargs.get("running_mean", None)
+        running_var = args[2] if len(args) > 2 else kwargs.get("running_var", None)
+        from .npu.backward import npu_batch_norm_backward
+        gi, gw, gb = npu_batch_norm_backward(
+            grad, saved_a, backward_data, weight=weight,
+            running_mean=running_mean, running_var=running_var,
+        )
+        return (gi, gw, gb)
+    return _batch_norm_backward(grad, _a, saved_a, keyset, args, kwargs, backward_data)
+
+def _npu_rms_norm_backward(grad, _a, saved_a, keyset, args, kwargs, backward_data=None):
+    weight = args[1] if len(args) > 1 else kwargs.get("weight", None)
+    if backward_data is not None and "rstd_ptr" in backward_data:
+        from .npu.backward import npu_rms_norm_backward
+        gi, gw = npu_rms_norm_backward(grad, saved_a, backward_data, weight=weight)
+        return (gi, gw)
+    return _rms_norm_backward(grad, _a, saved_a, keyset, args, kwargs, backward_data)
+
+def _npu_conv_backward_impl(name, grad, input, weight, bias, saved_input, saved_weight, saved_bias, keyset, args, kwargs):
+    from .npu.backward import npu_conv_backward
+    stride = kwargs.get("stride", args[0] if args else (1, 1))
+    padding = kwargs.get("padding", args[1] if len(args) > 1 else (0, 0))
+    dilation = kwargs.get("dilation", args[2] if len(args) > 2 else (1, 1))
+    groups = kwargs.get("groups", args[3] if len(args) > 3 else 1)
+    if isinstance(stride, int):
+        stride = (stride, stride)
+    if isinstance(padding, int):
+        padding = (padding, padding)
+    if isinstance(dilation, int):
+        dilation = (dilation, dilation)
+    gi, gw, gb = npu_conv_backward(
+        grad, saved_input, saved_weight, saved_bias,
+        name, stride, padding, dilation, groups,
+    )
+    results = [gi, gw]
+    if bias is not None:
+        results.append(gb)
+    return tuple(results)
+
+def _npu_autograd_conv(name, *, has_bias=True):
+    """NPU-specific autograd conv wrapper that uses ACLNN backward."""
+    def wrapper(input, weight, bias=None, *args, **kwargs):
+        active_keyset = current_dispatch_keyset()
+        raw_keyset = _strip_autograd_keys(active_keyset)
+        out = redispatch(name, raw_keyset, input, weight, bias, *args, **kwargs)
+        any_rg = (getattr(input, "requires_grad", False) or
+                  getattr(weight, "requires_grad", False) or
+                  (bias is not None and getattr(bias, "requires_grad", False)))
+        if GradMode.enabled and any_rg:
+            node_holder = {}
+
+            def _backward(grad):
+                saved = node_holder["node"].saved_tensors()
+                saved_input, saved_weight = saved[0], saved[1]
+                saved_bias = saved[2] if len(saved) > 2 else None
+                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
+                return _npu_conv_backward_impl(name, grad, input, weight, bias,
+                                               saved_input, saved_weight, saved_bias,
+                                               backward_keyset, args, kwargs)
+
+            inputs = (input, weight) if bias is None else (input, weight, bias)
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
+            node.save_for_backward(*inputs)
+            out.grad_fn = node
+            out.requires_grad = True
+        return out
+
+    return wrapper
+
+def _npu_dropout_backward(grad, backward_data, out, a, args, kwargs):
+    """NPU dropout backward using aclnnDropoutDoMask."""
+    from .npu import aclnn, runtime as npu_runtime, state as npu_state
+    runtime = npu_runtime.get_runtime((grad.device.index or 0))
+    stream = npu_state.current_stream((grad.device.index or 0))
+    out_shape = grad.shape
+    out_stride = npu_runtime._contiguous_stride(out_shape)
+    out_numel = 1
+    for d in out_shape:
+        out_numel *= d
+    from .npu.ops import _dtype_itemsize, _unwrap_storage
+    itemsize = _dtype_itemsize(grad.dtype)
+    out_ptr = npu_runtime._alloc_device(max(out_numel, 1) * itemsize, runtime=runtime)
+    grad_ptr = _unwrap_storage(grad).data_ptr()
+    aclnn.dropout_do_mask(
+        grad_ptr,
+        backward_data["mask_ptr"],
+        out_ptr,
+        out_shape, grad.stride, grad.dtype,
+        backward_data["mask_numel"],
+        backward_data["p"],
+        runtime, stream=stream.stream,
+    )
+    from .npu.ops import npu_typed_storage_from_ptr, _wrap_tensor
+    out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1),
+                                            grad.dtype, device=grad.device)
+    return (_wrap_tensor(out_storage, out_shape, out_stride),)
+
+def _npu_autograd_dropout():
+    """NPU-specific dropout autograd wrapper."""
+    op_name = "dropout"
+
+    def wrapper(a, *args, **kwargs):
+        active_keyset = current_dispatch_keyset()
+        raw_keyset = _strip_autograd_keys(active_keyset)
+        out = redispatch(op_name, raw_keyset, a, *args, **kwargs)
+        if GradMode.enabled and getattr(a, "requires_grad", False):
+            backward_data = getattr(out, "_backward_data", None)
+            node_holder = {}
+
+            def _backward(grad):
+                if backward_data is not None:
+                    return _npu_dropout_backward(grad, backward_data, out, a, args, kwargs)
+                # fallback: mask * scale
+                from .cpu.ops import _to_numpy, _from_numpy
+                import numpy as _np
+                g_np = _to_numpy(grad)
+                p = args[0] if args else kwargs.get("p", 0.5)
+                training = args[1] if len(args) > 1 else kwargs.get("training", True)
+                if not training or p == 0:
+                    return (grad,)
+                if backward_data is not None and "mask" in backward_data:
+                    mask_np = backward_data["mask"].astype(g_np.dtype)
+                    p = backward_data["p"]
+                else:
+                    out_np = _to_numpy(out)
+                    a_np = _to_numpy(a)
+                    mask_np = _np.where(_np.abs(a_np) > 0, (out_np != 0).astype(g_np.dtype), 1.0)
+                scale = 1.0 / (1.0 - p) if p < 1.0 else 0.0
+                grad_np = g_np * mask_np * scale
+                return (_from_numpy(grad_np, grad.dtype, grad.device),)
+
+            node = Node(_backward, (a,), name=f"{op_name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
+            out.grad_fn = node
+            out.requires_grad = True
+        return out
+
+    return wrapper
+
+
+# --- NPU pool backward adapters ---
+# Pool backward signature: (grad, input, saved_input, out, keyset, args, kwargs)
+
+def _npu_max_pool2d_backward(grad, input, saved_input, out, keyset, args, kwargs):
+    backward_data = getattr(out, "_backward_data", None)
+    if backward_data is not None and "mask_ptr" in backward_data:
+        from .npu.backward import npu_max_pool2d_backward
+        return (npu_max_pool2d_backward(grad, saved_input, backward_data),)
+    return _max_pool2d_backward(grad, input, saved_input, out, keyset, args, kwargs)
+
+def _npu_max_pool3d_backward(grad, input, saved_input, out, keyset, args, kwargs):
+    pool_out = out[0] if isinstance(out, tuple) else out
+    backward_data = getattr(pool_out, "_backward_data", None)
+    if backward_data is not None and "indices_ptr" in backward_data:
+        from .npu.backward import npu_max_pool3d_backward
+        return (npu_max_pool3d_backward(grad, saved_input, backward_data),)
+    return _max_pool3d_backward(grad, input, saved_input, out, keyset, args, kwargs)
+
+def _npu_avg_pool2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
+    from .npu.backward import npu_avg_pool2d_backward
+    kernel_size = args[0] if args else kwargs.get("kernel_size")
+    stride = args[1] if len(args) > 1 else kwargs.get("stride", kernel_size)
+    padding = args[2] if len(args) > 2 else kwargs.get("padding", 0)
+    ceil_mode = args[3] if len(args) > 3 else kwargs.get("ceil_mode", False)
+    count_include_pad = args[4] if len(args) > 4 else kwargs.get("count_include_pad", True)
+    divisor_override = args[5] if len(args) > 5 else kwargs.get("divisor_override", None)
+    return (npu_avg_pool2d_backward(grad, saved_input, kernel_size, stride, padding,
+                                    ceil_mode, count_include_pad, divisor_override),)
+
+def _npu_avg_pool3d_backward_impl(grad, input, saved_input, _out, keyset, args, kwargs):
+    from .npu.backward import npu_avg_pool3d_backward
+    kernel_size = args[0] if args else kwargs.get("kernel_size")
+    stride = args[1] if len(args) > 1 else kwargs.get("stride", kernel_size)
+    padding = args[2] if len(args) > 2 else kwargs.get("padding", (0, 0, 0))
+    ceil_mode = args[3] if len(args) > 3 else kwargs.get("ceil_mode", False)
+    count_include_pad = args[4] if len(args) > 4 else kwargs.get("count_include_pad", True)
+    divisor_override = args[5] if len(args) > 5 else kwargs.get("divisor_override", None)
+    if isinstance(kernel_size, int):
+        kernel_size = (kernel_size,) * 3
+    if isinstance(stride, int):
+        stride = (stride,) * 3
+    if isinstance(padding, int):
+        padding = (padding,) * 3
+    return (npu_avg_pool3d_backward(grad, saved_input, kernel_size, stride, padding,
+                                    ceil_mode, count_include_pad, divisor_override),)
+
+def _npu_adaptive_avg_pool2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
+    from .npu.backward import npu_adaptive_avg_pool2d_backward
+    return (npu_adaptive_avg_pool2d_backward(grad, saved_input),)
+
+def _npu_adaptive_avg_pool3d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
+    from .npu.backward import npu_adaptive_avg_pool3d_backward
+    return (npu_adaptive_avg_pool3d_backward(grad, saved_input),)
+
+def _npu_adaptive_max_pool2d_backward(grad, input, saved_input, out, keyset, args, kwargs):
+    pool_out = out[0] if isinstance(out, tuple) else out
+    backward_data = getattr(pool_out, "_backward_data", None)
+    if backward_data is not None and "indices_ptr" in backward_data:
+        from .npu.backward import npu_adaptive_max_pool2d_backward
+        return (npu_adaptive_max_pool2d_backward(grad, saved_input, backward_data),)
+    return _adaptive_max_pool2d_backward(grad, input, saved_input, out, keyset, args, kwargs)
+
+
+# --- NPU upsample backward adapters ---
+
+def _npu_upsample_nearest2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
+    from .npu.backward import npu_upsample_nearest2d_backward
+    return (npu_upsample_nearest2d_backward(grad, saved_input, args[0]),)
+
+def _npu_upsample_nearest1d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
+    from .npu.backward import npu_upsample_nearest1d_backward
+    return (npu_upsample_nearest1d_backward(grad, saved_input, args[0]),)
+
+def _npu_upsample_bilinear2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
+    from .npu.backward import npu_upsample_bilinear2d_backward
+    output_size = args[0]
+    align_corners = args[1] if len(args) > 1 else kwargs.get("align_corners", False)
+    return (npu_upsample_bilinear2d_backward(grad, saved_input, output_size, align_corners),)
+
+def _npu_upsample_linear1d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
+    from .npu.backward import npu_upsample_linear1d_backward
+    output_size = args[0]
+    align_corners = args[1] if len(args) > 1 else kwargs.get("align_corners", False)
+    return (npu_upsample_linear1d_backward(grad, saved_input, output_size, align_corners),)
+
+def _npu_upsample_bicubic2d_backward(grad, input, saved_input, _out, keyset, args, kwargs):
+    from .npu.backward import npu_upsample_bicubic2d_backward
+    output_size = args[0]
+    align_corners = args[1] if len(args) > 1 else kwargs.get("align_corners", False)
+    return (npu_upsample_bicubic2d_backward(grad, saved_input, output_size, align_corners),)
+
+
+# --- NPU grid_sample backward adapter ---
+
+def _npu_grid_sample_backward_impl(grad, input, grid, saved_input, saved_grid, keyset, args, kwargs):
+    from .npu.backward import npu_grid_sample_backward
+    mode = args[0] if args else kwargs.get("mode", "bilinear")
+    padding_mode = args[1] if len(args) > 1 else kwargs.get("padding_mode", "zeros")
+    align_corners = args[2] if len(args) > 2 else kwargs.get("align_corners", False)
+    mode_map = {"bilinear": 0, "nearest": 1, "bicubic": 2}
+    pad_map = {"zeros": 0, "border": 1, "reflection": 2}
+    interp_mode = mode_map.get(mode, 0) if isinstance(mode, str) else int(mode)
+    pad_mode = pad_map.get(padding_mode, 0) if isinstance(padding_mode, str) else int(padding_mode)
+    grad_input, grad_grid = npu_grid_sample_backward(
+        grad, saved_input, saved_grid, interp_mode, pad_mode, align_corners)
+    results = []
+    if getattr(input, "requires_grad", False):
+        results.append(grad_input)
+    if getattr(grid, "requires_grad", False):
+        results.append(grad_grid)
+    return tuple(results) if results else (grad_input, grad_grid)
+
+def _npu_autograd_grid_sample(name="grid_sample"):
+    """NPU-specific grid_sample autograd wrapper."""
+    def wrapper(input, grid, *args, **kwargs):
+        active_keyset = current_dispatch_keyset()
+        raw_keyset = _strip_autograd_keys(active_keyset)
+        out = redispatch(name, raw_keyset, input, grid, *args, **kwargs)
+        i_rg = getattr(input, "requires_grad", False)
+        g_rg = getattr(grid, "requires_grad", False)
+        if GradMode.enabled and (i_rg or g_rg):
+            node_holder = {}
+
+            def _backward(grad):
+                saved = node_holder["node"].saved_tensors()
+                saved_input, saved_grid = saved[0], saved[1]
+                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
+                return _npu_grid_sample_backward_impl(grad, input, grid, saved_input, saved_grid,
+                                                      backward_keyset, args, kwargs)
+
+            inputs = (input, grid)
+            node = Node(_backward, inputs, name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
+            node.save_for_backward(*inputs)
+            out.grad_fn = node
+            out.requires_grad = True
+        return out
+
+    return wrapper
+
+
+# --- NPU repeat_interleave / unfold backward adapters ---
+
+def _npu_repeat_interleave_backward(grad, _a, saved_a, keyset, args, kwargs):
+    repeats = args[0] if args else kwargs.get("repeats")
+    dim = args[1] if len(args) > 1 else kwargs.get("dim", None)
+    from .npu.backward import npu_repeat_interleave_backward
+    return (npu_repeat_interleave_backward(grad, saved_a, repeats, dim),)
+
+def _npu_unfold_backward(grad, a, _saved_a, keyset, args, kwargs):
+    dim = args[0] if len(args) > 0 else kwargs.get("dimension", 0)
+    size = args[1] if len(args) > 1 else kwargs.get("size")
+    step = args[2] if len(args) > 2 else kwargs.get("step")
+    from .npu.backward import npu_unfold_backward
+    return (npu_unfold_backward(grad, list(a.shape), dim, size, step),)
+
+
+# ---------------------------------------------------------------------------
+# Register NPU-specific autograd kernels — Round 2
+# ---------------------------------------------------------------------------
+for _npu_name, _npu_factory in (
+    # Norm ops
+    ("layer_norm", lambda: _autograd_norm("layer_norm", _npu_layer_norm_backward)),
+    ("batch_norm", lambda: _autograd_norm("batch_norm", _npu_batch_norm_backward)),
+    ("rms_norm", lambda: _autograd_norm("rms_norm", _npu_rms_norm_backward)),
+    # Conv ops
+    ("conv2d", lambda: _npu_autograd_conv("conv2d")),
+    ("conv1d", lambda: _npu_autograd_conv("conv1d")),
+    ("conv_transpose2d", lambda: _npu_autograd_conv("conv_transpose2d")),
+    ("conv_transpose1d", lambda: _npu_autograd_conv("conv_transpose1d")),
+    ("conv3d", lambda: _npu_autograd_conv("conv3d")),
+    ("conv_transpose3d", lambda: _npu_autograd_conv("conv_transpose3d")),
+    # Pool ops
+    ("max_pool2d", lambda: _autograd_pool("max_pool2d", _npu_max_pool2d_backward)),
+    ("max_pool3d", lambda: _autograd_pool("max_pool3d", _npu_max_pool3d_backward)),
+    ("avg_pool2d", lambda: _autograd_pool("avg_pool2d", _npu_avg_pool2d_backward)),
+    ("avg_pool3d", lambda: _autograd_pool("avg_pool3d", _npu_avg_pool3d_backward_impl)),
+    ("adaptive_avg_pool2d", lambda: _autograd_pool("adaptive_avg_pool2d", _npu_adaptive_avg_pool2d_backward)),
+    ("adaptive_avg_pool3d", lambda: _autograd_pool("adaptive_avg_pool3d", _npu_adaptive_avg_pool3d_backward)),
+    ("adaptive_max_pool2d", lambda: _autograd_pool("adaptive_max_pool2d", _npu_adaptive_max_pool2d_backward)),
+    # Upsample ops
+    ("upsample_nearest2d", lambda: _autograd_pool("upsample_nearest2d", _npu_upsample_nearest2d_backward)),
+    ("upsample_nearest1d", lambda: _autograd_pool("upsample_nearest1d", _npu_upsample_nearest1d_backward)),
+    ("upsample_bilinear2d", lambda: _autograd_pool("upsample_bilinear2d", _npu_upsample_bilinear2d_backward)),
+    ("upsample_linear1d", lambda: _autograd_pool("upsample_linear1d", _npu_upsample_linear1d_backward)),
+    ("upsample_bicubic2d", lambda: _autograd_pool("upsample_bicubic2d", _npu_upsample_bicubic2d_backward)),
+    # Grid sample
+    ("grid_sample", lambda: _npu_autograd_grid_sample("grid_sample")),
+    # Dropout
+    ("dropout", _npu_autograd_dropout),
+    # Misc
+    ("repeat_interleave", lambda: _autograd_unary_args("repeat_interleave", _npu_repeat_interleave_backward)),
+    ("unfold", lambda: _autograd_unary_args("unfold", _npu_unfold_backward)),
 ):
     register_autograd_kernels(_npu_name, npu=_npu_factory())
