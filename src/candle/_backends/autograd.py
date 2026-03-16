@@ -7742,3 +7742,150 @@ for _entry in (
     else:
         _name, _factory, _include_meta = _entry
         _register_autograd_op(_name, _factory, include_meta=_include_meta)
+
+
+# ---------------------------------------------------------------------------
+# NPU ACLNN fused backward kernels
+# ---------------------------------------------------------------------------
+# Override AutogradNPU for ops that have dedicated ACLNN backward kernels in
+# ``_backends/npu/backward.py``.  Each adapter matches the callback signature
+# expected by the corresponding ``_autograd_*`` wrapper factory, then delegates
+# to the single fused ACLNN kernel instead of the composite small-op path.
+# ---------------------------------------------------------------------------
+
+def _npu_relu_backward(grad, _a, saved_a, keyset):
+    from .npu.backward import npu_relu_backward
+    return (npu_relu_backward(grad, saved_a),)
+
+def _npu_sigmoid_backward(grad, _a, saved_a, keyset):
+    from .npu.backward import npu_sigmoid_backward
+    return (npu_sigmoid_backward(grad, saved_a),)
+
+def _npu_tanh_backward(grad, _a, saved_a, keyset):
+    from .npu.backward import npu_tanh_backward
+    return (npu_tanh_backward(grad, saved_a),)
+
+def _npu_silu_backward(grad, _a, saved_a, keyset):
+    from .npu.backward import npu_silu_backward
+    return (npu_silu_backward(grad, saved_a),)
+
+def _npu_gelu_backward(grad, _a, saved_a, keyset):
+    from .npu.backward import npu_gelu_backward
+    return (npu_gelu_backward(grad, saved_a),)
+
+def _npu_hardswish_backward(grad, _a, saved_a, keyset):
+    from .npu.backward import npu_hardswish_backward
+    return (npu_hardswish_backward(grad, saved_a),)
+
+def _npu_hardsigmoid_backward(grad, _a, saved_a, keyset):
+    from .npu.backward import npu_hardsigmoid_backward
+    return (npu_hardsigmoid_backward(grad, saved_a),)
+
+def _npu_mish_backward(grad, _a, saved_a, keyset):
+    from .npu.backward import npu_mish_backward
+    return (npu_mish_backward(grad, saved_a),)
+
+def _npu_selu_backward(grad, _a, saved_a, keyset):
+    from .npu.backward import npu_selu_backward
+    return (npu_selu_backward(grad, saved_a),)
+
+def _npu_softplus_backward(grad, _a, saved_a, keyset):
+    from .npu.backward import npu_softplus_backward
+    return (npu_softplus_backward(grad, saved_a),)
+
+def _npu_softmax_backward(grad, _a, saved_a, keyset, args, kwargs):
+    dim = args[0] if args else kwargs.get("dim", -1)
+    from .npu.backward import npu_softmax_backward
+    return (npu_softmax_backward(grad, saved_a, dim),)
+
+def _npu_log_softmax_backward(grad, _a, saved_a, keyset, args, kwargs):
+    dim = args[0] if args else kwargs.get("dim", -1)
+    from .npu.backward import npu_log_softmax_backward
+    return (npu_log_softmax_backward(grad, saved_a, dim),)
+
+def _npu_leaky_relu_backward(grad, _a, saved_a, keyset, args, kwargs):
+    negative_slope = args[0] if args else kwargs.get("negative_slope", 0.01)
+    from .npu.backward import npu_leaky_relu_backward
+    return (npu_leaky_relu_backward(grad, saved_a, negative_slope=negative_slope),)
+
+def _npu_elu_backward(grad, _a, saved_a, keyset, args, kwargs):
+    alpha = args[0] if args else kwargs.get("alpha", 1.0)
+    from .npu.backward import npu_elu_backward
+    return (npu_elu_backward(grad, saved_a, alpha=alpha),)
+
+def _npu_hardtanh_backward(grad, _a, saved_a, keyset, args, _kwargs):
+    min_val = args[0] if len(args) > 0 else _kwargs.get("min_val", -1.0)
+    max_val = args[1] if len(args) > 1 else _kwargs.get("max_val", 1.0)
+    from .npu.backward import npu_hardtanh_backward
+    return (npu_hardtanh_backward(grad, saved_a, min_val=min_val, max_val=max_val),)
+
+def _npu_threshold_backward(grad, _a, saved_a, keyset, args, kwargs):
+    threshold = args[0] if args else kwargs.get("threshold", 0.0)
+    from .npu.backward import npu_threshold_backward
+    return (npu_threshold_backward(grad, saved_a, threshold),)
+
+def _npu_hardshrink_backward(grad, _a, saved_a, keyset, args, kwargs):
+    lambd = args[0] if args else kwargs.get("lambd", 0.5)
+    from .npu.backward import npu_hardshrink_backward
+    return (npu_hardshrink_backward(grad, saved_a, lambd=lambd),)
+
+def _npu_softshrink_backward(grad, _a, saved_a, keyset, args, kwargs):
+    lambd = args[0] if args else kwargs.get("lambd", 0.5)
+    from .npu.backward import npu_softshrink_backward
+    return (npu_softshrink_backward(grad, saved_a, lambd=lambd),)
+
+def _npu_prelu_backward(grad, a, b, saved_a, saved_b, keyset):
+    from .npu.backward import npu_prelu_backward
+    grad_input, grad_weight = npu_prelu_backward(grad, saved_a, saved_b)
+    grad_a = grad_input if getattr(a, "requires_grad", False) else None
+    grad_b = grad_weight if getattr(b, "requires_grad", False) else None
+    return grad_a, grad_b
+
+def _npu_embedding_backward(
+    grad, weight, _indices, saved_weight, saved_indices, keyset,
+    *, padding_idx=None, scale_grad_by_freq=False,
+):
+    from .npu.backward import npu_embedding_backward
+    grad_weight = npu_embedding_backward(
+        grad, saved_weight, saved_indices,
+        padding_idx=padding_idx,
+        scale_grad_by_freq=scale_grad_by_freq,
+    )
+    return (grad_weight, None)
+
+def _npu_group_norm_backward(grad, _a, saved_a, keyset, args, kwargs):
+    num_groups = args[0] if args else kwargs.get("num_groups")
+    weight = args[1] if len(args) > 1 else kwargs.get("weight", None)
+    eps = args[3] if len(args) > 3 else kwargs.get("eps", 1e-5)
+    from .npu.backward import npu_group_norm_backward
+    return npu_group_norm_backward(grad, saved_a, num_groups, weight=weight, eps=eps)
+
+
+# Register NPU-specific autograd kernels (overrides AutogradNPU dispatch key)
+for _npu_name, _npu_factory in (
+    # Batch 1 — High-impact training ops
+    ("softmax", lambda: _autograd_unary_args("softmax", _npu_softmax_backward)),
+    ("log_softmax", lambda: _autograd_unary_args("log_softmax", _npu_log_softmax_backward)),
+    ("gelu", lambda: _autograd_unary("gelu", _npu_gelu_backward)),
+    ("silu", lambda: _autograd_unary("silu", _npu_silu_backward)),
+    ("embedding", lambda: _autograd_embedding("embedding", _npu_embedding_backward)),
+    ("group_norm", lambda: _autograd_unary_args("group_norm", _npu_group_norm_backward)),
+    # Batch 2 — Core activations
+    ("relu", lambda: _autograd_unary("relu", _npu_relu_backward, save_input=True)),
+    ("sigmoid", lambda: _autograd_unary("sigmoid", _npu_sigmoid_backward)),
+    ("tanh", lambda: _autograd_unary("tanh", _npu_tanh_backward)),
+    ("hardswish", lambda: _autograd_unary("hardswish", _npu_hardswish_backward)),
+    ("hardsigmoid", lambda: _autograd_unary("hardsigmoid", _npu_hardsigmoid_backward)),
+    ("mish", lambda: _autograd_unary("mish", _npu_mish_backward)),
+    ("selu", lambda: _autograd_unary("selu", _npu_selu_backward)),
+    ("prelu", lambda: _autograd_binary("prelu", _npu_prelu_backward)),
+    # Batch 3 — Activations with scalar args
+    ("softplus", lambda: _autograd_unary("softplus", _npu_softplus_backward)),
+    ("hardtanh", lambda: _autograd_unary_args("hardtanh", _npu_hardtanh_backward)),
+    ("leaky_relu", lambda: _autograd_unary_args("leaky_relu", _npu_leaky_relu_backward)),
+    ("elu", lambda: _autograd_unary_args("elu", _npu_elu_backward)),
+    ("threshold", lambda: _autograd_unary_args("threshold", _npu_threshold_backward, save_input=True)),
+    ("hardshrink", lambda: _autograd_unary_args("hardshrink", _npu_hardshrink_backward)),
+    ("softshrink", lambda: _autograd_unary_args("softshrink", _npu_softshrink_backward)),
+):
+    register_autograd_kernels(_npu_name, npu=_npu_factory())
