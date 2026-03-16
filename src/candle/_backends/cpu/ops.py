@@ -2536,6 +2536,61 @@ def bitwise_not(a):
     return _from_numpy(np.bitwise_not(_to_numpy(a)), a.dtype, a.device)
 
 
+def bitwise_left_shift(a, b):
+    a_np = _to_numpy(a)
+    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
+    return _from_numpy(np.left_shift(a_np, b_np), a.dtype, a.device)
+
+
+def bitwise_right_shift(a, b):
+    a_np = _to_numpy(a)
+    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
+    return _from_numpy(np.right_shift(a_np, b_np), a.dtype, a.device)
+
+
+def masked_scatter(a, mask, source):
+    arr = _to_numpy(a).copy()
+    m = _to_numpy(mask).astype(bool)
+    src = _to_numpy(source)
+    arr[m] = src.ravel()[:m.sum()]
+    return _from_numpy(arr, a.dtype, a.device)
+
+
+def mode(a, dim=-1, keepdim=False):
+    from scipy import stats as _stats
+    arr = _to_numpy(a)
+    if dim < 0:
+        dim = dim + arr.ndim
+    result = _stats.mode(arr, axis=dim, keepdims=keepdim)
+    vals = result.mode.astype(arr.dtype)
+    idxs = result.count.astype(np.int64)  # scipy mode returns count, not index
+    # recompute indices via argmax on equality
+    expanded = np.expand_dims(vals if keepdim else np.expand_dims(vals, axis=dim), axis=dim) if not keepdim else vals
+    eq = (arr == (vals if keepdim else np.expand_dims(vals, axis=dim)))
+    idxs = np.argmax(eq, axis=dim)
+    if keepdim:
+        idxs = np.expand_dims(idxs, axis=dim)
+    from collections import namedtuple
+    ModeResult = namedtuple('ModeResult', ['values', 'indices'])
+    return ModeResult(
+        _from_numpy(np.ascontiguousarray(vals), a.dtype, a.device),
+        _from_numpy(np.ascontiguousarray(idxs.astype(np.int64)), int64_dtype, a.device),
+    )
+
+
+def constant_pad_nd(a, pad, value=0):
+    """PyTorch-style constant padding: pad is (left, right, top, bottom, ...)."""
+    arr = _to_numpy(a)
+    ndim = arr.ndim
+    n_pairs = len(pad) // 2
+    np_pad = [(0, 0)] * ndim
+    for i in range(n_pairs):
+        dim = ndim - 1 - i
+        np_pad[dim] = (int(pad[2 * i]), int(pad[2 * i + 1]))
+    out = np.pad(arr, np_pad, mode='constant', constant_values=value)
+    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+
+
 # ---------------------------------------------------------------------------
 # Group 4: Random in-place op
 # ---------------------------------------------------------------------------

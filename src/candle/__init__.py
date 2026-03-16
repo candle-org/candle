@@ -244,6 +244,130 @@ def diagflat(input, offset=0):
     return diag(flatten(input), offset)
 
 
+# Inplace unary aliases (delegate to Tensor method)
+def abs_(input): return input.abs_()
+def acos_(input): return input.acos_() if hasattr(input, 'acos_') else copy_(input, acos(input))
+def acosh_(input): return copy_(input, acosh(input))
+def asin_(input): return copy_(input, asin(input))
+def asinh_(input): return copy_(input, asinh(input))
+def atan_(input): return copy_(input, atan(input))
+def atanh_(input): return copy_(input, atanh(input))
+def ceil_(input): return input.ceil_()
+def cos_(input): return input.cos_()
+def cosh_(input): return copy_(input, cosh(input))
+def erf_(input): return copy_(input, erf(input))
+def erfc_(input): return copy_(input, erfc(input))
+def exp_(input): return input.exp_()
+def exp2_(input): return copy_(input, exp2(input))
+def expm1_(input): return copy_(input, expm1(input))
+def floor_(input): return input.floor_()
+def frac_(input): return copy_(input, frac(input))
+def log_(input): return input.log_()
+def log2_(input): return input.log2_()
+def log10_(input): return input.log10_()
+def log1p_(input): return copy_(input, log1p(input))
+def neg_(input): return input.neg_()
+negative_ = neg_
+def reciprocal_(input): return input.reciprocal_()
+def round_(input): return input.round_()
+def rsqrt_(input): return copy_(input, rsqrt(input))
+def sigmoid_(input): return input.sigmoid_()
+def sin_(input): return input.sin_()
+def sinh_(input): return copy_(input, sinh(input))
+def sqrt_(input): return input.sqrt_()
+def square_(input): return copy_(input, square(input))
+def tan_(input): return input.tan_()
+def tanh_(input): return input.tanh_()
+def trunc_(input): return input.trunc_()
+fix_ = trunc_
+def clamp_min_(input, min): return copy_(input, clamp(input, min_val=min))
+def clamp_max_(input, max): return copy_(input, clamp(input, max_val=max))
+def detach_(input): return input.detach_()
+arccos_ = acos_
+arccosh_ = acosh_
+arcsin_ = asin_
+arcsinh_ = asinh_
+arctan_ = atan_
+arctanh_ = atanh_
+
+# NN functional ops exposed at top level
+from .nn.functional import (
+    softmax, log_softmax, dropout, embedding,
+    layer_norm, group_norm, instance_norm, batch_norm,
+    hardshrink, selu, celu, threshold,
+)
+from ._functional import rms_norm
+
+# as_strided (view op)
+def as_strided(input, size, stride, storage_offset=None):
+    from ._functional import dispatch
+    return dispatch("as_strided", input.device.type, input, size, stride, storage_offset)
+
+# erfinv top-level
+def erfinv(input):
+    out = clone(input)
+    return out.erfinv_()
+
+# masked_scatter top-level (out-of-place)
+def masked_scatter(input, mask, source):
+    from ._functional import dispatch
+    return dispatch("masked_scatter", input.device.type, input, mask, source)
+
+# bitwise shifts
+def bitwise_left_shift(input, other):
+    from ._functional import dispatch
+    return dispatch("bitwise_left_shift", input.device.type, input, other)
+
+def bitwise_right_shift(input, other):
+    from ._functional import dispatch
+    return dispatch("bitwise_right_shift", input.device.type, input, other)
+
+# constant_pad_nd
+def constant_pad_nd(input, pad, value=0):
+    from ._functional import dispatch
+    return dispatch("constant_pad_nd", input.device.type, input, pad, value)
+
+# mode: returns (values, indices) namedtuple-like
+def mode(input, dim=-1, keepdim=False):
+    from ._functional import dispatch
+    return dispatch("mode", input.device.type, input, dim, keepdim)
+
+# conv ops
+from .nn.functional import conv1d, conv2d, conv3d
+
+# dropout_ (in-place)
+def dropout_(input, p=0.5, training=True):
+    result = dropout(input, p=p, training=training)
+    copy_(input, result)
+    return input
+
+# embedding alias (already imported above)
+
+# inverse / solve / svd / qr — linalg wrappers
+def inverse(input):
+    return linalg.inv(input)
+
+def solve(input, other):
+    return linalg.solve(other, input)
+
+def svd(input, some=True, compute_uv=True):
+    return linalg.svd(input, full_matrices=not some)
+
+def qr(input, some=True):
+    return linalg.qr(input)
+
+from . import linalg
+
+# binomial
+def binomial(count, prob, *, generator=None):
+    from ._functional import dispatch
+    return dispatch("binomial", count.device.type, count, prob)
+
+# cond (matrix condition number)
+def cond(input, p=None):
+    return linalg.cond(input, p)
+
+
 from ._printing import set_printoptions, get_printoptions
 from ._dispatch import (
     pipeline_context,

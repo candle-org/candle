@@ -527,6 +527,11 @@ def register_schemas():
     registry.register_schema("searchsorted", "searchsorted(Tensor sorted_sequence, Any values, bool out_int32=False, bool right=False, str? side=None, Tensor? sorter=None) -> Tensor")
     registry.register_schema("kthvalue", "kthvalue(Tensor input, int k, int dim=-1, bool keepdim=False) -> (Tensor, Tensor)")
     registry.register_schema("median", "median(Tensor input, int? dim=None, bool keepdim=False) -> Any")
+    registry.register_schema("mode", "mode(Tensor input, int dim=-1, bool keepdim=False) -> (Tensor, Tensor)")
+    registry.register_schema("masked_scatter", "masked_scatter(Tensor input, Tensor mask, Tensor source) -> Tensor")
+    registry.register_schema("constant_pad_nd", "constant_pad_nd(Tensor input, int[] pad, Scalar value=0) -> Tensor")
+    registry.register_schema("bitwise_left_shift", "bitwise_left_shift(Tensor input, Any other) -> Tensor")
+    registry.register_schema("bitwise_right_shift", "bitwise_right_shift(Tensor input, Any other) -> Tensor")
 
     # New GROUP C ops for Tensor API alignment
     registry.register_schema("logsumexp", "logsumexp(Tensor input, int dim, bool keepdim=False) -> Tensor")
