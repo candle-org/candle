@@ -7,12 +7,21 @@ import math
 import pytest
 import candle as torch
 
+try:
+    import yaml as _yaml  # noqa: F401
+    _has_yaml = True
+except ImportError:
+    _has_yaml = False
+
+_skip_no_yaml = pytest.mark.skipif(not _has_yaml, reason="pyyaml not installed")
+
 
 # ---------------------------------------------------------------------------
 # Part 1: Codegen unit tests (parse + generate)
 # ---------------------------------------------------------------------------
 
 class TestDerivativesYamlParsing:
+    @_skip_no_yaml
     def test_load_derivatives(self):
         from tools.autograd.load_derivatives import load_derivatives
         from pathlib import Path
@@ -50,6 +59,7 @@ class TestDerivativesYamlParsing:
         assert not args[1].is_tensor
         assert args[1].type == "int"
 
+    @_skip_no_yaml
     def test_saved_inputs_only_tensors(self):
         """Non-tensor args (shape, dim) should NOT appear in all_saved_inputs."""
         from tools.autograd.load_derivatives import load_derivatives
@@ -66,6 +76,7 @@ class TestDerivativesYamlParsing:
         assert "dim0" not in transpose_info.all_saved_inputs
         assert "dim1" not in transpose_info.all_saved_inputs
 
+    @_skip_no_yaml
     def test_differentiability_info_properties(self):
         from tools.autograd.load_derivatives import load_derivatives
         from pathlib import Path
