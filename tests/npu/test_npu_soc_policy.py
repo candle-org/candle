@@ -76,6 +76,8 @@ def test_soc_310b_fallback_ops_cover_expected_watchlist_set():
         "mv",
         "remainder",
         "where",
+        "atan2",
+        "lerp",
         "softplus",
         "isclose",
         "flip",
