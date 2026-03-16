@@ -276,30 +276,37 @@ class ProcessGroupHCCL(ProcessGroup):
         return self._make_work(stream, source_rank=src)
 
     def _p2p_exchange(self, send_ptr, recv_ptr, count, hccl_dtype, peer,
-                      stream, bindings, _check):
+                      stream, bindings, _check, *,
+                      send_count=None, recv_count=None):
         """Send/recv with a single peer using deadlock-free ordering."""
+        sc = send_count if send_count is not None else count
+        rc = recv_count if recv_count is not None else count
         if self._rank < peer:
-            ret = bindings.send(
-                send_ptr, ctypes.c_uint64(count), hccl_dtype,
-                ctypes.c_uint32(peer), self._comm,
-                ctypes.c_void_p(int(stream)))
-            _check(ret, f"HcclSend to {peer}")
-            ret = bindings.recv(
-                recv_ptr, ctypes.c_uint64(count), hccl_dtype,
-                ctypes.c_uint32(peer), self._comm,
-                ctypes.c_void_p(int(stream)))
-            _check(ret, f"HcclRecv from {peer}")
+            if sc > 0:
+                ret = bindings.send(
+                    send_ptr, ctypes.c_uint64(sc), hccl_dtype,
+                    ctypes.c_uint32(peer), self._comm,
+                    ctypes.c_void_p(int(stream)))
+                _check(ret, f"HcclSend to {peer}")
+            if rc > 0:
+                ret = bindings.recv(
+                    recv_ptr, ctypes.c_uint64(rc), hccl_dtype,
+                    ctypes.c_uint32(peer), self._comm,
+                    ctypes.c_void_p(int(stream)))
+                _check(ret, f"HcclRecv from {peer}")
         else:
-            ret = bindings.recv(
-                recv_ptr, ctypes.c_uint64(count), hccl_dtype,
-                ctypes.c_uint32(peer), self._comm,
-                ctypes.c_void_p(int(stream)))
-            _check(ret, f"HcclRecv from {peer}")
-            ret = bindings.send(
-                send_ptr, ctypes.c_uint64(count), hccl_dtype,
-                ctypes.c_uint32(peer), self._comm,
-                ctypes.c_void_p(int(stream)))
-            _check(ret, f"HcclSend to {peer}")
+            if rc > 0:
+                ret = bindings.recv(
+                    recv_ptr, ctypes.c_uint64(rc), hccl_dtype,
+                    ctypes.c_uint32(peer), self._comm,
+                    ctypes.c_void_p(int(stream)))
+                _check(ret, f"HcclRecv from {peer}")
+            if sc > 0:
+                ret = bindings.send(
+                    send_ptr, ctypes.c_uint64(sc), hccl_dtype,
+                    ctypes.c_uint32(peer), self._comm,
+                    ctypes.c_void_p(int(stream)))
+                _check(ret, f"HcclSend to {peer}")
 
     def all_to_all(self, output_tensors, input_tensors):
         """All-to-all using native HcclAlltoAll/HcclAlltoAllV or P2P fallback.
@@ -439,22 +446,50 @@ class ProcessGroupHCCL(ProcessGroup):
 
             return self._make_work(stream)
 
-        # CANN <=8.3: P2P fallback (preserved for backward compat)
-        for peer in range(self._size):
-            numel = input_tensors[peer].numel()
-            hccl_dt = ctypes.c_int32(dtype_to_hccl(input_tensors[peer].dtype))
-            itemsize = input_tensors[peer].dtype.itemsize
-            if peer == self._rank:
-                nbytes = numel * itemsize
-                npu_runtime.memcpy_d2d(
-                    output_tensors[peer].storage().data_ptr(), nbytes,
-                    input_tensors[peer].storage().data_ptr(),
-                )
-            else:
-                send_ptr = ctypes.c_void_p(input_tensors[peer].storage().data_ptr())
-                recv_ptr = ctypes.c_void_p(output_tensors[peer].storage().data_ptr())
-                self._p2p_exchange(send_ptr, recv_ptr, numel, hccl_dt,
-                                   peer, stream, bindings, _check)
+        # CANN <=8.3: all_gather-based fallback.
+        # P2P send/recv fails with error 6 on 4+ ranks (910A),
+        # and native HcclAlltoAll is a no-op on CANN 8.3.
+        # Strategy: pack → all_gather → extract columns.
+        import candle as torch
+        dtype = input_tensors[0].dtype
+        itemsize = dtype.itemsize
+        world_size = self._size
+        dev = input_tensors[0].device
+
+        send_counts = [t.numel() for t in input_tensors]
+        total_send = sum(send_counts)
+
+        # Pack input tensors into a flat send buffer
+        send_flat = torch.empty(total_send, dtype=dtype, device=dev)
+        dst_base = send_flat.storage().data_ptr()
+        offset = 0
+        for t in input_tensors:
+            nb = t.numel() * itemsize
+            npu_runtime.memcpy_d2d(dst_base + offset, nb,
+                                   t.storage().data_ptr())
+            offset += nb
+
+        # all_gather: every rank gets every other rank's send buffer
+        recv_flat = torch.empty(total_send * world_size, dtype=dtype,
+                                device=dev)
+        self.allgather(recv_flat, send_flat).wait()
+
+        # Extract: from rank j's buffer, take the chunk destined for us
+        dev_id = self._device_id if self._device_id is not None else 0
+        rt = npu_runtime.get_runtime(dev_id)
+        rt.synchronize_stream(stream)
+        src_base = recv_flat.storage().data_ptr()
+        for j in range(world_size):
+            # rank j's flat buffer starts at j * total_send elements
+            # within that buffer, chunk for rank self._rank starts at
+            # sum(send_counts[0:self._rank]) elements
+            j_buf_offset = j * total_send * itemsize
+            my_chunk_offset = sum(send_counts[:self._rank]) * itemsize
+            nb = send_counts[self._rank] * itemsize
+            npu_runtime.memcpy_d2d(
+                output_tensors[j].storage().data_ptr(), nb,
+                src_base + j_buf_offset + my_chunk_offset,
+                runtime=rt)
 
         return self._make_work(stream)
 
@@ -479,25 +514,31 @@ class ProcessGroupHCCL(ProcessGroup):
             _check(ret, "HcclAlltoAll")
             return self._make_work(stream)
 
-        # CANN <=8.3: P2P fallback (preserved for backward compat)
+        # CANN <=8.3: all_gather-based fallback.
+        # P2P send/recv fails with error 6 on 4+ ranks (910A).
+        import candle as torch
         from .._backends.npu import runtime as npu_runtime
-        hccl_dt = ctypes.c_int32(dtype_to_hccl(input.dtype))
+        total = count_per_rank * self._size
+        recv_flat = torch.empty(total * self._size, dtype=input.dtype,
+                                device=input.device)
+        self.allgather(recv_flat, input).wait()
+
+        dev_id = self._device_id if self._device_id is not None else 0
+        rt = npu_runtime.get_runtime(dev_id)
+        rt.synchronize_stream(stream)
+
+        # From rank j's gathered buffer, pick the chunk destined for us
         itemsize = input.dtype.itemsize
         chunk_bytes = count_per_rank * itemsize
-        in_base = input.storage().data_ptr()
         out_base = output.storage().data_ptr()
-
-        for peer in range(self._size):
-            if peer == self._rank:
-                npu_runtime.memcpy_d2d(
-                    out_base + peer * chunk_bytes, chunk_bytes,
-                    in_base + peer * chunk_bytes,
-                )
-            else:
-                send_ptr = ctypes.c_void_p(in_base + peer * chunk_bytes)
-                recv_ptr = ctypes.c_void_p(out_base + peer * chunk_bytes)
-                self._p2p_exchange(send_ptr, recv_ptr, count_per_rank,
-                                   hccl_dt, peer, stream, bindings, _check)
+        src_base = recv_flat.storage().data_ptr()
+        for j in range(self._size):
+            # rank j's buffer starts at j * total elements
+            # our chunk within that buffer is at offset self._rank * count_per_rank
+            src_off = (j * total + self._rank * count_per_rank) * itemsize
+            dst_off = j * chunk_bytes
+            npu_runtime.memcpy_d2d(out_base + dst_off, chunk_bytes,
+                                   src_base + src_off, runtime=rt)
 
         return self._make_work(stream)
 
@@ -544,64 +585,63 @@ class ProcessGroupHCCL(ProcessGroup):
             _check(ret, "HcclAlltoAllV")
             return self._make_work(stream)
 
-        # CANN <=8.3: P2P fallback (preserved for backward compat)
+        # CANN <=8.3: all_gather-based fallback.
+        # P2P send/recv fails with error 6 on 4+ ranks (910A).
+        import candle as torch
         from .._backends.npu import runtime as npu_runtime
-        hccl_dt = ctypes.c_int32(dtype_to_hccl(input.dtype))
+        world_size = self._size
         itemsize = input.dtype.itemsize
-        in_base = input.storage().data_ptr()
+        total_send = input.numel()
+        dev = input.device
+
+        # Step 1: all_gather the split-size vectors so every rank knows
+        # every other rank's input layout.
+        local_splits = torch.tensor([int(s) for s in input_split_sizes],
+                                    dtype=torch.int64, device=dev)
+        all_splits_flat = torch.empty(world_size * world_size,
+                                      dtype=torch.int64, device=dev)
+        self.allgather(all_splits_flat, local_splits).wait()
+
+        dev_id = self._device_id if self._device_id is not None else 0
+        rt = npu_runtime.get_runtime(dev_id)
+        rt.synchronize_stream(stream)
+
+        # all_splits[j] = rank j's input_split_sizes
+        all_splits = all_splits_flat.reshape(world_size, world_size)
+        all_splits_cpu = all_splits.to("cpu")._numpy_view()
+
+        # Step 2: all_gather the data buffers.
+        # Each rank may have a different total_send, so pad to the max.
+        max_send = int(all_splits_cpu.sum(axis=1).max())
+        if total_send < max_send:
+            padded = torch.zeros(max_send, dtype=input.dtype, device=dev)
+            npu_runtime.memcpy_d2d(
+                padded.storage().data_ptr(), total_send * itemsize,
+                input.storage().data_ptr(), runtime=rt)
+            send_buf = padded
+        else:
+            send_buf = input
+
+        recv_flat = torch.empty(max_send * world_size, dtype=input.dtype,
+                                device=dev)
+        self.allgather(recv_flat, send_buf).wait()
+        rt.synchronize_stream(stream)
+
+        # Step 3: extract our column from each rank's gathered buffer.
         out_base = output.storage().data_ptr()
-
-        # Pre-compute byte offsets per peer
-        in_offsets = []
-        d = 0
-        for s in input_split_sizes:
-            in_offsets.append(d)
-            d += int(s) * itemsize
-        out_offsets = []
-        d = 0
-        for s in output_split_sizes:
-            out_offsets.append(d)
-            d += int(s) * itemsize
-
-        for peer in range(self._size):
-            send_numel = int(input_split_sizes[peer])
-            recv_numel = int(output_split_sizes[peer])
-            if peer == self._rank:
-                nbytes = send_numel * itemsize
-                if nbytes > 0:
-                    npu_runtime.memcpy_d2d(
-                        out_base + out_offsets[peer], nbytes,
-                        in_base + in_offsets[peer],
-                    )
-            else:
-                send_ptr = ctypes.c_void_p(in_base + in_offsets[peer])
-                recv_ptr = ctypes.c_void_p(out_base + out_offsets[peer])
-                if self._rank < peer:
-                    if send_numel > 0:
-                        ret = bindings.send(
-                            send_ptr, ctypes.c_uint64(send_numel), hccl_dt,
-                            ctypes.c_uint32(peer), self._comm,
-                            ctypes.c_void_p(int(stream)))
-                        _check(ret, f"HcclSend to {peer}")
-                    if recv_numel > 0:
-                        ret = bindings.recv(
-                            recv_ptr, ctypes.c_uint64(recv_numel), hccl_dt,
-                            ctypes.c_uint32(peer), self._comm,
-                            ctypes.c_void_p(int(stream)))
-                        _check(ret, f"HcclRecv from {peer}")
-                else:
-                    if recv_numel > 0:
-                        ret = bindings.recv(
-                            recv_ptr, ctypes.c_uint64(recv_numel), hccl_dt,
-                            ctypes.c_uint32(peer), self._comm,
-                            ctypes.c_void_p(int(stream)))
-                        _check(ret, f"HcclRecv from {peer}")
-                    if send_numel > 0:
-                        ret = bindings.send(
-                            send_ptr, ctypes.c_uint64(send_numel), hccl_dt,
-                            ctypes.c_uint32(peer), self._comm,
-                            ctypes.c_void_p(int(stream)))
-                        _check(ret, f"HcclSend to {peer}")
+        src_base = recv_flat.storage().data_ptr()
+        out_off = 0
+        for j in range(world_size):
+            # Offset within rank j's buffer for the chunk destined to us
+            j_splits = all_splits_cpu[j]
+            my_offset_in_j = int(sum(j_splits[:self._rank]))
+            recv_numel = int(output_split_sizes[j])
+            if recv_numel > 0:
+                src_off = (j * max_send + my_offset_in_j) * itemsize
+                npu_runtime.memcpy_d2d(out_base + out_off,
+                                       recv_numel * itemsize,
+                                       src_base + src_off, runtime=rt)
+            out_off += recv_numel * itemsize
 
         return self._make_work(stream)
 
