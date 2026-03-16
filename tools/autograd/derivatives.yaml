@@ -1,0 +1,155 @@
+# Declarative autograd gradient definitions — Phase 0
+# Format follows PyTorch derivatives.yaml conventions.
+#
+# Each entry has:
+#   name: <schema>          — function signature
+#   <var>: <formula>        — gradient formula for that input
+#
+# Available in formulas:
+#   grad          — upstream gradient
+#   self, other…  — forward inputs (by parameter name)
+#   result        — forward output
+#   redispatch(op, keyset, ...)  — call op through dispatcher
+#   reduce_grad(g, shape)        — sum-broadcast gradient
+#   _scalar_tensor_like(ref, v)  — scalar tensor on same device/dtype
+
+# ===== Unary elementwise =====
+
+- name: exp(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, result)
+
+- name: log(Tensor self) -> Tensor
+  self: redispatch("div", keyset, grad, self)
+
+- name: sqrt(Tensor self) -> Tensor
+  self: redispatch("div", keyset, grad, redispatch("mul", keyset, _scalar_tensor_like(self, 2.0), redispatch("sqrt", keyset, self)))
+
+- name: rsqrt(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("mul", keyset, _scalar_tensor_like(self, -0.5), redispatch("mul", keyset, redispatch("rsqrt", keyset, self), redispatch("mul", keyset, redispatch("rsqrt", keyset, self), redispatch("rsqrt", keyset, self)))))
+
+- name: neg(Tensor self) -> Tensor
+  self: redispatch("neg", keyset, grad)
+
+- name: abs(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("sign", keyset, self))
+
+- name: sigmoid(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("mul", keyset, redispatch("sigmoid", keyset, self), redispatch("add", keyset, self._ones_like(), redispatch("neg", keyset, redispatch("sigmoid", keyset, self)))))
+
+- name: tanh(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("add", keyset, self._ones_like(), redispatch("neg", keyset, redispatch("mul", keyset, redispatch("tanh", keyset, self), redispatch("tanh", keyset, self)))))
+
+- name: sin(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("cos", keyset, self))
+
+- name: cos(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("neg", keyset, redispatch("sin", keyset, self)))
+
+- name: relu(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("sign", keyset, redispatch("relu", keyset, self)))
+
+# ===== Binary elementwise =====
+
+- name: add.Tensor(Tensor self, Tensor other) -> Tensor
+  self: reduce_grad(grad, self.shape)
+  other: reduce_grad(grad, other.shape)
+
+- name: mul.Tensor(Tensor self, Tensor other) -> Tensor
+  self: reduce_grad(redispatch("mul", keyset, grad, other), self.shape)
+  other: reduce_grad(redispatch("mul", keyset, grad, self), other.shape)
+
+- name: sub.Tensor(Tensor self, Tensor other) -> Tensor
+  self: reduce_grad(grad, self.shape)
+  other: reduce_grad(redispatch("neg", keyset, grad), other.shape)
+
+- name: div.Tensor(Tensor self, Tensor other) -> Tensor
+  self: reduce_grad(redispatch("div", keyset, grad, other), self.shape)
+  other: reduce_grad(redispatch("neg", keyset, redispatch("div", keyset, redispatch("mul", keyset, grad, self), redispatch("mul", keyset, other, other))), other.shape)
+
+- name: matmul(Tensor self, Tensor other) -> Tensor
+  self: reduce_grad(redispatch("matmul", keyset, grad, other.transpose(-1, -2)), self.shape)
+  other: reduce_grad(redispatch("matmul", keyset, self.transpose(-1, -2), grad), other.shape)
+
+# ===== View / shape ops =====
+
+- name: reshape(Tensor self, int[] shape) -> Tensor
+  self: redispatch("reshape", keyset, grad, self.shape)
+
+- name: transpose(Tensor self, int dim0, int dim1) -> Tensor
+  self: redispatch("transpose", keyset, grad, dim0, dim1)
+
+- name: permute(Tensor self, int[] dims) -> Tensor
+  self: "redispatch(\"permute\", keyset, grad, _inverse_permutation(dims))"
+
+- name: expand(Tensor self, int[] size) -> Tensor
+  self: reduce_grad(grad, self.shape)
+
+- name: squeeze(Tensor self) -> Tensor
+  self: redispatch("reshape", keyset, grad, self.shape)
+
+- name: unsqueeze(Tensor self, int dim) -> Tensor
+  self: redispatch("squeeze", keyset, grad, dim)
+
+# ===== Reduction =====
+
+- name: sum(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, self._ones_like())
+
+- name: mean(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 1.0 / self.numel())), self._ones_like())"
+
+# ===== Misc =====
+
+- name: contiguous(Tensor self) -> Tensor
+  self: grad
+
+# ===== Activation ops (Phase 1) =====
+
+- name: erf(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, redispatch(\"mul\", keyset, _scalar_tensor_like(self, 2.0 / __import__('math').sqrt(__import__('math').pi)), redispatch(\"exp\", keyset, redispatch(\"neg\", keyset, redispatch(\"mul\", keyset, self, self)))))"
+
+- name: softplus(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("sigmoid", keyset, self))
+
+- name: silu(Tensor self) -> Tensor
+  self: "_silu_grad(grad, self, keyset)"
+
+- name: gelu(Tensor self) -> Tensor
+  self: "_gelu_grad(grad, self, keyset)"
+
+- name: mish(Tensor self) -> Tensor
+  self: "_mish_grad(grad, self, keyset)"
+
+- name: leaky_relu(Tensor self, float negative_slope=0.01) -> Tensor
+  self: "_leaky_relu_grad(grad, self, negative_slope, keyset)"
+
+- name: elu(Tensor self, float alpha=1.0) -> Tensor
+  self: "_elu_grad(grad, self, alpha, keyset)"
+
+- name: celu(Tensor self, float alpha=1.0) -> Tensor
+  self: "_celu_grad(grad, self, alpha, keyset)"
+
+- name: hardtanh(Tensor self, float min_val=-1.0, float max_val=1.0) -> Tensor
+  self: "_hardtanh_grad(grad, self, min_val, max_val, keyset)"
+
+- name: relu6(Tensor self) -> Tensor
+  self: "_hardtanh_grad(grad, self, 0.0, 6.0, keyset)"
+
+- name: hardswish(Tensor self) -> Tensor
+  self: "_hardswish_grad(grad, self, keyset)"
+
+- name: hardsigmoid(Tensor self) -> Tensor
+  self: "_hardsigmoid_grad(grad, self, keyset)"
+
+- name: selu(Tensor self) -> Tensor
+  self: "_selu_grad(grad, self, keyset)"
+
+- name: softmax(Tensor self, int dim) -> Tensor
+  self: "_softmax_grad(grad, self, dim, keyset)"
+
+- name: log_softmax(Tensor self, int dim) -> Tensor
+  self: "_log_softmax_grad(grad, self, dim, keyset)"
+
+- name: prelu(Tensor self, Tensor weight) -> Tensor
+  self: "_prelu_grad_input(grad, self, weight, keyset)"
+  weight: "reduce_grad(_prelu_grad_weight(grad, self, weight, keyset), weight.shape)"
