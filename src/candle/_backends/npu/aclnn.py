@@ -8,9 +8,12 @@ from . import cann_discovery
 
 # Try to import the Cython FFI hot-path; fall back to pure-Python ctypes.
 try:
-    from . import _aclnn_ffi as _ffi
+    from ..._cython import _aclnn_ffi as _ffi
 except ImportError:
-    from . import _aclnn_ffi_fallback as _ffi  # pylint: disable=ungrouped-imports
+    try:
+        from ..._cython import _aclnn_ffi_fallback as _ffi  # pylint: disable=ungrouped-imports
+    except ImportError:
+        _ffi = None  # pylint: disable=invalid-name
 
 acl = None
 

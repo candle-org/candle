@@ -550,3 +550,14 @@ def dispatch(name, dispatch_device, *args, **kwargs):
 
 def redispatch(name, keyset, *args, **kwargs):
     return dispatch_with_keyset(name, keyset, None, *args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# Cython fast-path: replace dispatch() if Cython extension is available.
+# Only dispatch() is replaced — it builds the keyset faster in C, then calls
+# the original Python dispatch_with_keyset() for the full dispatch logic.
+# ---------------------------------------------------------------------------
+try:
+    from .._cython._dispatch import cy_dispatch as dispatch  # noqa: F811
+except ImportError:
+    pass  # keep existing Python dispatch

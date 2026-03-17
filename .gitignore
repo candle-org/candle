@@ -7,7 +7,11 @@ __pycache__/
 *.so
 
 # Cython generated C files
-src/candle/_backends/npu/_aclnn_ffi.c
+src/candle/_cython/_aclnn_ffi.c
+src/candle/_cython/_npu_ops.c
+src/candle/_cython/_dispatch.c
+src/candle/_cython/_allocator.c
+src/candle/_cython/_storage.c
 
 # Distribution / packaging
 .Python
@@ -217,4 +221,3 @@ compat/*/_transformers/
 compat/*/_pytorch/
 compat/*/_reports/
 compat/pytorch/_pytorch.local/
-src/candle/_backends/npu/_npu_ops_fast.c

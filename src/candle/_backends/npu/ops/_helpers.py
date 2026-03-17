@@ -14,11 +14,11 @@ from .. import state as npu_state
 from .. import ops_soc
 
 try:
-    from .._npu_ops_fast import fast_binary_op as _fast_binary_op  # pylint: disable=no-name-in-module
+    from ...._cython._npu_ops import fast_binary_op as _fast_binary_op  # pylint: disable=no-name-in-module
     _HAS_FAST_OPS = True
 except ImportError:
     try:
-        from .._npu_ops_fast_fallback import fast_binary_op as _fast_binary_op
+        from ...._cython._npu_ops_fallback import fast_binary_op as _fast_binary_op
         _HAS_FAST_OPS = True
     except ImportError:
         _HAS_FAST_OPS = False

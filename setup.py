@@ -23,13 +23,25 @@ if platform.system() == "Linux":
         ext_modules = cythonize(
             [
                 Extension(
-                    "candle._backends.npu._aclnn_ffi",
-                    ["src/candle/_backends/npu/_aclnn_ffi.pyx"],
+                    "candle._cython._aclnn_ffi",
+                    ["src/candle/_cython/_aclnn_ffi.pyx"],
                     libraries=["dl"],
                 ),
                 Extension(
-                    "candle._backends.npu._npu_ops_fast",
-                    ["src/candle/_backends/npu/_npu_ops_fast.pyx"],
+                    "candle._cython._npu_ops",
+                    ["src/candle/_cython/_npu_ops.pyx"],
+                ),
+                Extension(
+                    "candle._cython._dispatch",
+                    ["src/candle/_cython/_dispatch.pyx"],
+                ),
+                Extension(
+                    "candle._cython._allocator",
+                    ["src/candle/_cython/_allocator.pyx"],
+                ),
+                Extension(
+                    "candle._cython._storage",
+                    ["src/candle/_cython/_storage.pyx"],
                 ),
             ],
             compiler_directives={
