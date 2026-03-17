@@ -120,10 +120,10 @@ def fast_binary_op(a, b, fn, str name):
     - output tensor wrapping (weakref + Python objects)
     """
     # Import heavy Python deps (cached after first call by Python)
-    from . import runtime as npu_runtime
-    from . import state as npu_state
-    from ..._storage import npu_typed_storage_from_ptr
-    from ..._tensor import Tensor
+    from candle._backends.npu import runtime as npu_runtime
+    from candle._backends.npu import state as npu_state
+    from candle._storage import npu_typed_storage_from_ptr
+    from candle._tensor import Tensor
 
     # 1. Validate device/dtype (direct attribute access)
     a_dev = a.device

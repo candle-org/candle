@@ -603,6 +603,15 @@ def npu_typed_storage_from_ptr(device_ptr, size, dtype, device=None):
     return TypedStorage(untyped, dtype, int(size))
 
 
+# ---------------------------------------------------------------------------
+# Cython fast-path: replace npu_typed_storage_from_ptr if available
+# ---------------------------------------------------------------------------
+try:
+    from ._cython._storage import cy_npu_storage_from_ptr as npu_typed_storage_from_ptr  # noqa: F811
+except ImportError:
+    pass  # keep existing Python npu_typed_storage_from_ptr
+
+
 def mps_typed_storage_from_numpy(arr, dtype, device=None):
     """Create MPS TypedStorage from a numpy array (copies data into a Metal buffer)."""
     from ._backends.mps.runtime import get_runtime, buffer_contents

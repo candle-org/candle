@@ -480,10 +480,22 @@ class NpuAllocator:
 _ALLOCATORS = {}
 
 
+# ---------------------------------------------------------------------------
+# Cython fast-path: use FastNpuAllocator in get_allocator() if available.
+# NpuAllocator class itself is preserved for tests that create it directly.
+# ---------------------------------------------------------------------------
+_AllocatorImpl = NpuAllocator
+
+try:
+    from ..._cython._allocator import FastNpuAllocator as _AllocatorImpl  # noqa: F811
+except ImportError:
+    pass
+
+
 def get_allocator(device_id=0):
     device_id = int(device_id)
     alloc = _ALLOCATORS.get(device_id)
     if alloc is None:
-        alloc = NpuAllocator(device_id)
+        alloc = _AllocatorImpl(device_id)
         _ALLOCATORS[device_id] = alloc
     return alloc
