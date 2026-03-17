@@ -1,5 +1,6 @@
 from ._backends.npu import runtime as npu_runtime
 from ._backends.npu import aclnn
+from ._stream import PyTorchFileReader
 
 
 def _npu_probe_model_dirs():

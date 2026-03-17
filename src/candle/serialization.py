@@ -10,7 +10,6 @@ import io
 import os
 import pickle
 import sys
-import zipfile
 from collections import OrderedDict
 
 import numpy as np
@@ -31,6 +30,7 @@ from ._dtype import (
     to_numpy_dtype,
 )
 from ._storage import TypedStorage, _CPUUntypedStorage, typed_storage_from_numpy
+from ._stream import PyTorchStreamReader, PyTorchStreamWriter
 from ._tensor import Tensor as MindTensor
 
 
@@ -367,30 +367,26 @@ def _write_zip_checkpoint(obj, f, pickle_module, pickle_protocol):
     pickler.dump(prepared)
     data_pkl = _patch_pickle_globals_for_torch(data_buf.getvalue())
 
-    prefix = "archive"
-    with zipfile.ZipFile(f, mode="w", compression=zipfile.ZIP_STORED) as zf:
-        zf.writestr(f"{prefix}/data.pkl", data_pkl)
-        zf.writestr(f"{prefix}/version", b"3")
-        zf.writestr(f"{prefix}/byteorder", sys.byteorder.encode("ascii"))
+    if isinstance(f, (str, os.PathLike)):
+        writer = PyTorchStreamWriter(str(f))
+    else:
+        # file-like: wrap in a writer callable
+        def _writer_func(buf, n):
+            if buf is None:
+                f.seek(n, os.SEEK_CUR)
+            else:
+                f.write(buf)
+            return n
+        writer = PyTorchStreamWriter(_writer_func)
 
-        refs = sorted(storage_refs_by_id.values(), key=lambda r: int(r.key))
-        for ref in refs:
-            zf.writestr(f"{prefix}/data/{ref.key}", ref.raw_bytes)
+    writer.writeRecord("data.pkl", data_pkl)
+    writer.writeRecord("byteorder", sys.byteorder.encode("ascii"))
 
+    refs = sorted(storage_refs_by_id.values(), key=lambda r: int(r.key))
+    for ref in refs:
+        writer.writeRecord(f"data/{ref.key}", ref.raw_bytes)
 
-def _detect_prefix(zf):
-    for name in zf.namelist():
-        if name.endswith("/data.pkl"):
-            return name[: -len("/data.pkl")]
-    if "data.pkl" in zf.namelist():
-        return ""
-    raise RuntimeError("checkpoint missing data.pkl record")
-
-
-def _record_name(prefix, name):
-    if not prefix:
-        return name
-    return f"{prefix}/{name}"
+    writer.writeEndOfFile()
 
 
 def _storage_dtype_from_type(storage_type):
@@ -508,67 +504,67 @@ def _load_zip_checkpoint(
     _validate_map_location(map_location)
 
     loaded_storages = {}
-    with zipfile.ZipFile(file_obj, mode="r") as zf:
-        prefix = _detect_prefix(zf)
-        data_pkl = zf.read(_record_name(prefix, "data.pkl"))
+    reader = PyTorchStreamReader(file_obj)
 
-        def persistent_load(saved_id):
-            assert isinstance(saved_id, tuple)
-            typename = _maybe_decode_ascii(saved_id[0])
-            if typename != "storage":
+    if not reader.hasRecord("data.pkl"):
+        raise RuntimeError("checkpoint missing data.pkl record")
+    data_pkl, _ = reader.getRecord("data.pkl")
+
+    def persistent_load(saved_id):
+        assert isinstance(saved_id, tuple)
+        typename = _maybe_decode_ascii(saved_id[0])
+        if typename != "storage":
+            raise RuntimeError(
+                f"Unknown typename for persistent_load, expected 'storage' but got '{typename}'"
+            )
+
+        storage_type, key, location, numel = saved_id[1:]
+        key = _maybe_decode_ascii(key)
+        location = _maybe_decode_ascii(location)
+
+        if key in loaded_storages:
+            return loaded_storages[key]
+
+        dtype = _storage_dtype_from_type(storage_type)
+        np_dtype = to_numpy_dtype(dtype)
+        record_name = f"data/{key}"
+        if mmap and mmap_path is not None:
+            if reader.isRecordCompressed(record_name):
                 raise RuntimeError(
-                    f"Unknown typename for persistent_load, expected 'storage' but got '{typename}'"
+                    "mmap requires uncompressed zip storage records"
                 )
+            byte_offset = reader.getRecordOffset(record_name)
+            nbytes = int(numel) * np.dtype(np_dtype).itemsize
+            raw = np.memmap(
+                mmap_path,
+                mode="r",
+                dtype=np.uint8,
+                offset=int(byte_offset),
+                shape=(nbytes,),
+            )
+            arr = raw.view(np_dtype)
+            untyped = _CPUUntypedStorage(raw, device="cpu")
+            storage = TypedStorage(untyped, dtype=dtype, size=int(numel), data=arr)
+        else:
+            payload, _ = reader.getRecord(record_name)
+            arr = np.frombuffer(payload, dtype=np_dtype, count=int(numel)).copy()
+            storage = typed_storage_from_numpy(arr, dtype=dtype, device="cpu")
 
-            storage_type, key, location, numel = saved_id[1:]
-            key = _maybe_decode_ascii(key)
-            location = _maybe_decode_ascii(location)
+        resolved_location = _resolve_storage_location(location, map_location)
+        _validate_resolved_location(resolved_location)
 
-            if key in loaded_storages:
-                return loaded_storages[key]
+        storage = _apply_map_location(storage, location, map_location)
+        loaded_storages[key] = storage
+        return storage
 
-            dtype = _storage_dtype_from_type(storage_type)
-            np_dtype = to_numpy_dtype(dtype)
-            record_name = _record_name(prefix, f"data/{key}")
-            if mmap and mmap_path is not None:
-                info = zf.getinfo(record_name)
-                if info.compress_type != zipfile.ZIP_STORED:
-                    raise RuntimeError(
-                        "mmap requires uncompressed zip storage records"
-                    )
-                with zf.open(record_name) as rec:
-                    byte_offset = rec._fileobj.tell()  # zipfile exposes payload offset here
-                nbytes = int(numel) * np.dtype(np_dtype).itemsize
-                raw = np.memmap(
-                    mmap_path,
-                    mode="r",
-                    dtype=np.uint8,
-                    offset=int(byte_offset),
-                    shape=(nbytes,),
-                )
-                arr = raw.view(np_dtype)
-                untyped = _CPUUntypedStorage(raw, device="cpu")
-                storage = TypedStorage(untyped, dtype=dtype, size=int(numel), data=arr)
-            else:
-                payload = zf.read(record_name)
-                arr = np.frombuffer(payload, dtype=np_dtype, count=int(numel)).copy()
-                storage = typed_storage_from_numpy(arr, dtype=dtype, device="cpu")
-
-            resolved_location = _resolve_storage_location(location, map_location)
-            _validate_resolved_location(resolved_location)
-
-            storage = _apply_map_location(storage, location, map_location)
-            loaded_storages[key] = storage
-            return storage
-
-        unpickler = _build_zip_unpickler(
-            data_pkl,
-            pickle_module=pickle_module,
-            weights_only=weights_only,
-            **pickle_load_args,
-        )
-        unpickler.persistent_load = persistent_load
-        return unpickler.load()
+    unpickler = _build_zip_unpickler(
+        data_pkl,
+        pickle_module=pickle_module,
+        weights_only=weights_only,
+        **pickle_load_args,
+    )
+    unpickler.persistent_load = persistent_load
+    return unpickler.load()
 
 
 
@@ -662,13 +658,17 @@ def _load_legacy_checkpoint(
 
 
 def _is_zip_checkpoint(file_obj):
+    """Check for ZIP local-file-header magic (PK\\x03\\x04) without importing zipfile."""
     try:
         cur = file_obj.tell()
     except Exception:
         cur = None
 
     try:
-        return zipfile.is_zipfile(file_obj)
+        magic = file_obj.read(4)
+        return magic == b'PK\x03\x04'
+    except Exception:
+        return False
     finally:
         if cur is not None:
             try:
@@ -702,8 +702,7 @@ def save(obj, f, pickle_module=pickle, pickle_protocol=2, **kwargs):
     _ = kwargs
 
     if _is_pathlike(f):
-        with open(f, "wb") as fh:
-            _write_zip_checkpoint(obj, fh, pickle_module, pickle_protocol)
+        _write_zip_checkpoint(obj, str(f), pickle_module, pickle_protocol)
         return
 
     _write_zip_checkpoint(obj, f, pickle_module, pickle_protocol)

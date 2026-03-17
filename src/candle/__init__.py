@@ -146,6 +146,232 @@ from ._functional import clone, detach, contiguous
 from ._functional import index_add, index_copy, index_fill, scatter_add
 from ._functional import tensor_split, split_with_sizes
 from ._functional import hann_window, hamming_window, bartlett_window, blackman_window
+# Aliases matching torch top-level names
+absolute = abs
+arccos = acos
+arccosh = acosh
+arcsin = asin
+arcsinh = asinh
+arctan = atan
+arctan2 = atan2
+arctanh = atanh
+clip = clamp
+clip_ = clamp_
+divide = div
+multiply = mul
+subtract = sub
+negative = neg
+greater = gt
+greater_equal = ge
+less = lt
+less_equal = le
+not_equal = ne
+swapaxes = transpose
+swapdims = transpose
+fix = trunc
+def msort(input):
+    """Sort along dim 0, returning values only (no indices)."""
+    return sort(input, dim=0)[0]
+vdot = dot
+ger = outer
+
+
+def t(input):
+    """2-D transpose (alias for transpose(input, 0, 1))."""
+    if input.ndim != 2:
+        raise RuntimeError(f"t() expects a 2-D tensor, got {input.ndim}-D")
+    return transpose(input, 0, 1)
+
+
+def fliplr(input):
+    """Flip tensor left-right (along dim 1)."""
+    if input.ndim < 2:
+        raise RuntimeError("fliplr requires at least 2-D input")
+    return flip(input, [1])
+
+
+def flipud(input):
+    """Flip tensor upside-down (along dim 0)."""
+    return flip(input, [0])
+
+
+def std_mean(input, dim=None, *, unbiased=True, keepdim=False):
+    """Return (std, mean) tuple."""
+    s = std(input, dim=dim, unbiased=unbiased, keepdim=keepdim)
+    m = mean(input, dim=dim, keepdim=keepdim)
+    return s, m
+
+
+def rsub(input, other, alpha=1):
+    """Subtract input from other: other - alpha * input."""
+    return sub(other, input if alpha == 1 else mul(input, alpha))
+
+
+def nan_to_num(input, nan=0.0, posinf=None, neginf=None):
+    """Replace NaN/inf/-inf with finite values."""
+    import builtins as _b
+    out = where(isnan(input), full(input.shape, nan, dtype=input.dtype, device=input.device), input)
+    if posinf is not None:
+        out = where(isposinf(out), full(input.shape, posinf, dtype=input.dtype, device=input.device), out)
+    if neginf is not None:
+        out = where(isneginf(out), full(input.shape, neginf, dtype=input.dtype, device=input.device), out)
+    return out
+
+
+def nan_to_num_(input, nan=0.0, posinf=None, neginf=None):
+    """In-place nan_to_num."""
+    result = nan_to_num(input, nan=nan, posinf=posinf, neginf=neginf)
+    copy_(input, result)
+    return input
+
+
+def diag_embed(input, offset=0, dim1=-2, dim2=-1):
+    """Embed input as diagonals of a new tensor."""
+    import builtins as _b
+    n = input.shape[-1]
+    out_size = n + _b.abs(offset)
+    shape = list(input.shape[:-1]) + [out_size, out_size]
+    out = zeros(shape, dtype=input.dtype, device=input.device)
+    row = _b.max(0, -offset)
+    col = _b.max(0, offset)
+    for i in _b.range(n):
+        out[..., row + i, col + i] = input[..., i]
+    return out
+
+
+def diagflat(input, offset=0):
+    """Flatten input and create a 2-D diagonal matrix."""
+    return diag(flatten(input), offset)
+
+
+# Inplace unary aliases (delegate to Tensor method)
+def abs_(input): return input.abs_()
+def acos_(input): return input.acos_() if hasattr(input, 'acos_') else copy_(input, acos(input))
+def acosh_(input): return copy_(input, acosh(input))
+def asin_(input): return copy_(input, asin(input))
+def asinh_(input): return copy_(input, asinh(input))
+def atan_(input): return copy_(input, atan(input))
+def atanh_(input): return copy_(input, atanh(input))
+def ceil_(input): return input.ceil_()
+def cos_(input): return input.cos_()
+def cosh_(input): return copy_(input, cosh(input))
+def erf_(input): return copy_(input, erf(input))
+def erfc_(input): return copy_(input, erfc(input))
+def exp_(input): return input.exp_()
+def exp2_(input): return copy_(input, exp2(input))
+def expm1_(input): return copy_(input, expm1(input))
+def floor_(input): return input.floor_()
+def frac_(input): return copy_(input, frac(input))
+def log_(input): return input.log_()
+def log2_(input): return input.log2_()
+def log10_(input): return input.log10_()
+def log1p_(input): return copy_(input, log1p(input))
+def neg_(input): return input.neg_()
+negative_ = neg_
+def reciprocal_(input): return input.reciprocal_()
+def round_(input): return input.round_()
+def rsqrt_(input): return copy_(input, rsqrt(input))
+def sigmoid_(input): return input.sigmoid_()
+def sin_(input): return input.sin_()
+def sinh_(input): return copy_(input, sinh(input))
+def sqrt_(input): return input.sqrt_()
+def square_(input): return copy_(input, square(input))
+def tan_(input): return input.tan_()
+def tanh_(input): return input.tanh_()
+def trunc_(input): return input.trunc_()
+fix_ = trunc_
+def clamp_min_(input, min): return copy_(input, clamp(input, min_val=min))
+def clamp_max_(input, max): return copy_(input, clamp(input, max_val=max))
+def detach_(input): return input.detach_()
+arccos_ = acos_
+arccosh_ = acosh_
+arcsin_ = asin_
+arcsinh_ = asinh_
+arctan_ = atan_
+arctanh_ = atanh_
+
+# NN functional ops exposed at top level
+from .nn.functional import (
+    softmax, log_softmax, dropout, embedding,
+    layer_norm, group_norm, instance_norm, batch_norm,
+    hardshrink, selu, celu, threshold,
+)
+from ._functional import rms_norm
+
+def selu_(input): return copy_(input, selu(input))
+def celu_(input, alpha=1.0): return copy_(input, celu(input, alpha=alpha))
+def threshold_(input, threshold_val, value): return copy_(input, threshold(input, threshold_val, value))
+
+# as_strided (view op)
+def as_strided(input, size, stride, storage_offset=None):
+    from ._functional import dispatch
+    return dispatch("as_strided", input.device.type, input, size, stride, storage_offset)
+
+# erfinv top-level
+def erfinv(input):
+    out = clone(input)
+    return out.erfinv_()
+
+# masked_scatter top-level (out-of-place)
+def masked_scatter(input, mask, source):
+    from ._functional import dispatch
+    return dispatch("masked_scatter", input.device.type, input, mask, source)
+
+# bitwise shifts
+def bitwise_left_shift(input, other):
+    from ._functional import dispatch
+    return dispatch("bitwise_left_shift", input.device.type, input, other)
+
+def bitwise_right_shift(input, other):
+    from ._functional import dispatch
+    return dispatch("bitwise_right_shift", input.device.type, input, other)
+
+# constant_pad_nd
+def constant_pad_nd(input, pad, value=0):
+    from ._functional import dispatch
+    return dispatch("constant_pad_nd", input.device.type, input, pad, value)
+
+# mode: returns (values, indices) namedtuple-like
+def mode(input, dim=-1, keepdim=False):
+    from ._functional import dispatch
+    return dispatch("mode", input.device.type, input, dim, keepdim)
+
+# conv ops
+from .nn.functional import conv1d, conv2d, conv3d
+
+# dropout_ (in-place)
+def dropout_(input, p=0.5, training=True):
+    result = dropout(input, p=p, training=training)
+    copy_(input, result)
+    return input
+
+# embedding alias (already imported above)
+
+# inverse / solve / svd / qr — linalg wrappers
+def inverse(input):
+    return linalg.inv(input)
+
+def solve(input, other):
+    return linalg.solve(other, input)
+
+def svd(input, some=True, compute_uv=True):
+    return linalg.svd(input, full_matrices=not some)
+
+def qr(input, some=True):
+    return linalg.qr(input)
+
+from . import linalg
+
+# binomial
+def binomial(count, prob, *, generator=None):
+    from ._functional import dispatch
+    return dispatch("binomial", count.device.type, count, prob)
+
+# cond (matrix condition number)
+def cond(input, p=None):
+    return linalg.cond(input, p)
+
+
 from ._printing import set_printoptions, get_printoptions
 from ._dispatch import (
     pipeline_context,

@@ -239,6 +239,8 @@ from .ops import (
     bitwise_or,
     bitwise_xor,
     bitwise_not,
+    bitwise_left_shift,
+    bitwise_right_shift,
     # New random in-place op
     randint_,
     random_,
@@ -253,6 +255,10 @@ from .ops import (
     searchsorted,
     kthvalue,
     median,
+    # masked_scatter (out-of-place), mode, constant_pad_nd
+    masked_scatter,
+    mode,
+    constant_pad_nd,
     # New GROUP C ops
     logsumexp,
     trace,
@@ -530,6 +536,8 @@ registry.register("bitwise_and", "cpu", bitwise_and, meta=meta_infer.infer_binar
 registry.register("bitwise_or", "cpu", bitwise_or, meta=meta_infer.infer_binary)
 registry.register("bitwise_xor", "cpu", bitwise_xor, meta=meta_infer.infer_binary)
 registry.register("bitwise_not", "cpu", bitwise_not, meta=meta_infer.infer_unary)
+registry.register("bitwise_left_shift", "cpu", bitwise_left_shift, meta=meta_infer.infer_binary)
+registry.register("bitwise_right_shift", "cpu", bitwise_right_shift, meta=meta_infer.infer_binary)
 
 # Random in-place op
 registry.register("randint_", "cpu", randint_, meta=meta_infer.infer_unary)
@@ -547,6 +555,9 @@ registry.register("unique", "cpu", unique)
 registry.register("searchsorted", "cpu", searchsorted)
 registry.register("kthvalue", "cpu", kthvalue)
 registry.register("median", "cpu", median)
+registry.register("mode", "cpu", mode)
+registry.register("masked_scatter", "cpu", masked_scatter)
+registry.register("constant_pad_nd", "cpu", constant_pad_nd, meta=meta_infer.infer_unary)
 
 # New GROUP C ops
 registry.register("logsumexp", "cpu", logsumexp, meta=meta_infer.infer_sum)
