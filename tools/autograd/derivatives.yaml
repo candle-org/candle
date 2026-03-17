@@ -735,3 +735,73 @@
 
 - name: fft_ifftshift(Tensor input, Any dim=None) -> Tensor
   input: "_fft_shift_backward_helper(grad, input, dim, 'fft_fftshift', keyset)"
+
+# --- Multi-tensor ops (Phase 3) ---
+
+- name: lerp(Tensor self, Tensor other, Any weight) -> Tensor
+  self, other: "_lerp_backward_all(grad, self, other, weight, keyset)"
+  output: result
+
+- name: addcmul(Tensor self, Tensor tensor1, Tensor tensor2, Scalar value=1) -> Tensor
+  self, tensor1, tensor2: "_addcmul_backward_all(grad, self, tensor1, tensor2, value, keyset)"
+  output: result
+
+- name: addcdiv(Tensor self, Tensor tensor1, Tensor tensor2, Scalar value=1) -> Tensor
+  self, tensor1, tensor2: "_addcdiv_backward_all(grad, self, tensor1, tensor2, value, keyset)"
+  output: result
+
+- name: addmm(Tensor self, Tensor mat1, Tensor mat2, Scalar beta=1, Scalar alpha=1) -> Tensor
+  self, mat1, mat2: "_addmm_backward_all(grad, self, mat1, mat2, beta, alpha, keyset)"
+  output: result
+
+- name: baddbmm(Tensor self, Tensor batch1, Tensor batch2, Scalar beta=1, Scalar alpha=1) -> Tensor
+  self, batch1, batch2: "_baddbmm_backward_all(grad, self, batch1, batch2, beta, alpha, keyset)"
+  output: result
+
+- name: where(Tensor cond, Tensor x, Tensor y) -> Tensor
+  x, y: "_where_backward_all(grad, cond, x, y, keyset)"
+
+- name: embedding(Tensor self, Tensor weight, int? padding_idx=None, bool scale_grad_by_freq=False, bool sparse=False) -> Tensor
+  self: "_embedding_backward_helper(grad, self, weight, padding_idx, scale_grad_by_freq, keyset)"
+
+- name: cross(Tensor self, Tensor other, int dim=-1) -> Tensor
+  self, other: "_cross_backward_all(grad, self, other, dim, keyset)"
+  output: result
+
+- name: min(Tensor self, Tensor other) -> Tensor
+  self, other: "_min_backward_all(grad, self, other, keyset)"
+  output: result
+
+- name: max(Tensor self, Tensor other) -> Tensor
+  self, other: "_max_backward_all(grad, self, other, keyset)"
+  output: result
+
+- name: masked_select(Tensor self, Tensor mask) -> Tensor
+  self: "_masked_select_backward_helper(grad, self, mask, keyset)"
+
+- name: tensordot(Tensor self, Tensor other, Any dims=2) -> Tensor
+  self, other: "_tensordot_backward_all(grad, self, other, dims, keyset)"
+
+- name: grid_sample(Tensor self, Tensor grid, str mode='bilinear', str padding_mode='zeros', bool align_corners=False) -> Tensor
+  self, grid: "_grid_sample_backward_all(grad, self, grid, mode, padding_mode, align_corners, keyset)"
+  output: result
+
+- name: affine_grid(Tensor theta, Any size, bool align_corners=False) -> Tensor
+  theta: "_affine_grid_backward_helper(grad, theta, size, align_corners, keyset)"
+
+- name: ctc_loss(Tensor self, Any targets, Any input_lengths, Any target_lengths, int blank=0, str reduction='mean', bool zero_infinity=False) -> Tensor
+  self: "_ctc_loss_backward_helper(grad, self, targets, input_lengths, target_lengths, blank, reduction, zero_infinity, keyset)"
+
+- name: dist(Tensor self, Tensor other, Any p=2) -> Tensor
+  self, other: "_dist_backward_all(grad, self, other, p, keyset)"
+  output: result
+
+- name: cdist(Tensor x1, Tensor x2, float p=2.0) -> Tensor
+  x1, x2: "_cdist_backward_all(grad, x1, x2, p, keyset)"
+  output: result
+
+- name: special_polygamma(int n, Tensor self) -> Tensor
+  self: "_special_polygamma_backward_helper(grad, n, self, keyset)"
+
+- name: special_multigammaln(Tensor self, int p) -> Tensor
+  self: "_special_multigammaln_backward_helper(grad, self, p, keyset)"
