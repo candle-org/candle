@@ -657,6 +657,140 @@ def _load_legacy_checkpoint(
     return result
 
 
+# ── torch.distributed.checkpoint (.distcp) support ───────────────────
+
+# Map torch dtype strings to candle dtypes
+_TORCH_DTYPE_STR_TO_CANDLE = {
+    "torch.float16": float16,
+    "torch.float32": float32,
+    "torch.float64": float64,
+    "torch.bfloat16": bfloat16,
+    "torch.int8": int8,
+    "torch.int16": int16,
+    "torch.int32": int32,
+    "torch.int64": int64,
+    "torch.uint8": uint8,
+    "torch.bool": mt_bool,
+    "torch.complex64": complex64,
+    "torch.complex128": complex128,
+}
+
+
+def _is_distcp_dir(path):
+    """Return True if *path* is a DCP checkpoint directory."""
+    if not os.path.isdir(path):
+        return False
+    return os.path.isfile(os.path.join(path, ".metadata"))
+
+
+def _load_distcp_checkpoint(checkpoint_dir, map_location=None):
+    """Load a ``torch.distributed.checkpoint`` directory into a state_dict.
+
+    Each ``.distcp`` file contains concatenated zip archives (one per tensor
+    chunk).  The ``.metadata`` pickle describes the layout.
+    """
+    meta_path = os.path.join(checkpoint_dir, ".metadata")
+    with open(meta_path, "rb") as f:
+        meta = pickle.load(f)
+
+    # Build fqn -> (storage_info, tensor_metadata) mapping
+    fqn_to_info = {}
+    for idx, storage_info in meta.storage_data.items():
+        fqn_to_info.setdefault(idx.fqn, []).append((idx, storage_info))
+
+    state_dict = {}
+    # Cache open file handles for .distcp files
+    file_cache = {}
+
+    try:
+        for fqn, tensor_meta in meta.state_dict_metadata.items():
+            dtype_str = str(tensor_meta.properties.dtype)
+            candle_dtype = _TORCH_DTYPE_STR_TO_CANDLE.get(dtype_str)
+            if candle_dtype is None:
+                raise TypeError(f"unsupported dtype in distcp checkpoint: {dtype_str}")
+            np_dtype = to_numpy_dtype(candle_dtype)
+            shape = tuple(tensor_meta.size)
+
+            if fqn not in fqn_to_info:
+                raise RuntimeError(f"no storage_data entry for {fqn!r}")
+
+            # For single-chunk tensors (most common case)
+            chunks = fqn_to_info[fqn]
+            if len(chunks) == 1:
+                _idx, info = chunks[0]
+                arr = _read_distcp_chunk(
+                    checkpoint_dir, info, np_dtype, file_cache,
+                )
+                arr = arr.reshape(shape)
+            else:
+                # Multi-chunk: allocate full tensor, fill each chunk
+                arr = np.empty(shape, dtype=np_dtype)
+                for _idx, info in chunks:
+                    chunk_offsets = tuple(_idx.offset)
+                    chunk_sizes = tuple(
+                        next(
+                            c.sizes
+                            for c in tensor_meta.chunks
+                            if tuple(c.offsets) == chunk_offsets
+                        )
+                    )
+                    chunk_data = _read_distcp_chunk(
+                        checkpoint_dir, info, np_dtype, file_cache,
+                    )
+                    chunk_data = chunk_data.reshape(tuple(chunk_sizes))
+                    slices = tuple(
+                        slice(o, o + s) for o, s in zip(chunk_offsets, chunk_sizes)
+                    )
+                    arr[slices] = chunk_data
+
+            storage = typed_storage_from_numpy(
+                arr.ravel(), dtype=candle_dtype, device="cpu",
+            )
+            tensor = MindTensor(
+                storage, shape, _contiguous_strides(shape),
+                requires_grad=bool(tensor_meta.properties.requires_grad),
+            )
+            state_dict[fqn] = tensor
+    finally:
+        for fh in file_cache.values():
+            fh.close()
+
+    return state_dict
+
+
+def _read_distcp_chunk(checkpoint_dir, storage_info, np_dtype, file_cache):
+    """Read one tensor chunk from a .distcp file."""
+    rel_path = storage_info.relative_path
+    if rel_path not in file_cache:
+        file_cache[rel_path] = open(
+            os.path.join(checkpoint_dir, rel_path), "rb",
+        )
+    fh = file_cache[rel_path]
+    fh.seek(storage_info.offset)
+    chunk_bytes = fh.read(storage_info.length)
+
+    reader = PyTorchStreamReader(io.BytesIO(chunk_bytes))
+    # Each chunk zip has a single storage in data/0
+    for rec in reader.getAllRecords():
+        if rec.startswith("data/"):
+            payload, _ = reader.getRecord(rec)
+            return np.frombuffer(payload, dtype=np_dtype).copy()
+
+    raise RuntimeError(
+        f"no data/ record found in distcp chunk at offset {storage_info.offset}"
+    )
+
+
+def _contiguous_strides(shape):
+    """Compute C-contiguous strides for *shape*."""
+    if not shape:
+        return ()
+    strides = [1] * len(shape)
+    for i in range(len(shape) - 2, -1, -1):
+        strides[i] = strides[i + 1] * shape[i + 1]
+    return tuple(strides)
+
+
 def _is_zip_checkpoint(file_obj):
     """Check for ZIP local-file-header magic (PK\\x03\\x04) without importing zipfile."""
     try:
@@ -711,9 +845,9 @@ def save(obj, f, pickle_module=pickle, pickle_protocol=2, **kwargs):
 def load(f, map_location=None, pickle_module=pickle, *, weights_only=False, mmap=None, **kwargs):
     """Load checkpoint without torch runtime dependency.
 
-    Supports torch zip checkpoints and the zip checkpoints produced by
-    :func:`save`. Falls back to plain pickle for older candle baseline
-    files if needed.
+    Supports torch zip checkpoints, the zip checkpoints produced by
+    :func:`save`, ``torch.distributed.checkpoint`` directories (``.distcp``),
+    and legacy pickle checkpoints.
     """
     _check_filelike_for_read(f)
     if pickle_module is None:
@@ -722,6 +856,10 @@ def load(f, map_location=None, pickle_module=pickle, *, weights_only=False, mmap
         mmap = False
     map_location = _coerce_map_location_arg(map_location)
     _ = pickle_module, weights_only, kwargs
+
+    # DCP directory checkpoint
+    if _is_pathlike(f) and _is_distcp_dir(str(f)):
+        return _load_distcp_checkpoint(str(f), map_location=map_location)
 
     if mmap and not _is_pathlike(f):
         raise ValueError("f must be a string filename in order to use mmap argument")
