@@ -57,7 +57,6 @@ class TensorStorageMetadata:
 @dataclasses.dataclass
 class BytesStorageMetadata:
     """Metadata for a non-tensor (bytes) entry in the checkpoint."""
-    pass
 
 
 STORAGE_TYPES = Union[TensorStorageMetadata, BytesStorageMetadata]
