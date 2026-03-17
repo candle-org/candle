@@ -553,11 +553,12 @@ def redispatch(name, keyset, *args, **kwargs):
 
 
 # ---------------------------------------------------------------------------
-# Cython fast-path: replace dispatch() if Cython extension is available.
-# Only dispatch() is replaced — it builds the keyset faster in C, then calls
-# the original Python dispatch_with_keyset() for the full dispatch logic.
+# Cython fast-path: replace dispatch() and helpers if Cython extension is
+# available.  These must come AFTER the Python definitions so they override.
 # ---------------------------------------------------------------------------
 try:
     from .._cython._dispatch import cy_dispatch as dispatch  # noqa: F811
+    from .._cython._dispatch import cy_prepare_kwargs as _prepare_kwargs  # noqa: F811
+    from .._cython._dispatch import cy_extract_tensors as _extract_tensors  # noqa: F811
 except ImportError:
-    pass  # keep existing Python dispatch
+    pass  # keep existing Python versions
