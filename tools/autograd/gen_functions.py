@@ -1110,7 +1110,7 @@ def _embedding_backward_helper(grad, weight, indices, padding_idx, scale_grad_by
 
 def _cross_backward_all(grad, self_, other, dim, keyset):
     from .._backends.autograd import _cross_backward
-    return _cross_backward(grad, self_, other, self_, other, keyset, (dim,))
+    return _cross_backward(grad, self_, other, self_, other, dim, keyset)
 
 
 def _min_backward_all(grad, self_, other, keyset):
@@ -1136,6 +1136,39 @@ def _cdist_backward_all(grad, self_, other, p, keyset):
 def _as_strided_scatter_backward_all(grad, self_, src, size, stride, storage_offset, keyset):
     from .._backends.autograd import _as_strided_scatter_backward
     return _as_strided_scatter_backward(grad, self_, src, self_, src, keyset, (size, stride, storage_offset))
+
+
+def _masked_select_backward_helper(grad, self_, mask, keyset):
+    from .._backends.autograd import _masked_select_backward
+    return _masked_select_backward(grad, self_, mask, keyset)[0]
+
+
+def _tensordot_backward_all(grad, self_, other, dims, keyset):
+    from .._backends.autograd import _tensordot_backward
+    return _tensordot_backward(grad, self_, other, dims, keyset)
+
+
+def _grid_sample_backward_all(grad, self_, grid, mode, padding_mode, align_corners, keyset):
+    from .._backends.autograd import _grid_sample_backward
+    return _grid_sample_backward(grad, self_, grid, self_, grid, keyset,
+                                 (mode, padding_mode, align_corners), {})
+
+
+def _affine_grid_backward_helper(grad, theta, size, align_corners, keyset):
+    from .._backends.autograd import _affine_grid_backward
+    return _affine_grid_backward(grad, theta, size, align_corners, keyset)
+
+
+def _rrelu_backward_helper(grad, self_, result, lower, upper, training, keyset):
+    from .._backends.autograd import _rrelu_backward
+    slope = getattr(result, '_rrelu_slope', None)
+    return _rrelu_backward(grad, self_, self_, keyset, (lower, upper, training), {}, slope=slope)[0]
+
+
+def _ctc_loss_backward_helper(grad, log_probs, targets, input_lengths, target_lengths, blank, reduction, zero_infinity, keyset):
+    from .._backends.autograd import _ctc_loss_backward
+    return _ctc_loss_backward(grad, log_probs, targets, input_lengths, target_lengths,
+                              blank, reduction, zero_infinity, keyset)
 '''
 
 
@@ -1261,17 +1294,16 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
             lhs = ", ".join(grad_var_names)
             lines.append(f"            {lhs} = {formula}")
 
-    # Build return tuple in argument order
+    # Build return tuple in argument order — must match the inputs tuple
+    # built in gen_variable_type.py (only differentiable inputs).
     diff_inputs = info.differentiable_inputs
     if len(diff_inputs) == 0:
         lines.append("        return (grad,)")
     else:
         ret_parts = []
-        for arg in info.tensor_args:
+        for arg in diff_inputs:
             if arg.name in grad_vars:
                 ret_parts.append(grad_vars[arg.name])
-            elif arg.name in info.non_differentiable:
-                ret_parts.append("None")
             else:
                 ret_parts.append("None")
         lines.append(f"        return ({', '.join(ret_parts)},)")

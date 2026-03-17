@@ -13,7 +13,7 @@ def gen_registration(infos: list[DifferentiabilityInfo]) -> str:
     for info in infos:
         func_name = f"{info.op_name}_autograd"
         op = info.op_name
-        parts.append(f"    register_autograd_kernels({op!r}, default=_VT.{func_name}, cpu=_VT.{func_name}, cuda=_VT.{func_name}, meta=_VT.{func_name})")
+        parts.append(f"    register_autograd_kernels({op!r}, default=_VT.{func_name}, cpu=_VT.{func_name}, cuda=_VT.{func_name}, npu=_VT.{func_name}, meta=_VT.{func_name})")
     parts.append("")
     return "\n".join(parts)
 
