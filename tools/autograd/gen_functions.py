@@ -254,6 +254,28 @@ def _layer_norm_grad_input(grad, input_, normalized_shape, weight, eps, keyset):
     return _norm_grad_core(dl_dxhat, x_hat, inv_std, axes, n, keyset)
 
 
+def _layer_norm_backward_all(grad, input_, normalized_shape, weight, bias, eps, keyset):
+    norm_shape = tuple(normalized_shape)
+    ndim = len(input_.shape)
+    n_norm = len(norm_shape)
+    axes = tuple(range(ndim - n_norm, ndim))
+    inv_std, x_hat = _norm_stats(input_, axes, eps, keyset)
+    dl_dxhat = redispatch("mul", keyset, grad, weight) if weight is not None else grad
+    n = 1
+    for d in axes:
+        n *= input_.shape[d]
+    grad_input = _norm_grad_core(dl_dxhat, x_hat, inv_std, axes, n, keyset)
+    grad_weight = None
+    if weight is not None:
+        batch_dims = tuple(range(ndim - n_norm))
+        grad_weight = redispatch("sum", keyset, redispatch("mul", keyset, grad, x_hat), dim=batch_dims)
+    grad_bias = None
+    if bias is not None:
+        batch_dims = tuple(range(ndim - n_norm))
+        grad_bias = redispatch("sum", keyset, grad, dim=batch_dims)
+    return grad_input, grad_weight, grad_bias
+
+
 def _batch_norm_grad_input(grad, input_, weight, eps, keyset):
     ndim = len(input_.shape)
     axes = (0,) + tuple(range(2, ndim))
@@ -460,40 +482,44 @@ def _upsample_bicubic2d_backward_helper(grad, self_, output_size, align_corners,
 # ---------------------------------------------------------------------------
 
 def _add_backward_all(grad, self_, other, keyset):
-    grad_self = reduce_grad(grad, self_.shape) if getattr(self_, 'requires_grad', False) else None
-    grad_other = reduce_grad(grad, other.shape) if hasattr(other, 'shape') and getattr(other, 'requires_grad', False) else None
+    grad_self = reduce_grad(grad, self_.shape) if hasattr(self_, 'shape') else None
+    grad_other = reduce_grad(grad, other.shape) if hasattr(other, 'shape') else None
     return grad_self, grad_other
 
 
 def _sub_backward_all(grad, self_, other, keyset):
-    grad_self = reduce_grad(grad, self_.shape) if getattr(self_, 'requires_grad', False) else None
+    grad_self = reduce_grad(grad, self_.shape) if hasattr(self_, 'shape') else None
     grad_other = None
-    if hasattr(other, 'shape') and getattr(other, 'requires_grad', False):
+    if hasattr(other, 'shape'):
         grad_other = reduce_grad(redispatch("neg", keyset, grad), other.shape)
     return grad_self, grad_other
 
 
 def _mul_backward_all(grad, self_, other, keyset):
-    grad_self = None
-    grad_other = None
-    if getattr(self_, 'requires_grad', False):
-        g = redispatch("mul", keyset, grad, other) if hasattr(other, 'shape') else redispatch("mul", keyset, grad, _scalar_tensor_like(self_, float(other)))
+    if hasattr(other, 'shape'):
+        g = redispatch("mul", keyset, grad, other)
         grad_self = reduce_grad(g, self_.shape)
-    if hasattr(other, 'shape') and getattr(other, 'requires_grad', False):
+    else:
+        g = redispatch("mul", keyset, grad, _scalar_tensor_like(self_, float(other)))
+        grad_self = reduce_grad(g, self_.shape)
+    if hasattr(other, 'shape'):
         g = redispatch("mul", keyset, grad, self_)
         grad_other = reduce_grad(g, other.shape)
+    else:
+        grad_other = None
     return grad_self, grad_other
 
 
 def _div_backward_all(grad, self_, other, keyset):
-    grad_self = None
-    grad_other = None
-    if getattr(self_, 'requires_grad', False):
-        g = redispatch("div", keyset, grad, other)
-        grad_self = reduce_grad(g, self_.shape)
-    if hasattr(other, 'shape') and getattr(other, 'requires_grad', False):
-        g = redispatch("neg", keyset, redispatch("div", keyset, redispatch("mul", keyset, grad, self_), redispatch("mul", keyset, other, other)))
+    if hasattr(other, 'shape'):
+        grad_self = reduce_grad(redispatch("div", keyset, grad, other), self_.shape)
+        other_sq = redispatch("mul", keyset, other, other)
+        g = redispatch("neg", keyset, redispatch("div", keyset, redispatch("mul", keyset, grad, self_), other_sq))
         grad_other = reduce_grad(g, other.shape)
+    else:
+        # other is a scalar
+        grad_self = reduce_grad(redispatch("div", keyset, grad, _scalar_tensor_like(self_, float(other))), self_.shape)
+        grad_other = None
     return grad_self, grad_other
 
 
@@ -937,6 +963,179 @@ def _linalg_inv_grad(grad, self_, keyset):
 def _linalg_svdvals_grad(grad, self_, keyset):
     from .._backends.autograd import _linalg_svdvals_backward
     return _linalg_svdvals_backward(grad, self_, self_, keyset)[0]
+
+
+# ---------------------------------------------------------------------------
+# FFT backward helpers (Batch 5)
+# ---------------------------------------------------------------------------
+
+def _fft_c2c_backward_helper(grad, input_, n, dim, norm, inverse_op, keyset):
+    return redispatch(inverse_op, keyset, grad, n=n, dim=dim, norm=norm)
+
+
+def _fft_r2c_backward_helper(grad, input_, n, dim, norm, inverse_op, keyset):
+    result = redispatch(inverse_op, keyset, grad, n=n if n is not None else input_.shape[dim if isinstance(dim, int) else -1], dim=dim, norm=norm)
+    return result
+
+
+def _fft_c2r_backward_helper(grad, input_, n, dim, norm, inverse_op, keyset):
+    return redispatch(inverse_op, keyset, grad, dim=dim, norm=norm)
+
+
+def _fft_shift_backward_helper(grad, input_, dim, inverse_op, keyset):
+    return redispatch(inverse_op, keyset, grad, dim=dim)
+
+
+# ---------------------------------------------------------------------------
+# Linalg custom backward helpers (Batch 5)
+# ---------------------------------------------------------------------------
+
+def _linalg_det_backward_helper(grad, self_, keyset):
+    from .._backends.autograd import _linalg_det_backward
+    return _linalg_det_backward(grad, self_, self_, keyset)[0]
+
+
+def _linalg_slogdet_backward_helper(grad, self_, keyset):
+    from .._backends.autograd import _linalg_slogdet_backward
+    return _linalg_slogdet_backward(grad, self_, self_, keyset)[0]
+
+
+def _linalg_cholesky_backward_helper(grad, self_, upper, keyset):
+    from .._backends.autograd import _linalg_cholesky_backward
+    return _linalg_cholesky_backward(grad, self_, self_, keyset, (upper,))[0]
+
+
+def _linalg_solve_backward_all(grad, self_, other, left, keyset):
+    from .._backends.autograd import _linalg_solve_backward
+    return _linalg_solve_backward(grad, self_, other, self_, other, keyset, (left,))
+
+
+def _linalg_solve_triangular_backward_all(grad, self_, B, upper, left, unitriangular, keyset):
+    from .._backends.autograd import _linalg_solve_triangular_backward
+    return _linalg_solve_triangular_backward(grad, self_, B, self_, B, keyset, (upper, left, unitriangular))
+
+
+def _linalg_qr_backward_helper(grad, self_, mode, keyset):
+    from .._backends.autograd import _linalg_qr_backward
+    return _linalg_qr_backward(grad, self_, self_, keyset, (mode,))[0]
+
+
+def _linalg_svd_backward_helper(grad, self_, full_matrices, keyset):
+    from .._backends.autograd import _linalg_svd_backward
+    return _linalg_svd_backward(grad, self_, self_, keyset, (full_matrices,))[0]
+
+
+def _linalg_eigh_backward_helper(grad, self_, UPLO, keyset):
+    from .._backends.autograd import _linalg_eigh_backward
+    return _linalg_eigh_backward(grad, self_, self_, keyset, (UPLO,))[0]
+
+
+def _linalg_eig_backward_helper(grad, self_, keyset):
+    from .._backends.autograd import _linalg_eig_backward
+    return _linalg_eig_backward(grad, self_, self_, keyset)[0]
+
+
+def _linalg_lu_backward_helper(grad, self_, pivot, keyset):
+    from .._backends.autograd import _linalg_lu_backward
+    return _linalg_lu_backward(grad, self_, self_, keyset, (pivot,))[0]
+
+
+def _linalg_lu_factor_backward_helper(grad, self_, pivot, keyset):
+    from .._backends.autograd import _linalg_lu_factor_backward
+    return _linalg_lu_factor_backward(grad, self_, self_, keyset, (pivot,))[0]
+
+
+def _linalg_lu_solve_backward_all(grad, LU, pivots, B, left, adjoint, keyset):
+    from .._backends.autograd import _linalg_lu_solve_backward
+    return _linalg_lu_solve_backward(grad, LU, pivots, B, LU, pivots, B, keyset, (left, adjoint))
+
+
+def _linalg_multi_dot_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _linalg_multi_dot_backward
+    return _linalg_multi_dot_backward(grad, tensors, keyset)
+
+
+# ---------------------------------------------------------------------------
+# Special custom backward helpers (Batch 5)
+# ---------------------------------------------------------------------------
+
+def _special_polygamma_backward_helper(grad, n, self_, keyset):
+    return redispatch("mul", keyset, grad, redispatch("special_polygamma", keyset, n + 1, self_))
+
+
+def _special_multigammaln_backward_helper(grad, self_, p, keyset):
+    from .._backends.autograd import _special_multigammaln_backward
+    return _special_multigammaln_backward(grad, self_, self_, keyset, (p,))[0]
+
+
+# ---------------------------------------------------------------------------
+# Multi-tensor backward helpers (Batch 6)
+# ---------------------------------------------------------------------------
+
+def _lerp_backward_all(grad, self_, other, weight, keyset):
+    from .._backends.autograd import _lerp_backward
+    return _lerp_backward(grad, self_, other, weight, keyset)
+
+
+def _addcmul_backward_all(grad, self_, tensor1, tensor2, value, keyset):
+    from .._backends.autograd import _addcmul_backward
+    return _addcmul_backward(grad, self_, tensor1, tensor2, value, keyset)
+
+
+def _addcdiv_backward_all(grad, self_, tensor1, tensor2, value, keyset):
+    from .._backends.autograd import _addcdiv_backward
+    return _addcdiv_backward(grad, self_, tensor1, tensor2, value, keyset)
+
+
+def _addmm_backward_all(grad, self_, mat1, mat2, beta, alpha, keyset):
+    from .._backends.autograd import _addmm_backward
+    return _addmm_backward(grad, self_, mat1, mat2, beta, alpha, keyset)
+
+
+def _baddbmm_backward_all(grad, self_, batch1, batch2, beta, alpha, keyset):
+    from .._backends.autograd import _baddbmm_backward
+    return _baddbmm_backward(grad, self_, batch1, batch2, beta, alpha, keyset)
+
+
+def _where_backward_all(grad, condition, self_, other, keyset):
+    from .._backends.autograd import _where_backward
+    return _where_backward(grad, condition, self_, other, condition, keyset)[1:]
+
+
+def _embedding_backward_helper(grad, weight, indices, padding_idx, scale_grad_by_freq, keyset):
+    from .._backends.autograd import _embedding_backward
+    return _embedding_backward(grad, weight, indices, weight, indices, keyset,
+                               padding_idx=padding_idx, scale_grad_by_freq=scale_grad_by_freq)[0]
+
+
+def _cross_backward_all(grad, self_, other, dim, keyset):
+    from .._backends.autograd import _cross_backward
+    return _cross_backward(grad, self_, other, self_, other, keyset, (dim,))
+
+
+def _min_backward_all(grad, self_, other, keyset):
+    from .._backends.autograd import _min_backward
+    return _min_backward(grad, self_, other, self_, other, keyset)
+
+
+def _max_backward_all(grad, self_, other, keyset):
+    from .._backends.autograd import _max_backward
+    return _max_backward(grad, self_, other, self_, other, keyset)
+
+
+def _dist_backward_all(grad, self_, other, p, keyset):
+    from .._backends.autograd import _dist_backward
+    return _dist_backward(grad, self_, other, self_, other, keyset, (p,))
+
+
+def _cdist_backward_all(grad, self_, other, p, keyset):
+    from .._backends.autograd import _cdist_backward
+    return _cdist_backward(grad, self_, other, self_, other, keyset, (p,))
+
+
+def _as_strided_scatter_backward_all(grad, self_, src, size, stride, storage_offset, keyset):
+    from .._backends.autograd import _as_strided_scatter_backward
+    return _as_strided_scatter_backward(grad, self_, src, self_, src, keyset, (size, stride, storage_offset))
 '''
 
 
@@ -994,6 +1193,10 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
             lines.append(f"            tensors.append({p})")
         lines.append("        if tensors:")
         lines.append("            super().save_for_backward(*tensors)")
+        # Populate _saved_fields so Node.__getattr__ can resolve _raw_saved_* / _saved_*
+        for name in all_saved:
+            lines.append(f"        if self._saved_{name}_idx is not None:")
+            lines.append(f"            self._saved_fields[{name!r}] = self._saved_tensors_list[self._saved_{name}_idx]")
 
     # backward method (overrides Node.backward directly — no bound-method cycle)
     lines.append("\n    def backward(self, grad):")
@@ -1014,6 +1217,24 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     for name in saved_outputs:
         local = _safe_local(name)
         lines.append(f"        {local} = _saved[self._saved_{name}_idx]")
+
+    # Retrieve unsaved tensor args from self.inputs (when save_inputs override excludes them)
+    # Build map of tensor arg name -> index in the inputs tuple
+    tensor_args = [a for a in info.args if a.is_tensor or a.is_optional_tensor]
+    tensor_arg_indices = {a.name: i for i, a in enumerate(tensor_args)}
+    saved_set = set(saved_inputs) | set(saved_outputs)
+    # Collect all tensor arg names referenced in any formula
+    import re as _re
+    _ident_pat = _re.compile(r"\b([a-zA-Z_]\w*)\b")
+    formula_referenced = set()
+    for d in info.derivatives:
+        formula_referenced |= set(_ident_pat.findall(d.formula))
+    tensor_arg_names = {a.name for a in tensor_args}
+    unsaved_referenced = (formula_referenced & tensor_arg_names) - saved_set
+    for name in sorted(unsaved_referenced):
+        local = _safe_local(name)
+        idx = tensor_arg_indices[name]
+        lines.append(f"        {local} = self.inputs[{idx}]")
 
     # Retrieve non-tensor args
     for arg in non_tensor_args:

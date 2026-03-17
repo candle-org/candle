@@ -51,12 +51,14 @@
 # ===== Binary elementwise =====
 
 - name: add.Tensor(Tensor self, Tensor other) -> Tensor
+  save_inputs: []
   self, other: "_add_backward_all(grad, self, other, keyset)"
 
 - name: mul.Tensor(Tensor self, Tensor other) -> Tensor
   self, other: "_mul_backward_all(grad, self, other, keyset)"
 
 - name: sub.Tensor(Tensor self, Tensor other) -> Tensor
+  save_inputs: []
   self, other: "_sub_backward_all(grad, self, other, keyset)"
 
 - name: div.Tensor(Tensor self, Tensor other) -> Tensor
@@ -155,7 +157,7 @@
 # We declare them here and delegate to helper functions.
 
 - name: layer_norm(Tensor input, int[] normalized_shape, Tensor? weight, Tensor? bias, float eps=1e-5) -> Tensor
-  input: "_layer_norm_grad_input(grad, input, normalized_shape, weight, eps, keyset)"
+  input, weight, bias: "_layer_norm_backward_all(grad, input, normalized_shape, weight, bias, eps, keyset)"
 
 - name: batch_norm(Tensor input, Tensor? running_mean, Tensor? running_var, Tensor? weight, Tensor? bias, bool training=False, float momentum=0.1, float eps=1e-5) -> Tensor
   input: "_batch_norm_grad_input(grad, input, weight, eps, keyset)"
@@ -323,8 +325,7 @@
   other: reduce_grad(redispatch("neg", keyset, grad), other.shape)
 
 - name: true_divide(Tensor self, Tensor other) -> Tensor
-  self: reduce_grad(redispatch("div", keyset, grad, other), self.shape)
-  other: reduce_grad(redispatch("neg", keyset, redispatch("div", keyset, redispatch("mul", keyset, grad, self), redispatch("mul", keyset, other, other))), other.shape)
+  self, other: "_div_backward_all(grad, self, other, keyset)"
 
 - name: mm(Tensor self, Tensor other) -> Tensor
   self: "redispatch(\"mm\", keyset, grad, redispatch(\"transpose\", keyset, other, 0, 1))"
@@ -684,3 +685,53 @@
 
 - name: linalg_svdvals(Tensor self) -> Tensor
   self: "_linalg_svdvals_grad(grad, self, keyset)"
+
+# ===== Batch 5: FFT ops =====
+
+- name: fft_fft(Tensor input, Any n=None, int dim=-1, Any norm=None) -> Tensor
+  input: "_fft_c2c_backward_helper(grad, input, n, dim, norm, 'fft_ifft', keyset)"
+
+- name: fft_ifft(Tensor input, Any n=None, int dim=-1, Any norm=None) -> Tensor
+  input: "_fft_c2c_backward_helper(grad, input, n, dim, norm, 'fft_fft', keyset)"
+
+- name: fft_fft2(Tensor input, Any s=None, Any dim=None, Any norm=None) -> Tensor
+  input: "_fft_c2c_backward_helper(grad, input, s, dim, norm, 'fft_ifft2', keyset)"
+
+- name: fft_ifft2(Tensor input, Any s=None, Any dim=None, Any norm=None) -> Tensor
+  input: "_fft_c2c_backward_helper(grad, input, s, dim, norm, 'fft_fft2', keyset)"
+
+- name: fft_fftn(Tensor input, Any s=None, Any dim=None, Any norm=None) -> Tensor
+  input: "_fft_c2c_backward_helper(grad, input, s, dim, norm, 'fft_ifftn', keyset)"
+
+- name: fft_ifftn(Tensor input, Any s=None, Any dim=None, Any norm=None) -> Tensor
+  input: "_fft_c2c_backward_helper(grad, input, s, dim, norm, 'fft_fftn', keyset)"
+
+- name: fft_rfft(Tensor input, Any n=None, int dim=-1, Any norm=None) -> Tensor
+  input: "_fft_r2c_backward_helper(grad, input, n, dim, norm, 'fft_irfft', keyset)"
+
+- name: fft_irfft(Tensor input, Any n=None, int dim=-1, Any norm=None) -> Tensor
+  input: "_fft_c2r_backward_helper(grad, input, n, dim, norm, 'fft_rfft', keyset)"
+
+- name: fft_rfft2(Tensor input, Any s=None, Any dim=None, Any norm=None) -> Tensor
+  input: "_fft_r2c_backward_helper(grad, input, s, dim, norm, 'fft_irfft2', keyset)"
+
+- name: fft_irfft2(Tensor input, Any s=None, Any dim=None, Any norm=None) -> Tensor
+  input: "_fft_c2r_backward_helper(grad, input, s, dim, norm, 'fft_rfft2', keyset)"
+
+- name: fft_rfftn(Tensor input, Any s=None, Any dim=None, Any norm=None) -> Tensor
+  input: "_fft_r2c_backward_helper(grad, input, s, dim, norm, 'fft_irfftn', keyset)"
+
+- name: fft_irfftn(Tensor input, Any s=None, Any dim=None, Any norm=None) -> Tensor
+  input: "_fft_c2r_backward_helper(grad, input, s, dim, norm, 'fft_rfftn', keyset)"
+
+- name: fft_hfft(Tensor input, Any n=None, int dim=-1, Any norm=None) -> Tensor
+  input: "_fft_c2r_backward_helper(grad, input, n, dim, norm, 'fft_ihfft', keyset)"
+
+- name: fft_ihfft(Tensor input, Any n=None, int dim=-1, Any norm=None) -> Tensor
+  input: "_fft_r2c_backward_helper(grad, input, n, dim, norm, 'fft_hfft', keyset)"
+
+- name: fft_fftshift(Tensor input, Any dim=None) -> Tensor
+  input: "_fft_shift_backward_helper(grad, input, dim, 'fft_ifftshift', keyset)"
+
+- name: fft_ifftshift(Tensor input, Any dim=None) -> Tensor
+  input: "_fft_shift_backward_helper(grad, input, dim, 'fft_fftshift', keyset)"

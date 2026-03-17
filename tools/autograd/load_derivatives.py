@@ -55,9 +55,10 @@ def _parse_entry(entry: dict) -> DifferentiabilityInfo:
 
     # Collect derivatives
     arg_names = {a.name for a in args}
+    save_inputs_override = entry.get("save_inputs", None)
     derivatives: list[Derivative] = []
     for key, value in entry.items():
-        if key in ("name", "output_differentiability"):
+        if key in ("name", "output_differentiability", "save_inputs"):
             continue
         # key is comma-separated var names like "self" or "input, weight, bias"
         var_names = tuple(v.strip() for v in key.split(","))
@@ -90,6 +91,11 @@ def _parse_entry(entry: dict) -> DifferentiabilityInfo:
             if s not in seen_out:
                 all_saved_outputs.append(s)
                 seen_out.add(s)
+
+    # Apply explicit save_inputs override if provided
+    if save_inputs_override is not None:
+        allowed = set(save_inputs_override)
+        all_saved_inputs = [s for s in all_saved_inputs if s in allowed]
 
     return DifferentiabilityInfo(
         name=name,
