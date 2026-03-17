@@ -7543,22 +7543,10 @@ for _entry in (
         _name, _factory, _include_meta = _entry
         _register_autograd_op(_name, _factory, include_meta=_include_meta)
 
-# Register declarative autograd kernels generated from derivatives.yaml
-# Only register Phase 2+ ops that have been removed from the manual registry above.
-# Phase 1 ops (exp, sum, relu, etc.) still use the manual registry because their
-# dispatch signatures accept **kwargs that the generated positional-only wrappers don't handle.
+# Register declarative autograd kernels generated from derivatives.yaml.
+# Called AFTER the manual registry so generated wrappers override manual ones.
 from .._generated.registration import register_generated_autograd_kernels  # pylint: disable=wrong-import-position
-_PHASE2_GENERATED_OPS = frozenset({
-    "conv1d", "conv2d", "conv3d",
-    "conv_transpose1d", "conv_transpose2d", "conv_transpose3d",
-    "max_pool1d", "max_pool2d", "max_pool3d",
-    "avg_pool1d", "avg_pool2d", "avg_pool3d",
-    "adaptive_avg_pool1d", "adaptive_avg_pool2d", "adaptive_avg_pool3d",
-    "adaptive_max_pool1d", "adaptive_max_pool2d",
-    "upsample_nearest1d", "upsample_nearest2d",
-    "upsample_bilinear2d", "upsample_linear1d", "upsample_bicubic2d",
-})
-register_generated_autograd_kernels(only_ops=_PHASE2_GENERATED_OPS)
+register_generated_autograd_kernels()
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@
 # ===== Unary elementwise =====
 
 - name: exp(Tensor self) -> Tensor
-  self: redispatch("mul", keyset, grad, result)
+  self: "redispatch(\"mul\", keyset, grad, redispatch(\"exp\", keyset, self))"
 
 - name: log(Tensor self) -> Tensor
   self: redispatch("div", keyset, grad, self)
@@ -51,20 +51,16 @@
 # ===== Binary elementwise =====
 
 - name: add.Tensor(Tensor self, Tensor other) -> Tensor
-  self: reduce_grad(grad, self.shape)
-  other: reduce_grad(grad, other.shape)
+  self, other: "_add_backward_all(grad, self, other, keyset)"
 
 - name: mul.Tensor(Tensor self, Tensor other) -> Tensor
-  self: reduce_grad(redispatch("mul", keyset, grad, other), self.shape)
-  other: reduce_grad(redispatch("mul", keyset, grad, self), other.shape)
+  self, other: "_mul_backward_all(grad, self, other, keyset)"
 
 - name: sub.Tensor(Tensor self, Tensor other) -> Tensor
-  self: reduce_grad(grad, self.shape)
-  other: reduce_grad(redispatch("neg", keyset, grad), other.shape)
+  self, other: "_sub_backward_all(grad, self, other, keyset)"
 
 - name: div.Tensor(Tensor self, Tensor other) -> Tensor
-  self: reduce_grad(redispatch("div", keyset, grad, other), self.shape)
-  other: reduce_grad(redispatch("neg", keyset, redispatch("div", keyset, redispatch("mul", keyset, grad, self), redispatch("mul", keyset, other, other))), other.shape)
+  self, other: "_div_backward_all(grad, self, other, keyset)"
 
 - name: matmul(Tensor self, Tensor other) -> Tensor
   self: reduce_grad(redispatch("matmul", keyset, grad, other.transpose(-1, -2)), self.shape)
@@ -84,7 +80,7 @@
 - name: expand(Tensor self, int[] size) -> Tensor
   self: reduce_grad(grad, self.shape)
 
-- name: squeeze(Tensor self) -> Tensor
+- name: squeeze(Tensor self, Any dim=None) -> Tensor
   self: redispatch("reshape", keyset, grad, self.shape)
 
 - name: unsqueeze(Tensor self, int dim) -> Tensor
@@ -242,3 +238,449 @@
 
 - name: upsample_bicubic2d(Tensor self, Any output_size, bool align_corners=False, Any scales_h=None, Any scales_w=None) -> Tensor
   self: "_upsample_bicubic2d_backward_helper(grad, self, output_size, align_corners, keyset)"
+
+# ===== Batch 1: Unary ops =====
+
+- name: log1p(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, grad, redispatch(\"add\", keyset, _scalar_tensor_like(self, 1.0), self))"
+
+- name: expm1(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("exp", keyset, self))
+
+- name: reciprocal(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, redispatch(\"neg\", keyset, grad), redispatch(\"mul\", keyset, self, self))"
+
+- name: softsign(Tensor self) -> Tensor
+  self: "_softsign_grad(grad, self, keyset)"
+
+- name: tan(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, grad, redispatch(\"mul\", keyset, redispatch(\"cos\", keyset, self), redispatch(\"cos\", keyset, self)))"
+
+- name: asin(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, grad, redispatch(\"sqrt\", keyset, redispatch(\"add\", keyset, _scalar_tensor_like(self, 1.0), redispatch(\"neg\", keyset, redispatch(\"mul\", keyset, self, self)))))"
+
+- name: acos(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, redispatch(\"neg\", keyset, grad), redispatch(\"sqrt\", keyset, redispatch(\"add\", keyset, _scalar_tensor_like(self, 1.0), redispatch(\"neg\", keyset, redispatch(\"mul\", keyset, self, self)))))"
+
+- name: atan(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, grad, redispatch(\"add\", keyset, _scalar_tensor_like(self, 1.0), redispatch(\"mul\", keyset, self, self)))"
+
+- name: sinh(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("cosh", keyset, self))
+
+- name: cosh(Tensor self) -> Tensor
+  self: redispatch("mul", keyset, grad, redispatch("sinh", keyset, self))
+
+- name: asinh(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, grad, redispatch(\"sqrt\", keyset, redispatch(\"add\", keyset, redispatch(\"mul\", keyset, self, self), _scalar_tensor_like(self, 1.0))))"
+
+- name: acosh(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, grad, redispatch(\"sqrt\", keyset, redispatch(\"add\", keyset, redispatch(\"mul\", keyset, self, self), redispatch(\"neg\", keyset, _scalar_tensor_like(self, 1.0)))))"
+
+- name: atanh(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, grad, redispatch(\"add\", keyset, _scalar_tensor_like(self, 1.0), redispatch(\"neg\", keyset, redispatch(\"mul\", keyset, self, self))))"
+
+- name: log10(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, grad, redispatch(\"mul\", keyset, self, _scalar_tensor_like(self, __import__('math').log(10.0))))"
+
+- name: erfc(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, redispatch(\"mul\", keyset, _scalar_tensor_like(self, -2.0 / __import__('math').sqrt(__import__('math').pi)), redispatch(\"exp\", keyset, redispatch(\"neg\", keyset, redispatch(\"mul\", keyset, self, self)))))"
+
+- name: log2(Tensor self) -> Tensor
+  self: "redispatch(\"div\", keyset, grad, redispatch(\"mul\", keyset, self, _scalar_tensor_like(self, __import__('math').log(2.0))))"
+
+- name: exp2(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, redispatch(\"mul\", keyset, redispatch(\"exp2\", keyset, self), _scalar_tensor_like(self, __import__('math').log(2.0))))"
+
+- name: square(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, redispatch(\"mul\", keyset, _scalar_tensor_like(self, 2.0), self))"
+
+- name: frac(Tensor self) -> Tensor
+  self: grad
+
+- name: ceil(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 0.0))"
+
+- name: floor(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 0.0))"
+
+- name: round(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 0.0))"
+
+- name: trunc(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 0.0))"
+
+- name: sign(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 0.0))"
+
+- name: signbit(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 0.0))"
+
+# ===== Batch 2: Binary ops =====
+
+- name: sub.Tensor(Tensor self, Tensor other) -> Tensor
+  self: reduce_grad(grad, self.shape)
+  other: reduce_grad(redispatch("neg", keyset, grad), other.shape)
+
+- name: true_divide(Tensor self, Tensor other) -> Tensor
+  self: reduce_grad(redispatch("div", keyset, grad, other), self.shape)
+  other: reduce_grad(redispatch("neg", keyset, redispatch("div", keyset, redispatch("mul", keyset, grad, self), redispatch("mul", keyset, other, other))), other.shape)
+
+- name: mm(Tensor self, Tensor other) -> Tensor
+  self: "redispatch(\"mm\", keyset, grad, redispatch(\"transpose\", keyset, other, 0, 1))"
+  other: "redispatch(\"mm\", keyset, redispatch(\"transpose\", keyset, self, 0, 1), grad)"
+
+- name: bmm(Tensor self, Tensor other) -> Tensor
+  self: "redispatch(\"matmul\", keyset, grad, redispatch(\"transpose\", keyset, other, -1, -2))"
+  other: "redispatch(\"matmul\", keyset, redispatch(\"transpose\", keyset, self, -1, -2), grad)"
+
+- name: pow(Tensor self, Tensor other) -> Tensor
+  self, other: "_pow_backward_all(grad, self, other, keyset)"
+
+- name: maximum(Tensor self, Tensor other) -> Tensor
+  self, other: "_maximum_backward_all(grad, self, other, keyset)"
+
+- name: minimum(Tensor self, Tensor other) -> Tensor
+  self, other: "_minimum_backward_all(grad, self, other, keyset)"
+
+- name: dot(Tensor self, Tensor other) -> Tensor
+  self: redispatch("mul", keyset, grad, other)
+  other: redispatch("mul", keyset, grad, self)
+
+- name: outer(Tensor self, Tensor other) -> Tensor
+  self: redispatch("matmul", keyset, grad, other)
+  other: "redispatch(\"matmul\", keyset, redispatch(\"transpose\", keyset, grad, 0, 1), self)"
+
+- name: mv(Tensor self, Tensor other) -> Tensor
+  self: redispatch("outer", keyset, grad, other)
+  other: "redispatch(\"matmul\", keyset, redispatch(\"transpose\", keyset, self, 0, 1), grad)"
+
+- name: fmin(Tensor self, Tensor other) -> Tensor
+  self, other: "_fmin_backward_all(grad, self, other, keyset)"
+
+- name: fmax(Tensor self, Tensor other) -> Tensor
+  self, other: "_fmax_backward_all(grad, self, other, keyset)"
+
+- name: fmod(Tensor self, Tensor other) -> Tensor
+  self: reduce_grad(grad, self.shape)
+  other: "reduce_grad(redispatch(\"neg\", keyset, redispatch(\"mul\", keyset, grad, redispatch(\"trunc\", keyset, redispatch(\"div\", keyset, self, other)))), other.shape)"
+
+- name: hypot(Tensor self, Tensor other) -> Tensor
+  self, other: "_hypot_backward_all(grad, self, other, keyset)"
+
+- name: remainder(Tensor self, Tensor other) -> Tensor
+  self: reduce_grad(grad, self.shape)
+  other: "reduce_grad(redispatch(\"neg\", keyset, redispatch(\"mul\", keyset, grad, redispatch(\"floor\", keyset, redispatch(\"div\", keyset, self, other)))), other.shape)"
+
+- name: logaddexp(Tensor self, Tensor other) -> Tensor
+  self, other: "_logaddexp_backward_all(grad, self, other, keyset)"
+
+- name: logaddexp2(Tensor self, Tensor other) -> Tensor
+  self, other: "_logaddexp2_backward_all(grad, self, other, keyset)"
+
+- name: floor_divide(Tensor self, Tensor other) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 0.0))"
+  other: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(other, 0.0))"
+
+- name: atan2(Tensor self, Tensor other) -> Tensor
+  self, other: "_atan2_backward_all(grad, self, other, keyset)"
+
+- name: inner(Tensor self, Tensor other) -> Tensor
+  self, other: "_inner_backward_all(grad, self, other, keyset)"
+
+- name: heaviside(Tensor self, Tensor other) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 0.0))"
+  other: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(other, 0.0))"
+
+# ===== Batch 3: Unary-args ops =====
+
+- name: clamp(Tensor input, Any min_val=None, Any max_val=None) -> Tensor
+  input: "_clamp_backward_helper(grad, input, min_val, max_val, keyset)"
+
+- name: clamp_min(Tensor input, Any min_val) -> Tensor
+  input: "_clamp_min_backward_helper(grad, input, min_val, keyset)"
+
+- name: clamp_max(Tensor input, Any max_val) -> Tensor
+  input: "_clamp_max_backward_helper(grad, input, max_val, keyset)"
+
+- name: gather(Tensor input, int dim, Tensor index) -> Tensor
+  input: "_gather_backward_helper(grad, input, dim, index, keyset)"
+
+- name: index_select(Tensor input, int dim, Tensor index) -> Tensor
+  input: "_index_select_backward_helper(grad, input, dim, index, keyset)"
+
+- name: repeat(Tensor input, int[] repeats) -> Tensor
+  input: "_repeat_backward_helper(grad, input, repeats, keyset)"
+
+- name: norm(Tensor input, Any p=2, Any dim=None, bool keepdim=False) -> Tensor
+  input: "_norm_backward_helper(grad, input, p, dim, keepdim, keyset)"
+
+- name: prod(Tensor input, Any dim=None, bool keepdim=False) -> Tensor
+  input: "_prod_backward_helper(grad, input, dim, keepdim, keyset)"
+
+- name: cumsum(Tensor input, int dim=0) -> Tensor
+  input: "_cumsum_backward_helper(grad, input, dim, keyset)"
+
+- name: flip(Tensor input, int[] dims) -> Tensor
+  input: "redispatch(\"flip\", keyset, grad, dims)"
+
+- name: pad(Tensor input, int[] pad, str mode="constant", Any value=0) -> Tensor
+  input: "_pad_backward_helper(grad, input, pad, keyset)"
+
+- name: roll(Tensor input, Any shifts, Any dims=None) -> Tensor
+  input: "_roll_backward_helper(grad, input, shifts, dims, keyset)"
+
+- name: tile(Tensor input, int[] dims) -> Tensor
+  input: "_tile_backward_helper(grad, input, dims, keyset)"
+
+- name: flatten(Tensor input, int start_dim=0, int end_dim=-1) -> Tensor
+  input: "redispatch(\"reshape\", keyset, grad, input.shape)"
+
+- name: unflatten(Tensor input, int dim, int[] sizes) -> Tensor
+  input: "redispatch(\"reshape\", keyset, grad, input.shape)"
+
+- name: movedim(Tensor input, Any source, Any destination) -> Tensor
+  input: "_movedim_backward_helper(grad, input, source, destination, keyset)"
+
+- name: moveaxis(Tensor input, Any source, Any destination) -> Tensor
+  input: "_movedim_backward_helper(grad, input, source, destination, keyset)"
+
+- name: diagonal(Tensor input, int offset=0, int dim1=0, int dim2=1) -> Tensor
+  input: "_diagonal_backward_helper(grad, input, offset, dim1, dim2, keyset)"
+
+- name: threshold(Tensor input, Any threshold, Any value) -> Tensor
+  input: "_threshold_backward_helper(grad, input, threshold, keyset)"
+
+- name: instance_norm(Tensor input, Any weight=None, Any bias=None, Any running_mean=None, Any running_var=None, bool use_input_stats=True, float momentum=0.1, float eps=1e-5, bool cudnn_enabled=False) -> Tensor
+  input: "_instance_norm_backward_helper(grad, input, weight, bias, running_mean, running_var, use_input_stats, momentum, eps, cudnn_enabled, keyset)"
+
+- name: normalize(Tensor input, float p=2.0, int dim=1, float eps=1e-12) -> Tensor
+  input: "_normalize_backward_helper(grad, input, p, dim, eps, keyset)"
+
+- name: cumprod(Tensor input, int dim=0) -> Tensor
+  input: "_cumprod_backward_helper(grad, input, dim, keyset)"
+
+- name: repeat_interleave(Tensor input, Any repeats, Any dim=None) -> Tensor
+  input: "_repeat_interleave_backward_helper(grad, input, repeats, dim, keyset)"
+
+- name: rot90(Tensor input, int k=1, int[] dims=None) -> Tensor
+  input: "_rot90_backward_helper(grad, input, k, dims, keyset)"
+
+- name: take(Tensor input, Tensor index) -> Tensor
+  input: "_take_backward_helper(grad, input, index, keyset)"
+
+- name: take_along_dim(Tensor input, Tensor indices, int dim) -> Tensor
+  input: "_take_along_dim_backward_helper(grad, input, indices, dim, keyset)"
+
+- name: hardshrink(Tensor input, float lambd=0.5) -> Tensor
+  input: "_hardshrink_backward_helper(grad, input, lambd, keyset)"
+
+- name: softshrink(Tensor input, float lambd=0.5) -> Tensor
+  input: "_softshrink_backward_helper(grad, input, lambd, keyset)"
+
+- name: logsumexp(Tensor input, int dim, bool keepdim=False) -> Tensor
+  input: "_logsumexp_backward_helper(grad, input, dim, keepdim, keyset)"
+
+- name: renorm(Tensor input, Any p, int dim, Any maxnorm) -> Tensor
+  input: "_renorm_backward_helper(grad, input, p, dim, maxnorm, keyset)"
+
+- name: unfold(Tensor input, int dimension, int size, int step) -> Tensor
+  input: "_unfold_backward_helper(grad, input, dimension, size, step, keyset)"
+
+- name: var(Tensor input, Any dim=None, bool unbiased=True, bool keepdim=False) -> Tensor
+  input: "_var_backward_helper(grad, input, dim, unbiased, keepdim, keyset)"
+
+- name: std(Tensor input, Any dim=None, bool keepdim=False, bool unbiased=True) -> Tensor
+  input: "_std_backward_helper(grad, input, dim, keepdim, unbiased, keyset)"
+
+- name: amax(Tensor input, Any dim=None, bool keepdim=False) -> Tensor
+  input: "_amax_backward_helper(grad, input, dim, keepdim, keyset)"
+
+- name: amin(Tensor input, Any dim=None, bool keepdim=False) -> Tensor
+  input: "_amin_backward_helper(grad, input, dim, keepdim, keyset)"
+
+- name: narrow(Tensor input, int dim, int start, int length) -> Tensor
+  input: "_narrow_backward_helper(grad, input, dim, start, length, keyset)"
+
+- name: select(Tensor input, int dim, int index) -> Tensor
+  input: "_select_backward_helper(grad, input, dim, index, keyset)"
+
+- name: masked_fill(Tensor input, Tensor mask, Any value) -> Tensor
+  input: "_masked_fill_backward_helper(grad, input, mask, keyset)"
+
+- name: var_mean(Tensor input, Any dim=None, bool unbiased=True, bool keepdim=False) -> Tensor
+  input: "_var_backward_helper(grad, input, dim, unbiased, keepdim, keyset)"
+
+- name: tril(Tensor input, int diagonal=0) -> Tensor
+  input: "redispatch(\"tril\", keyset, grad)"
+
+- name: triu(Tensor input, int diagonal=0) -> Tensor
+  input: "redispatch(\"triu\", keyset, grad)"
+
+- name: broadcast_to(Tensor input, int[] shape) -> Tensor
+  input: reduce_grad(grad, input.shape)
+
+- name: diff(Tensor input, int n=1, int dim=-1, Tensor? prepend=None, Tensor? append=None) -> Tensor
+  input: "_diff_backward_helper(grad, input, n, dim, keyset)"
+
+- name: trace(Tensor input) -> Tensor
+  input: "_trace_backward_helper(grad, input, keyset)"
+
+- name: det(Tensor input) -> Tensor
+  input: "_det_backward_helper(grad, input, keyset)"
+
+- name: diag(Tensor input, int diagonal=0) -> Tensor
+  input: "_diag_backward_helper(grad, input, diagonal, keyset)"
+
+- name: im2col(Tensor input, Any kernel_size, Any dilation, Any padding, Any stride) -> Tensor
+  input: "_im2col_backward_helper(grad, input, kernel_size, dilation, padding, stride, keyset)"
+
+- name: col2im(Tensor input, Any output_size, Any kernel_size, Any dilation, Any padding, Any stride) -> Tensor
+  input: "_col2im_backward_helper(grad, input, output_size, kernel_size, dilation, padding, stride, keyset)"
+
+- name: nansum(Tensor input, Any dim=None, bool keepdim=False) -> Tensor
+  input: "_nansum_backward_helper(grad, input, dim, keepdim, keyset)"
+
+- name: nanmean(Tensor input, Any dim=None, bool keepdim=False) -> Tensor
+  input: "_nanmean_backward_helper(grad, input, dim, keepdim, keyset)"
+
+- name: matrix_power(Tensor input, int n) -> Tensor
+  input: "_matrix_power_backward_helper(grad, input, n, keyset)"
+
+- name: linalg_matrix_power(Tensor input, int n) -> Tensor
+  input: "_matrix_power_backward_helper(grad, input, n, keyset)"
+
+- name: special_logit(Tensor input, Any eps=None) -> Tensor
+  input: "_special_logit_backward_helper(grad, input, eps, keyset)"
+
+- name: linalg_norm(Tensor input, Any ord=None, Any dim=None, bool keepdim=False) -> Tensor
+  input: "_linalg_norm_backward_helper(grad, input, ord, dim, keepdim, keyset)"
+
+- name: linalg_vector_norm(Tensor input, Any ord=2, Any dim=None, bool keepdim=False) -> Tensor
+  input: "_linalg_vector_norm_backward_helper(grad, input, ord, dim, keepdim, keyset)"
+
+- name: linalg_matrix_norm(Tensor input, Any ord="fro", Any dim=None, bool keepdim=False) -> Tensor
+  input: "_linalg_matrix_norm_backward_helper(grad, input, ord, dim, keepdim, keyset)"
+
+- name: linalg_pinv(Tensor input, Any atol=None, Any rtol=None, bool hermitian=False) -> Tensor
+  input: "_linalg_pinv_backward_helper(grad, input, atol, rtol, hermitian, keyset)"
+
+- name: linalg_cond(Tensor input, Any p=None) -> Tensor
+  input: "_linalg_cond_backward_helper(grad, input, p, keyset)"
+
+- name: linalg_matrix_rank(Tensor input, Any atol=None, Any rtol=None, bool hermitian=False) -> Tensor
+  input: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(input, 0.0))"
+
+- name: linalg_matrix_exp(Tensor input) -> Tensor
+  input: "_linalg_matrix_exp_backward_helper(grad, input, keyset)"
+
+- name: linalg_tensorinv(Tensor input, int ind=2) -> Tensor
+  input: "_linalg_tensorinv_backward_helper(grad, input, ind, keyset)"
+
+- name: linalg_tensorsolve(Tensor input, Tensor B, Any dims=None) -> Tensor
+  input: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(input, 0.0))"
+
+- name: linalg_householder_product(Tensor input, Tensor tau) -> Tensor
+  input: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(input, 0.0))"
+
+- name: linalg_vander(Tensor x, Any N=None) -> Tensor
+  x: "_linalg_vander_backward_helper(grad, x, N, keyset)"
+
+- name: linalg_eigvalsh(Tensor input, str UPLO="L") -> Tensor
+  input: "_linalg_eigvalsh_backward_helper(grad, input, UPLO, keyset)"
+
+- name: sum_to_size(Tensor input, int[] size) -> Tensor
+  input: "_sum_to_size_backward_helper(grad, input, size, keyset)"
+
+- name: slice(Tensor input, int dim, int start=0, int end=9223372036854775807, int step=1) -> Tensor
+  input: "_slice_backward_helper(grad, input, dim, start, end, step, keyset)"
+
+- name: getitem(Tensor self, Any key) -> Tensor
+  self: "_getitem_backward_helper(grad, self, key, keyset)"
+
+- name: view(Tensor input, int[] shape) -> Tensor
+  input: "redispatch(\"reshape\", keyset, grad, input.shape)"
+
+- name: view_as_real(Tensor input) -> Tensor
+  input: "redispatch(\"reshape\", keyset, grad, input.shape)"
+
+- name: view_as_complex(Tensor input) -> Tensor
+  input: "redispatch(\"reshape\", keyset, grad, input.shape)"
+
+- name: quantile(Tensor input, Any q, Any dim=None, bool keepdim=False) -> Tensor
+  input: "_quantile_backward_helper(grad, input, q, dim, keepdim, keyset)"
+
+- name: nanquantile(Tensor input, Any q, Any dim=None, bool keepdim=False) -> Tensor
+  input: "_quantile_backward_helper(grad, input, q, dim, keepdim, keyset)"
+
+# ===== Batch 4: Special unary ops =====
+
+- name: special_digamma(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, redispatch(\"special_polygamma\", keyset, 1, self))"
+
+- name: special_gammaln(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, redispatch(\"special_digamma\", keyset, self))"
+
+- name: special_erfinv(Tensor self) -> Tensor
+  self: "_special_erfinv_grad(grad, self, keyset)"
+
+- name: special_erfcx(Tensor self) -> Tensor
+  self: "_special_erfcx_grad(grad, self, keyset)"
+
+- name: special_ndtr(Tensor self) -> Tensor
+  self: "_special_ndtr_grad(grad, self, keyset)"
+
+- name: special_ndtri(Tensor self) -> Tensor
+  self: "_special_ndtri_grad(grad, self, keyset)"
+
+- name: special_sinc(Tensor self) -> Tensor
+  self: "_special_sinc_grad(grad, self, keyset)"
+
+- name: special_entr(Tensor self) -> Tensor
+  self: "_special_entr_grad(grad, self, keyset)"
+
+- name: special_log_ndtr(Tensor self) -> Tensor
+  self: "_special_log_ndtr_grad(grad, self, keyset)"
+
+- name: special_i0(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, redispatch(\"special_i1\", keyset, self))"
+
+- name: special_i0e(Tensor self) -> Tensor
+  self: "_special_i0e_grad(grad, self, keyset)"
+
+- name: special_i1(Tensor self) -> Tensor
+  self: "_special_i1_grad(grad, self, keyset)"
+
+- name: special_i1e(Tensor self) -> Tensor
+  self: "_special_i1e_grad(grad, self, keyset)"
+
+- name: uniform(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 0.0))"
+
+# ===== Batch 4: Special binary ops =====
+
+- name: special_xlogy(Tensor self, Tensor other) -> Tensor
+  self, other: "_special_xlogy_backward_all(grad, self, other, keyset)"
+
+- name: special_xlog1py(Tensor self, Tensor other) -> Tensor
+  self, other: "_special_xlog1py_backward_all(grad, self, other, keyset)"
+
+- name: special_zeta(Tensor self, Tensor other) -> Tensor
+  self, other: "_special_zeta_backward_all(grad, self, other, keyset)"
+
+- name: special_gammainc(Tensor self, Tensor other) -> Tensor
+  self, other: "_special_gammainc_backward_all(grad, self, other, keyset)"
+
+- name: special_gammaincc(Tensor self, Tensor other) -> Tensor
+  self, other: "_special_gammaincc_backward_all(grad, self, other, keyset)"
+
+# ===== Batch 4: Linalg unary ops (simple) =====
+
+- name: linalg_inv(Tensor self) -> Tensor
+  self: "_linalg_inv_grad(grad, self, keyset)"
+
+- name: linalg_eigvals(Tensor self) -> Tensor
+  self: "redispatch(\"mul\", keyset, grad, _scalar_tensor_like(self, 0.0))"
+
+- name: linalg_svdvals(Tensor self) -> Tensor
+  self: "_linalg_svdvals_grad(grad, self, keyset)"

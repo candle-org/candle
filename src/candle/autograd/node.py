@@ -161,7 +161,8 @@ class AccumulateGrad:
 
 class Node:
     def __init__(self, backward, inputs, *, name=None):
-        self.backward = backward
+        if backward is not None:
+            self.backward = backward
         self.inputs = tuple(inputs)
         self._saved_tensors_list = []
         self._saved_fields = {}

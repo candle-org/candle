@@ -49,7 +49,7 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
         else:
             params.append(arg.name)
     sig = ", ".join(params)
-    lines.append(f"\n\ndef {func_name}({sig}):")
+    lines.append(f"\n\ndef {func_name}({sig}, **_kwargs):")
 
     # Dispatch setup
     lines.append("    active_keyset = current_dispatch_keyset()")
@@ -57,7 +57,7 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
 
     # Forward call
     fwd_args = ", ".join([f'"{op_name}"', "raw_keyset"] + [a.name for a in info.args])
-    lines.append(f"    result = redispatch({fwd_args})")
+    lines.append(f"    result = redispatch({fwd_args}, **_kwargs)")
 
     # Check requires_grad
     if len(diff_inputs) == 1:

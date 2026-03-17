@@ -7,14 +7,13 @@ from .model import DifferentiabilityInfo
 def gen_registration(infos: list[DifferentiabilityInfo]) -> str:
     """Generate registration.py source."""
     parts = [_HEADER]
-    parts.append("\n\ndef register_generated_autograd_kernels(only_ops=None):")
+    parts.append("\n\ndef register_generated_autograd_kernels():")
     parts.append("    from .._dispatch.registration import register_autograd_kernels")
     parts.append("    from . import variable_type as _VT\n")
     for info in infos:
         func_name = f"{info.op_name}_autograd"
         op = info.op_name
-        parts.append(f"    if only_ops is None or {op!r} in only_ops:")
-        parts.append(f"        register_autograd_kernels({op!r}, default=_VT.{func_name}, cpu=_VT.{func_name}, cuda=_VT.{func_name}, meta=_VT.{func_name})")
+        parts.append(f"    register_autograd_kernels({op!r}, default=_VT.{func_name}, cpu=_VT.{func_name}, cuda=_VT.{func_name}, meta=_VT.{func_name})")
     parts.append("")
     return "\n".join(parts)
 

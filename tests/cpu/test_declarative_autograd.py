@@ -124,7 +124,7 @@ class TestCodegenOutput:
         node = ExpBackward0((x,), raw_keyset=None, active_keyset=None)
         assert node.name() == "ExpBackward0"
         assert hasattr(node, "_save")
-        assert hasattr(node, "apply")
+        assert hasattr(node, "backward")
 
 
 # ---------------------------------------------------------------------------
