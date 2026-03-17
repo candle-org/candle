@@ -27,6 +27,10 @@ if platform.system() == "Linux":
                     ["src/candle/_backends/npu/_aclnn_ffi.pyx"],
                     libraries=["dl"],
                 ),
+                Extension(
+                    "candle._backends.npu._npu_ops_fast",
+                    ["src/candle/_backends/npu/_npu_ops_fast.pyx"],
+                ),
             ],
             compiler_directives={
                 "language_level": "3",

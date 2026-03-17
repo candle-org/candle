@@ -217,3 +217,4 @@ compat/*/_transformers/
 compat/*/_pytorch/
 compat/*/_reports/
 compat/pytorch/_pytorch.local/
+src/candle/_backends/npu/_npu_ops_fast.c

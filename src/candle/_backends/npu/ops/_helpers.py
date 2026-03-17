@@ -13,6 +13,16 @@ from .. import runtime as npu_runtime
 from .. import state as npu_state
 from .. import ops_soc
 
+try:
+    from .._npu_ops_fast import fast_binary_op as _fast_binary_op  # pylint: disable=no-name-in-module
+    _HAS_FAST_OPS = True
+except ImportError:
+    try:
+        from .._npu_ops_fast_fallback import fast_binary_op as _fast_binary_op
+        _HAS_FAST_OPS = True
+    except ImportError:
+        _HAS_FAST_OPS = False
+
 
 def _unwrap_storage(tensor):
     if tensor.storage().device.type != "npu":
@@ -289,6 +299,8 @@ def _unary_op(a, fn, name, out_dtype=None):
 
 
 def _binary_op(a, b, fn, name):
+    if _HAS_FAST_OPS:
+        return _fast_binary_op(a, b, fn, name)
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu" or b.device.type != "npu":
