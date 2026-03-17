@@ -12,6 +12,12 @@ src/candle/_cython/_npu_ops.c
 src/candle/_cython/_dispatch.c
 src/candle/_cython/_allocator.c
 src/candle/_cython/_storage.c
+src/candle/_cython/_tensor_impl.c
+src/candle/_cython/_dispatcher_core.c
+src/candle/_cython/_device.c
+src/candle/_cython/_dtype.c
+src/candle/_cython/_autograd_node.c
+src/candle/_cython/_fast_ops.c
 
 # Distribution / packaging
 .Python

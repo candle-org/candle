@@ -43,6 +43,30 @@ if platform.system() == "Linux":
                     "candle._cython._storage",
                     ["src/candle/_cython/_storage.pyx"],
                 ),
+                Extension(
+                    "candle._cython._tensor_impl",
+                    ["src/candle/_cython/_tensor_impl.pyx"],
+                ),
+                Extension(
+                    "candle._cython._dispatcher_core",
+                    ["src/candle/_cython/_dispatcher_core.pyx"],
+                ),
+                Extension(
+                    "candle._cython._device",
+                    ["src/candle/_cython/_device.pyx"],
+                ),
+                Extension(
+                    "candle._cython._dtype",
+                    ["src/candle/_cython/_dtype.pyx"],
+                ),
+                Extension(
+                    "candle._cython._autograd_node",
+                    ["src/candle/_cython/_autograd_node.pyx"],
+                ),
+                Extension(
+                    "candle._cython._fast_ops",
+                    ["src/candle/_cython/_fast_ops.pyx"],
+                ),
             ],
             compiler_directives={
                 "language_level": "3",

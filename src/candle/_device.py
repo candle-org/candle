@@ -44,3 +44,14 @@ def set_default_device(dev):
     global _default_device
     _default_device = device(dev)
     return _default_device
+
+
+# ---------------------------------------------------------------------------
+# Cython fast-path: replace device class if Cython extension is available.
+# FastDevice is a drop-in replacement with int-based comparison.
+# ---------------------------------------------------------------------------
+try:
+    from ._cython._device import FastDevice as device  # noqa: F811
+    _default_device = device("cpu")
+except ImportError:
+    pass

@@ -1714,3 +1714,30 @@ def blackman_window(window_length, periodic=True, *, dtype=None, device=None):
     return sub(add(_tensor(a0, dtype=dtype, device=device),
                    mul(_tensor(a2, dtype=dtype, device=device), cos(t2))),
                mul(_tensor(a1, dtype=dtype, device=device), cos(t1)))
+
+
+# ---------------------------------------------------------------------------
+# Cython fast-path: replace top ops if Cython extension is available.
+# These skip __torch_function__ scanning for base Tensor instances.
+# Save originals first so fast_ops can reference them for __torch_function__.
+# ---------------------------------------------------------------------------
+_py_add = add
+_py_mul = mul
+_py_matmul = matmul
+_py_sub = sub
+_py_div = div
+_py_relu = relu
+_py_neg = neg
+
+try:
+    from ._cython._fast_ops import (
+        add,  # noqa: F811
+        mul,  # noqa: F811
+        matmul,  # noqa: F811
+        sub,  # noqa: F811
+        div,  # noqa: F811
+        relu,  # noqa: F811
+        neg,  # noqa: F811
+    )
+except ImportError:
+    pass

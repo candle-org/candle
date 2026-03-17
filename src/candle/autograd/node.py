@@ -1,5 +1,13 @@
 from .graph import current_saved_tensors_hooks
 
+# FastNode base class: Cython if available, else no base
+try:
+    from .._cython._autograd_node import FastNode as _NodeBase
+    _HAS_FAST_NODE = True
+except ImportError:
+    _NodeBase = object
+    _HAS_FAST_NODE = False
+
 
 class _SavedValue:
     def __init__(self, value):
@@ -159,20 +167,24 @@ class AccumulateGrad:
         return self._name
 
 
-class Node:
+class Node(_NodeBase):
     def __init__(self, backward, inputs, *, name=None):
-        if backward is not None:
-            self.backward = backward
-        self.inputs = tuple(inputs)
-        self._saved_tensors_list = []
-        self._saved_fields = {}
-        self._hooks = {}
-        self._prehooks = {}
-        self._next_functions_cache = self._freeze_next_functions()
-        self._metadata = None
-        self._name = name or type(self).__name__
-        self._anomaly_trace = None
-        self._anomaly_parent = None
+        if _HAS_FAST_NODE:
+            # FastNode.__init__ handles all field setup + _freeze_next_functions
+            _NodeBase.__init__(self, backward, inputs, name=name)
+        else:
+            if backward is not None:
+                self.backward = backward
+            self.inputs = tuple(inputs)
+            self._saved_tensors_list = []
+            self._saved_fields = {}
+            self._hooks = {}
+            self._prehooks = {}
+            self._next_functions_cache = self._freeze_next_functions()
+            self._metadata = None
+            self._name = name or type(self).__name__
+            self._anomaly_trace = None
+            self._anomaly_parent = None
 
     def save_for_backward(self, *tensors):
         saved = []

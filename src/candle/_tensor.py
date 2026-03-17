@@ -74,8 +74,16 @@ from ._functional import tile as tile_dispatch, flip as flip_dispatch, roll as r
 from ._functional import reciprocal as reciprocal_dispatch, addmm as addmm_dispatch
 from ._functional import log1p as log1p_dispatch, expm1 as expm1_dispatch
 from .autograd.engine import backward as _backward
-from .autograd.version_counter import VersionCounter
 from ._printing import format_tensor
+
+# TensorImpl base class: Cython if available, else pure-Python fallback
+try:
+    from ._cython._tensor_impl import TensorImpl as _TensorBase
+    from ._cython._tensor_impl import _VersionCounterProxy  # noqa: F401
+    _HAS_CYTHON_TENSOR_IMPL = True
+except ImportError:
+    from ._cython._tensor_impl_fallback import TensorImpl as _TensorBase
+    _HAS_CYTHON_TENSOR_IMPL = False
 
 
 class _StrideTuple(tuple):
@@ -137,7 +145,7 @@ class _HookHandle:
         self.remove()
 
 
-class Tensor:
+class Tensor(_TensorBase):
     def __init__(self, storage, shape, stride, offset=0, requires_grad=False):
         self._storage = storage
         self.shape = tuple(shape)
@@ -149,9 +157,24 @@ class Tensor:
         self._pending = False
         self._retain_grad = False
         self._backward_hooks = None
-        self._version_counter = VersionCounter()
+        self._version_value = 0
+        self._vc_proxy = None
         self._base = None
         self._view_meta = None
+
+    def _set_device_from_storage(self, dev):
+        """Cache device from storage into TensorImpl fields."""
+        self._device_obj = dev
+        dt = getattr(dev, "type", str(dev))
+        _MAP = {"cpu": 0, "npu": 1, "cuda": 2, "mps": 3, "meta": 4}
+        self._device_type = _MAP.get(dt, -1)
+        idx = getattr(dev, "index", None)
+        self._device_index = idx if idx is not None else -1
+
+    def _set_dtype_from_storage(self, dtype):
+        """Cache dtype from storage into TensorImpl fields."""
+        self._dtype_obj = dtype
+        self._itemsize = getattr(dtype, "itemsize", 4)
 
     def __delattr__(self, name):
         if name == "grad":
@@ -160,14 +183,6 @@ class Tensor:
         if name in {"data", "requires_grad", "_grad_fn", "grad_fn", "_backward_hooks"}:
             raise RuntimeError(f"cannot delete {name}")
         object.__delattr__(self, name)
-
-    @property
-    def dtype(self):
-        return self._storage.dtype
-
-    @property
-    def device(self):
-        return self._storage.device
 
     @property
     def data(self):
@@ -269,8 +284,6 @@ class Tensor:
     def _fw_has(self, level):
         tangents = getattr(self, "_fw_tangents", None)
         return bool(tangents) and level in tangents
-    def storage(self):
-        return self._storage
 
     def storage_offset(self):
         """Returns the offset into the storage."""
@@ -290,16 +303,13 @@ class Tensor:
         """
         return self._storage.untyped_storage()
 
-    def dim(self):
-        return len(self.shape)
-
     def ndimension(self):
         """Return the number of dimensions of the tensor (alias for dim())."""
-        return len(self.shape)
+        return self._ndim
 
     @property
     def ndim(self):
-        return len(self.shape)
+        return self._ndim
 
     def size(self, dim=None):
         if dim is None:
@@ -310,17 +320,9 @@ class Tensor:
             raise IndexError("Dimension out of range")
         return self.shape[dim]
 
-    def numel(self):
-        result = 1
-        for s in self.shape:
-            result *= s
-        return result
-
     # Alias for numel (PyTorch compatibility)
-    nelement = numel
-
-    def element_size(self):
-        return self.dtype.itemsize
+    def nelement(self):
+        return self.numel()
 
     def is_floating_point(self):
         return self.dtype.is_floating_point
@@ -576,7 +578,7 @@ class Tensor:
         out.grad_fn = None
         out.grad = None
         out._pending = self._pending
-        out._version_counter = self._version_counter
+        out._version_value = self._version_value
         return out
 
     def detach_(self):
@@ -593,9 +595,6 @@ class Tensor:
         handle = _HookHandle(self._backward_hooks)
         self._backward_hooks[handle.id] = hook
         return handle
-
-    def _bump_version(self):
-        self._version_counter.bump()
 
     def _is_view(self):
         return self._base is not None
