@@ -1155,6 +1155,21 @@ def _ctc_loss_backward_helper(grad, log_probs, targets, input_lengths, target_le
                               blank, reduction, zero_infinity, keyset)
 
 
+def _sort_backward_helper(grad, self_, result1, dim, keyset):
+    from .._backends.autograd import _sort_backward
+    return _sort_backward(grad, self_, result1, keyset, (dim,), {})[0]
+
+
+def _topk_backward_helper(grad, self_, result1, k, dim, keyset):
+    from .._backends.autograd import _topk_backward
+    return _topk_backward(grad, self_, result1, keyset, (k, dim), {})[0]
+
+
+def _kthvalue_backward_helper(grad, self_, result1, k, dim, keepdim, keyset):
+    from .._backends.autograd import _kthvalue_backward
+    return _kthvalue_backward(grad, self_, result1, keyset, (k, dim), {"keepdim": keepdim})[0]
+
+
 class ExpBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         super().__init__(None, inputs, name='ExpBackward0')
@@ -8501,4 +8516,123 @@ class Special_multigammalnBackward0(Node):
         p = self._p
         with _grad_context(keyset):
             grad_self = _special_multigammaln_backward_helper(grad, self_, p, keyset)
+        return (grad_self,)
+
+class SortBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='SortBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_result1_idx = None
+        self._dim = None
+        self._descending = None
+        self._stable = None
+
+    def _save(self, *, self_=None, result1=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if result1 is not None:
+            self._saved_result1_idx = len(tensors)
+            tensors.append(result1)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_self_idx is not None:
+            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
+        if self._saved_result1_idx is not None:
+            self._saved_fields['result1'] = self._saved_tensors_list[self._saved_result1_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        result1 = _saved[self._saved_result1_idx]
+        dim = self._dim
+        descending = self._descending
+        stable = self._stable
+        with _grad_context(keyset):
+            grad_self = _sort_backward_helper(grad, self_, result1, dim, keyset)
+        return (grad_self,)
+
+class TopkBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='TopkBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_result1_idx = None
+        self._k = None
+        self._dim = None
+        self._largest = None
+        self._sorted = None
+
+    def _save(self, *, self_=None, result1=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if result1 is not None:
+            self._saved_result1_idx = len(tensors)
+            tensors.append(result1)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_self_idx is not None:
+            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
+        if self._saved_result1_idx is not None:
+            self._saved_fields['result1'] = self._saved_tensors_list[self._saved_result1_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        result1 = _saved[self._saved_result1_idx]
+        k = self._k
+        dim = self._dim
+        largest = self._largest
+        sorted = self._sorted
+        with _grad_context(keyset):
+            grad_self = _topk_backward_helper(grad, self_, result1, k, dim, keyset)
+        return (grad_self,)
+
+class KthvalueBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='KthvalueBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_result1_idx = None
+        self._k = None
+        self._dim = None
+        self._keepdim = None
+
+    def _save(self, *, self_=None, result1=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if result1 is not None:
+            self._saved_result1_idx = len(tensors)
+            tensors.append(result1)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_self_idx is not None:
+            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
+        if self._saved_result1_idx is not None:
+            self._saved_fields['result1'] = self._saved_tensors_list[self._saved_result1_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        result1 = _saved[self._saved_result1_idx]
+        k = self._k
+        dim = self._dim
+        keepdim = self._keepdim
+        with _grad_context(keyset):
+            grad_self = _kthvalue_backward_helper(grad, self_, result1, k, dim, keepdim, keyset)
         return (grad_self,)

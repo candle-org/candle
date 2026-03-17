@@ -7250,9 +7250,6 @@ for _entry in (
     ("vsplit", lambda: _autograd_multi_output("vsplit", _vsplit_backward, save_input=False)),
     ("dsplit", lambda: _autograd_multi_output("dsplit", _dsplit_backward, save_input=False)),
     # Custom wrapper ops (not yet migrated — multi-output, Tensor[], or special patterns)
-    ("sort", lambda: _autograd_sort_like("sort", _sort_backward)),
-    ("topk", lambda: _autograd_sort_like("topk", _topk_backward)),
-    ("kthvalue", lambda: _autograd_sort_like("kthvalue", _kthvalue_backward)),
     ("scatter", lambda: _autograd_scatter("scatter")),
     ("cummax", lambda: _autograd_cummax("cummax")),
     ("cummin", lambda: _autograd_cummin("cummin")),

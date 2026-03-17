@@ -99,7 +99,14 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
         for name in saved_inputs:
             save_kw.append(f"{_safe_param(name)}={name}")
         for name in saved_outputs:
-            save_kw.append(f"{_safe_param(name)}=result")
+            # Multi-output: result0 -> result[0], result1 -> result[1], etc.
+            if name == "result":
+                save_kw.append(f"{_safe_param(name)}=result")
+            elif name.startswith("result") and name[6:].isdigit():
+                idx = name[6:]
+                save_kw.append(f"{_safe_param(name)}=result[{idx}]")
+            else:
+                save_kw.append(f"{_safe_param(name)}=result")
         lines.append(f"        grad_fn._save({', '.join(save_kw)})")
 
     # Save non-tensor args
@@ -107,8 +114,15 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
         lines.append(f"        grad_fn._{arg.name} = {arg.name}")
 
     # Attach grad_fn
-    lines.append("        result.grad_fn = grad_fn")
-    lines.append("        result.requires_grad = True")
+    if info.is_multi_output:
+        out_diff = info.output_differentiability
+        for i in range(info.num_outputs):
+            if out_diff is None or (i < len(out_diff) and out_diff[i]):
+                lines.append(f"        result[{i}].grad_fn = grad_fn")
+                lines.append(f"        result[{i}].requires_grad = True")
+    else:
+        lines.append("        result.grad_fn = grad_fn")
+        lines.append("        result.requires_grad = True")
     lines.append("    return result")
 
     return "\n".join(lines)
