@@ -6,7 +6,8 @@ try:
     from ._c10d import (  # pylint: disable=no-name-in-module
         RedOpType, ReduceOp, reduce_op,
         Work,
-        Store as _CStore, TCPStore, PrefixStore as _CPrefixStore, HashStore,
+        Store as _CStore, TCPStore, PrefixStore as _CPrefixStore,
+        HashStore, FileStore, BackendType,
         ProcessGroup,
         AllreduceOptions as _CAllreduceOptions,
         BroadcastOptions as _CBroadcastOptions,
