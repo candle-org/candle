@@ -827,3 +827,24 @@
 - name: cummin(Tensor self, int dim) -> (Tensor, Tensor)
   output_differentiability: [True, False]
   self: "_cummin_backward_helper(grad, self, result1, dim, keyset)"
+
+# --- Linalg ops (Phase 5) ---
+
+- name: linalg_det(Tensor self) -> Tensor
+  self: "_linalg_det_backward_helper(grad, self, keyset)"
+
+- name: linalg_slogdet(Tensor self) -> (Tensor, Tensor)
+  output_differentiability: [False, True]
+  self: "_linalg_slogdet_backward_helper(grad, self, keyset)"
+
+- name: linalg_cholesky(Tensor self, bool upper=False) -> Tensor
+  self: "_linalg_cholesky_backward_helper(grad, self, upper, keyset)"
+
+- name: linalg_solve(Tensor self, Tensor other, bool left=True) -> Tensor
+  self, other: "_linalg_solve_backward_all(grad, self, other, left, keyset)"
+
+- name: linalg_solve_triangular(Tensor self, Tensor B, bool upper, bool left=True, bool unitriangular=False) -> Tensor
+  self, B: "_linalg_solve_triangular_backward_all(grad, self, B, upper, left, unitriangular, keyset)"
+
+- name: linalg_lu_solve(Tensor LU, Tensor pivots, Tensor B, bool left=True, bool adjoint=False) -> Tensor
+  B: "_linalg_lu_solve_backward_helper(grad, LU, pivots, B, left, adjoint, keyset)"

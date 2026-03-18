@@ -3551,3 +3551,88 @@ def cummin_autograd(self, dim, **_kwargs):
         result[0].grad_fn = grad_fn
         result[0].requires_grad = True
     return result
+
+
+def linalg_det_autograd(self, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("linalg_det", raw_keyset, self, **_kwargs)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Linalg_detBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_slogdet_autograd(self, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("linalg_slogdet", raw_keyset, self, **_kwargs)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Linalg_slogdetBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        result[1].grad_fn = grad_fn
+        result[1].requires_grad = True
+    return result
+
+
+def linalg_cholesky_autograd(self, upper=False, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("linalg_cholesky", raw_keyset, self, upper, **_kwargs)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.Linalg_choleskyBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self)
+        grad_fn._upper = upper
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_solve_autograd(self, other, left=True, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("linalg_solve", raw_keyset, self, other, left, **_kwargs)
+    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.Linalg_solveBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self)
+        grad_fn._left = left
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_solve_triangular_autograd(self, B, upper, left=True, unitriangular=False, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("linalg_solve_triangular", raw_keyset, self, B, upper, left, unitriangular, **_kwargs)
+    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(B, 'requires_grad', False)):
+        grad_fn = _F.Linalg_solve_triangularBackward0((self, B,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(B=B, self_=self)
+        grad_fn._upper = upper
+        grad_fn._left = left
+        grad_fn._unitriangular = unitriangular
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_lu_solve_autograd(LU, pivots, B, left=True, adjoint=False, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("linalg_lu_solve", raw_keyset, LU, pivots, B, left, adjoint, **_kwargs)
+    if GradMode.enabled and (B.requires_grad):
+        grad_fn = _F.Linalg_lu_solveBackward0((B,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(B=B, LU=LU, pivots=pivots)
+        grad_fn._left = left
+        grad_fn._adjoint = adjoint
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result

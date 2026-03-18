@@ -1050,6 +1050,11 @@ def _linalg_lu_solve_backward_all(grad, LU, pivots, B, left, adjoint, keyset):
     return _linalg_lu_solve_backward(grad, LU, pivots, B, LU, pivots, B, keyset, (left, adjoint))
 
 
+def _linalg_lu_solve_backward_helper(grad, LU, pivots, B, left, adjoint, keyset):
+    from .._backends.autograd import _linalg_lu_solve_backward
+    return _linalg_lu_solve_backward(grad, LU, pivots, B, LU, pivots, B, keyset, (left, adjoint))[2]
+
+
 def _linalg_multi_dot_backward_helper(grad, tensors, keyset):
     from .._backends.autograd import _linalg_multi_dot_backward
     return _linalg_multi_dot_backward(grad, tensors, keyset)

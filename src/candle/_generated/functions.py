@@ -1035,6 +1035,11 @@ def _linalg_lu_solve_backward_all(grad, LU, pivots, B, left, adjoint, keyset):
     return _linalg_lu_solve_backward(grad, LU, pivots, B, LU, pivots, B, keyset, (left, adjoint))
 
 
+def _linalg_lu_solve_backward_helper(grad, LU, pivots, B, left, adjoint, keyset):
+    from .._backends.autograd import _linalg_lu_solve_backward
+    return _linalg_lu_solve_backward(grad, LU, pivots, B, LU, pivots, B, keyset, (left, adjoint))[2]
+
+
 def _linalg_multi_dot_backward_helper(grad, tensors, keyset):
     from .._backends.autograd import _linalg_multi_dot_backward
     return _linalg_multi_dot_backward(grad, tensors, keyset)
@@ -8716,3 +8721,201 @@ class CumminBackward0(Node):
         with _grad_context(keyset):
             grad_self = _cummin_backward_helper(grad, self_, result1, dim, keyset)
         return (grad_self,)
+
+class Linalg_detBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='Linalg_detBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_self_idx is not None:
+            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        with _grad_context(keyset):
+            grad_self = _linalg_det_backward_helper(grad, self_, keyset)
+        return (grad_self,)
+
+class Linalg_slogdetBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='Linalg_slogdetBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_self_idx is not None:
+            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        with _grad_context(keyset):
+            grad_self = _linalg_slogdet_backward_helper(grad, self_, keyset)
+        return (grad_self,)
+
+class Linalg_choleskyBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='Linalg_choleskyBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._upper = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_self_idx is not None:
+            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        upper = self._upper
+        with _grad_context(keyset):
+            grad_self = _linalg_cholesky_backward_helper(grad, self_, upper, keyset)
+        return (grad_self,)
+
+class Linalg_solveBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='Linalg_solveBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_other_idx = None
+        self._saved_self_idx = None
+        self._left = None
+
+    def _save(self, *, other=None, self_=None):
+        tensors = []
+        if other is not None:
+            self._saved_other_idx = len(tensors)
+            tensors.append(other)
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_other_idx is not None:
+            self._saved_fields['other'] = self._saved_tensors_list[self._saved_other_idx]
+        if self._saved_self_idx is not None:
+            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        other = _saved[self._saved_other_idx]
+        self_ = _saved[self._saved_self_idx]
+        left = self._left
+        with _grad_context(keyset):
+            grad_self, grad_other = _linalg_solve_backward_all(grad, self_, other, left, keyset)
+        return (grad_self, grad_other,)
+
+class Linalg_solve_triangularBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='Linalg_solve_triangularBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_B_idx = None
+        self._saved_self_idx = None
+        self._upper = None
+        self._left = None
+        self._unitriangular = None
+
+    def _save(self, *, B=None, self_=None):
+        tensors = []
+        if B is not None:
+            self._saved_B_idx = len(tensors)
+            tensors.append(B)
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_B_idx is not None:
+            self._saved_fields['B'] = self._saved_tensors_list[self._saved_B_idx]
+        if self._saved_self_idx is not None:
+            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        B = _saved[self._saved_B_idx]
+        self_ = _saved[self._saved_self_idx]
+        upper = self._upper
+        left = self._left
+        unitriangular = self._unitriangular
+        with _grad_context(keyset):
+            grad_self, grad_B = _linalg_solve_triangular_backward_all(grad, self_, B, upper, left, unitriangular, keyset)
+        return (grad_self, grad_B,)
+
+class Linalg_lu_solveBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='Linalg_lu_solveBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_B_idx = None
+        self._saved_LU_idx = None
+        self._saved_pivots_idx = None
+        self._left = None
+        self._adjoint = None
+
+    def _save(self, *, B=None, LU=None, pivots=None):
+        tensors = []
+        if B is not None:
+            self._saved_B_idx = len(tensors)
+            tensors.append(B)
+        if LU is not None:
+            self._saved_LU_idx = len(tensors)
+            tensors.append(LU)
+        if pivots is not None:
+            self._saved_pivots_idx = len(tensors)
+            tensors.append(pivots)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_B_idx is not None:
+            self._saved_fields['B'] = self._saved_tensors_list[self._saved_B_idx]
+        if self._saved_LU_idx is not None:
+            self._saved_fields['LU'] = self._saved_tensors_list[self._saved_LU_idx]
+        if self._saved_pivots_idx is not None:
+            self._saved_fields['pivots'] = self._saved_tensors_list[self._saved_pivots_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        B = _saved[self._saved_B_idx]
+        LU = _saved[self._saved_LU_idx]
+        pivots = _saved[self._saved_pivots_idx]
+        left = self._left
+        adjoint = self._adjoint
+        with _grad_context(keyset):
+            grad_B = _linalg_lu_solve_backward_helper(grad, LU, pivots, B, left, adjoint, keyset)
+        return (grad_B,)

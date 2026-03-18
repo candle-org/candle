@@ -6388,6 +6388,108 @@ def _linalg_inv_backward(grad, _a, saved_a, keyset):
         return (result,)
 
 
+def _linalg_det_backward(grad, _a, saved_a, keyset):
+    """Backward for linalg_det: grad * det(A) * inv(A)^T."""
+    with _grad_context(keyset):
+        det_val = redispatch("linalg_det", keyset, saved_a)
+        inv_a = redispatch("linalg_inv", keyset, saved_a)
+        inv_t = redispatch("transpose", keyset, inv_a, -2, -1)
+        det_expanded = det_val
+        while len(det_expanded.shape) < len(inv_t.shape):
+            det_expanded = redispatch("unsqueeze", keyset, det_expanded, -1)
+        grad_expanded = grad
+        while len(grad_expanded.shape) < len(inv_t.shape):
+            grad_expanded = redispatch("unsqueeze", keyset, grad_expanded, -1)
+        result = redispatch("mul", keyset,
+            redispatch("mul", keyset, grad_expanded, det_expanded), inv_t)
+        return (result,)
+
+
+def _linalg_slogdet_backward(grad, _a, saved_a, keyset):
+    """Backward for linalg_slogdet: grad_logabsdet * inv(A)^T."""
+    with _grad_context(keyset):
+        inv_a = redispatch("linalg_inv", keyset, saved_a)
+        inv_t = redispatch("transpose", keyset, inv_a, -2, -1)
+        g = grad
+        while len(g.shape) < len(inv_t.shape):
+            g = redispatch("unsqueeze", keyset, g, -1)
+        return (redispatch("mul", keyset, g, inv_t),)
+
+
+def _linalg_cholesky_backward(grad, _a, saved_a, keyset, args):
+    """Backward for linalg_cholesky (Smith 1995)."""
+    upper = args[0] if args else False
+    with _grad_context(keyset):
+        L = redispatch("linalg_cholesky", keyset, saved_a, upper=False)
+        if upper:
+            grad = redispatch("transpose", keyset, grad, -2, -1)
+        L_t = redispatch("transpose", keyset, L, -2, -1)
+        S = redispatch("matmul", keyset, L_t, grad)
+        S_t = redispatch("transpose", keyset, S, -2, -1)
+        S_sym = redispatch("mul", keyset,
+            redispatch("add", keyset, S, S_t),
+            _scalar_tensor_like(S, 0.5))
+        Phi = redispatch("tril", keyset, S_sym)
+        L_inv = redispatch("linalg_inv", keyset, L)
+        L_inv_t = redispatch("transpose", keyset, L_inv, -2, -1)
+        result = redispatch("matmul", keyset,
+            redispatch("matmul", keyset, L_inv_t, Phi), L_inv)
+        return (result,)
+
+
+def _linalg_solve_backward(grad, a, b, saved_a, saved_b, keyset, args):
+    """Backward for linalg_solve(A, B) -> X where AX=B."""
+    left = args[0] if args else True
+    with _grad_context(keyset):
+        a_t = redispatch("transpose", keyset, saved_a, -2, -1)
+        b_rg = getattr(b, "requires_grad", False)
+        a_rg = getattr(a, "requires_grad", False)
+        grad_b = redispatch("linalg_solve", keyset, a_t, grad, left=left) if b_rg else None
+        grad_a = None
+        if a_rg:
+            x = redispatch("linalg_solve", keyset, saved_a, saved_b, left=left)
+            x_t = redispatch("transpose", keyset, x, -2, -1)
+            sol = grad_b if grad_b is not None else redispatch("linalg_solve", keyset, a_t, grad, left=left)
+            grad_a = redispatch("neg", keyset, redispatch("matmul", keyset, sol, x_t))
+        return grad_a, grad_b
+
+
+def _linalg_solve_triangular_backward(grad, a, b, saved_a, saved_b, keyset, args):
+    """Backward for linalg_solve_triangular."""
+    upper = args[0] if args else True
+    left = args[1] if len(args) > 1 else True
+    unitriangular = args[2] if len(args) > 2 else False
+    with _grad_context(keyset):
+        a_t = redispatch("transpose", keyset, saved_a, -2, -1)
+        b_rg = getattr(b, "requires_grad", False)
+        a_rg = getattr(a, "requires_grad", False)
+        grad_b = redispatch("linalg_solve_triangular", keyset,
+            a_t, grad, not upper, left=left, unitriangular=unitriangular) if b_rg else None
+        grad_a = None
+        if a_rg:
+            x = redispatch("linalg_solve_triangular", keyset,
+                saved_a, saved_b, upper, left=left, unitriangular=unitriangular)
+            x_t = redispatch("transpose", keyset, x, -2, -1)
+            sol = grad_b if grad_b is not None else redispatch("linalg_solve_triangular", keyset,
+                a_t, grad, not upper, left=left, unitriangular=unitriangular)
+            grad_a_full = redispatch("neg", keyset, redispatch("matmul", keyset, sol, x_t))
+            if upper:
+                grad_a = redispatch("triu", keyset, grad_a_full)
+            else:
+                grad_a = redispatch("tril", keyset, grad_a_full)
+        return grad_a, grad_b
+
+
+def _linalg_lu_solve_backward(grad, LU, pivots, B, saved_LU, saved_pivots, saved_B, keyset, args):
+    """Backward for linalg_lu_solve: only grad_B."""
+    left = args[0] if args else True
+    adjoint = args[1] if len(args) > 1 else False
+    with _grad_context(keyset):
+        grad_b = redispatch("linalg_lu_solve", keyset,
+            saved_LU, saved_pivots, grad, left=left, adjoint=not adjoint)
+        return None, None, grad_b
+
+
 def _autograd_linalg_solve(name):
     """Autograd wrapper for linalg_solve(A, B) -> X where AX=B."""
     def wrapper(a, b, left=True):
@@ -7257,19 +7359,13 @@ for _entry in (
     ("aminmax", lambda: _autograd_aminmax("aminmax")),
     ("rrelu", lambda: _autograd_rrelu()),
     # Linalg ops with custom wrappers (multi-output, special patterns)
-    ("linalg_det", lambda: _autograd_linalg_det("linalg_det")),
-    ("linalg_slogdet", lambda: _autograd_linalg_slogdet("linalg_slogdet")),
-    ("linalg_solve", lambda: _autograd_linalg_solve("linalg_solve")),
-    ("linalg_cholesky", lambda: _autograd_linalg_cholesky("linalg_cholesky")),
     ("linalg_qr", lambda: _autograd_linalg_qr("linalg_qr")),
     ("linalg_svd", lambda: _autograd_linalg_svd("linalg_svd")),
     ("linalg_eigh", lambda: _autograd_linalg_eigh("linalg_eigh")),
     ("linalg_multi_dot", lambda: _autograd_linalg_multi_dot("linalg_multi_dot")),
     ("linalg_lu", lambda: _autograd_linalg_lu("linalg_lu")),
     ("linalg_lu_factor", lambda: _autograd_linalg_lu_factor("linalg_lu_factor")),
-    ("linalg_lu_solve", lambda: _autograd_linalg_lu_solve("linalg_lu_solve")),
     ("linalg_eig", lambda: _autograd_linalg_eig("linalg_eig")),
-    ("linalg_solve_triangular", lambda: _autograd_linalg_solve_triangular("linalg_solve_triangular")),
     ("linalg_lstsq", lambda: _autograd_unary_args("linalg_lstsq", _linalg_lstsq_backward, save_input=False)),
     # Misc remaining ops
     ("nanmedian", lambda: _autograd_nanmedian("nanmedian")),
