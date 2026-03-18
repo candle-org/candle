@@ -16,6 +16,7 @@ DTYPE_MAP = [
 ]
 
 _FLOAT_TYPES = ("float", "half")
+_INT_TYPES = ("int", "long", "uchar")
 _ALL_TYPES = tuple(t for t, _ in DTYPE_MAP)
 _SUFFIX = dict(DTYPE_MAP)
 
@@ -1621,6 +1622,20 @@ _BINARY_FLOAT_OPS = (
     ("floor_divide", "floor(a[id] / b[id])"),
 )
 
+# --- Bitwise binary ops (integer types only: int, long, uchar) ---
+_BINARY_INT_OPS = (
+    ("bitwise_and", "a[id] & b[id]"),
+    ("bitwise_or", "a[id] | b[id]"),
+    ("bitwise_xor", "a[id] ^ b[id]"),
+    ("bitwise_left_shift", "a[id] << b[id]"),
+    ("bitwise_right_shift", "a[id] >> b[id]"),
+)
+
+# --- Bitwise unary ops (integer types only) ---
+_UNARY_INT_OPS = (
+    ("bitwise_not", "~x"),
+)
+
 # --- Unary element-wise (numeric types: float, half, int, long) ---
 _UNARY_NUMERIC_OPS = (
     ("neg", "-x"),
@@ -2055,6 +2070,17 @@ def _build_msl_source():
     # Binary ops (float-only)
     for name, expr in _BINARY_FLOAT_OPS:
         parts.append(_gen_binary(name, expr, float_only=True))
+
+    # Binary ops (integer-only: bitwise)
+    for name, expr in _BINARY_INT_OPS:
+        parts.append(_gen_binary(name, expr, types=_INT_TYPES))
+
+    # Unary ops (integer-only: bitwise_not)
+    for name, expr in _UNARY_INT_OPS:
+        for t in _INT_TYPES:
+            suffix = _SUFFIX[t]
+            parts.append(_UNARY_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=expr))
+            parts.append(_UNARY_STRIDED_TEMPLATE.format(name=name, suffix=suffix, type=t, expr=expr))
 
     # Unary ops (numeric types: float, half, int, long)
     _NUMERIC_TYPES = ("float", "half", "int", "long")
