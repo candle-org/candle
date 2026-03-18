@@ -160,11 +160,84 @@ class DTensor(Tensor):
         from ..._dispatch.dispatcher import dispatch
         return dispatch(func, None, *new_args, **new_kwargs)
 
+    # ------------------------------------------------------------------
+    # Checkpointable protocol (DCP)
+    # ------------------------------------------------------------------
+
+    def __create_write_items__(self, fqn, obj):
+        """Checkpointable protocol: create WriteItem for this DTensor's local shard."""
+        from ..checkpoint.planner import WriteItem, WriteItemType, TensorWriteData
+        from ..checkpoint.metadata import ChunkStorageMetadata, MetadataIndex, TensorProperties
+        from .placement import Partial
+
+        if any(isinstance(p, Partial) for p in self.placements):
+            raise RuntimeError("Cannot checkpoint DTensor with Partial placement")
+
+        sizes, offsets = compute_local_shape_and_global_offset(
+            self._spec.tensor_meta.shape, self.device_mesh, self.placements
+        )
+        chunk = ChunkStorageMetadata(offsets=offsets, sizes=sizes)
+        props = TensorProperties(
+            dtype=self._local_tensor.dtype,
+            requires_grad=self.requires_grad,
+        )
+        index = MetadataIndex(fqn, offset=offsets)
+        return [WriteItem(
+            index=index,
+            type=WriteItemType.SHARD,
+            tensor_data=TensorWriteData(
+                chunk=chunk, properties=props,
+                size=self._spec.tensor_meta.shape,
+            ),
+        )]
+
+    def __create_chunk_list__(self):
+        """Checkpointable protocol: describe this rank's local chunk for load planning."""
+        from ..checkpoint.metadata import ChunkStorageMetadata
+
+        sizes, offsets = compute_local_shape_and_global_offset(
+            self._spec.tensor_meta.shape, self.device_mesh, self.placements
+        )
+        return [ChunkStorageMetadata(offsets=offsets, sizes=sizes)]
+
     def __repr__(self):
         return (
             f"DTensor(local_shape={self._local_tensor.shape}, "
             f"placements={self.placements})"
         )
+
+
+def compute_local_shape_and_global_offset(global_shape, mesh, placements):
+    """Compute local shard shape and global offset from distribution spec.
+
+    Args:
+        global_shape: the global (unsharded) tensor shape.
+        mesh: DeviceMesh instance.
+        placements: sequence of Placement objects.
+
+    Returns:
+        (local_shape, global_offset) as tuples of ints.
+    """
+    from .placement import Shard
+    local_shape = list(global_shape)
+    global_offset = [0] * len(global_shape)
+    for mesh_dim, placement in enumerate(placements):
+        if isinstance(placement, Shard):
+            dim = placement.dim
+            num_chunks = mesh.size(mesh_dim)
+            local_rank = mesh.get_local_rank(mesh_dim)
+            chunk_size = global_shape[dim] // num_chunks
+            remainder = global_shape[dim] % num_chunks
+            if local_rank < remainder:
+                local_shape[dim] = chunk_size + 1
+                global_offset[dim] = local_rank * (chunk_size + 1)
+            else:
+                local_shape[dim] = chunk_size
+                global_offset[dim] = (
+                    remainder * (chunk_size + 1)
+                    + (local_rank - remainder) * chunk_size
+                )
+    return tuple(local_shape), tuple(global_offset)
 
 
 def _compute_global_shape(local_shape, mesh, placements):

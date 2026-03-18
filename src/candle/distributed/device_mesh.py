@@ -88,6 +88,11 @@ class DeviceMesh:
         """Number of devices along a mesh dimension."""
         return self._mesh_shape[mesh_dim]
 
+    def get_local_rank(self, mesh_dim=0):
+        """Return this rank's position along *mesh_dim*."""
+        from . import get_rank
+        return get_rank(self.get_group(mesh_dim))
+
     @property
     def ndim(self):
         """Number of mesh dimensions."""

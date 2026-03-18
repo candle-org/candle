@@ -1,6 +1,6 @@
 """Distributed tensor module."""
 from .placement import Placement, Shard, Replicate, Partial
-from .dtensor import DTensor, DTensorSpec, TensorMeta
+from .dtensor import DTensor, DTensorSpec, TensorMeta, compute_local_shape_and_global_offset
 
 __all__ = [
     "Placement",
@@ -10,4 +10,5 @@ __all__ = [
     "DTensor",
     "DTensorSpec",
     "TensorMeta",
+    "compute_local_shape_and_global_offset",
 ]

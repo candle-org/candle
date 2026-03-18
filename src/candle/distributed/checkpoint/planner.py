@@ -1,6 +1,10 @@
 """Planner interfaces and default implementations for DCP save/load.
 
 Mirrors ``torch.distributed.checkpoint.planner``.
+
+The default planners support the Checkpointable protocol: if a tensor has
+``__create_write_items__`` / ``__create_chunk_list__`` dunder methods
+(e.g. DTensor), the planner delegates to them.
 """
 
 import dataclasses
@@ -72,7 +76,7 @@ class ReadItem:
 
 
 # ---------------------------------------------------------------------------
-# Plans exchanged between planner ↔ storage
+# Plans exchanged between planner <-> storage
 # ---------------------------------------------------------------------------
 
 @dataclasses.dataclass
@@ -116,13 +120,18 @@ class SavePlanner(ABC):
 
 
 class DefaultSavePlanner(SavePlanner):
-    """One WriteItem per tensor key, resolves to contiguous tensor data."""
+    """One WriteItem per tensor key, resolves to contiguous tensor data.
+
+    Supports the Checkpointable protocol: tensors with
+    ``__create_write_items__`` (e.g. DTensor) produce SHARD WriteItems.
+    Regular tensors produce a single full-tensor WriteItem.
+    """
 
     def __init__(self):
         self.state_dict = None
         self.is_coordinator = False
 
-    def set_up_planner(self, state_dict, is_coordinator):
+    def set_up_planner(self, state_dict, is_coordinator=False):
         self.state_dict = state_dict
         self.is_coordinator = is_coordinator
 
@@ -131,6 +140,11 @@ class DefaultSavePlanner(SavePlanner):
         for fqn, tensor in self.state_dict.items():
             if not hasattr(tensor, "shape"):
                 continue
+            # Checkpointable protocol: delegate to DTensor
+            if hasattr(tensor, "__create_write_items__"):
+                items.extend(tensor.__create_write_items__(fqn, tensor))
+                continue
+            # Regular tensor: full chunk
             shape = tuple(int(s) for s in tensor.shape)
             chunk = ChunkStorageMetadata(
                 offsets=tuple(0 for _ in shape),
@@ -172,6 +186,9 @@ class DefaultSavePlanner(SavePlanner):
 
     def resolve_data(self, write_item):
         tensor = self.state_dict[write_item.index.fqn]
+        # DTensor: return local shard
+        if hasattr(tensor, "to_local"):
+            tensor = tensor.to_local()
         if hasattr(tensor, "detach"):
             tensor = tensor.detach()
         if hasattr(tensor, "contiguous"):
@@ -214,14 +231,20 @@ class LoadPlanner(ABC):
 
 
 class DefaultLoadPlanner(LoadPlanner):
-    """One ReadItem per tensor key, resolves to pre-allocated tensor in state_dict."""
+    """One ReadItem per tensor key, resolves to pre-allocated tensor in state_dict.
+
+    Supports the Checkpointable protocol: tensors with
+    ``__create_chunk_list__`` (e.g. DTensor) declare which local chunks
+    they need.  The planner matches those against saved chunks, supporting
+    resharding (save N ranks -> load M ranks).
+    """
 
     def __init__(self):
         self.state_dict = None
         self.metadata = None
         self.is_coordinator = False
 
-    def set_up_planner(self, state_dict, metadata, is_coordinator):
+    def set_up_planner(self, state_dict, metadata=None, is_coordinator=False):
         self.state_dict = state_dict
         self.metadata = metadata
         self.is_coordinator = is_coordinator
@@ -235,18 +258,14 @@ class DefaultLoadPlanner(LoadPlanner):
                 continue
             if not isinstance(tensor_meta, TensorStorageMetadata):
                 continue
-            size = tuple(tensor_meta.size)
-            for chunk in tensor_meta.chunks:
-                storage_index = MetadataIndex(fqn, offset=tuple(chunk.offsets))
-                dest_index = MetadataIndex(fqn, offset=tuple(chunk.offsets))
-                items.append(ReadItem(
-                    type=LoadItemType.TENSOR,
-                    dest_index=dest_index,
-                    dest_offsets=tuple(chunk.offsets),
-                    storage_index=storage_index,
-                    storage_offsets=tuple(chunk.offsets),
-                    lengths=tuple(chunk.sizes),
-                ))
+            obj = self.state_dict[fqn]
+            # Checkpointable protocol: get local chunks from DTensor
+            if hasattr(obj, "__create_chunk_list__"):
+                local_chunks = obj.__create_chunk_list__()
+            else:
+                # Full tensor: use all saved chunks
+                local_chunks = tensor_meta.chunks
+            items.extend(_create_read_items(fqn, tensor_meta, local_chunks))
         return LoadPlan(items=items)
 
     def create_global_plan(self, all_plans):
@@ -259,7 +278,78 @@ class DefaultLoadPlanner(LoadPlanner):
         self.state_dict[read_item.dest_index.fqn] = value
 
     def resolve_tensor(self, read_item):
-        return self.state_dict.get(read_item.dest_index.fqn)
+        obj = self.state_dict.get(read_item.dest_index.fqn)
+        if obj is None:
+            return None
+        # DTensor: resolve to local shard
+        if hasattr(obj, "to_local"):
+            return obj.to_local()
+        return obj
 
     def commit_tensor(self, read_item, tensor):
-        self.state_dict[read_item.dest_index.fqn] = tensor
+        fqn = read_item.dest_index.fqn
+        obj = self.state_dict.get(fqn)
+        # DTensor: data was written into local shard, don't replace
+        if hasattr(obj, "to_local"):
+            return
+        self.state_dict[fqn] = tensor
+
+
+# ---------------------------------------------------------------------------
+# Resharding helpers
+# ---------------------------------------------------------------------------
+
+def _create_read_items(fqn, tensor_meta, local_chunks):
+    """Match local chunks against saved chunks, creating ReadItems.
+
+    Supports resharding: if a local chunk spans multiple saved chunks,
+    creates multiple ReadItems for the overlapping regions.
+    """
+    items = []
+    for local_chunk in local_chunks:
+        for saved_chunk in tensor_meta.chunks:
+            overlap = _chunk_overlap(local_chunk, saved_chunk)
+            if overlap is None:
+                continue
+            dest_offsets, storage_offsets, lengths = overlap
+            items.append(ReadItem(
+                type=LoadItemType.TENSOR,
+                dest_index=MetadataIndex(
+                    fqn, offset=tuple(local_chunk.offsets),
+                ),
+                dest_offsets=dest_offsets,
+                storage_index=MetadataIndex(
+                    fqn, offset=tuple(saved_chunk.offsets),
+                ),
+                storage_offsets=storage_offsets,
+                lengths=lengths,
+            ))
+    return items
+
+
+def _chunk_overlap(local_chunk, saved_chunk):
+    """Compute the overlap region between two chunks.
+
+    Returns ``(dest_offsets, storage_offsets, lengths)`` or ``None``
+    if there is no overlap.
+    """
+    ndim = len(local_chunk.offsets)
+    dest_offsets = []
+    storage_offsets = []
+    lengths = []
+    for dim in range(ndim):
+        local_start = local_chunk.offsets[dim]
+        local_end = local_start + local_chunk.sizes[dim]
+        saved_start = saved_chunk.offsets[dim]
+        saved_end = saved_start + saved_chunk.sizes[dim]
+
+        overlap_start = max(local_start, saved_start)
+        overlap_end = min(local_end, saved_end)
+        if overlap_start >= overlap_end:
+            return None
+
+        dest_offsets.append(overlap_start - local_start)
+        storage_offsets.append(overlap_start - saved_start)
+        lengths.append(overlap_end - overlap_start)
+
+    return tuple(dest_offsets), tuple(storage_offsets), tuple(lengths)
