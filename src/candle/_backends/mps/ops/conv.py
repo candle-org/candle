@@ -989,8 +989,7 @@ def pad(a, pad_widths, mode='constant', value=0):
                 fill_bytes = struct.pack("f", float(value))
                 fill_size = 4
             else:
-                import numpy as np
-                fill_bytes = np.float16(value).tobytes()
+                fill_bytes = struct.pack("e", float(value))
                 fill_size = 2
             d.dispatch_pad_constant(
                 f"pad_constant_{sfx}", _metal_buf(a), out_buf,

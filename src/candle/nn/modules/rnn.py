@@ -127,10 +127,13 @@ class RNNBase(Module):
         # Initialize hidden state
         if hx is None:
             if self.mode == 'LSTM':
-                h_zeros = zeros(self.num_layers * num_directions, batch_size, self.hidden_size)
-                hx = (h_zeros, zeros(self.num_layers * num_directions, batch_size, self.hidden_size))
+                h_zeros = zeros(self.num_layers * num_directions, batch_size, self.hidden_size,
+                                dtype=input.dtype, device=input.device)
+                hx = (h_zeros, zeros(self.num_layers * num_directions, batch_size, self.hidden_size,
+                                     dtype=input.dtype, device=input.device))
             else:
-                hx = zeros(self.num_layers * num_directions, batch_size, self.hidden_size)
+                hx = zeros(self.num_layers * num_directions, batch_size, self.hidden_size,
+                           dtype=input.dtype, device=input.device)
 
         # Split hidden state per layer and direction
         if self.mode == 'LSTM':
@@ -280,7 +283,8 @@ class RNNCell(RNNCellBase):
 
     def forward(self, input, hx=None):
         if hx is None:
-            hx = zeros(input.shape[0], self.hidden_size)
+            hx = zeros(input.shape[0], self.hidden_size,
+                       dtype=input.dtype, device=input.device)
         gate = F.linear(input, self.weight_ih, self.bias_ih) + \
                F.linear(hx, self.weight_hh, self.bias_hh)
         if self.nonlinearity == 'tanh':
@@ -309,8 +313,10 @@ class LSTMCell(RNNCellBase):
     def forward(self, input, hx=None):
         if hx is None:
             hx = (
-                zeros(input.shape[0], self.hidden_size),
-                zeros(input.shape[0], self.hidden_size),
+                zeros(input.shape[0], self.hidden_size,
+                      dtype=input.dtype, device=input.device),
+                zeros(input.shape[0], self.hidden_size,
+                      dtype=input.dtype, device=input.device),
             )
         h, c = hx
         gates = F.linear(input, self.weight_ih, self.bias_ih) + \
@@ -337,7 +343,8 @@ class GRUCell(RNNCellBase):
 
     def forward(self, input, hx=None):
         if hx is None:
-            hx = zeros(input.shape[0], self.hidden_size)
+            hx = zeros(input.shape[0], self.hidden_size,
+                       dtype=input.dtype, device=input.device)
         # Compute input gates (all 3 at once)
         gates_x = F.linear(input, self.weight_ih, self.bias_ih)
         gates_h = F.linear(hx, self.weight_hh, self.bias_hh)
