@@ -13,6 +13,7 @@ class Argument:
     is_tensor: bool = False
     is_optional_tensor: bool = False
     is_mutating: bool = False  # Tensor(a!)
+    is_tensor_list: bool = False  # Tensor[]
 
 
 @dataclass
@@ -53,7 +54,7 @@ class DifferentiabilityInfo:
 
     @property
     def tensor_args(self) -> list[Argument]:
-        return [a for a in self.args if a.is_tensor or a.is_optional_tensor]
+        return [a for a in self.args if a.is_tensor or a.is_optional_tensor or a.is_tensor_list]
 
     @property
     def differentiable_inputs(self) -> list[Argument]:
@@ -64,7 +65,7 @@ class DifferentiabilityInfo:
 
     @property
     def non_tensor_args(self) -> list[Argument]:
-        return [a for a in self.args if not a.is_tensor and not a.is_optional_tensor]
+        return [a for a in self.args if not a.is_tensor and not a.is_optional_tensor and not a.is_tensor_list]
 
     @property
     def num_outputs(self) -> int:
@@ -143,7 +144,8 @@ def parse_schema(schema: str) -> tuple[str, list[Argument], list[Return]]:
             type_str = am.group(1)
             arg_name = am.group(2)
             default = am.group(3)
-            is_tensor = type_str in ("Tensor", "Tensor(a!)", "Tensor(a)", "Tensor[]")
+            is_tensor_list = type_str == "Tensor[]"
+            is_tensor = type_str in ("Tensor", "Tensor(a!)", "Tensor(a)") and not is_tensor_list
             is_optional = type_str == "Tensor?"
             is_mutating = "!" in type_str
             args.append(Argument(
@@ -153,6 +155,7 @@ def parse_schema(schema: str) -> tuple[str, list[Argument], list[Return]]:
                 is_tensor=is_tensor,
                 is_optional_tensor=is_optional,
                 is_mutating=is_mutating,
+                is_tensor_list=is_tensor_list,
             ))
 
     # Parse returns

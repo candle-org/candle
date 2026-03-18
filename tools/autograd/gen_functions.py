@@ -1198,6 +1198,60 @@ def _cummax_backward_helper(grad, self_, result1, dim, keyset):
 def _cummin_backward_helper(grad, self_, result1, dim, keyset):
     from .._backends.autograd import _cummin_backward
     return _cummin_backward(grad, self_, result1, keyset, (dim,), {})[0]
+
+
+# ---------------------------------------------------------------------------
+# Tensor[] backward helpers (called from generated formulas)
+# ---------------------------------------------------------------------------
+
+def _cat_backward_helper(grad, tensors, dim, keyset):
+    from .._backends.autograd import _cat_backward
+    return _cat_backward(grad, tensors, None, keyset, (dim,), {})
+
+
+def _stack_backward_helper(grad, tensors, dim, keyset):
+    from .._backends.autograd import _stack_backward
+    return _stack_backward(grad, tensors, None, keyset, (dim,), {})
+
+
+def _hstack_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _hstack_backward
+    return _hstack_backward(grad, tensors, None, keyset, (), {})
+
+
+def _vstack_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _vstack_backward
+    return _vstack_backward(grad, tensors, None, keyset, (), {})
+
+
+def _dstack_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _dstack_backward
+    return _dstack_backward(grad, tensors, None, keyset, (), {})
+
+
+def _column_stack_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _column_stack_backward
+    return _column_stack_backward(grad, tensors, None, keyset, (), {})
+
+
+def _concat_backward_helper(grad, tensors, dim, keyset):
+    from .._backends.autograd import _cat_backward
+    return _cat_backward(grad, tensors, None, keyset, (dim,), {})
+
+
+def _concatenate_backward_helper(grad, tensors, dim, keyset):
+    from .._backends.autograd import _cat_backward
+    return _cat_backward(grad, tensors, None, keyset, (dim,), {})
+
+
+def _block_diag_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _block_diag_backward
+    return _block_diag_backward(grad, tensors, keyset)
+
+
+def _pad_sequence_backward_helper(grad, sequences, batch_first, padding_value, padding_side, keyset):
+    from .._backends.autograd import _pad_sequence_backward
+    return _pad_sequence_backward(grad, sequences, keyset, batch_first, padding_value, padding_side)
 '''
 
 
@@ -1225,6 +1279,9 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     saved_outputs = info.all_saved_outputs
     non_tensor_args = info.non_tensor_args
 
+    # Detect if any differentiable input is a Tensor[]
+    has_tensor_list = any(a.is_tensor_list for a in info.differentiable_inputs)
+
     lines: list[str] = []
     lines.append(f"\nclass {cls_name}(Node):")
 
@@ -1235,6 +1292,9 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     lines.append("        self._active_keyset = active_keyset")
     # Slots for saved tensor indices
     for name in saved_inputs:
+        arg = next((a for a in info.args if a.name == name), None)
+        if arg and arg.is_tensor_list:
+            continue  # Tensor[] not saved individually
         lines.append(f"        self._saved_{name}_idx = None")
     for name in saved_outputs:
         lines.append(f"        self._saved_{name}_idx = None")
@@ -1243,7 +1303,9 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
         lines.append(f"        self._{arg.name} = None")
 
     # save_for_backward — use safe param names to avoid shadowing `self`
-    all_saved = saved_inputs + saved_outputs
+    # Filter out Tensor[] from saved list
+    all_saved = [n for n in saved_inputs
+                 if not any(a.name == n and a.is_tensor_list for a in info.args)] + saved_outputs
     if all_saved:
         kw_params = ", ".join(f"{_safe_param(n)}=None" for n in all_saved)
         lines.append(f"\n    def _save(self, *, {kw_params}):")
@@ -1271,6 +1333,9 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     if all_saved:
         lines.append("        _saved = self.saved_tensors()")
     for name in saved_inputs:
+        arg = next((a for a in info.args if a.name == name), None)
+        if arg and arg.is_tensor_list:
+            continue  # handled below
         local = _safe_local(name)
         if name in optional_tensor_names:
             lines.append(f"        {local} = _saved[self._saved_{name}_idx] if self._saved_{name}_idx is not None else None")
@@ -1282,7 +1347,7 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
 
     # Retrieve unsaved tensor args from self.inputs (when save_inputs override excludes them)
     # Build map of tensor arg name -> index in the inputs tuple
-    tensor_args = [a for a in info.args if a.is_tensor or a.is_optional_tensor]
+    tensor_args = [a for a in info.args if a.is_tensor or a.is_optional_tensor or a.is_tensor_list]
     tensor_arg_indices = {a.name: i for i, a in enumerate(tensor_args)}
     saved_set = set(saved_inputs) | set(saved_outputs)
     # Collect all tensor arg names referenced in any formula
@@ -1294,9 +1359,14 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     tensor_arg_names = {a.name for a in tensor_args}
     unsaved_referenced = (formula_referenced & tensor_arg_names) - saved_set
     for name in sorted(unsaved_referenced):
+        arg = next((a for a in info.args if a.name == name), None)
         local = _safe_local(name)
-        idx = tensor_arg_indices[name]
-        lines.append(f"        {local} = self.inputs[{idx}]")
+        if arg and arg.is_tensor_list:
+            # Reconstruct list from Node.inputs (all inputs come from this list)
+            lines.append(f"        {local} = list(self.inputs)")
+        else:
+            idx = tensor_arg_indices[name]
+            lines.append(f"        {local} = self.inputs[{idx}]")
 
     # Retrieve non-tensor args
     for arg in non_tensor_args:
@@ -1327,6 +1397,12 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     diff_inputs = info.differentiable_inputs
     if len(diff_inputs) == 0:
         lines.append("        return (grad,)")
+    elif has_tensor_list:
+        # Tensor[] backward: helper already returns a tuple of per-tensor grads
+        # Return it directly (it matches the unpacked inputs tuple)
+        assert len(diff_inputs) == 1, "Tensor[] ops should have exactly one differentiable input"
+        grad_var = grad_vars[diff_inputs[0].name]
+        lines.append(f"        return {grad_var}")
     else:
         ret_parts = []
         for arg in diff_inputs:

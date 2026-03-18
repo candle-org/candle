@@ -848,3 +848,49 @@
 
 - name: linalg_lu_solve(Tensor LU, Tensor pivots, Tensor B, bool left=True, bool adjoint=False) -> Tensor
   B: "_linalg_lu_solve_backward_helper(grad, LU, pivots, B, left, adjoint, keyset)"
+
+# --- Tensor[] input ops (Phase 6) ---
+
+- name: cat(Tensor[] tensors, int dim=0) -> Tensor
+  save_inputs: []
+  tensors: "_cat_backward_helper(grad, tensors, dim, keyset)"
+
+- name: stack(Tensor[] tensors, int dim=0) -> Tensor
+  save_inputs: []
+  tensors: "_stack_backward_helper(grad, tensors, dim, keyset)"
+
+- name: hstack(Tensor[] tensors) -> Tensor
+  save_inputs: []
+  tensors: "_hstack_backward_helper(grad, tensors, keyset)"
+
+- name: vstack(Tensor[] tensors) -> Tensor
+  save_inputs: []
+  tensors: "_vstack_backward_helper(grad, tensors, keyset)"
+
+- name: row_stack(Tensor[] tensors) -> Tensor
+  save_inputs: []
+  tensors: "_vstack_backward_helper(grad, tensors, keyset)"
+
+- name: dstack(Tensor[] tensors) -> Tensor
+  save_inputs: []
+  tensors: "_dstack_backward_helper(grad, tensors, keyset)"
+
+- name: column_stack(Tensor[] tensors) -> Tensor
+  save_inputs: []
+  tensors: "_column_stack_backward_helper(grad, tensors, keyset)"
+
+- name: concat(Tensor[] tensors, int dim=0) -> Tensor
+  save_inputs: []
+  tensors: "_concat_backward_helper(grad, tensors, dim, keyset)"
+
+- name: concatenate(Tensor[] tensors, int dim=0) -> Tensor
+  save_inputs: []
+  tensors: "_concatenate_backward_helper(grad, tensors, dim, keyset)"
+
+- name: block_diag(Tensor[] tensors) -> Tensor
+  save_inputs: []
+  tensors: "_block_diag_backward_helper(grad, tensors, keyset)"
+
+- name: pad_sequence(Tensor[] sequences, bool batch_first=False, float padding_value=0.0, str padding_side="right") -> Tensor
+  save_inputs: []
+  sequences: "_pad_sequence_backward_helper(grad, sequences, batch_first, padding_value, padding_side, keyset)"
