@@ -170,6 +170,8 @@ Run pylint locally and confirm zero errors before pushing or creating a PR:
 pylint src/candle/ --rcfile=.github/pylint.conf
 ```
 
+Use `.github/pylint.conf` as the canonical pylint config path.
+
 Do NOT open a PR if pylint fails. Fix all issues first.
 
 #### 5. Clean up after merge
