@@ -1,11 +1,43 @@
 import os
 from datetime import timedelta
 
-from ._reduce_op import ReduceOp, RedOpType, reduce_op
-from ._work import Work
-from ._process_group import ProcessGroup, ProcessGroupHCCL
-from ._gloo import ProcessGroupGloo
-from ._store import TCPStore
+# Core types: try Cython, fallback to Python
+try:
+    from ._c10d import (  # pylint: disable=no-name-in-module
+        RedOpType, ReduceOp, reduce_op,
+        Work,
+        Store as _CStore, TCPStore, PrefixStore as _CPrefixStore, HashStore,
+        ProcessGroup,
+        AllreduceOptions as _CAllreduceOptions,
+        BroadcastOptions as _CBroadcastOptions,
+        ReduceOptions as _CReduceOptions,
+        AllgatherOptions as _CAllgatherOptions,
+        GatherOptions as _CGatherOptions,
+        ScatterOptions as _CScatterOptions,
+        ReduceScatterOptions as _CReduceScatterOptions,
+        BarrierOptions as _CBarrierOptions,
+        AllToAllOptions as _CAllToAllOptions,
+    )
+    _C10D_CYTHON = True
+except ImportError:
+    from ._reduce_op import ReduceOp, RedOpType, reduce_op
+    from ._work import Work
+    from ._process_group import ProcessGroup
+    from ._store import TCPStore
+    _C10D_CYTHON = False
+
+# HCCL backend: try Cython, fallback to Python
+try:
+    from ._c10d_hccl import ProcessGroupHCCL  # pylint: disable=no-name-in-module
+except ImportError:
+    from ._process_group import ProcessGroupHCCL
+
+# Gloo backend: try Cython, fallback to Python
+try:
+    from ._c10d_gloo import ProcessGroupGloo  # pylint: disable=no-name-in-module
+except ImportError:
+    from ._gloo import ProcessGroupGloo
+
 from ._backend import (
     Backend, GroupMember, Store, PrefixStore,
     is_nccl_available, is_gloo_available, is_mpi_available, is_ucc_available,
@@ -34,16 +66,28 @@ _all_to_all_single_seq = {}
 
 default_pg_timeout = timedelta(minutes=30)
 
-# Placeholder option classes for API compatibility
-AllreduceOptions = object
+# Option classes: use Cython versions if available, else placeholders
+if _C10D_CYTHON:
+    AllreduceOptions = _CAllreduceOptions
+    AllToAllOptions = _CAllToAllOptions
+    BarrierOptions = _CBarrierOptions
+    BroadcastOptions = _CBroadcastOptions
+    GatherOptions = _CGatherOptions
+    ReduceOptions = _CReduceOptions
+    ReduceScatterOptions = _CReduceScatterOptions
+    ScatterOptions = _CScatterOptions
+    AllgatherOptions = _CAllgatherOptions
+else:
+    AllreduceOptions = object
+    AllToAllOptions = object
+    BarrierOptions = object
+    BroadcastOptions = object
+    GatherOptions = object
+    ReduceOptions = object
+    ReduceScatterOptions = object
+    ScatterOptions = object
+    AllgatherOptions = object
 AllreduceCoalescedOptions = object
-AllToAllOptions = object
-BarrierOptions = object
-BroadcastOptions = object
-GatherOptions = object
-ReduceOptions = object
-ReduceScatterOptions = object
-ScatterOptions = object
 DebugLevel = object
 
 

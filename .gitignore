@@ -227,3 +227,4 @@ compat/*/_transformers/
 compat/*/_pytorch/
 compat/*/_reports/
 compat/pytorch/_pytorch.local/
+*.c

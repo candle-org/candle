@@ -67,6 +67,18 @@ if platform.system() == "Linux":
                     "candle._cython._fast_ops",
                     ["src/candle/_cython/_fast_ops.pyx"],
                 ),
+                Extension(
+                    "candle.distributed._c10d",
+                    ["src/candle/distributed/_c10d.pyx"],
+                ),
+                Extension(
+                    "candle.distributed._c10d_gloo",
+                    ["src/candle/distributed/_c10d_gloo.pyx"],
+                ),
+                Extension(
+                    "candle.distributed._c10d_hccl",
+                    ["src/candle/distributed/_c10d_hccl.pyx"],
+                ),
             ],
             compiler_directives={
                 "language_level": "3",
