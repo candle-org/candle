@@ -359,34 +359,11 @@ def cy_prepare_kwargs(func, dict kwargs, device):
 
 
 # ---------------------------------------------------------------------------
-# Public dispatch entry points (delegate to Python dispatcher with fast primitives)
+# Public dispatch entry points
 # ---------------------------------------------------------------------------
-
-def cy_dispatch(str name, dispatch_device, *args, **kwargs):
-    """Cython-accelerated dispatch. Same semantics as Python dispatch()."""
-    from candle._dispatch.dispatcher import dispatch_with_keyset
-    from candle._dispatch.pipeline import current_pipeline
-    from candle.autograd.grad_mode import is_grad_enabled
-    from candle.amp.state import is_autocast_enabled
-    from candle._dispatch.functionalize import is_functionalize_enabled
-
-    tensors = cy_extract_tensors(args, kwargs)
-    autocast_device_type = getattr(dispatch_device, "type", dispatch_device)
-    if autocast_device_type is None and tensors:
-        autocast_device_type = getattr(tensors[0].device, "type", None)
-    pipe = current_pipeline()
-    keyset = FastDispatchKeySet.from_tensors(
-        tensors,
-        grad_enabled=is_grad_enabled(),
-        pipeline_enabled=pipe is not None,
-        functionalize_enabled=is_functionalize_enabled(),
-        device=dispatch_device,
-        autocast_enabled=is_autocast_enabled(autocast_device_type),
-    )
-    return dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs)
-
-
-def cy_dispatch_with_keyset(str name, keyset, dispatch_device, *args, **kwargs):
-    """Cython-accelerated dispatch_with_keyset."""
-    from candle._dispatch.dispatcher import dispatch_with_keyset
-    return dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs)
+# cy_dispatch has been replaced by cy_dispatch_full in _dispatcher_core.pyx.
+# cy_dispatch_with_keyset has been replaced by cy_dispatch_with_keyset_fast
+# in _dispatcher_core.pyx.
+# The utility functions (cy_extract_tensors, cy_prepare_kwargs,
+# FastDispatchKeySet, cy_apply_tls_masks, cy_kernel_for_entry) remain here
+# for backward compatibility and use by other modules.

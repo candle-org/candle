@@ -1,9 +1,11 @@
 # cython: language_level=3, boundscheck=False, wraparound=False
-"""Cython full dispatcher — replaces dispatch_with_keyset inner loop.
+"""Cython full dispatcher — single-function dispatch aligned with PyTorch Dispatcher::call.
 
-Inlines: tensor extraction, device validation, TLS mask application,
-schema validation fast-path, kernel lookup, kwargs preparation,
-dispatch context push/pop, version bumping, and single-pass autograd.
+Merges the entire dispatch call chain (keyset construction, tensor extraction,
+device validation, TLS mask application, schema validation, kernel lookup,
+kwargs preparation, context push/pop, version bumping, single-pass autograd)
+into a single cdef _dispatch_core function with zero intermediate Python
+function boundaries on the hot path.
 """
 
 from libc.stdint cimport int64_t, uint32_t
@@ -39,6 +41,16 @@ cdef inline bint _fast_grad_enabled():
         from candle.autograd.grad_mode import _GRAD_MODE_STATE
         _grad_tls = _GRAD_MODE_STATE
     return getattr(_grad_tls, "enabled", True)
+
+# Cached is_functionalize_enabled
+cdef object _is_func_enabled_fn = None
+
+cdef inline bint _fast_functionalize_enabled():
+    global _is_func_enabled_fn
+    if _is_func_enabled_fn is None:
+        from candle._dispatch.functionalize import is_functionalize_enabled
+        _is_func_enabled_fn = is_functionalize_enabled
+    return _is_func_enabled_fn()
 
 # ---------------------------------------------------------------------------
 # Cached accepts_device check
@@ -190,6 +202,9 @@ cdef unsigned int _KEY_PrivateUse2 = 0
 cdef object _strip_autograd_keys_fn = None
 cdef object _FastDispatchKeySet = None
 
+# Cached base Tensor class for __torch_dispatch__ subclass check
+cdef object _BaseTensor = None
+
 # Cached dispatch helper functions (lazy-loaded in _ensure_dispatch_helpers)
 cdef object _apply_tls_masks_fn = None
 cdef object _current_pipeline_fn = None
@@ -268,17 +283,20 @@ cdef inline void _ensure_imports():
     global _KEY_Meta, _KEY_NPU, _KEY_CUDA, _KEY_CPU, _KEY_PrivateUse2
     global _strip_autograd_keys_fn
     global _FastDispatchKeySet
+    global _BaseTensor
     if _registry is not None:
         return
     from candle._dispatch.registry import registry
     from candle._dispatch.keys import DispatchKey, DISPATCH_KEY_PRIORITY
     from candle._backends.autograd import _strip_autograd_keys
     from candle._cython._dispatch import FastDispatchKeySet
+    from candle._tensor import Tensor
     _registry = registry
     _DispatchKey = DispatchKey
     _DISPATCH_KEY_PRIORITY = DISPATCH_KEY_PRIORITY
     _strip_autograd_keys_fn = _strip_autograd_keys
     _FastDispatchKeySet = FastDispatchKeySet
+    _BaseTensor = Tensor
     # Cache individual key values as C unsigned ints
     _KEY_ADInplaceOrView = <unsigned int>int(DispatchKey.ADInplaceOrView)
     _KEY_Autograd = <unsigned int>int(DispatchKey.Autograd)
@@ -355,19 +373,15 @@ cdef inline void _fast_validate_devices(list tensors):
             )
 
 
-cdef inline object _fast_kernel_for_entry(object entry, object keyset):
-    """Find kernel for dispatch entry — direct iteration."""
-    _ensure_imports()
-    cdef unsigned int m
-    if hasattr(keyset, "mask"):
-        m = <unsigned int>int(keyset.mask)
-    else:
-        m = <unsigned int>int(keyset)
+cdef inline object _fast_kernel_for_entry(object entry, unsigned int m):
+    """Find kernel for dispatch entry — direct bitmask iteration."""
     fallthrough = entry.fallthrough
     kernels = entry.kernels
     global_fallthrough = getattr(_registry, "_global_fallthrough", set())
+    cdef unsigned int kv
     for key in _DISPATCH_KEY_PRIORITY:
-        if not (m & <unsigned int>int(key)):
+        kv = <unsigned int>int(key)
+        if not (m & kv):
             continue
         if key in fallthrough:
             continue
@@ -406,127 +420,193 @@ cdef inline object _fast_kernel_for_entry_skip_autograd(object entry, unsigned i
 
 
 # ---------------------------------------------------------------------------
-# Main dispatch entry point
+# Inline keyset construction — replaces _dispatch.pyx::_cy_from_tensors
 # ---------------------------------------------------------------------------
 
-def cy_dispatch_with_keyset_fast(str name, object keyset, object dispatch_device,
-                                  *args, **kwargs):
-    """Full Cython replacement for dispatch_with_keyset.
+# Dispatch key bit constants (must match keys.py / _dispatch.pyx DEF values)
+DEF _DK_CPU = 1 << 15
+DEF _DK_NPU = 1 << 13
+DEF _DK_CUDA = 1 << 14
+DEF _DK_MPS = 1 << 21       # PrivateUse2
+DEF _DK_META = 1 << 12
+DEF _DK_AUTOGRAD_CPU = 1 << 6
+DEF _DK_AUTOGRAD_NPU = 1 << 7
+DEF _DK_AUTOGRAD_CUDA = 1 << 8
+DEF _DK_AUTOGRAD_MPS = 1 << 22  # PrivateUse3
+DEF _DK_AUTOGRAD_META = 1 << 10
+DEF _DK_ADINPLACEORVIEW = 1 << 4
+DEF _DK_AUTOGRAD = 1 << 11
+DEF _DK_FUNCTIONALIZE = 1 << 3
+DEF _DK_AUTOCAST = 1 << 19
+DEF _DK_PIPELINE = 1 << 1
+DEF _DK_PYTHON = 1 << 2
 
-    Handles: tensor extraction, device validation, TLS masks, schema
-    validation (fast-path), kernel lookup, kwargs prep, context push/pop,
-    version bumping, single-pass autograd.
-    Delegates to Python for: functionalize, autocast, pipeline, profiler,
-    forward AD, __torch_dispatch__.
+cdef inline object _build_keyset_inline(list tensors, object dispatch_device):
+    """Build FastDispatchKeySet from tensors — fully inlined.
+
+    Reads _device_type and requires_grad directly from TensorImpl C fields
+    when available, checks grad_enabled/pipeline/functionalize/autocast state,
+    and returns a FastDispatchKeySet. No cross-module Python calls.
     """
-    _ensure_imports()
-    _ensure_dispatch_helpers()
+    cdef bint has_meta = False, has_npu = False, has_cuda = False
+    cdef bint has_mps = False, has_cpu = False
+    cdef bint requires_grad = False, saw_device = False
+    cdef bint has_dispatch_subclass = False
+    cdef unsigned int mask = 0
+    cdef int dev_type_int
 
-    cdef list tensors = _fast_extract_tensors(args, kwargs)
-    _fast_validate_devices(tensors)
-
-    keyset = _apply_tls_masks_fn(keyset)
-    pipe = _current_pipeline_fn()
-    dispatch_device = _infer_dispatch_device_fn(dispatch_device, tensors, keyset)
-
-    cdef str alias_name = name
-    try:
-        name = _registry.resolve(name)
-        entry = _registry.get(name)
-    except Exception as exc:
-        raise _wrap_dispatch_error_fn(exc, alias_name, dispatch_device) from exc
-
-    # -- Schema validation --
-    cdef object schema_obj = entry.schema_obj
-    if schema_obj is not None:
-        schema_obj.bind(args, kwargs, op_name=alias_name,
-                        error_overrides=entry.error_overrides)
-    if schema_obj is not None and keyset.has(_DispatchKey.ADInplaceOrView):
-        _check_inplace_targets_fn(schema_obj, args, kwargs)
-
-    # -- Functionalize --
-    if keyset.has(_DispatchKey.Functionalize) and _should_functionalize_fn(entry):
-        if pipe is not None and keyset.has(_DispatchKey.Pipeline):
-            return _functionalize_op_fn(name, alias_name, entry, keyset, args, kwargs,
-                                    _redispatch_fn, pipeline=pipe, dispatch_device=dispatch_device)
-        return _functionalize_op_fn(name, alias_name, entry, keyset, args, kwargs,
-                                _redispatch_fn, dispatch_device=dispatch_device)
-
-    # -- __torch_dispatch__ --
-    if keyset.has(_DispatchKey.Python):
-        result = _dispatch_torch_dispatch_fn(alias_name, tensors, args, kwargs)
-        if result is not NotImplemented:
-            return result
-
-    # -- Autocast --
-    if keyset.has(_DispatchKey.Autocast):
-        device_type = getattr(dispatch_device, "type", dispatch_device)
-        if device_type is None and tensors:
-            device_type = getattr(tensors[0].device, "type", None)
-        casted_args, casted_kwargs = _apply_autocast_policy_fn(alias_name, args, kwargs, device_type)
-        return _redispatch_fn(alias_name, keyset.without(_DispatchKey.Autocast),
-                          *casted_args, **casted_kwargs)
-
-    # -- Pipeline deferred execution --
-    if pipe is not None and keyset.has(_DispatchKey.Pipeline):
-        if not pipe.should_defer_next():
-            return _run_kernel_fast(entry, keyset, alias_name, dispatch_device,
-                                    schema_obj, tensors, args, kwargs,
-                                    _forward_ad_mod, _is_profiler_enabled_fn,
-                                    _dispatch_op_enter_fn, _dispatch_op_exit_fn)
-        meta = entry.kernels.get(_DispatchKey.Meta)
-        if meta is None:
-            raise RuntimeError(f"pipeline requires meta kernel for op {name}")
-        meta_kwargs = _fast_prepare_kwargs(meta, kwargs, dispatch_device)
-        spec = meta(*args, **meta_kwargs)
-        out = _pending_from_meta_fn(spec, dispatch_device)
-        if isinstance(out, (tuple, list)):
-            for item in out:
-                item._pending = True
+    for tensor in tensors:
+        # Fast path: read _device_type directly from TensorImpl
+        dev_type_int = getattr(tensor, "_device_type", -1)
+        if dev_type_int >= 0:
+            saw_device = True
+            if dev_type_int == 4:    # meta
+                has_meta = True
+            elif dev_type_int == 1:  # npu
+                has_npu = True
+            elif dev_type_int == 2:  # cuda
+                has_cuda = True
+            elif dev_type_int == 3:  # mps
+                has_mps = True
+            else:                    # cpu (0) or unknown
+                has_cpu = True
         else:
-            out._pending = True
-        backend_keys = [key for key in keyset.iter_keys() if key != _DispatchKey.Pipeline]
-        impl, impl_key = _fast_kernel_for_entry(entry, keyset.without(_DispatchKey.Pipeline))
-        if impl is None:
-            raise RuntimeError(f"pipeline requires backend kernel for op {name}")
-        impl_kwargs = _fast_prepare_kwargs(impl, kwargs, dispatch_device)
-        pipe.record(
-            _PendingOp_cls(impl, args, impl_kwargs, out,
-                       keyset.without(_DispatchKey.Pipeline), impl_key,
-                       schema_obj=schema_obj, op_name=alias_name),
-            pending=out,
-        )
-        return out
+            # Fallback for non-TensorImpl objects
+            dev = getattr(tensor, "device", None)
+            if dev is None:
+                continue
+            saw_device = True
+            dev_type = getattr(dev, "type", dev)
+            if dev_type == "meta":
+                has_meta = True
+            elif dev_type == "npu":
+                has_npu = True
+            elif dev_type == "cuda":
+                has_cuda = True
+            elif dev_type == "mps":
+                has_mps = True
+            else:
+                has_cpu = True
+        # Read requires_grad directly (C field access for TensorImpl)
+        if getattr(tensor, "requires_grad", False):
+            requires_grad = True
+        if not has_dispatch_subclass:
+            tensor_cls = type(tensor)
+            if tensor_cls is not _BaseTensor:
+                td = getattr(tensor_cls, "__torch_dispatch__", None)
+                if td is not None:
+                    base_td = _BaseTensor.__dict__.get("__torch_dispatch__")
+                    actual_func = getattr(td, "__func__", td)
+                    base_func = getattr(base_td, "__func__", base_td)
+                    if actual_func is not base_func:
+                        has_dispatch_subclass = True
 
-    if pipe is not None and keyset.has(_DispatchKey.Pipeline):
-        pipe.flush()
+    if (not saw_device) and dispatch_device is not None:
+        dev_type = getattr(dispatch_device, "type", dispatch_device)
+        if dev_type == "meta":
+            has_meta = True
+        elif dev_type == "npu":
+            has_npu = True
+        elif dev_type == "cuda":
+            has_cuda = True
+        elif dev_type == "mps":
+            has_mps = True
+        else:
+            has_cpu = True
 
-    return _run_kernel_fast(entry, keyset, alias_name, dispatch_device,
-                            schema_obj, tensors, args, kwargs,
-                            _forward_ad_mod, _is_profiler_enabled_fn,
-                            _dispatch_op_enter_fn, _dispatch_op_exit_fn)
+    # Build backend key from device flags
+    if has_meta:
+        mask = _DK_META
+    elif has_npu:
+        mask = _DK_NPU
+    elif has_cuda:
+        mask = _DK_CUDA
+    elif has_mps:
+        mask = _DK_MPS
+    else:
+        mask = _DK_CPU
+
+    # Autograd keys — check grad_enabled inline
+    if _fast_grad_enabled() and requires_grad:
+        mask |= _DK_ADINPLACEORVIEW | _DK_AUTOGRAD
+        if has_meta:
+            mask |= _DK_AUTOGRAD_META
+        elif has_npu:
+            mask |= _DK_AUTOGRAD_NPU
+        elif has_cuda:
+            mask |= _DK_AUTOGRAD_CUDA
+        elif has_mps:
+            mask |= _DK_AUTOGRAD_MPS
+        else:
+            mask |= _DK_AUTOGRAD_CPU
+
+    if _fast_functionalize_enabled():
+        mask |= _DK_FUNCTIONALIZE
+    # Autocast: infer device type for autocast check
+    cdef object autocast_device_type = getattr(dispatch_device, "type", dispatch_device)
+    if autocast_device_type is None and tensors:
+        autocast_device_type = getattr(tensors[0].device, "type", None)
+    if _is_autocast_enabled_fn is not None and _is_autocast_enabled_fn(autocast_device_type):
+        mask |= _DK_AUTOCAST
+    if _current_pipeline_fn is not None and _current_pipeline_fn() is not None and not has_meta and not has_cuda:
+        mask |= _DK_PIPELINE
+    if has_dispatch_subclass:
+        mask |= _DK_PYTHON
+
+    return _FastDispatchKeySet(mask)
 
 
 # ---------------------------------------------------------------------------
-# _run_kernel — the hot inner loop (with single-pass autograd)
+# Inline TLS mask application
 # ---------------------------------------------------------------------------
 
-cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
-                              object dispatch_device, object schema_obj,
-                              list tensors, tuple args, dict kwargs,
-                              object forward_ad, object is_profiler_enabled,
-                              object dispatch_op_enter, object dispatch_op_exit):
-    """Execute the backend kernel — C-speed context management.
+cdef inline object _apply_tls_masks_inline(object keyset):
+    """Apply TLS include/exclude masks — inline bitmask ops.
 
-    Step 1 optimization: single-pass autograd.
-    When the keyset has autograd keys AND entry.autograd_post is available,
-    we skip the autograd wrapper's redispatch and directly:
-      1. Find the backend kernel (skipping autograd keys)
-      2. Call the backend kernel
-      3. Apply autograd_post to attach grad_fn
-    This eliminates the entire second dispatch pass.
+    Avoids the cross-module Python call to apply_tls_masks.
     """
-    # All cdef declarations must be at function top
+    cdef unsigned int base_mask
+    if hasattr(keyset, "mask"):
+        base_mask = <unsigned int>int(keyset.mask)
+    else:
+        base_mask = <unsigned int>int(keyset)
+
+    state = _tls_state_fn()
+    cdef unsigned int include_mask = 0
+    cdef unsigned int exclude_mask = 0
+    for m_val in state["include"]:
+        include_mask |= <unsigned int>m_val
+    for m_val in state["exclude"]:
+        exclude_mask |= <unsigned int>m_val
+
+    return _FastDispatchKeySet((base_mask | include_mask) & ~exclude_mask)
+
+
+# ---------------------------------------------------------------------------
+# _dispatch_core — the unified dispatch function (cdef, C-level)
+# ---------------------------------------------------------------------------
+
+cdef object _dispatch_core(str name, object dispatch_device,
+                           tuple args, dict kwargs,
+                           object keyset, list tensors):
+    """Core dispatch — single C-level function, no intermediate Python boundaries.
+
+    Parameters
+    ----------
+    name : str
+        Op name (e.g. "add").
+    dispatch_device : object
+        Target device, or None to infer.
+    args, kwargs : tuple, dict
+        Op arguments.
+    keyset : object or None
+        Pre-built keyset (for redispatch), or None to build from tensors.
+    tensors : list or None
+        Pre-extracted tensors, or None to extract from args/kwargs.
+    """
+    # All cdef declarations at function top (Cython requirement)
+    cdef str alias_name
+    cdef object schema_obj
     cdef unsigned int m
     cdef bint has_autograd
     cdef object autograd_post_fn = None
@@ -535,13 +615,105 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
     cdef dict impl_kwargs
     cdef object token = None
 
+    # -- Tensor extraction (once) --
+    if tensors is None:
+        tensors = _fast_extract_tensors(args, kwargs)
+        _fast_validate_devices(tensors)
+
+    # -- Keyset construction or TLS application --
+    if keyset is None:
+        # Full dispatch: build keyset from tensors (inlined)
+        keyset = _build_keyset_inline(tensors, dispatch_device)
+    # Apply TLS masks (inlined)
+    keyset = _apply_tls_masks_inline(keyset)
+
+    # -- Pipeline (read once) --
+    pipe = _current_pipeline_fn()
+
+    # -- Infer dispatch device --
+    dispatch_device = _infer_dispatch_device_fn(dispatch_device, tensors, keyset)
+
+    # -- Registry lookup --
+    alias_name = name
+    try:
+        name = _registry.resolve(name)
+        entry = _registry.get(name)
+    except Exception as exc:
+        raise _wrap_dispatch_error_fn(exc, alias_name, dispatch_device) from exc
+
+    # -- Schema validation --
+    schema_obj = entry.schema_obj
+    if schema_obj is not None:
+        schema_obj.bind(args, kwargs, op_name=alias_name,
+                        error_overrides=entry.error_overrides)
+    if schema_obj is not None and keyset.has(_DispatchKey.ADInplaceOrView):
+        _check_inplace_targets_fn(schema_obj, args, kwargs)
+
+    # -- Functionalize (cold path) --
+    if keyset.has(_DispatchKey.Functionalize) and _should_functionalize_fn(entry):
+        if pipe is not None and keyset.has(_DispatchKey.Pipeline):
+            return _functionalize_op_fn(name, alias_name, entry, keyset, args, kwargs,
+                                    _redispatch_fn, pipeline=pipe, dispatch_device=dispatch_device)
+        return _functionalize_op_fn(name, alias_name, entry, keyset, args, kwargs,
+                                _redispatch_fn, dispatch_device=dispatch_device)
+
+    # -- __torch_dispatch__ (cold path) --
+    if keyset.has(_DispatchKey.Python):
+        result = _dispatch_torch_dispatch_fn(alias_name, tensors, args, kwargs)
+        if result is not NotImplemented:
+            return result
+
+    # -- Autocast (cold path) --
+    if keyset.has(_DispatchKey.Autocast):
+        device_type = getattr(dispatch_device, "type", dispatch_device)
+        if device_type is None and tensors:
+            device_type = getattr(tensors[0].device, "type", None)
+        casted_args, casted_kwargs = _apply_autocast_policy_fn(alias_name, args, kwargs, device_type)
+        return _redispatch_fn(alias_name, keyset.without(_DispatchKey.Autocast),
+                          *casted_args, **casted_kwargs)
+
+    # -- Pipeline deferred execution (cold path) --
+    if pipe is not None and keyset.has(_DispatchKey.Pipeline):
+        if not pipe.should_defer_next():
+            # Run kernel immediately (fall through to hot path below)
+            pass
+        else:
+            meta = entry.kernels.get(_DispatchKey.Meta)
+            if meta is None:
+                raise RuntimeError(f"pipeline requires meta kernel for op {name}")
+            meta_kwargs = _fast_prepare_kwargs(meta, kwargs, dispatch_device)
+            spec = meta(*args, **meta_kwargs)
+            out = _pending_from_meta_fn(spec, dispatch_device)
+            if isinstance(out, (tuple, list)):
+                for item in out:
+                    item._pending = True
+            else:
+                out._pending = True
+            impl, impl_key = _fast_kernel_for_entry(entry, keyset.without(_DispatchKey.Pipeline).mask)
+            if impl is None:
+                raise RuntimeError(f"pipeline requires backend kernel for op {name}")
+            impl_kwargs = _fast_prepare_kwargs(impl, kwargs, dispatch_device)
+            pipe.record(
+                _PendingOp_cls(impl, args, impl_kwargs, out,
+                           keyset.without(_DispatchKey.Pipeline), impl_key,
+                           schema_obj=schema_obj, op_name=alias_name),
+                pending=out,
+            )
+            return out
+
+    if pipe is not None and keyset.has(_DispatchKey.Pipeline):
+        pipe.flush()
+
+    # =====================================================================
+    # HOT PATH: kernel execution (inlined from _run_kernel_fast)
+    # =====================================================================
+
     if hasattr(keyset, "mask"):
         m = <unsigned int>int(keyset.mask)
     else:
         m = <unsigned int>int(keyset)
 
-    # -- Step 1: Single-pass autograd --
-    # Check if keyset has any autograd key and entry has autograd_post
+    # -- Single-pass autograd --
     has_autograd = (m & _AUTOGRAD_MASK) != 0
 
     if has_autograd:
@@ -551,17 +723,15 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
         # Single-pass: find backend kernel directly, skip autograd wrapper
         backend_kernel, backend_key = _fast_kernel_for_entry_skip_autograd(entry, m)
         if backend_kernel is not None:
-            # Inline _strip_autograd_keys as C bitmask op (avoids Python call)
             active_keyset = keyset
             raw_keyset = _FastDispatchKeySet(m & ~(_AUTOGRAD_MASK | _KEY_ADInplaceOrView | _KEY_PrivateUse3))
 
             impl_kwargs = _fast_prepare_kwargs(backend_kernel, kwargs, dispatch_device)
 
             token = None
-            if is_profiler_enabled():
-                token = dispatch_op_enter(alias_name, dispatch_device, args, impl_kwargs)
+            if _is_profiler_enabled_fn():
+                token = _dispatch_op_enter_fn(alias_name, dispatch_device, args, impl_kwargs)
 
-            # Push context with the raw (non-autograd) keyset
             _fast_push(raw_keyset, backend_key)
             try:
                 result = backend_kernel(*args, **impl_kwargs)
@@ -570,7 +740,7 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
             finally:
                 _fast_pop()
                 if token is not None:
-                    dispatch_op_exit(token)
+                    _dispatch_op_exit_fn(token)
 
             _fast_bump_versions(schema_obj, args, impl_kwargs)
 
@@ -578,14 +748,14 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
             result = autograd_post_fn(result, *args, raw_keyset=raw_keyset, active_keyset=active_keyset, **kwargs)
 
             # -- Forward AD (JVP) --
-            _handle_forward_ad(forward_ad, alias_name, keyset, backend_key,
+            _handle_forward_ad(_forward_ad_mod, alias_name, keyset, backend_key,
                                tensors, args, impl_kwargs, result)
 
             return result
-        # If no backend kernel found via skip_autograd, fall through to normal path
+        # If no backend kernel found via skip_autograd, fall through
 
     # -- Normal path (no single-pass optimization) --
-    kernel, key = _fast_kernel_for_entry(entry, keyset)
+    kernel, key = _fast_kernel_for_entry(entry, m)
     if kernel is None:
         key_names = [k.name for k in keyset.iter_keys()]
         exc = RuntimeError(
@@ -596,8 +766,8 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
     impl_kwargs = _fast_prepare_kwargs(kernel, kwargs, dispatch_device)
 
     token = None
-    if is_profiler_enabled():
-        token = dispatch_op_enter(alias_name, dispatch_device, args, impl_kwargs)
+    if _is_profiler_enabled_fn():
+        token = _dispatch_op_enter_fn(alias_name, dispatch_device, args, impl_kwargs)
 
     _fast_push(keyset, key)
     try:
@@ -607,15 +777,42 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
     finally:
         _fast_pop()
         if token is not None:
-            dispatch_op_exit(token)
+            _dispatch_op_exit_fn(token)
 
     _fast_bump_versions(schema_obj, args, impl_kwargs)
 
     # -- Forward AD (JVP) --
-    _handle_forward_ad(forward_ad, alias_name, keyset, key,
+    _handle_forward_ad(_forward_ad_mod, alias_name, keyset, key,
                        tensors, args, impl_kwargs, result)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
+
+def cy_dispatch_full(str name, object dispatch_device, *args, **kwargs):
+    """Full dispatch — single Python entry point replacing cy_dispatch.
+
+    Builds keyset from scratch, extracts tensors, and runs the full dispatch
+    pipeline in one C-level call chain.
+    """
+    _ensure_imports()
+    _ensure_dispatch_helpers()
+    return _dispatch_core(name, dispatch_device, args, kwargs, None, None)
+
+
+def cy_dispatch_with_keyset_fast(str name, object keyset, object dispatch_device,
+                                  *args, **kwargs):
+    """Thin wrapper for redispatch callers — delegates to _dispatch_core.
+
+    The keyset is pre-built by the caller; _dispatch_core applies TLS masks
+    and skips keyset construction.
+    """
+    _ensure_imports()
+    _ensure_dispatch_helpers()
+    return _dispatch_core(name, dispatch_device, args, kwargs, keyset, None)
 
 
 # ---------------------------------------------------------------------------
