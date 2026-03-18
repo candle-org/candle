@@ -189,6 +189,68 @@ cdef unsigned int _KEY_PrivateUse2 = 0
 # Cached _strip_autograd_keys function
 cdef object _strip_autograd_keys_fn = None
 
+# Cached dispatch helper functions (lazy-loaded in _ensure_dispatch_helpers)
+cdef object _apply_tls_masks_fn = None
+cdef object _current_pipeline_fn = None
+cdef object _should_functionalize_fn = None
+cdef object _functionalize_op_fn = None
+cdef object _is_autocast_enabled_fn = None
+cdef object _apply_autocast_policy_fn = None
+cdef object _forward_ad_mod = None
+cdef object _is_profiler_enabled_fn = None
+cdef object _dispatch_op_enter_fn = None
+cdef object _dispatch_op_exit_fn = None
+cdef object _infer_dispatch_device_fn = None
+cdef object _wrap_dispatch_error_fn = None
+cdef object _check_inplace_targets_fn = None
+cdef object _PendingOp_cls = None
+cdef object _pending_from_meta_fn = None
+cdef object _dispatch_torch_dispatch_fn = None
+cdef object _redispatch_fn = None
+
+cdef inline void _ensure_dispatch_helpers():
+    global _apply_tls_masks_fn, _current_pipeline_fn
+    global _should_functionalize_fn, _functionalize_op_fn
+    global _is_autocast_enabled_fn, _apply_autocast_policy_fn
+    global _forward_ad_mod, _is_profiler_enabled_fn
+    global _dispatch_op_enter_fn, _dispatch_op_exit_fn
+    global _infer_dispatch_device_fn, _wrap_dispatch_error_fn
+    global _check_inplace_targets_fn, _PendingOp_cls
+    global _pending_from_meta_fn, _dispatch_torch_dispatch_fn
+    global _redispatch_fn
+    if _apply_tls_masks_fn is not None:
+        return
+    from candle._dispatch.keys import apply_tls_masks
+    from candle._dispatch.pipeline import current_pipeline
+    from candle._dispatch.functionalize import should_functionalize, functionalize_op
+    from candle.amp.state import is_autocast_enabled
+    from candle.amp.policy import apply_autocast_policy
+    from candle.autograd import forward_ad
+    from candle.profiler.profiler import is_profiler_enabled, dispatch_op_enter, dispatch_op_exit
+    from candle._dispatch.dispatcher import (
+        _infer_dispatch_device, _wrap_dispatch_error,
+        _check_inplace_targets, _PendingOp,
+        _pending_from_meta, _dispatch_torch_dispatch,
+        redispatch,
+    )
+    _apply_tls_masks_fn = apply_tls_masks
+    _current_pipeline_fn = current_pipeline
+    _should_functionalize_fn = should_functionalize
+    _functionalize_op_fn = functionalize_op
+    _is_autocast_enabled_fn = is_autocast_enabled
+    _apply_autocast_policy_fn = apply_autocast_policy
+    _forward_ad_mod = forward_ad
+    _is_profiler_enabled_fn = is_profiler_enabled
+    _dispatch_op_enter_fn = dispatch_op_enter
+    _dispatch_op_exit_fn = dispatch_op_exit
+    _infer_dispatch_device_fn = _infer_dispatch_device
+    _wrap_dispatch_error_fn = _wrap_dispatch_error
+    _check_inplace_targets_fn = _check_inplace_targets
+    _PendingOp_cls = _PendingOp
+    _pending_from_meta_fn = _pending_from_meta
+    _dispatch_torch_dispatch_fn = _dispatch_torch_dispatch
+    _redispatch_fn = redispatch
+
 cdef inline void _ensure_imports():
     global _registry, _DispatchKey, _DISPATCH_KEY_PRIORITY
     global _AUTOGRAD_MASK
@@ -348,38 +410,21 @@ def cy_dispatch_with_keyset_fast(str name, object keyset, object dispatch_device
     forward AD, __torch_dispatch__.
     """
     _ensure_imports()
-
-    # -- lazy imports for complex paths (only loaded when needed) --
-    from candle._dispatch.keys import apply_tls_masks
-    from candle._dispatch.pipeline import current_pipeline
-    from candle._dispatch.functionalize import (
-        is_functionalize_enabled as _is_func_enabled,
-        should_functionalize, functionalize_op,
-    )
-    from candle.amp.state import is_autocast_enabled
-    from candle.amp.policy import apply_autocast_policy
-    from candle.autograd import forward_ad
-    from candle.profiler.profiler import is_profiler_enabled, dispatch_op_enter, dispatch_op_exit
-    from candle._dispatch.dispatcher import (
-        _infer_dispatch_device, _wrap_dispatch_error,
-        _check_inplace_targets, _PendingOp, _FunctionalizePendingOp,
-        _pending_from_meta, _dispatch_torch_dispatch,
-        redispatch,
-    )
+    _ensure_dispatch_helpers()
 
     cdef list tensors = _fast_extract_tensors(args, kwargs)
     _fast_validate_devices(tensors)
 
-    keyset = apply_tls_masks(keyset)
-    pipe = current_pipeline()
-    dispatch_device = _infer_dispatch_device(dispatch_device, tensors, keyset)
+    keyset = _apply_tls_masks_fn(keyset)
+    pipe = _current_pipeline_fn()
+    dispatch_device = _infer_dispatch_device_fn(dispatch_device, tensors, keyset)
 
     cdef str alias_name = name
     try:
         name = _registry.resolve(name)
         entry = _registry.get(name)
     except Exception as exc:
-        raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
+        raise _wrap_dispatch_error_fn(exc, alias_name, dispatch_device) from exc
 
     # -- Schema validation --
     cdef object schema_obj = entry.schema_obj
@@ -387,19 +432,19 @@ def cy_dispatch_with_keyset_fast(str name, object keyset, object dispatch_device
         schema_obj.bind(args, kwargs, op_name=alias_name,
                         error_overrides=entry.error_overrides)
     if schema_obj is not None and keyset.has(_DispatchKey.ADInplaceOrView):
-        _check_inplace_targets(schema_obj, args, kwargs)
+        _check_inplace_targets_fn(schema_obj, args, kwargs)
 
     # -- Functionalize --
-    if keyset.has(_DispatchKey.Functionalize) and should_functionalize(entry):
+    if keyset.has(_DispatchKey.Functionalize) and _should_functionalize_fn(entry):
         if pipe is not None and keyset.has(_DispatchKey.Pipeline):
-            return functionalize_op(name, alias_name, entry, keyset, args, kwargs,
-                                    redispatch, pipeline=pipe, dispatch_device=dispatch_device)
-        return functionalize_op(name, alias_name, entry, keyset, args, kwargs,
-                                redispatch, dispatch_device=dispatch_device)
+            return _functionalize_op_fn(name, alias_name, entry, keyset, args, kwargs,
+                                    _redispatch_fn, pipeline=pipe, dispatch_device=dispatch_device)
+        return _functionalize_op_fn(name, alias_name, entry, keyset, args, kwargs,
+                                _redispatch_fn, dispatch_device=dispatch_device)
 
     # -- __torch_dispatch__ --
     if keyset.has(_DispatchKey.Python):
-        result = _dispatch_torch_dispatch(alias_name, tensors, args, kwargs)
+        result = _dispatch_torch_dispatch_fn(alias_name, tensors, args, kwargs)
         if result is not NotImplemented:
             return result
 
@@ -408,8 +453,8 @@ def cy_dispatch_with_keyset_fast(str name, object keyset, object dispatch_device
         device_type = getattr(dispatch_device, "type", dispatch_device)
         if device_type is None and tensors:
             device_type = getattr(tensors[0].device, "type", None)
-        casted_args, casted_kwargs = apply_autocast_policy(alias_name, args, kwargs, device_type)
-        return redispatch(alias_name, keyset.without(_DispatchKey.Autocast),
+        casted_args, casted_kwargs = _apply_autocast_policy_fn(alias_name, args, kwargs, device_type)
+        return _redispatch_fn(alias_name, keyset.without(_DispatchKey.Autocast),
                           *casted_args, **casted_kwargs)
 
     # -- Pipeline deferred execution --
@@ -417,14 +462,14 @@ def cy_dispatch_with_keyset_fast(str name, object keyset, object dispatch_device
         if not pipe.should_defer_next():
             return _run_kernel_fast(entry, keyset, alias_name, dispatch_device,
                                     schema_obj, tensors, args, kwargs,
-                                    forward_ad, is_profiler_enabled,
-                                    dispatch_op_enter, dispatch_op_exit)
+                                    _forward_ad_mod, _is_profiler_enabled_fn,
+                                    _dispatch_op_enter_fn, _dispatch_op_exit_fn)
         meta = entry.kernels.get(_DispatchKey.Meta)
         if meta is None:
             raise RuntimeError(f"pipeline requires meta kernel for op {name}")
         meta_kwargs = _fast_prepare_kwargs(meta, kwargs, dispatch_device)
         spec = meta(*args, **meta_kwargs)
-        out = _pending_from_meta(spec, dispatch_device)
+        out = _pending_from_meta_fn(spec, dispatch_device)
         if isinstance(out, (tuple, list)):
             for item in out:
                 item._pending = True
@@ -436,7 +481,7 @@ def cy_dispatch_with_keyset_fast(str name, object keyset, object dispatch_device
             raise RuntimeError(f"pipeline requires backend kernel for op {name}")
         impl_kwargs = _fast_prepare_kwargs(impl, kwargs, dispatch_device)
         pipe.record(
-            _PendingOp(impl, args, impl_kwargs, out,
+            _PendingOp_cls(impl, args, impl_kwargs, out,
                        keyset.without(_DispatchKey.Pipeline), impl_key,
                        schema_obj=schema_obj, op_name=alias_name),
             pending=out,
@@ -448,8 +493,8 @@ def cy_dispatch_with_keyset_fast(str name, object keyset, object dispatch_device
 
     return _run_kernel_fast(entry, keyset, alias_name, dispatch_device,
                             schema_obj, tensors, args, kwargs,
-                            forward_ad, is_profiler_enabled,
-                            dispatch_op_enter, dispatch_op_exit)
+                            _forward_ad_mod, _is_profiler_enabled_fn,
+                            _dispatch_op_enter_fn, _dispatch_op_exit_fn)
 
 
 # ---------------------------------------------------------------------------
@@ -471,8 +516,6 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
       3. Apply autograd_post to attach grad_fn
     This eliminates the entire second dispatch pass.
     """
-    from candle._dispatch.dispatcher import _wrap_dispatch_error
-
     # All cdef declarations must be at function top
     cdef unsigned int m
     cdef bint has_autograd
@@ -513,7 +556,7 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
             try:
                 result = backend_kernel(*args, **impl_kwargs)
             except Exception as exc:
-                raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
+                raise _wrap_dispatch_error_fn(exc, alias_name, dispatch_device) from exc
             finally:
                 _fast_pop()
                 if token is not None:
@@ -538,7 +581,7 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
         exc = RuntimeError(
             f"could not find kernel for op {alias_name} with keys {key_names}"
         )
-        raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
+        raise _wrap_dispatch_error_fn(exc, alias_name, dispatch_device) from exc
 
     impl_kwargs = _fast_prepare_kwargs(kernel, kwargs, dispatch_device)
 
@@ -550,7 +593,7 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
     try:
         result = kernel(*args, **impl_kwargs)
     except Exception as exc:
-        raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
+        raise _wrap_dispatch_error_fn(exc, alias_name, dispatch_device) from exc
     finally:
         _fast_pop()
         if token is not None:
