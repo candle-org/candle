@@ -59,17 +59,21 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
     fwd_args = ", ".join([f'"{op_name}"', "raw_keyset"] + [a.name for a in info.args])
     lines.append(f"    result = redispatch({fwd_args}, **_kwargs)")
 
-    # Check requires_grad
+    # Check requires_grad — Tensor[] needs iteration
     if len(diff_inputs) == 1:
         a = diff_inputs[0]
-        if a.is_optional_tensor:
+        if a.is_tensor_list:
+            rg_check = f"any(getattr(t, 'requires_grad', False) for t in {a.name})"
+        elif a.is_optional_tensor:
             rg_check = f"({a.name} is not None and {a.name}.requires_grad)"
         else:
             rg_check = f"{a.name}.requires_grad"
     elif len(diff_inputs) > 1:
         parts = []
         for a in diff_inputs:
-            if a.is_optional_tensor:
+            if a.is_tensor_list:
+                parts.append(f"any(getattr(t, 'requires_grad', False) for t in {a.name})")
+            elif a.is_optional_tensor:
                 parts.append(f"({a.name} is not None and getattr({a.name}, 'requires_grad', False))")
             else:
                 parts.append(f"getattr({a.name}, 'requires_grad', False)")
@@ -81,22 +85,35 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
 
     lines.append(f"    if GradMode.enabled and ({rg_check}):")
 
-    # Build inputs list for Node (all tensor args that could need grad)
-    input_names = [a.name for a in diff_inputs]
-    # Filter out optional None
-    if any(a.is_optional_tensor for a in diff_inputs):
+    # Build inputs list for Node — Tensor[] needs unpacking
+    has_tensor_list = any(a.is_tensor_list for a in diff_inputs)
+    if has_tensor_list:
+        # Unpack tensor lists into the inputs tuple
+        unpack_parts = []
+        for a in diff_inputs:
+            if a.is_tensor_list:
+                unpack_parts.append(f"*{a.name}")
+            else:
+                unpack_parts.append(a.name)
+        inputs_expr = f"({', '.join(unpack_parts)},)"
+    elif any(a.is_optional_tensor for a in diff_inputs):
+        input_names = [a.name for a in diff_inputs]
         lines.append(f"        _inputs = [x for x in ({', '.join(input_names)},) if x is not None]")
         inputs_expr = "_inputs"
     else:
+        input_names = [a.name for a in diff_inputs]
         inputs_expr = f"({', '.join(input_names)},)"
 
     lines.append(f"        grad_fn = _F.{cls_name}({inputs_expr}, raw_keyset=raw_keyset, active_keyset=active_keyset)")
     lines.append(f"        annotate_node_creation(grad_fn)")
 
-    # Save tensors — use safe param names for the keyword args
+    # Save tensors — skip Tensor[] args (they're accessed via Node.inputs)
     if saved_inputs or saved_outputs:
         save_kw = []
         for name in saved_inputs:
+            arg = next((a for a in info.args if a.name == name), None)
+            if arg and arg.is_tensor_list:
+                continue  # Tensor[] saved via Node.inputs, not _save()
             save_kw.append(f"{_safe_param(name)}={name}")
         for name in saved_outputs:
             # Multi-output: result0 -> result[0], result1 -> result[1], etc.
@@ -107,7 +124,8 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
                 save_kw.append(f"{_safe_param(name)}=result[{idx}]")
             else:
                 save_kw.append(f"{_safe_param(name)}=result")
-        lines.append(f"        grad_fn._save({', '.join(save_kw)})")
+        if save_kw:
+            lines.append(f"        grad_fn._save({', '.join(save_kw)})")
 
     # Save non-tensor args
     for arg in non_tensor_args:

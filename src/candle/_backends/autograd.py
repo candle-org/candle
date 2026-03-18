@@ -7213,6 +7213,57 @@ def _nanquantile_backward(grad, _a, saved_a, keyset, args, kwargs):
     return _quantile_backward(grad, _a, saved_a, keyset, args, kwargs)
 
 
+def _block_diag_backward(grad, tensors, keyset):
+    """Standalone backward for block_diag: slice grad into diagonal blocks."""
+    with _grad_context(keyset):
+        grads = []
+        row_offset = 0
+        col_offset = 0
+        for t in tensors:
+            if t.ndim == 0:
+                g = redispatch("getitem", keyset, grad, (row_offset, col_offset))
+                grads.append(g if getattr(t, "requires_grad", False) else None)
+                row_offset += 1
+                col_offset += 1
+            elif t.ndim == 1:
+                g = redispatch("narrow", keyset, grad, 0, row_offset, 1)
+                g = redispatch("narrow", keyset, g, 1, col_offset, t.shape[0])
+                g = redispatch("squeeze", keyset, g, 0)
+                grads.append(g if getattr(t, "requires_grad", False) else None)
+                row_offset += 1
+                col_offset += t.shape[0]
+            else:
+                rows, cols = t.shape[-2], t.shape[-1]
+                g = redispatch("narrow", keyset, grad, -2, row_offset, rows)
+                g = redispatch("narrow", keyset, g, -1, col_offset, cols)
+                grads.append(g if getattr(t, "requires_grad", False) else None)
+                row_offset += rows
+                col_offset += cols
+        return tuple(grads)
+
+
+def _pad_sequence_backward(grad, sequences, keyset, batch_first, padding_value, padding_side):
+    """Standalone backward for pad_sequence: extract unpadded regions from grad."""
+    with _grad_context(keyset):
+        lengths = [s.shape[0] for s in sequences]
+        grads = []
+        for i, seq in enumerate(sequences):
+            if not getattr(seq, "requires_grad", False):
+                grads.append(None)
+                continue
+            length = lengths[i]
+            if batch_first:
+                g = redispatch("narrow", keyset, grad, 0, i, 1)
+                g = redispatch("squeeze", keyset, g, 0)
+                g = redispatch("narrow", keyset, g, 0, 0, length)
+            else:
+                g = redispatch("narrow", keyset, grad, 0, 0, length)
+                g = redispatch("narrow", keyset, g, 1, i, 1)
+                g = redispatch("squeeze", keyset, g, 1)
+            grads.append(g)
+        return tuple(grads)
+
+
 def _autograd_block_diag(name):
     """Autograd wrapper for block_diag: slice grad into diagonal blocks."""
     def wrapper(tensors):
@@ -7334,16 +7385,6 @@ for _entry in (
     ("as_strided_scatter", lambda: _autograd_binary_args("as_strided_scatter", _as_strided_scatter_backward, save_inputs=False), False),
     ("setitem", lambda: _autograd_setitem("setitem"), False),
     ("dropout", _autograd_dropout),
-    # Multi-input ops
-    ("cat", lambda: _autograd_multi_input("cat", _cat_backward, save_inputs=False)),
-    ("stack", lambda: _autograd_multi_input("stack", _stack_backward, save_inputs=False)),
-    ("hstack", lambda: _autograd_multi_input("hstack", _hstack_backward, save_inputs=False)),
-    ("vstack", lambda: _autograd_multi_input("vstack", _vstack_backward, save_inputs=False)),
-    ("row_stack", lambda: _autograd_multi_input("row_stack", _vstack_backward, save_inputs=False)),
-    ("dstack", lambda: _autograd_multi_input("dstack", _dstack_backward, save_inputs=False)),
-    ("column_stack", lambda: _autograd_multi_input("column_stack", _column_stack_backward, save_inputs=False)),
-    ("concat", lambda: _autograd_multi_input("concat", _cat_backward, save_inputs=False)),
-    ("concatenate", lambda: _autograd_multi_input("concatenate", _cat_backward, save_inputs=False)),
     # Multi-output ops
     ("split", lambda: _autograd_multi_output("split", _split_backward, save_input=False)),
     ("unbind", lambda: _autograd_multi_output("unbind", _unbind_backward, save_input=False)),
@@ -7369,8 +7410,6 @@ for _entry in (
     ("linalg_lstsq", lambda: _autograd_unary_args("linalg_lstsq", _linalg_lstsq_backward, save_input=False)),
     # Misc remaining ops
     ("nanmedian", lambda: _autograd_nanmedian("nanmedian")),
-    ("block_diag", lambda: _autograd_block_diag("block_diag")),
-    ("pad_sequence", lambda: _autograd_pad_sequence("pad_sequence")),
 ):
     if len(_entry) == 2:
         _name, _factory = _entry

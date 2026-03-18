@@ -3636,3 +3636,142 @@ def linalg_lu_solve_autograd(LU, pivots, B, left=True, adjoint=False, **_kwargs)
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
+
+
+def cat_autograd(tensors, dim=0, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("cat", raw_keyset, tensors, dim, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
+        grad_fn = _F.CatBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._dim = dim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def stack_autograd(tensors, dim=0, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("stack", raw_keyset, tensors, dim, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
+        grad_fn = _F.StackBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._dim = dim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def hstack_autograd(tensors, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("hstack", raw_keyset, tensors, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
+        grad_fn = _F.HstackBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def vstack_autograd(tensors, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("vstack", raw_keyset, tensors, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
+        grad_fn = _F.VstackBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def row_stack_autograd(tensors, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("row_stack", raw_keyset, tensors, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
+        grad_fn = _F.Row_stackBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def dstack_autograd(tensors, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("dstack", raw_keyset, tensors, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
+        grad_fn = _F.DstackBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def column_stack_autograd(tensors, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("column_stack", raw_keyset, tensors, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
+        grad_fn = _F.Column_stackBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def concat_autograd(tensors, dim=0, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("concat", raw_keyset, tensors, dim, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
+        grad_fn = _F.ConcatBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._dim = dim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def concatenate_autograd(tensors, dim=0, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("concatenate", raw_keyset, tensors, dim, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
+        grad_fn = _F.ConcatenateBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._dim = dim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def block_diag_autograd(tensors, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("block_diag", raw_keyset, tensors, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
+        grad_fn = _F.Block_diagBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def pad_sequence_autograd(sequences, batch_first=False, padding_value=0.0, padding_side="right", **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("pad_sequence", raw_keyset, sequences, batch_first, padding_value, padding_side, **_kwargs)
+    if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in sequences)):
+        grad_fn = _F.Pad_sequenceBackward0((*sequences,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._batch_first = batch_first
+        grad_fn._padding_value = padding_value
+        grad_fn._padding_side = padding_side
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result

@@ -1185,6 +1185,60 @@ def _cummin_backward_helper(grad, self_, result1, dim, keyset):
     return _cummin_backward(grad, self_, result1, keyset, (dim,), {})[0]
 
 
+# ---------------------------------------------------------------------------
+# Tensor[] backward helpers (called from generated formulas)
+# ---------------------------------------------------------------------------
+
+def _cat_backward_helper(grad, tensors, dim, keyset):
+    from .._backends.autograd import _cat_backward
+    return _cat_backward(grad, tensors, None, keyset, (dim,), {})
+
+
+def _stack_backward_helper(grad, tensors, dim, keyset):
+    from .._backends.autograd import _stack_backward
+    return _stack_backward(grad, tensors, None, keyset, (dim,), {})
+
+
+def _hstack_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _hstack_backward
+    return _hstack_backward(grad, tensors, None, keyset, (), {})
+
+
+def _vstack_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _vstack_backward
+    return _vstack_backward(grad, tensors, None, keyset, (), {})
+
+
+def _dstack_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _dstack_backward
+    return _dstack_backward(grad, tensors, None, keyset, (), {})
+
+
+def _column_stack_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _column_stack_backward
+    return _column_stack_backward(grad, tensors, None, keyset, (), {})
+
+
+def _concat_backward_helper(grad, tensors, dim, keyset):
+    from .._backends.autograd import _cat_backward
+    return _cat_backward(grad, tensors, None, keyset, (dim,), {})
+
+
+def _concatenate_backward_helper(grad, tensors, dim, keyset):
+    from .._backends.autograd import _cat_backward
+    return _cat_backward(grad, tensors, None, keyset, (dim,), {})
+
+
+def _block_diag_backward_helper(grad, tensors, keyset):
+    from .._backends.autograd import _block_diag_backward
+    return _block_diag_backward(grad, tensors, keyset)
+
+
+def _pad_sequence_backward_helper(grad, sequences, batch_first, padding_value, padding_side, keyset):
+    from .._backends.autograd import _pad_sequence_backward
+    return _pad_sequence_backward(grad, sequences, keyset, batch_first, padding_value, padding_side)
+
+
 class ExpBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         super().__init__(None, inputs, name='ExpBackward0')
@@ -8919,3 +8973,171 @@ class Linalg_lu_solveBackward0(Node):
         with _grad_context(keyset):
             grad_B = _linalg_lu_solve_backward_helper(grad, LU, pivots, B, left, adjoint, keyset)
         return (grad_B,)
+
+class CatBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='CatBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._dim = None
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        tensors = list(self.inputs)
+        dim = self._dim
+        with _grad_context(keyset):
+            grad_tensors = _cat_backward_helper(grad, tensors, dim, keyset)
+        return grad_tensors
+
+class StackBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='StackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._dim = None
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        tensors = list(self.inputs)
+        dim = self._dim
+        with _grad_context(keyset):
+            grad_tensors = _stack_backward_helper(grad, tensors, dim, keyset)
+        return grad_tensors
+
+class HstackBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='HstackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        tensors = list(self.inputs)
+        with _grad_context(keyset):
+            grad_tensors = _hstack_backward_helper(grad, tensors, keyset)
+        return grad_tensors
+
+class VstackBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='VstackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        tensors = list(self.inputs)
+        with _grad_context(keyset):
+            grad_tensors = _vstack_backward_helper(grad, tensors, keyset)
+        return grad_tensors
+
+class Row_stackBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='Row_stackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        tensors = list(self.inputs)
+        with _grad_context(keyset):
+            grad_tensors = _vstack_backward_helper(grad, tensors, keyset)
+        return grad_tensors
+
+class DstackBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='DstackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        tensors = list(self.inputs)
+        with _grad_context(keyset):
+            grad_tensors = _dstack_backward_helper(grad, tensors, keyset)
+        return grad_tensors
+
+class Column_stackBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='Column_stackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        tensors = list(self.inputs)
+        with _grad_context(keyset):
+            grad_tensors = _column_stack_backward_helper(grad, tensors, keyset)
+        return grad_tensors
+
+class ConcatBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='ConcatBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._dim = None
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        tensors = list(self.inputs)
+        dim = self._dim
+        with _grad_context(keyset):
+            grad_tensors = _concat_backward_helper(grad, tensors, dim, keyset)
+        return grad_tensors
+
+class ConcatenateBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='ConcatenateBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._dim = None
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        tensors = list(self.inputs)
+        dim = self._dim
+        with _grad_context(keyset):
+            grad_tensors = _concatenate_backward_helper(grad, tensors, dim, keyset)
+        return grad_tensors
+
+class Block_diagBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='Block_diagBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        tensors = list(self.inputs)
+        with _grad_context(keyset):
+            grad_tensors = _block_diag_backward_helper(grad, tensors, keyset)
+        return grad_tensors
+
+class Pad_sequenceBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='Pad_sequenceBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._batch_first = None
+        self._padding_value = None
+        self._padding_side = None
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        sequences = list(self.inputs)
+        batch_first = self._batch_first
+        padding_value = self._padding_value
+        padding_side = self._padding_side
+        with _grad_context(keyset):
+            grad_sequences = _pad_sequence_backward_helper(grad, sequences, batch_first, padding_value, padding_side, keyset)
+        return grad_sequences

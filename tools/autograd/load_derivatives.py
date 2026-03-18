@@ -123,7 +123,7 @@ def _analyze_formula(
     Only tensor arguments go into saved_inputs (non-tensor args are stored
     separately as plain attributes on the Node).
     """
-    tensor_arg_names = {a.name for a in args if a.is_tensor or a.is_optional_tensor}
+    tensor_arg_names = {a.name for a in args if a.is_tensor or a.is_optional_tensor or a.is_tensor_list}
     identifiers = set(_IDENT_RE.findall(formula))
 
     saved_inputs = []
