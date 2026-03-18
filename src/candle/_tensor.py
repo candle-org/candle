@@ -169,12 +169,13 @@ class Tensor(_TensorBase):
         if dtype is not None:
             self._set_dtype_from_storage(dtype)
 
+    _DEVICE_MAP = {"cpu": 0, "npu": 1, "cuda": 2, "mps": 3, "meta": 4}
+
     def _set_device_from_storage(self, dev):
         """Cache device from storage into TensorImpl fields."""
         self._device_obj = dev
         dt = getattr(dev, "type", str(dev))
-        _MAP = {"cpu": 0, "npu": 1, "cuda": 2, "mps": 3, "meta": 4}
-        self._device_type = _MAP.get(dt, -1)
+        self._device_type = Tensor._DEVICE_MAP.get(dt, -1)
         idx = getattr(dev, "index", None)
         self._device_index = idx if idx is not None else -1
 

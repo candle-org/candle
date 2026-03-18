@@ -209,6 +209,9 @@ cdef object _pending_from_meta_fn = None
 cdef object _dispatch_torch_dispatch_fn = None
 cdef object _redispatch_fn = None
 
+# Cached TLS state reference for fast apply_tls_masks
+cdef object _tls_state_fn = None
+
 cdef inline void _ensure_dispatch_helpers():
     global _apply_tls_masks_fn, _current_pipeline_fn
     global _should_functionalize_fn, _functionalize_op_fn
@@ -219,6 +222,7 @@ cdef inline void _ensure_dispatch_helpers():
     global _check_inplace_targets_fn, _PendingOp_cls
     global _pending_from_meta_fn, _dispatch_torch_dispatch_fn
     global _redispatch_fn
+    global _tls_state_fn
     if _apply_tls_masks_fn is not None:
         return
     from candle._dispatch.keys import apply_tls_masks
@@ -251,6 +255,8 @@ cdef inline void _ensure_dispatch_helpers():
     _pending_from_meta_fn = _pending_from_meta
     _dispatch_torch_dispatch_fn = _dispatch_torch_dispatch
     _redispatch_fn = redispatch
+    from candle._dispatch.keys import _tls_state
+    _tls_state_fn = _tls_state
 
 cdef inline void _ensure_imports():
     global _registry, _DispatchKey, _DISPATCH_KEY_PRIORITY
