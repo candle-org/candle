@@ -244,16 +244,32 @@ def logical_xor(a, b):
 # ---------------------------------------------------------------------------
 
 def bitwise_and(a, b):
-    raise NotImplementedError("MPS bitwise_and: Metal shader not yet implemented")
+    if _can_use_gpu(a):
+        return _dispatch_binary_gpu(a, b, "bitwise_and")
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("bitwise_and", a)
 
 def bitwise_or(a, b):
-    raise NotImplementedError("MPS bitwise_or: Metal shader not yet implemented")
+    if _can_use_gpu(a):
+        return _dispatch_binary_gpu(a, b, "bitwise_or")
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("bitwise_or", a)
 
 def bitwise_xor(a, b):
-    raise NotImplementedError("MPS bitwise_xor: Metal shader not yet implemented")
+    if _can_use_gpu(a):
+        return _dispatch_binary_gpu(a, b, "bitwise_xor")
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("bitwise_xor", a)
 
 def bitwise_not(a):
-    raise NotImplementedError("MPS bitwise_not: Metal shader not yet implemented")
+    if _can_use_gpu(a):
+        return _dispatch_unary_gpu(a, "bitwise_not")
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("bitwise_not", a)
 
 
 # ---------------------------------------------------------------------------
