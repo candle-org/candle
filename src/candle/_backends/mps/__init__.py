@@ -242,6 +242,7 @@ from .ops import (
     diagonal,
     # New search ops
     unique,
+    unique_consecutive,
     searchsorted,
     kthvalue,
     median,
@@ -573,6 +574,7 @@ registry.register("diagonal", "mps", diagonal, meta=meta_infer.infer_diagonal)
 # Search / sort ops
 # ---------------------------------------------------------------------------
 registry.register("unique", "mps", unique)
+registry.register("unique_consecutive", "mps", unique_consecutive)
 registry.register("searchsorted", "mps", searchsorted)
 registry.register("kthvalue", "mps", kthvalue)
 registry.register("median", "mps", median)
@@ -847,12 +849,14 @@ from .ops import (
     upsample_nearest2d,
     upsample_bilinear2d,
     upsample_bicubic2d,
+    upsample_trilinear3d,
 )
 registry.register("upsample_nearest1d", "mps", upsample_nearest1d)
 registry.register("upsample_linear1d", "mps", upsample_linear1d)
 registry.register("upsample_nearest2d", "mps", upsample_nearest2d)
 registry.register("upsample_bilinear2d", "mps", upsample_bilinear2d)
 registry.register("upsample_bicubic2d", "mps", upsample_bicubic2d)
+registry.register("upsample_trilinear3d", "mps", upsample_trilinear3d)
 
 # ---------------------------------------------------------------------------
 # 1D pooling

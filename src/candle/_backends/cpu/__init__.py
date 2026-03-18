@@ -252,6 +252,7 @@ from .ops import (
     diagonal,
     # New search ops
     unique,
+    unique_consecutive,
     searchsorted,
     kthvalue,
     median,
@@ -552,6 +553,7 @@ registry.register("diagonal", "cpu", diagonal, meta=meta_infer.infer_diagonal)
 
 # Search ops (no meta — output shape is data-dependent or returns tuples)
 registry.register("unique", "cpu", unique)
+registry.register("unique_consecutive", "cpu", unique_consecutive)
 registry.register("searchsorted", "cpu", searchsorted)
 registry.register("kthvalue", "cpu", kthvalue)
 registry.register("median", "cpu", median)
@@ -823,12 +825,14 @@ from .ops import (
     upsample_nearest2d,
     upsample_bilinear2d,
     upsample_bicubic2d,
+    upsample_trilinear3d,
 )
 registry.register("upsample_nearest1d", "cpu", upsample_nearest1d)
 registry.register("upsample_linear1d", "cpu", upsample_linear1d)
 registry.register("upsample_nearest2d", "cpu", upsample_nearest2d)
 registry.register("upsample_bilinear2d", "cpu", upsample_bilinear2d)
 registry.register("upsample_bicubic2d", "cpu", upsample_bicubic2d)
+registry.register("upsample_trilinear3d", "cpu", upsample_trilinear3d)
 
 # 1D pooling ops
 from .ops import max_pool1d, avg_pool1d, adaptive_avg_pool1d, max_unpool1d, max_unpool2d

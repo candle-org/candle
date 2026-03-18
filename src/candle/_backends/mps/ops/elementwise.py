@@ -23,7 +23,47 @@ from .math import sub, add, mul, div
 from .comparison import gt, lt, logical_not
 
 
+def _broadcast_contiguous(t, out_shape):
+    """Broadcast tensor to out_shape and return a contiguous copy via unified memory."""
+    arr = _to_numpy(t)
+    arr = np.broadcast_to(arr, out_shape)
+    arr = np.ascontiguousarray(arr)
+    return _from_numpy(arr, t.dtype, t.device)
+
+
 def where(cond, x, y):
+    # Broadcast cond, x, y to the same shape if needed
+    if isinstance(x, Tensor) and isinstance(y, Tensor) and isinstance(cond, Tensor):
+        shapes = [cond.shape, x.shape, y.shape]
+        if not (shapes[0] == shapes[1] == shapes[2]):
+            max_ndim = max(len(s) for s in shapes)
+            padded = [(1,) * (max_ndim - len(s)) + tuple(s) for s in shapes]
+            out_shape = []
+            for dims in zip(*padded):
+                m = max(dims)
+                for d in dims:
+                    if d != 1 and d != m:
+                        raise RuntimeError(
+                            f"where: shape mismatch, cannot broadcast {shapes}")
+                out_shape.append(m)
+            out_shape = tuple(out_shape)
+            if tuple(cond.shape) != out_shape:
+                cond = _broadcast_contiguous(cond, out_shape)
+            if tuple(x.shape) != out_shape:
+                x = _broadcast_contiguous(x, out_shape)
+            if tuple(y.shape) != out_shape:
+                y = _broadcast_contiguous(y, out_shape)
+    elif isinstance(x, Tensor) and not isinstance(y, Tensor) and isinstance(cond, Tensor):
+        if tuple(cond.shape) != tuple(x.shape):
+            max_ndim = max(len(cond.shape), len(x.shape))
+            pc = (1,) * (max_ndim - len(cond.shape)) + tuple(cond.shape)
+            px = (1,) * (max_ndim - len(x.shape)) + tuple(x.shape)
+            out_shape = tuple(max(a, b) for a, b in zip(pc, px))
+            if tuple(cond.shape) != out_shape:
+                cond = _broadcast_contiguous(cond, out_shape)
+            if tuple(x.shape) != out_shape:
+                x = _broadcast_contiguous(x, out_shape)
+
     # GPU path: both cond and x are GPU+contiguous
     if (isinstance(x, Tensor) and _can_use_gpu(x) and x.is_contiguous()
             and isinstance(cond, Tensor) and _can_use_gpu(cond) and cond.is_contiguous()):
