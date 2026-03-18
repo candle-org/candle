@@ -84,6 +84,18 @@ cdef class ReduceOp:
     def __repr__(self):
         return f"<ReduceOp.{RedOpType(self._op).name}: {self._op}>"
 
+    def __getstate__(self):
+        return self._op
+
+    def __setstate__(self, state):
+        self._op = int(state)
+
+    def __copy__(self):
+        return ReduceOp(self._op)
+
+    def __deepcopy__(self, memo):
+        return ReduceOp(self._op)
+
 
 # Deprecated alias matching PyTorch
 class reduce_op:
@@ -91,6 +103,20 @@ class reduce_op:
     PRODUCT = ReduceOp.PRODUCT
     MAX = ReduceOp.MAX
     MIN = ReduceOp.MIN
+
+
+# ---------------------------------------------------------------------------
+# BackendType enum
+# ---------------------------------------------------------------------------
+
+class BackendType(IntEnum):
+    UNDEFINED = 0
+    GLOO = 1
+    NCCL = 2
+    XCCL = 3
+    UCC = 4
+    MPI = 5
+    CUSTOM = 6
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +266,19 @@ cdef class Work:
 
     def synchronize(self):
         self.wait()
+
+    def block_current_stream(self):
+        """Block the currently active stream on this operation.
+
+        For GPU/NPU collectives this is equivalent to synchronize().
+        """
+        if self._stream is not None:
+            try:
+                from .._backends.npu import runtime as npu_runtime
+                dev = self._device_id if self._device_id is not None else 0
+                npu_runtime.get_runtime(dev).synchronize_stream(self._stream)
+            except ImportError:
+                pass
 
     def get_future(self):
         from ..futures import Future
@@ -783,6 +822,136 @@ cdef class HashStore(Store):
         pass
 
 
+# --- FileStore ---
+
+import os as _os
+import fcntl as _fcntl
+
+cdef class FileStore(Store):
+    """File-system-based distributed store.
+
+    Uses a directory on a shared filesystem for coordination.
+    Each key is stored as a separate file.
+    """
+    # cdef fields declared in _c10d.pxd
+
+    def __init__(self, str file_name, int world_size=-1):
+        self._path = file_name
+        self._world_size = world_size
+        _os.makedirs(file_name, exist_ok=True)
+
+    cdef str _key_path(self, str key):
+        # Sanitize key: replace / with _
+        return _os.path.join(self._path, key.replace("/", "_"))
+
+    cpdef set(self, str key, bytes value):
+        cdef str path = self._key_path(key)
+        with open(path, "wb") as f:
+            _fcntl.flock(f, _fcntl.LOCK_EX)
+            f.write(value)
+
+    cpdef bytes get(self, str key):
+        cdef str path = self._key_path(key)
+        cdef double deadline = time.monotonic() + _DEFAULT_TIMEOUT
+        while True:
+            if _os.path.exists(path):
+                with open(path, "rb") as f:
+                    _fcntl.flock(f, _fcntl.LOCK_SH)
+                    return f.read()
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"FileStore: GET '{key}' timed out")
+            time.sleep(0.01)
+
+    cpdef int add(self, str key, int amount):
+        cdef str path = self._key_path(key)
+        cdef int old_val, new_val
+        # Use file locking for atomicity
+        fd = _os.open(path, _os.O_RDWR | _os.O_CREAT)
+        try:
+            f = _os.fdopen(fd, "r+b")
+            _fcntl.flock(f, _fcntl.LOCK_EX)
+            data = f.read()
+            old_val = 0
+            if len(data) >= 4:
+                old_val = struct.unpack("!i", data[:4])[0]
+            new_val = old_val + amount
+            f.seek(0)
+            f.write(struct.pack("!i", new_val))
+            f.truncate()
+            f.flush()
+            return new_val
+        finally:
+            try:
+                f.close()
+            except Exception:
+                _os.close(fd)
+
+    cpdef bint delete_key(self, str key):
+        cdef str path = self._key_path(key)
+        if _os.path.exists(path):
+            _os.remove(path)
+            return True
+        return False
+
+    cpdef int num_keys(self):
+        if not _os.path.isdir(self._path):
+            return 0
+        return len(_os.listdir(self._path))
+
+    cpdef bint check(self, list keys):
+        cdef str k
+        for k in keys:
+            if not _os.path.exists(self._key_path(k)):
+                return False
+        return True
+
+    cpdef bytes compare_set(self, str key, str expected, str desired):
+        cdef str path = self._key_path(key)
+        cdef bytes expected_b = expected.encode("utf-8")
+        cdef bytes desired_b = desired.encode("utf-8")
+        fd = _os.open(path, _os.O_RDWR | _os.O_CREAT)
+        try:
+            f = _os.fdopen(fd, "r+b")
+            _fcntl.flock(f, _fcntl.LOCK_EX)
+            current = f.read()
+            if current == expected_b:
+                f.seek(0)
+                f.write(desired_b)
+                f.truncate()
+                f.flush()
+                return desired_b
+            return current
+        finally:
+            try:
+                f.close()
+            except Exception:
+                _os.close(fd)
+
+    cpdef wait(self, list keys, timeout=None):
+        cdef double t = _to_seconds(timeout)
+        cdef double deadline = time.monotonic() + t
+        cdef str k
+        cdef bint all_present
+        while True:
+            all_present = True
+            for k in keys:
+                if not _os.path.exists(self._key_path(k)):
+                    all_present = False
+                    break
+            if all_present:
+                return
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"FileStore: WAIT timed out for keys {keys}")
+            time.sleep(0.01)
+
+    cpdef close(self):
+        pass
+
+    @property
+    def path(self):
+        return self._path
+
+
 # ---------------------------------------------------------------------------
 # ProcessGroup base class
 # ---------------------------------------------------------------------------
@@ -865,5 +1034,10 @@ cdef class ProcessGroup:
     def recv(self, tensors, int src, int tag=0):
         raise NotImplementedError(f"{type(self).__name__}.recv not implemented")
 
+    def recv_anysource(self, tensors, int tag=0):
+        raise NotImplementedError(f"{type(self).__name__}.recv_anysource not implemented")
+
     def barrier(self, opts=None):
         raise NotImplementedError(f"{type(self).__name__}.barrier not implemented")
+
+    BackendType = BackendType

@@ -131,6 +131,12 @@ cdef class HashStore(Store):
     cdef object _cond
 
 
+cdef class FileStore(Store):
+    cdef str _path
+    cdef int _world_size
+    cdef str _key_path(self, str key)
+
+
 # ---------------------------------------------------------------------------
 # ProcessGroup
 # ---------------------------------------------------------------------------
