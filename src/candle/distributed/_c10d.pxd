@@ -99,6 +99,11 @@ cdef class Work:
 cdef class Store:
     cpdef set(self, str key, bytes value)
     cpdef bytes get(self, str key)
+    cpdef int add(self, str key, int amount)
+    cpdef bint delete_key(self, str key)
+    cpdef int num_keys(self)
+    cpdef bint check(self, list keys)
+    cpdef bytes compare_set(self, str key, str expected, str desired)
     cpdef wait(self, list keys, timeout=*)
     cpdef close(self)
 

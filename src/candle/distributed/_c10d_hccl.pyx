@@ -241,7 +241,7 @@ cdef class ProcessGroupHCCL:
         _check(ret, "HcclBarrier")
         return self._make_work(stream)
 
-    def send(self, tensor, dst):
+    def send(self, tensor, dst, int tag=0):
         get_bindings, _, _, _, _, _, _, _, _check = self._load_bindings()
         bindings = get_bindings()
         stream = self._stream()
@@ -253,7 +253,7 @@ cdef class ProcessGroupHCCL:
         _check(ret, "HcclSend")
         return self._make_work(stream)
 
-    def recv(self, tensor, src):
+    def recv(self, tensor, src, int tag=0):
         get_bindings, _, _, _, _, _, _, _, _check = self._load_bindings()
         bindings = get_bindings()
         stream = self._stream()

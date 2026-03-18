@@ -502,14 +502,14 @@ cdef class ProcessGroupGloo:
 
         return self._make_work()
 
-    def send(self, tensor, dst):
+    def send(self, tensor, dst, int tag=0):
         """Point-to-point send."""
         arr = self._tensor_to_numpy(tensor)
         serialized = serialize_array(arr)
         self._transport.send_to(dst, serialized)
         return self._make_work()
 
-    def recv(self, tensor, src):
+    def recv(self, tensor, src, int tag=0):
         """Point-to-point receive."""
         data = self._transport.recv_from(src)
         arr = deserialize_array(data)
