@@ -10,6 +10,20 @@ from libc.stdint cimport int64_t
 
 DEF MAX_NDIM = 64
 
+# Dispatch key bit values (must match keys.py DispatchKey enum)
+DEF _DK_CPU = 1 << 15
+DEF _DK_NPU = 1 << 13
+DEF _DK_CUDA = 1 << 14
+DEF _DK_MPS = 1 << 21       # PrivateUse2
+DEF _DK_META = 1 << 12
+DEF _DK_AUTOGRAD_CPU = 1 << 6
+DEF _DK_AUTOGRAD_NPU = 1 << 7
+DEF _DK_AUTOGRAD_CUDA = 1 << 8
+DEF _DK_AUTOGRAD_MPS = 1 << 22  # PrivateUse3
+DEF _DK_AUTOGRAD_META = 1 << 10
+DEF _DK_ADINPLACEORVIEW = 1 << 4
+DEF _DK_AUTOGRAD = 1 << 11
+
 
 cdef class TensorImpl:
     """C-level base for Tensor. All hot fields are cdef-typed."""
@@ -55,6 +69,11 @@ cdef class TensorImpl:
     # -- cached version counter proxy --
     cdef public object _vc_proxy
 
+    # -- precomputed dispatch key bits (Step 4) --
+    # Bitmask of DispatchKey values based on device_type and requires_grad.
+    # Updated by _set_device_from_obj and requires_grad setter.
+    cdef public unsigned int _dispatch_keys
+
     # ---------------------------------------------------------------
     # Initialisation helpers
     # ---------------------------------------------------------------
@@ -78,7 +97,7 @@ cdef class TensorImpl:
         self._stride_tuple = stride
 
     cdef inline void _set_device_from_obj(self, object dev):
-        """Cache device object and extract type_code/index."""
+        """Cache device object and extract type_code/index, compute dispatch keys."""
         self._device_obj = dev
         cdef str dt = getattr(dev, "type", None)
         if dt is None:
@@ -97,6 +116,37 @@ cdef class TensorImpl:
             self._device_type = -1
         cdef object idx = getattr(dev, "index", None)
         self._device_index = <int>(idx if idx is not None else -1)
+        self._recompute_dispatch_keys()
+
+    cdef inline void _recompute_dispatch_keys(self):
+        """Recompute _dispatch_keys from _device_type and requires_grad."""
+        cdef unsigned int dk = 0
+        cdef int devt = self._device_type
+        if devt == 0:    # cpu
+            dk = _DK_CPU
+        elif devt == 1:  # npu
+            dk = _DK_NPU
+        elif devt == 2:  # cuda
+            dk = _DK_CUDA
+        elif devt == 3:  # mps
+            dk = _DK_MPS
+        elif devt == 4:  # meta
+            dk = _DK_META
+        else:
+            dk = _DK_CPU
+        if self.requires_grad:
+            dk |= _DK_ADINPLACEORVIEW | _DK_AUTOGRAD
+            if devt == 0:
+                dk |= _DK_AUTOGRAD_CPU
+            elif devt == 1:
+                dk |= _DK_AUTOGRAD_NPU
+            elif devt == 2:
+                dk |= _DK_AUTOGRAD_CUDA
+            elif devt == 3:
+                dk |= _DK_AUTOGRAD_MPS
+            elif devt == 4:
+                dk |= _DK_AUTOGRAD_META
+        self._dispatch_keys = dk
 
     cdef inline void _set_dtype_from_obj(self, object dtype):
         """Cache dtype object and extract code/itemsize."""

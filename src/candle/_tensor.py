@@ -161,6 +161,13 @@ class Tensor(_TensorBase):
         self._vc_proxy = None
         self._base = None
         self._view_meta = None
+        # Cache device/dtype from storage into TensorImpl C fields
+        dev = getattr(storage, "device", None)
+        if dev is not None:
+            self._set_device_from_storage(dev)
+        dtype = getattr(storage, "dtype", None)
+        if dtype is not None:
+            self._set_dtype_from_storage(dtype)
 
     def _set_device_from_storage(self, dev):
         """Cache device from storage into TensorImpl fields."""

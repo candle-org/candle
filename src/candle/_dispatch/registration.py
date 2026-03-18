@@ -58,4 +58,10 @@ def register_autograd_kernels(name, *, default=None, **kernels):
         registry.register_kernel(name, key, fn)
 
 
-__all__ = ["register_forward_kernels", "register_autograd_kernels"]
+def register_autograd_post_kernels(name, fn):
+    """Register an autograd post-processing kernel for single-pass dispatch."""
+    entry = registry._entry(name)
+    entry.autograd_post = fn
+
+
+__all__ = ["register_forward_kernels", "register_autograd_kernels", "register_autograd_post_kernels"]

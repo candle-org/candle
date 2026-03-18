@@ -10,6 +10,8 @@ def gen_variable_type(infos: list[DifferentiabilityInfo]) -> str:
     parts = [_HEADER]
     for info in infos:
         parts.append(_gen_one_wrapper(info))
+    for info in infos:
+        parts.append(_gen_one_post_wrapper(info))
     return "\n".join(parts) + "\n"
 
 
@@ -132,6 +134,120 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
         lines.append(f"        grad_fn._{arg.name} = {arg.name}")
 
     # Attach grad_fn
+    if info.is_multi_output:
+        out_diff = info.output_differentiability
+        for i in range(info.num_outputs):
+            if out_diff is None or (i < len(out_diff) and out_diff[i]):
+                lines.append(f"        result[{i}].grad_fn = grad_fn")
+                lines.append(f"        result[{i}].requires_grad = True")
+    else:
+        lines.append("        result.grad_fn = grad_fn")
+        lines.append("        result.requires_grad = True")
+    lines.append("    return result")
+
+    return "\n".join(lines)
+
+
+def _gen_one_post_wrapper(info: DifferentiabilityInfo) -> str:
+    """Generate a _post variant that only does autograd post-processing.
+
+    The _post variant receives the already-computed result and the original
+    args, plus raw_keyset and active_keyset.  It attaches grad_fn if needed
+    and returns the result.
+    """
+    cls_name = info.backward_name
+    op_name = info.op_name
+    func_name = f"{op_name}_autograd_post"
+
+    non_tensor_args = info.non_tensor_args
+    saved_inputs = info.all_saved_inputs
+    saved_outputs = info.all_saved_outputs
+    diff_inputs = info.differentiable_inputs
+
+    lines: list[str] = []
+
+    # Build function signature: result, <original params>, *, raw_keyset, active_keyset
+    params = []
+    for arg in info.args:
+        if arg.default is not None:
+            params.append(f"{arg.name}={arg.default}")
+        else:
+            params.append(arg.name)
+    sig = ", ".join(["result"] + params + ["*", "raw_keyset", "active_keyset"])
+    lines.append(f"\n\ndef {func_name}({sig}, **_kwargs):")
+
+    # No differentiable inputs — nothing to do, just return result
+    if not diff_inputs:
+        lines.append("    return result")
+        return "\n".join(lines)
+
+    # Check requires_grad — same logic as the regular wrapper
+    if len(diff_inputs) == 1:
+        a = diff_inputs[0]
+        if a.is_tensor_list:
+            rg_check = f"any(getattr(t, 'requires_grad', False) for t in {a.name})"
+        elif a.is_optional_tensor:
+            rg_check = f"({a.name} is not None and {a.name}.requires_grad)"
+        else:
+            rg_check = f"{a.name}.requires_grad"
+    else:
+        parts = []
+        for a in diff_inputs:
+            if a.is_tensor_list:
+                parts.append(f"any(getattr(t, 'requires_grad', False) for t in {a.name})")
+            elif a.is_optional_tensor:
+                parts.append(f"({a.name} is not None and getattr({a.name}, 'requires_grad', False))")
+            else:
+                parts.append(f"getattr({a.name}, 'requires_grad', False)")
+        rg_check = " or ".join(parts)
+
+    lines.append(f"    if GradMode.enabled and ({rg_check}):")
+
+    # Build inputs list for Node — same logic as regular wrapper
+    has_tensor_list = any(a.is_tensor_list for a in diff_inputs)
+    if has_tensor_list:
+        unpack_parts = []
+        for a in diff_inputs:
+            if a.is_tensor_list:
+                unpack_parts.append(f"*{a.name}")
+            else:
+                unpack_parts.append(a.name)
+        inputs_expr = f"({', '.join(unpack_parts)},)"
+    elif any(a.is_optional_tensor for a in diff_inputs):
+        input_names = [a.name for a in diff_inputs]
+        lines.append(f"        _inputs = [x for x in ({', '.join(input_names)},) if x is not None]")
+        inputs_expr = "_inputs"
+    else:
+        input_names = [a.name for a in diff_inputs]
+        inputs_expr = f"({', '.join(input_names)},)"
+
+    lines.append(f"        grad_fn = _F.{cls_name}({inputs_expr}, raw_keyset=raw_keyset, active_keyset=active_keyset)")
+    lines.append(f"        annotate_node_creation(grad_fn)")
+
+    # Save tensors
+    if saved_inputs or saved_outputs:
+        save_kw = []
+        for name in saved_inputs:
+            arg = next((a for a in info.args if a.name == name), None)
+            if arg and arg.is_tensor_list:
+                continue
+            save_kw.append(f"{_safe_param(name)}={name}")
+        for name in saved_outputs:
+            if name == "result":
+                save_kw.append(f"{_safe_param(name)}=result")
+            elif name.startswith("result") and name[6:].isdigit():
+                idx = name[6:]
+                save_kw.append(f"{_safe_param(name)}=result[{idx}]")
+            else:
+                save_kw.append(f"{_safe_param(name)}=result")
+        if save_kw:
+            lines.append(f"        grad_fn._save({', '.join(save_kw)})")
+
+    # Save non-tensor args
+    for arg in non_tensor_args:
+        lines.append(f"        grad_fn._{arg.name} = {arg.name}")
+
+    # Attach grad_fn to result(s)
     if info.is_multi_output:
         out_diff = info.output_differentiability
         for i in range(info.num_outputs):
