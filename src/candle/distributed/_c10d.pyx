@@ -133,6 +133,16 @@ cdef class AllreduceOptions:
         self.asyncOp = asyncOp
 
 
+cdef class AllreduceCoalescedOptions:
+    # cdef fields declared in _c10d.pxd
+
+    def __init__(self, reduceOp=int(RedOpType.SUM), double timeout=300.0,
+                 bint asyncOp=False):
+        self.reduceOp = reduceOp
+        self.timeout = timeout
+        self.asyncOp = asyncOp
+
+
 cdef class BroadcastOptions:
     # cdef fields declared in _c10d.pxd
 
@@ -226,6 +236,7 @@ cdef class Work:
         self._exception = None
         self._source_rank = source_rank
         self._on_wait = None
+        self._result = None
 
     cpdef bint wait(self, timeout=None):
         if timeout is not None:
@@ -262,6 +273,8 @@ cdef class Work:
         return self._source_rank
 
     def result(self):
+        if self._result is not None:
+            return self._result
         return []
 
     def synchronize(self):
@@ -966,6 +979,8 @@ cdef class ProcessGroup:
         self._group_desc = ""
         self._ranks = None
         self._bound_device_id = None
+        self._coalescing_ops = []
+        self._coalescing_active = False
 
     cpdef int rank(self):
         return self._rank
@@ -1039,5 +1054,52 @@ cdef class ProcessGroup:
 
     def barrier(self, opts=None):
         raise NotImplementedError(f"{type(self).__name__}.barrier not implemented")
+
+    # --- Coalescing ---
+
+    def _start_coalescing(self, device=None):
+        """Begin collecting collective operations for batched execution."""
+        self._coalescing_ops = []
+        self._coalescing_active = True
+
+    def _end_coalescing(self, device=None):
+        """Flush all queued operations. Returns Work."""
+        self._coalescing_active = False
+        ops = self._coalescing_ops
+        self._coalescing_ops = []
+        # Execute all queued ops sequentially (no actual batching yet)
+        last_work = None
+        for op_fn in ops:
+            last_work = op_fn()
+        if last_work is None:
+            last_work = Work()
+            last_work._completed = True
+        return last_work
+
+    def allreduce_coalesced(self, tensors, opts=None):
+        """Allreduce multiple tensors. Default: sequential allreduce each."""
+        works = []
+        for t in tensors:
+            works.append(self.allreduce(t, opts))
+        # Return last work
+        return works[-1] if works else Work()
+
+    def _allgather_base(self, output, input, opts=None):
+        """Allgather into a single flat output tensor."""
+        return self.allgather(output, input, opts)
+
+    def reduce_scatter_tensor_coalesced(self, outputs, inputs, opts=None):
+        """Reduce-scatter multiple tensor pairs. Default: sequential."""
+        works = []
+        for out, inp in zip(outputs, inputs):
+            works.append(self.reduce_scatter(out, inp, opts))
+        return works[-1] if works else Work()
+
+    def allgather_into_tensor_coalesced(self, outputs, inputs, opts=None):
+        """Allgather multiple tensor pairs into flat buffers. Default: sequential."""
+        works = []
+        for out, inp in zip(outputs, inputs):
+            works.append(self._allgather_base(out, inp, opts))
+        return works[-1] if works else Work()
 
     BackendType = BackendType

@@ -10,6 +10,7 @@ try:
         HashStore, FileStore, BackendType,
         ProcessGroup,
         AllreduceOptions as _CAllreduceOptions,
+        AllreduceCoalescedOptions as _CAllreduceCoalescedOptions,
         BroadcastOptions as _CBroadcastOptions,
         ReduceOptions as _CReduceOptions,
         AllgatherOptions as _CAllgatherOptions,
@@ -70,6 +71,7 @@ default_pg_timeout = timedelta(minutes=30)
 # Option classes: use Cython versions if available, else placeholders
 if _C10D_CYTHON:
     AllreduceOptions = _CAllreduceOptions
+    AllreduceCoalescedOptions = _CAllreduceCoalescedOptions
     AllToAllOptions = _CAllToAllOptions
     BarrierOptions = _CBarrierOptions
     BroadcastOptions = _CBroadcastOptions
@@ -80,6 +82,7 @@ if _C10D_CYTHON:
     AllgatherOptions = _CAllgatherOptions
 else:
     AllreduceOptions = object
+    AllreduceCoalescedOptions = object
     AllToAllOptions = object
     BarrierOptions = object
     BroadcastOptions = object
@@ -88,7 +91,6 @@ else:
     ReduceScatterOptions = object
     ScatterOptions = object
     AllgatherOptions = object
-AllreduceCoalescedOptions = object
 DebugLevel = object
 
 

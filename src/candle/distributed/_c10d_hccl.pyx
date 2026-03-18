@@ -4,11 +4,14 @@
 import os
 import ctypes
 
+from ._c10d cimport ProcessGroup
 from ._c10d import Work
 
 
-cdef class ProcessGroupHCCL:
-    """HCCL process group using direct ctypes bindings to libhccl.so.
+cdef class ProcessGroupHCCL(ProcessGroup):
+    """HCCL process group backed by direct ctypes bindings to libhccl.so.
+
+    Inherits rank/size/name infrastructure from :class:`ProcessGroup`.
 
     Initialization follows torch_npu's pattern:
     1. Try ranktable path (RANK_TABLE_FILE + HcclCommInitClusterInfoConfig)
@@ -16,37 +19,23 @@ cdef class ProcessGroupHCCL:
 
     HCCL bindings are imported lazily when this class is instantiated, so
     importing the base ProcessGroup class does not require libhccl.so.
-
-    This class does NOT inherit from ProcessGroup (to avoid cross-module
-    cdef class inheritance). It provides rank()/size() methods directly.
     """
 
-    cdef public int _rank
-    cdef public int _size
     cdef public int _device_id
     cdef public object _comm
-    cdef public str _group_name
-    cdef public object _ranks
-    cdef public object _store
+    cdef public object _hccl_store
 
     def __init__(self, store, rank, size, device_id=None, group_name="",
                  group_ranks=None):
-        self._rank = rank
-        self._size = size
+        super().__init__(rank, size)
         if device_id is None:
             device_id = rank % 8
         self._device_id = device_id
         self._comm = None
         self._group_name = group_name
         self._ranks = group_ranks
-        self._store = store
+        self._hccl_store = store
         self._init_hccl(store, group_name)
-
-    def rank(self):
-        return self._rank
-
-    def size(self):
-        return self._size
 
     @staticmethod
     def _load_bindings():
@@ -633,6 +622,26 @@ cdef class ProcessGroupHCCL:
                                        src_base + src_off, runtime=rt)
             out_off += recv_numel * itemsize
 
+        return self._make_work(stream)
+
+    def _allgather_base(self, output_tensor, input_tensor, opts=None):
+        """Allgather into a single flat output tensor."""
+        return self.allgather(output_tensor, input_tensor)
+
+    def allreduce_coalesced(self, tensors, opts=None):
+        """Allreduce multiple tensors sequentially."""
+        op = opts.reduceOp if opts and hasattr(opts, 'reduceOp') else 0
+        stream = self._stream()
+        for t in tensors:
+            self.allreduce(t, op)
+        return self._make_work(stream)
+
+    def reduce_scatter_tensor_coalesced(self, outputs, inputs, opts=None):
+        """Reduce-scatter multiple tensor pairs sequentially."""
+        op = opts.reduceOp if opts and hasattr(opts, 'reduceOp') else 0
+        stream = self._stream()
+        for out, inp in zip(outputs, inputs):
+            self.reduce_scatter(out, inp, op)
         return self._make_work(stream)
 
     def destroy(self):

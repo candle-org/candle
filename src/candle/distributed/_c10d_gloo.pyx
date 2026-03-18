@@ -7,7 +7,8 @@ import threading
 import numpy as np
 from enum import IntEnum
 
-from ._c10d import RedOpType, Work, ProcessGroup
+from ._c10d cimport ProcessGroup
+from ._c10d import RedOpType, Work
 
 
 # ---------------------------------------------------------------------------
@@ -230,40 +231,23 @@ cdef class TcpTransport:
 # Section 4: ProcessGroupGloo (from _process_group_gloo.py)
 # ---------------------------------------------------------------------------
 
-cdef class ProcessGroupGloo:
+cdef class ProcessGroupGloo(ProcessGroup):
     """Gloo-compatible process group using pure Python TCP transport.
 
-    All collectives are synchronous (gather-to-root + broadcast-from-root).
-    Work objects are returned already completed.
-
-    Standalone cdef class (does not inherit from the Cython ProcessGroup to
-    avoid cross-module inheritance complexity). Provides rank/size methods
-    for API compatibility.
+    Inherits from ProcessGroup (cimported from _c10d) for rank/size/name
+    accessors and common fields.  All collectives are synchronous
+    (gather-to-root + broadcast-from-root).  Work objects are returned
+    already completed.
     """
 
-    cdef int _rank
-    cdef int _size
-    cdef str _group_name
-    cdef object _ranks
-    cdef object _store
     cdef TcpTransport _transport
 
     def __init__(self, object store, int rank, int size,
                  str group_name="", object group_ranks=None):
-        self._rank = rank
-        self._size = size
+        super().__init__(rank, size)
         self._group_name = group_name
         self._ranks = group_ranks
-        self._store = store
         self._transport = TcpTransport(store, rank, size, prefix=group_name)
-
-    # -- rank / size accessors -----------------------------------------------
-
-    def rank(self):
-        return self._rank
-
-    def size(self):
-        return self._size
 
     # -- internal helpers ----------------------------------------------------
 
@@ -324,6 +308,13 @@ cdef class ProcessGroupGloo:
 
         return self._make_work()
 
+    def allreduce_coalesced(self, tensors, opts=None):
+        """Allreduce multiple tensors sequentially."""
+        op = opts.reduceOp if opts and hasattr(opts, 'reduceOp') else 0
+        for t in tensors:
+            self.allreduce(t, op)
+        return self._make_work()
+
     def broadcast(self, tensor, root=0):
         """Broadcast: root sends tensor to all other ranks."""
         if self._size == 1:
@@ -380,6 +371,10 @@ cdef class ProcessGroupGloo:
             self._write_numpy_to_tensor(result, output_tensor)
 
         return self._make_work()
+
+    def _allgather_base(self, output_tensor, input_tensor, opts=None):
+        """Allgather into a single flat output tensor."""
+        return self.allgather(output_tensor, input_tensor)
 
     def reduce(self, tensor, dst=0, op=0):
         """Reduce: all ranks send to dst, dst receives reduced result."""
@@ -451,6 +446,13 @@ cdef class ProcessGroupGloo:
             chunk = deserialize_array(chunk_data)
             self._write_numpy_to_tensor(chunk, output_tensor)
 
+        return self._make_work()
+
+    def reduce_scatter_tensor_coalesced(self, outputs, inputs, opts=None):
+        """Reduce-scatter multiple tensor pairs sequentially."""
+        op = opts.reduceOp if opts and hasattr(opts, 'reduceOp') else 0
+        for out, inp in zip(outputs, inputs):
+            self.reduce_scatter(out, inp, op)
         return self._make_work()
 
     def scatter(self, output_tensor, input_tensor, src=0):

@@ -26,6 +26,12 @@ cdef class AllreduceOptions:
     cdef public bint asyncOp
 
 
+cdef class AllreduceCoalescedOptions:
+    cdef public int reduceOp
+    cdef public double timeout
+    cdef public bint asyncOp
+
+
 cdef class BroadcastOptions:
     cdef public int rootRank
     cdef public int rootTensor
@@ -86,6 +92,7 @@ cdef class Work:
     cdef public object _exception
     cdef public int _source_rank
     cdef public object _on_wait
+    cdef public object _result
 
     cpdef bint wait(self, timeout=*)
     cpdef bint is_completed(self)
@@ -148,6 +155,8 @@ cdef class ProcessGroup:
     cdef public str _group_desc
     cdef public object _ranks
     cdef public object _bound_device_id
+    cdef public list _coalescing_ops
+    cdef public bint _coalescing_active
 
     cpdef int rank(self)
     cpdef int size(self)
