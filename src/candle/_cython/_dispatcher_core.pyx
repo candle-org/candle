@@ -188,6 +188,7 @@ cdef unsigned int _KEY_PrivateUse2 = 0
 
 # Cached _strip_autograd_keys function
 cdef object _strip_autograd_keys_fn = None
+cdef object _FastDispatchKeySet = None
 
 # Cached dispatch helper functions (lazy-loaded in _ensure_dispatch_helpers)
 cdef object _apply_tls_masks_fn = None
@@ -260,15 +261,18 @@ cdef inline void _ensure_imports():
     global _KEY_Functionalize, _KEY_Python, _KEY_Autocast, _KEY_Pipeline
     global _KEY_Meta, _KEY_NPU, _KEY_CUDA, _KEY_CPU, _KEY_PrivateUse2
     global _strip_autograd_keys_fn
+    global _FastDispatchKeySet
     if _registry is not None:
         return
     from candle._dispatch.registry import registry
     from candle._dispatch.keys import DispatchKey, DISPATCH_KEY_PRIORITY
     from candle._backends.autograd import _strip_autograd_keys
+    from candle._cython._dispatch import FastDispatchKeySet
     _registry = registry
     _DispatchKey = DispatchKey
     _DISPATCH_KEY_PRIORITY = DISPATCH_KEY_PRIORITY
     _strip_autograd_keys_fn = _strip_autograd_keys
+    _FastDispatchKeySet = FastDispatchKeySet
     # Cache individual key values as C unsigned ints
     _KEY_ADInplaceOrView = <unsigned int>int(DispatchKey.ADInplaceOrView)
     _KEY_Autograd = <unsigned int>int(DispatchKey.Autograd)
@@ -541,9 +545,9 @@ cdef object _run_kernel_fast(object entry, object keyset, str alias_name,
         # Single-pass: find backend kernel directly, skip autograd wrapper
         backend_kernel, backend_key = _fast_kernel_for_entry_skip_autograd(entry, m)
         if backend_kernel is not None:
-            # Compute raw_keyset (keyset without autograd keys) and active_keyset
+            # Inline _strip_autograd_keys as C bitmask op (avoids Python call)
             active_keyset = keyset
-            raw_keyset = _strip_autograd_keys_fn(keyset)
+            raw_keyset = _FastDispatchKeySet(m & ~(_AUTOGRAD_MASK | _KEY_ADInplaceOrView | _KEY_PrivateUse3))
 
             impl_kwargs = _fast_prepare_kwargs(backend_kernel, kwargs, dispatch_device)
 
