@@ -40,7 +40,4 @@ def set_early_stop_enabled(enabled: bool | None) -> None:
 
 @contextlib.contextmanager
 def checkpoint_context():
-    try:
-        yield None
-    finally:
-        return
+    yield None
