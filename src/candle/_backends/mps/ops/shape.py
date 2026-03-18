@@ -784,8 +784,8 @@ def getitem(tensor, key):
 def setitem(tensor, key, value):
     arr = _to_numpy(tensor)
     norm_key = _normalize_index_key(key)
-    if hasattr(value, 'numpy'):
-        arr[norm_key] = value.numpy()
+    if hasattr(value, '_numpy_view'):
+        arr[norm_key] = _to_numpy(value)
     else:
         arr[norm_key] = value
     return tensor
