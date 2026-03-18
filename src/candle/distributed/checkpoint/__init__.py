@@ -46,6 +46,7 @@ from .planner import (
     WriteItem,
     WriteItemType,
     LoadItemType,
+    TensorWriteData,
 )
 
 __all__ = [
@@ -80,4 +81,5 @@ __all__ = [
     "WriteItem",
     "WriteItemType",
     "LoadItemType",
+    "TensorWriteData",
 ]
