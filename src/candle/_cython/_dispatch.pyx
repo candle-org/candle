@@ -71,12 +71,51 @@ cdef class FastDispatchKeySet:
 # Cached reference to base Tensor class
 cdef object _BaseTensor = None
 
+# Dispatch key bit constants (must match keys.py)
+DEF _DK_CPU = 1 << 15
+DEF _DK_NPU = 1 << 13
+DEF _DK_CUDA = 1 << 14
+DEF _DK_MPS = 1 << 21       # PrivateUse2
+DEF _DK_META = 1 << 12
+DEF _DK_AUTOGRAD_CPU = 1 << 6
+DEF _DK_AUTOGRAD_NPU = 1 << 7
+DEF _DK_AUTOGRAD_CUDA = 1 << 8
+DEF _DK_AUTOGRAD_MPS = 1 << 22  # PrivateUse3
+DEF _DK_AUTOGRAD_META = 1 << 10
+DEF _DK_ADINPLACEORVIEW = 1 << 4
+DEF _DK_AUTOGRAD = 1 << 11
+DEF _DK_FUNCTIONALIZE = 1 << 3
+DEF _DK_AUTOCAST = 1 << 19
+DEF _DK_PIPELINE = 1 << 1
+DEF _DK_PYTHON = 1 << 2
+
+# Device type to backend key mapping (indexed by _device_type int)
+# 0=cpu, 1=npu, 2=cuda, 3=mps, 4=meta
+cdef unsigned int _DEVICE_BACKEND_KEY[5]
+_DEVICE_BACKEND_KEY[0] = _DK_CPU
+_DEVICE_BACKEND_KEY[1] = _DK_NPU
+_DEVICE_BACKEND_KEY[2] = _DK_CUDA
+_DEVICE_BACKEND_KEY[3] = _DK_MPS
+_DEVICE_BACKEND_KEY[4] = _DK_META
+
+# Device type to autograd key mapping
+cdef unsigned int _DEVICE_AUTOGRAD_KEY[5]
+_DEVICE_AUTOGRAD_KEY[0] = _DK_AUTOGRAD_CPU
+_DEVICE_AUTOGRAD_KEY[1] = _DK_AUTOGRAD_NPU
+_DEVICE_AUTOGRAD_KEY[2] = _DK_AUTOGRAD_CUDA
+_DEVICE_AUTOGRAD_KEY[3] = _DK_AUTOGRAD_MPS
+_DEVICE_AUTOGRAD_KEY[4] = _DK_AUTOGRAD_META
+
 cdef FastDispatchKeySet _cy_from_tensors(list tensors, bint grad_enabled,
                                           bint pipeline_enabled,
                                           bint functionalize_enabled,
                                           object device, bint autocast_enabled):
-    """Build keyset from tensors — C-speed bitmask construction."""
-    # Import DispatchKey constants
+    """Build keyset from tensors — C-speed bitmask construction.
+
+    Step 4 optimization: reads _device_type and requires_grad directly from
+    TensorImpl C fields when available, avoiding Python attribute access and
+    string comparison.
+    """
     from candle._dispatch.keys import DispatchKey
 
     cdef bint has_meta = False, has_npu = False, has_cuda = False
@@ -84,6 +123,7 @@ cdef FastDispatchKeySet _cy_from_tensors(list tensors, bint grad_enabled,
     cdef bint requires_grad = False, saw_device = False
     cdef bint has_dispatch_subclass = False
     cdef unsigned int mask = 0
+    cdef int dev_type_int
 
     global _BaseTensor
     if _BaseTensor is None:
@@ -91,21 +131,38 @@ cdef FastDispatchKeySet _cy_from_tensors(list tensors, bint grad_enabled,
         _BaseTensor = Tensor
 
     for tensor in tensors:
-        dev = getattr(tensor, "device", None)
-        if dev is None:
-            continue
-        saw_device = True
-        dev_type = getattr(dev, "type", dev)
-        if dev_type == "meta":
-            has_meta = True
-        elif dev_type == "npu":
-            has_npu = True
-        elif dev_type == "cuda":
-            has_cuda = True
-        elif dev_type == "mps":
-            has_mps = True
+        # Fast path: read _device_type directly from TensorImpl
+        dev_type_int = getattr(tensor, "_device_type", -1)
+        if dev_type_int >= 0:
+            saw_device = True
+            if dev_type_int == 4:    # meta
+                has_meta = True
+            elif dev_type_int == 1:  # npu
+                has_npu = True
+            elif dev_type_int == 2:  # cuda
+                has_cuda = True
+            elif dev_type_int == 3:  # mps
+                has_mps = True
+            else:                    # cpu (0) or unknown
+                has_cpu = True
         else:
-            has_cpu = True
+            # Fallback for non-TensorImpl objects
+            dev = getattr(tensor, "device", None)
+            if dev is None:
+                continue
+            saw_device = True
+            dev_type = getattr(dev, "type", dev)
+            if dev_type == "meta":
+                has_meta = True
+            elif dev_type == "npu":
+                has_npu = True
+            elif dev_type == "cuda":
+                has_cuda = True
+            elif dev_type == "mps":
+                has_mps = True
+            else:
+                has_cpu = True
+        # Read requires_grad directly (C field access for TensorImpl)
         if getattr(tensor, "requires_grad", False):
             requires_grad = True
         if not has_dispatch_subclass:
@@ -132,39 +189,39 @@ cdef FastDispatchKeySet _cy_from_tensors(list tensors, bint grad_enabled,
         else:
             has_cpu = True
 
+    # Build backend key from device flags
     if has_meta:
-        mask |= <unsigned int>int(DispatchKey.Meta)
+        mask = _DK_META
     elif has_npu:
-        mask |= <unsigned int>int(DispatchKey.NPU)
+        mask = _DK_NPU
     elif has_cuda:
-        mask |= <unsigned int>int(DispatchKey.CUDA)
+        mask = _DK_CUDA
     elif has_mps:
-        mask |= <unsigned int>int(DispatchKey.PrivateUse2)
+        mask = _DK_MPS
     else:
-        mask |= <unsigned int>int(DispatchKey.CPU)
+        mask = _DK_CPU
 
     if grad_enabled and requires_grad:
-        mask |= <unsigned int>int(DispatchKey.ADInplaceOrView)
-        mask |= <unsigned int>int(DispatchKey.Autograd)
+        mask |= _DK_ADINPLACEORVIEW | _DK_AUTOGRAD
         if has_meta:
-            mask |= <unsigned int>int(DispatchKey.AutogradMeta)
+            mask |= _DK_AUTOGRAD_META
         elif has_npu:
-            mask |= <unsigned int>int(DispatchKey.AutogradNPU)
+            mask |= _DK_AUTOGRAD_NPU
         elif has_cuda:
-            mask |= <unsigned int>int(DispatchKey.AutogradCUDA)
+            mask |= _DK_AUTOGRAD_CUDA
         elif has_mps:
-            mask |= <unsigned int>int(DispatchKey.PrivateUse3)
+            mask |= _DK_AUTOGRAD_MPS
         else:
-            mask |= <unsigned int>int(DispatchKey.AutogradCPU)
+            mask |= _DK_AUTOGRAD_CPU
 
     if functionalize_enabled:
-        mask |= <unsigned int>int(DispatchKey.Functionalize)
+        mask |= _DK_FUNCTIONALIZE
     if autocast_enabled:
-        mask |= <unsigned int>int(DispatchKey.Autocast)
+        mask |= _DK_AUTOCAST
     if pipeline_enabled and not has_meta and not has_cuda:
-        mask |= <unsigned int>int(DispatchKey.Pipeline)
+        mask |= _DK_PIPELINE
     if has_dispatch_subclass:
-        mask |= <unsigned int>int(DispatchKey.Python)
+        mask |= _DK_PYTHON
 
     return FastDispatchKeySet(mask)
 

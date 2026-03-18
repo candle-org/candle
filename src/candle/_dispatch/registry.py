@@ -12,6 +12,7 @@ class OperatorEntry:
         self.kernels = {}
         self.fallthrough = set()
         self.functionalize = None
+        self.autograd_post = None
 
 
 class OpRegistry:
