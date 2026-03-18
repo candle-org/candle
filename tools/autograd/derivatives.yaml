@@ -819,3 +819,11 @@
 - name: kthvalue(Tensor self, int k, int dim=-1, bool keepdim=False) -> (Tensor, Tensor)
   output_differentiability: [True, False]
   self: "_kthvalue_backward_helper(grad, self, result1, k, dim, keepdim, keyset)"
+
+- name: cummax(Tensor self, int dim=0) -> (Tensor, Tensor)
+  output_differentiability: [True, False]
+  self: "_cummax_backward_helper(grad, self, result1, dim, keyset)"
+
+- name: cummin(Tensor self, int dim) -> (Tensor, Tensor)
+  output_differentiability: [True, False]
+  self: "_cummin_backward_helper(grad, self, result1, dim, keyset)"

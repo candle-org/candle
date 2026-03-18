@@ -1170,6 +1170,16 @@ def _kthvalue_backward_helper(grad, self_, result1, k, dim, keepdim, keyset):
     return _kthvalue_backward(grad, self_, result1, keyset, (k, dim), {"keepdim": keepdim})[0]
 
 
+def _cummax_backward_helper(grad, self_, result1, dim, keyset):
+    from .._backends.autograd import _cummax_backward
+    return _cummax_backward(grad, self_, result1, keyset, (dim,), {})[0]
+
+
+def _cummin_backward_helper(grad, self_, result1, dim, keyset):
+    from .._backends.autograd import _cummin_backward
+    return _cummin_backward(grad, self_, result1, keyset, (dim,), {})[0]
+
+
 class ExpBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         super().__init__(None, inputs, name='ExpBackward0')
@@ -8635,4 +8645,74 @@ class KthvalueBackward0(Node):
         keepdim = self._keepdim
         with _grad_context(keyset):
             grad_self = _kthvalue_backward_helper(grad, self_, result1, k, dim, keepdim, keyset)
+        return (grad_self,)
+
+class CummaxBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='CummaxBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_result1_idx = None
+        self._dim = None
+
+    def _save(self, *, self_=None, result1=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if result1 is not None:
+            self._saved_result1_idx = len(tensors)
+            tensors.append(result1)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_self_idx is not None:
+            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
+        if self._saved_result1_idx is not None:
+            self._saved_fields['result1'] = self._saved_tensors_list[self._saved_result1_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        result1 = _saved[self._saved_result1_idx]
+        dim = self._dim
+        with _grad_context(keyset):
+            grad_self = _cummax_backward_helper(grad, self_, result1, dim, keyset)
+        return (grad_self,)
+
+class CumminBackward0(Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        super().__init__(None, inputs, name='CumminBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_result1_idx = None
+        self._dim = None
+
+    def _save(self, *, self_=None, result1=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if result1 is not None:
+            self._saved_result1_idx = len(tensors)
+            tensors.append(result1)
+        if tensors:
+            super().save_for_backward(*tensors)
+        if self._saved_self_idx is not None:
+            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
+        if self._saved_result1_idx is not None:
+            self._saved_fields['result1'] = self._saved_tensors_list[self._saved_result1_idx]
+
+    def backward(self, grad):
+        from .._dispatch.dispatcher import current_dispatch_keyset
+        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
+        _saved = self.saved_tensors()
+        self_ = _saved[self._saved_self_idx]
+        result1 = _saved[self._saved_result1_idx]
+        dim = self._dim
+        with _grad_context(keyset):
+            grad_self = _cummin_backward_helper(grad, self_, result1, dim, keyset)
         return (grad_self,)

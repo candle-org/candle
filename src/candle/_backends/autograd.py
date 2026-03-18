@@ -7251,8 +7251,6 @@ for _entry in (
     ("dsplit", lambda: _autograd_multi_output("dsplit", _dsplit_backward, save_input=False)),
     # Custom wrapper ops (not yet migrated — multi-output, Tensor[], or special patterns)
     ("scatter", lambda: _autograd_scatter("scatter")),
-    ("cummax", lambda: _autograd_cummax("cummax")),
-    ("cummin", lambda: _autograd_cummin("cummin")),
     ("index_put", lambda: _autograd_index_put("index_put")),
     ("einsum", lambda: _autograd_einsum("einsum")),
     ("median", lambda: _autograd_median("median")),

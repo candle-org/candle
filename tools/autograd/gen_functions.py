@@ -1183,6 +1183,16 @@ def _topk_backward_helper(grad, self_, result1, k, dim, keyset):
 def _kthvalue_backward_helper(grad, self_, result1, k, dim, keepdim, keyset):
     from .._backends.autograd import _kthvalue_backward
     return _kthvalue_backward(grad, self_, result1, keyset, (k, dim), {"keepdim": keepdim})[0]
+
+
+def _cummax_backward_helper(grad, self_, result1, dim, keyset):
+    from .._backends.autograd import _cummax_backward
+    return _cummax_backward(grad, self_, result1, keyset, (dim,), {})[0]
+
+
+def _cummin_backward_helper(grad, self_, result1, dim, keyset):
+    from .._backends.autograd import _cummin_backward
+    return _cummin_backward(grad, self_, result1, keyset, (dim,), {})[0]
 '''
 
 
