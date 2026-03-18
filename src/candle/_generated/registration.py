@@ -252,3 +252,8 @@ def register_generated_autograd_kernels():
     register_autograd_kernels('cdist', default=_VT.cdist_autograd, cpu=_VT.cdist_autograd, cuda=_VT.cdist_autograd, npu=_VT.cdist_autograd, meta=_VT.cdist_autograd)
     register_autograd_kernels('special_polygamma', default=_VT.special_polygamma_autograd, cpu=_VT.special_polygamma_autograd, cuda=_VT.special_polygamma_autograd, npu=_VT.special_polygamma_autograd, meta=_VT.special_polygamma_autograd)
     register_autograd_kernels('special_multigammaln', default=_VT.special_multigammaln_autograd, cpu=_VT.special_multigammaln_autograd, cuda=_VT.special_multigammaln_autograd, npu=_VT.special_multigammaln_autograd, meta=_VT.special_multigammaln_autograd)
+    register_autograd_kernels('sort', default=_VT.sort_autograd, cpu=_VT.sort_autograd, cuda=_VT.sort_autograd, npu=_VT.sort_autograd, meta=_VT.sort_autograd)
+    register_autograd_kernels('topk', default=_VT.topk_autograd, cpu=_VT.topk_autograd, cuda=_VT.topk_autograd, npu=_VT.topk_autograd, meta=_VT.topk_autograd)
+    register_autograd_kernels('kthvalue', default=_VT.kthvalue_autograd, cpu=_VT.kthvalue_autograd, cuda=_VT.kthvalue_autograd, npu=_VT.kthvalue_autograd, meta=_VT.kthvalue_autograd)
+    register_autograd_kernels('cummax', default=_VT.cummax_autograd, cpu=_VT.cummax_autograd, cuda=_VT.cummax_autograd, npu=_VT.cummax_autograd, meta=_VT.cummax_autograd)
+    register_autograd_kernels('cummin', default=_VT.cummin_autograd, cpu=_VT.cummin_autograd, cuda=_VT.cummin_autograd, npu=_VT.cummin_autograd, meta=_VT.cummin_autograd)

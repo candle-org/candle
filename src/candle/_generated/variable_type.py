@@ -3474,3 +3474,80 @@ def special_multigammaln_autograd(self, p, **_kwargs):
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
+
+
+def sort_autograd(self, dim=-1, descending=False, stable=False, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("sort", raw_keyset, self, dim, descending, stable, **_kwargs)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.SortBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self, result1=result[1])
+        grad_fn._dim = dim
+        grad_fn._descending = descending
+        grad_fn._stable = stable
+        result[0].grad_fn = grad_fn
+        result[0].requires_grad = True
+    return result
+
+
+def topk_autograd(self, k, dim=-1, largest=True, sorted=True, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("topk", raw_keyset, self, k, dim, largest, sorted, **_kwargs)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.TopkBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self, result1=result[1])
+        grad_fn._k = k
+        grad_fn._dim = dim
+        grad_fn._largest = largest
+        grad_fn._sorted = sorted
+        result[0].grad_fn = grad_fn
+        result[0].requires_grad = True
+    return result
+
+
+def kthvalue_autograd(self, k, dim=-1, keepdim=False, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("kthvalue", raw_keyset, self, k, dim, keepdim, **_kwargs)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.KthvalueBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self, result1=result[1])
+        grad_fn._k = k
+        grad_fn._dim = dim
+        grad_fn._keepdim = keepdim
+        result[0].grad_fn = grad_fn
+        result[0].requires_grad = True
+    return result
+
+
+def cummax_autograd(self, dim=0, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("cummax", raw_keyset, self, dim, **_kwargs)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.CummaxBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self, result1=result[1])
+        grad_fn._dim = dim
+        result[0].grad_fn = grad_fn
+        result[0].requires_grad = True
+    return result
+
+
+def cummin_autograd(self, dim, **_kwargs):
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = redispatch("cummin", raw_keyset, self, dim, **_kwargs)
+    if GradMode.enabled and (self.requires_grad):
+        grad_fn = _F.CumminBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self, result1=result[1])
+        grad_fn._dim = dim
+        result[0].grad_fn = grad_fn
+        result[0].requires_grad = True
+    return result
