@@ -229,6 +229,8 @@ from .ops import (
     bitwise_or,
     bitwise_xor,
     bitwise_not,
+    bitwise_left_shift,
+    bitwise_right_shift,
     # New random in-place op
     randint_,
     random_,
@@ -549,6 +551,8 @@ registry.register("bitwise_and", "mps", bitwise_and, meta=meta_infer.infer_binar
 registry.register("bitwise_or", "mps", bitwise_or, meta=meta_infer.infer_binary)
 registry.register("bitwise_xor", "mps", bitwise_xor, meta=meta_infer.infer_binary)
 registry.register("bitwise_not", "mps", bitwise_not, meta=meta_infer.infer_unary)
+registry.register("bitwise_left_shift", "mps", bitwise_left_shift, meta=meta_infer.infer_binary)
+registry.register("bitwise_right_shift", "mps", bitwise_right_shift, meta=meta_infer.infer_binary)
 
 # ---------------------------------------------------------------------------
 # Random in-place

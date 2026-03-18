@@ -1259,6 +1259,14 @@ def bitwise_not(a):
     return dispatch("bitwise_not", a.device.type, a)
 
 
+def bitwise_left_shift(a, b):
+    return dispatch("bitwise_left_shift", None, a, b)
+
+
+def bitwise_right_shift(a, b):
+    return dispatch("bitwise_right_shift", None, a, b)
+
+
 def flatten(a, start_dim=0, end_dim=-1):
     return dispatch("flatten", a.device.type, a, start_dim, end_dim)
 

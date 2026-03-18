@@ -271,6 +271,20 @@ def bitwise_not(a):
         return _empty_like(a)
     _unsupported_dtype("bitwise_not", a)
 
+def bitwise_left_shift(a, b):
+    if _can_use_gpu(a):
+        return _dispatch_binary_gpu(a, b, "bitwise_left_shift")
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("bitwise_left_shift", a)
+
+def bitwise_right_shift(a, b):
+    if _can_use_gpu(a):
+        return _dispatch_binary_gpu(a, b, "bitwise_right_shift")
+    if a.numel() == 0:
+        return _empty_like(a)
+    _unsupported_dtype("bitwise_right_shift", a)
+
 
 # ---------------------------------------------------------------------------
 # Group 4: Random in-place op

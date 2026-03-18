@@ -74,6 +74,8 @@ from .comparison import (  # noqa: F401
     bitwise_or,
     bitwise_xor,
     bitwise_not,
+    bitwise_left_shift,
+    bitwise_right_shift,
 )
 
 from .activation import (  # noqa: F401
