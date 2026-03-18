@@ -110,6 +110,26 @@ cdef inline tuple _to_tuple(const int64_t* arr, int n):
 # fast_binary_op — drop-in replacement for _binary_op in _helpers.py
 # ---------------------------------------------------------------------------
 
+# Cached module references (loaded once)
+cdef object _npu_runtime = None
+cdef object _npu_state = None
+cdef object _npu_typed_storage_from_ptr = None
+cdef object _Tensor = None
+
+cdef inline void _ensure_npu_imports():
+    global _npu_runtime, _npu_state, _npu_typed_storage_from_ptr, _Tensor
+    if _npu_runtime is not None:
+        return
+    from candle._backends.npu import runtime as rt
+    from candle._backends.npu import state as st
+    from candle._storage import npu_typed_storage_from_ptr as nfp
+    from candle._tensor import Tensor as T
+    _npu_runtime = rt
+    _npu_state = st
+    _npu_typed_storage_from_ptr = nfp
+    _Tensor = T
+
+
 def fast_binary_op(a, b, fn, str name):
     """Drop-in replacement for _binary_op in _helpers.py.
 
@@ -119,11 +139,7 @@ def fast_binary_op(a, b, fn, str name):
     - aclnn kernel (already Cython-ized)
     - output tensor wrapping (weakref + Python objects)
     """
-    # Import heavy Python deps (cached after first call by Python)
-    from candle._backends.npu import runtime as npu_runtime
-    from candle._backends.npu import state as npu_state
-    from candle._storage import npu_typed_storage_from_ptr
-    from candle._tensor import Tensor
+    _ensure_npu_imports()
 
     # 1. Validate device/dtype (direct attribute access)
     a_dev = a.device
@@ -134,10 +150,10 @@ def fast_binary_op(a, b, fn, str name):
     if a_dtype != b.dtype:
         raise ValueError(f"NPU {name} requires matching dtypes")
 
-    # 2. Get runtime + stream (Python — dict + TLS)
+    # 2. Get runtime + stream
     cdef int dev_idx = a_dev.index or 0
-    runtime = npu_runtime.get_runtime(dev_idx)
-    stream = npu_state.current_stream(dev_idx)
+    runtime = _npu_runtime.get_runtime(dev_idx)
+    stream = _npu_state.current_stream(dev_idx)
 
     # 3. Extract shapes into C arrays
     py_a_shape = a.shape
@@ -167,15 +183,15 @@ def fast_binary_op(a, b, fn, str name):
     out_shape = _to_tuple(out_shape_buf, out_ndim)
     out_stride = _to_tuple(out_stride_buf, out_ndim)
 
-    # 6. Allocate output (Python — allocator is complex)
+    # 6. Allocate output
     cdef int isize = c_dtype_itemsize(a_dtype)
-    out_ptr = npu_runtime._alloc_device(n * isize, runtime=runtime)
+    out_ptr = _npu_runtime._alloc_device(n * isize, runtime=runtime)
 
-    # 7. Get data pointers via storage (need _unwrap_storage validation)
+    # 7. Get data pointers via storage
     a_storage = a.storage()
     b_storage = b.storage()
 
-    # 8. Call aclnn (Python — already Cython-ized internally)
+    # 8. Call aclnn
     fn(
         a_storage.data_ptr(),
         b_storage.data_ptr(),
@@ -191,7 +207,7 @@ def fast_binary_op(a, b, fn, str name):
         stream=stream.stream,
     )
 
-    # 9. Wrap output (Python — involves GC weak references)
-    out_storage = npu_typed_storage_from_ptr(
+    # 9. Wrap output
+    out_storage = _npu_typed_storage_from_ptr(
         out_ptr, n, a_dtype, device=a_dev)
-    return Tensor(out_storage, out_shape, out_stride)
+    return _Tensor(out_storage, out_shape, out_stride)
