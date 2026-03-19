@@ -72,6 +72,11 @@ if _system in ("Linux", "Darwin"):
             ["src/candle/_cython/_fast_ops.pyx"],
         ),
         Extension(
+            "candle._cython._cpu_kernels",
+            ["src/candle/_cython/_cpu_kernels.pyx"],
+            extra_compile_args=["-O3", "-ffast-math"],
+        ),
+        Extension(
             "candle.distributed._c10d",
             ["src/candle/distributed/_c10d.pyx"],
         ),

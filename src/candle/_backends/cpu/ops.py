@@ -1,6 +1,11 @@
 import math
 import numpy as np
 
+try:
+    from ..._cython import _cpu_kernels as _ck
+except ImportError:
+    from ..._cython import _cpu_kernels_fallback as _ck  # type: ignore[no-redef]
+
 from ..._dtype import bool as bool_dtype
 from ..._dtype import bfloat16 as bfloat16_dtype
 from ..._dtype import complex64 as complex64_dtype
@@ -120,15 +125,87 @@ def _binary_out_dtype(a, b, *, for_div=False):
     return _promote_binary_dtype(dtype_a, dtype_b)
 
 
+def _cython_unary(kernel_f32, kernel_f64, arr, out_np_dtype):
+    """Apply a Cython unary kernel to a numpy array, returning a numpy result.
+
+    Falls back to returning None if the array dtype is not float32/float64 or
+    if the Cython extension is not available (kernel is None).
+    """
+    if kernel_f32 is None:
+        return None
+    if arr.dtype == np.float32 and kernel_f32 is not None:
+        flat = np.ascontiguousarray(arr).ravel()
+        out = np.empty(flat.shape[0], dtype=np.float32)
+        kernel_f32(flat, out)
+        return out.reshape(arr.shape).astype(out_np_dtype, copy=False)
+    if arr.dtype == np.float64 and kernel_f64 is not None:
+        flat = np.ascontiguousarray(arr).ravel()
+        out = np.empty(flat.shape[0], dtype=np.float64)
+        kernel_f64(flat, out)
+        return out.reshape(arr.shape).astype(out_np_dtype, copy=False)
+    return None
+
+
+def _cython_binary(kernel_f32, kernel_f64, a_arr, b_arr, out_np_dtype):
+    """Apply a Cython element-wise binary kernel.
+
+    Only used when both arrays have the same shape (no broadcast needed) and
+    are float32 or float64.  Returns None otherwise so callers fall back to
+    numpy.
+    """
+    if kernel_f32 is None or a_arr.shape != b_arr.shape:
+        return None
+    if a_arr.dtype == np.float32 and b_arr.dtype == np.float32:
+        a_flat = np.ascontiguousarray(a_arr).ravel()
+        b_flat = np.ascontiguousarray(b_arr).ravel()
+        out = np.empty(a_flat.shape[0], dtype=np.float32)
+        kernel_f32(a_flat, b_flat, out)
+        return out.reshape(a_arr.shape).astype(out_np_dtype, copy=False)
+    if a_arr.dtype == np.float64 and b_arr.dtype == np.float64:
+        a_flat = np.ascontiguousarray(a_arr).ravel()
+        b_flat = np.ascontiguousarray(b_arr).ravel()
+        out = np.empty(a_flat.shape[0], dtype=np.float64)
+        kernel_f64(a_flat, b_flat, out)
+        return out.reshape(a_arr.shape).astype(out_np_dtype, copy=False)
+    return None
+
+
+def _cython_scalar_binary(kernel_f32, kernel_f64, a_arr, scalar, out_np_dtype):
+    """Apply a Cython tensor-scalar binary kernel.
+
+    Returns None if Cython unavailable or dtype not float32/float64.
+    """
+    if kernel_f32 is None:
+        return None
+    if a_arr.dtype == np.float32:
+        flat = np.ascontiguousarray(a_arr).ravel()
+        out = np.empty(flat.shape[0], dtype=np.float32)
+        kernel_f32(flat, float(scalar), out)
+        return out.reshape(a_arr.shape).astype(out_np_dtype, copy=False)
+    if a_arr.dtype == np.float64:
+        flat = np.ascontiguousarray(a_arr).ravel()
+        out = np.empty(flat.shape[0], dtype=np.float64)
+        kernel_f64(flat, float(scalar), out)
+        return out.reshape(a_arr.shape).astype(out_np_dtype, copy=False)
+    return None
+
+
 def add(a, b):
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     out_dtype = _binary_out_dtype(a, b)
+    out_np_dtype = to_numpy_dtype(out_dtype)
+    if isinstance(b, Tensor):
+        result = _cython_binary(_ck.add_f32, _ck.add_f64, a_np, b_np, out_np_dtype)
+    else:
+        result = _cython_scalar_binary(_ck.add_scalar_f32, _ck.add_scalar_f64, a_np, b_np, out_np_dtype)
+    if result is not None:
+        return _from_numpy(result, out_dtype, a.device)
     try:
         out = np.add(a_np, b_np)
     except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
-    out = out.astype(to_numpy_dtype(out_dtype), copy=False)
+    out = out.astype(out_np_dtype, copy=False)
     return _from_numpy(out, out_dtype, a.device)
 
 
@@ -136,7 +213,14 @@ def mul(a, b):
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     out_dtype = _binary_out_dtype(a, b)
-    out = np.multiply(a_np, b_np).astype(to_numpy_dtype(out_dtype), copy=False)
+    out_np_dtype = to_numpy_dtype(out_dtype)
+    if isinstance(b, Tensor):
+        result = _cython_binary(_ck.mul_f32, _ck.mul_f64, a_np, b_np, out_np_dtype)
+    else:
+        result = _cython_scalar_binary(_ck.mul_scalar_f32, _ck.mul_scalar_f64, a_np, b_np, out_np_dtype)
+    if result is not None:
+        return _from_numpy(result, out_dtype, a.device)
+    out = np.multiply(a_np, b_np).astype(out_np_dtype, copy=False)
     return _from_numpy(out, out_dtype, a.device)
 
 
@@ -144,8 +228,15 @@ def div(a, b):
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
     out_dtype = _binary_out_dtype(a, b, for_div=True)
+    out_np_dtype = to_numpy_dtype(out_dtype)
+    if isinstance(b, Tensor):
+        result = _cython_binary(_ck.div_f32, _ck.div_f64, a_np, b_np, out_np_dtype)
+    else:
+        result = _cython_scalar_binary(_ck.div_scalar_f32, _ck.div_scalar_f64, a_np, b_np, out_np_dtype)
+    if result is not None:
+        return _from_numpy(result, out_dtype, a.device)
     with np.errstate(divide="ignore", invalid="ignore"):
-        out = np.true_divide(a_np, b_np).astype(to_numpy_dtype(out_dtype), copy=False)
+        out = np.true_divide(a_np, b_np).astype(out_np_dtype, copy=False)
     return _from_numpy(out, out_dtype, a.device)
 
 
@@ -166,11 +257,18 @@ def bmm(a, b):
 
 
 def relu(a):
-    return _from_numpy(np.maximum(_to_numpy(a), 0), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.relu_f32, _ck.relu_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.maximum(arr, 0), a.dtype, a.device)
 
 
 def gelu(a):
     arr = _to_numpy(a)
+    result = _cython_unary(_ck.gelu_f32, _ck.gelu_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
     out = 0.5 * arr * (1.0 + np.vectorize(math.erf)(arr / math.sqrt(2.0)))
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
 
@@ -1038,43 +1136,82 @@ def contiguous(a):
 
 
 def abs(a):
-    return _from_numpy(np.abs(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.abs_f32, _ck.abs_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.abs(arr), a.dtype, a.device)
 
 
 def neg(a):
-    return _from_numpy(np.negative(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.neg_f32, _ck.neg_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.negative(arr), a.dtype, a.device)
 
 
 def exp(a):
-    return _from_numpy(np.exp(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.exp_f32, _ck.exp_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.exp(arr), a.dtype, a.device)
 
 
 def log(a):
-    return _from_numpy(np.log(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.log_f32, _ck.log_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.log(arr), a.dtype, a.device)
 
 
 def sqrt(a):
-    return _from_numpy(np.sqrt(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.sqrt_f32, _ck.sqrt_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.sqrt(arr), a.dtype, a.device)
 
 
 def sin(a):
-    return _from_numpy(np.sin(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.sin_f32, _ck.sin_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.sin(arr), a.dtype, a.device)
 
 
 def cos(a):
-    return _from_numpy(np.cos(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.cos_f32, _ck.cos_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.cos(arr), a.dtype, a.device)
 
 
 def tan(a):
-    return _from_numpy(np.tan(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.tan_f32, _ck.tan_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.tan(arr), a.dtype, a.device)
 
 
 def tanh(a):
-    return _from_numpy(np.tanh(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.tanh_f32, _ck.tanh_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.tanh(arr), a.dtype, a.device)
 
 
 def sigmoid(a):
     arr = _to_numpy(a)
+    result = _cython_unary(_ck.sigmoid_f32, _ck.sigmoid_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
     out = 1.0 / (1.0 + np.exp(-arr))
     return _from_numpy(out, a.dtype, a.device)
 
@@ -1116,19 +1253,34 @@ def pow(a, b):
 
 
 def log2(a):
-    return _from_numpy(np.log2(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.log2_f32, _ck.log2_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.log2(arr), a.dtype, a.device)
 
 
 def log10(a):
-    return _from_numpy(np.log10(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.log10_f32, _ck.log10_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.log10(arr), a.dtype, a.device)
 
 
 def exp2(a):
-    return _from_numpy(np.exp2(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.exp2_f32, _ck.exp2_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.exp2(arr), a.dtype, a.device)
 
 
 def rsqrt(a):
     arr = _to_numpy(a)
+    result = _cython_unary(_ck.rsqrt_f32, _ck.rsqrt_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
     out = 1.0 / np.sqrt(arr)
     return _from_numpy(out, a.dtype, a.device)
 
@@ -1139,6 +1291,9 @@ def sign(a):
 
 def square(a):
     arr = _to_numpy(a)
+    result = _cython_unary(_ck.square_f32, _ck.square_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
     out = np.square(arr)
     return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
 
@@ -1164,33 +1319,59 @@ def isfinite(a):
 
 
 def sinh(a):
-    return _from_numpy(np.sinh(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.sinh_f32, _ck.sinh_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.sinh(arr), a.dtype, a.device)
 
 
 def cosh(a):
-    return _from_numpy(np.cosh(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.cosh_f32, _ck.cosh_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.cosh(arr), a.dtype, a.device)
 
 
 def asinh(a):
-    return _from_numpy(np.arcsinh(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.asinh_f32, _ck.asinh_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.arcsinh(arr), a.dtype, a.device)
 
 
 def acosh(a):
-    return _from_numpy(np.arccosh(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.acosh_f32, _ck.acosh_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.arccosh(arr), a.dtype, a.device)
 
 
 def atanh(a):
-    return _from_numpy(np.arctanh(_to_numpy(a)), a.dtype, a.device)
+    arr = _to_numpy(a)
+    result = _cython_unary(_ck.atanh_f32, _ck.atanh_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
+    return _from_numpy(np.arctanh(arr), a.dtype, a.device)
 
 
 def erf(a):
     arr = _to_numpy(a)
+    result = _cython_unary(_ck.erf_f32, _ck.erf_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
     out = np.vectorize(math.erf)(arr)
     return _from_numpy(out, a.dtype, a.device)
 
 
 def erfc(a):
     arr = _to_numpy(a)
+    result = _cython_unary(_ck.erfc_f32, _ck.erfc_f64, arr, to_numpy_dtype(a.dtype))
+    if result is not None:
+        return _from_numpy(result, a.dtype, a.device)
     out = np.vectorize(math.erfc)(arr)
     return _from_numpy(out, a.dtype, a.device)
 
@@ -2407,7 +2588,15 @@ def adaptive_avg_pool2d(input, output_size):
 def sub(a, b):
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(a_np - b_np, a.dtype, a.device)
+    out_dtype = _binary_out_dtype(a, b)
+    out_np_dtype = to_numpy_dtype(out_dtype)
+    if isinstance(b, Tensor):
+        result = _cython_binary(_ck.sub_f32, _ck.sub_f64, a_np, b_np, out_np_dtype)
+    else:
+        result = _cython_scalar_binary(_ck.sub_scalar_f32, _ck.sub_scalar_f64, a_np, b_np, out_np_dtype)
+    if result is not None:
+        return _from_numpy(result, out_dtype, a.device)
+    return _from_numpy(a_np - b_np, out_dtype, a.device)
 
 
 def log1p(a):
