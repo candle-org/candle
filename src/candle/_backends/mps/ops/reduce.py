@@ -151,6 +151,9 @@ def var_(a, dim=None, unbiased=True, keepdim=False):
         return var_(a.contiguous(), dim=dim, unbiased=unbiased, keepdim=keepdim)
     _unsupported_dtype("var", a)
 
+def var_mean(a, dim=None, unbiased=True, keepdim=False):
+    return var_(a, dim=dim, unbiased=unbiased, keepdim=keepdim), mean_(a, dim=dim, keepdim=keepdim)
+
 def norm_(a, p=2, dim=None, keepdim=False):
     """Compute the p-norm of a tensor (GPU composite)."""
     from ...._dtype import float32 as f32
