@@ -718,3 +718,51 @@ def test_load_honors_custom_pickle_module_on_legacy_path(tmp_path):
     assert loaded["x"].tolist() == [1.0]
     assert _CountingPickleModule.load_calls >= 1
     assert _CountingPickleModule.unpickler_inits >= 1
+
+
+def test_c_module_exports_pytorch_file_reader_writer():
+    import candle as candle_torch
+
+    assert hasattr(candle_torch._C, "PyTorchFileReader")
+    assert hasattr(candle_torch._C, "PyTorchFileWriter")
+
+
+def test_serialization_uses_c_module_reader_writer_surface(tmp_path):
+    import candle as candle_torch
+
+    path = tmp_path / "sample.pt"
+    candle_torch.save({"x": 1}, path)
+
+    reader = candle_torch._C.PyTorchFileReader(str(path))
+    assert reader.has_record("data.pkl")
+    assert isinstance(reader.get_all_records(), list)
+
+
+
+
+def test_path_save_uses_pytorch_file_writer_snake_case_surface(tmp_path, monkeypatch):
+    calls = []
+
+    class _SnakeCaseOnlyWriter:
+        def __init__(self, path):
+            self.path = path
+
+        def write_record(self, name, data, size=None, compress=False):
+            calls.append(("write_record", name, size, compress))
+
+        def write_end_of_file(self):
+            calls.append(("write_end_of_file",))
+
+    monkeypatch.setattr(ser, "PyTorchFileWriter", _SnakeCaseOnlyWriter)
+
+    path = tmp_path / "snake_case_writer_surface.pt"
+    ser._write_zip_checkpoint(
+        {"x": mt.tensor([1.0])},
+        str(path),
+        pickle,
+        pickle.HIGHEST_PROTOCOL,
+    )
+
+    assert calls[0][0] == "write_record"
+    assert calls[0][1] == "data.pkl"
+    assert calls[-1] == ("write_end_of_file",)

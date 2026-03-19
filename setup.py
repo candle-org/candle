@@ -68,6 +68,10 @@ if platform.system() == "Linux":
                     ["src/candle/_cython/_fast_ops.pyx"],
                 ),
                 Extension(
+                    "candle._cython._stream",
+                    ["src/candle/_cython/_stream.pyx"],
+                ),
+                Extension(
                     "candle.distributed._c10d",
                     ["src/candle/distributed/_c10d.pyx"],
                 ),

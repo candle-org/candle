@@ -30,6 +30,7 @@ from ._dtype import (
     to_numpy_dtype,
 )
 from ._storage import TypedStorage, _CPUUntypedStorage, typed_storage_from_numpy
+from ._C import PyTorchFileReader, PyTorchFileWriter
 from ._stream import PyTorchStreamReader, PyTorchStreamWriter
 from ._tensor import Tensor as MindTensor
 
@@ -368,7 +369,9 @@ def _write_zip_checkpoint(obj, f, pickle_module, pickle_protocol):
     data_pkl = _patch_pickle_globals_for_torch(data_buf.getvalue())
 
     if isinstance(f, (str, os.PathLike)):
-        writer = PyTorchStreamWriter(str(f))
+        writer = PyTorchFileWriter(str(f))
+        write_record = writer.write_record
+        write_end_of_file = writer.write_end_of_file
     else:
         # file-like: wrap in a writer callable
         def _writer_func(buf, n):
@@ -378,15 +381,17 @@ def _write_zip_checkpoint(obj, f, pickle_module, pickle_protocol):
                 f.write(buf)
             return n
         writer = PyTorchStreamWriter(_writer_func)
+        write_record = writer.writeRecord
+        write_end_of_file = writer.writeEndOfFile
 
-    writer.writeRecord("data.pkl", data_pkl)
-    writer.writeRecord("byteorder", sys.byteorder.encode("ascii"))
+    write_record("data.pkl", data_pkl)
+    write_record("byteorder", sys.byteorder.encode("ascii"))
 
     refs = sorted(storage_refs_by_id.values(), key=lambda r: int(r.key))
     for ref in refs:
-        writer.writeRecord(f"data/{ref.key}", ref.raw_bytes)
+        write_record(f"data/{ref.key}", ref.raw_bytes)
 
-    writer.writeEndOfFile()
+    write_end_of_file()
 
 
 def _storage_dtype_from_type(storage_type):
@@ -504,7 +509,10 @@ def _load_zip_checkpoint(
     _validate_map_location(map_location)
 
     loaded_storages = {}
-    reader = PyTorchStreamReader(file_obj)
+    if isinstance(file_obj, (str, os.PathLike)):
+        reader = PyTorchFileReader(str(file_obj))
+    else:
+        reader = PyTorchStreamReader(file_obj)
 
     if not reader.hasRecord("data.pkl"):
         raise RuntimeError("checkpoint missing data.pkl record")
