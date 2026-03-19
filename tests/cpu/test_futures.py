@@ -1,4 +1,8 @@
+import importlib
+import sys
 import threading
+
+import pytest
 
 from candle.futures import Future, collect_all
 
@@ -73,8 +77,26 @@ def test_future_wait_blocks_until_other_thread_sets_result():
     assert seen == ["threaded"]
 
 
-def test_future_module_reports_compiled_fast_path():
+def test_future_module_uses_compiled_symbols():
+    import candle.futures as futures_mod
+    import candle._cython._future as cy_future
+
+    assert futures_mod.Future is cy_future.Future
+    assert futures_mod.collect_all is cy_future.collect_all
+
+
+def test_future_module_fails_without_compiled_extension(monkeypatch):
+    import candle
+    import candle._cython as cython_pkg
     import candle.futures as futures_mod
 
-    assert hasattr(futures_mod, "_FUTURE_CYTHON")
-    assert futures_mod._FUTURE_CYTHON is True
+    with monkeypatch.context() as patch:
+        patch.delitem(sys.modules, "candle.futures", raising=False)
+        patch.setitem(sys.modules, "candle._cython._future", None)
+        patch.delattr(cython_pkg, "_future", raising=False)
+        patch.delattr(candle, "futures", raising=False)
+
+        with pytest.raises(ModuleNotFoundError, match=r"candle\._cython\._future"):
+            importlib.import_module("candle.futures")
+
+    importlib.reload(futures_mod)

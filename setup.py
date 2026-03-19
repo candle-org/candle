@@ -12,90 +12,92 @@ import shutil
 
 from setuptools import setup, find_packages, Extension
 from setuptools.command.build_py import build_py
+from Cython.Build import cythonize
 
 # ---------------------------------------------------------------------------
-# Cython extension (optional — only built on Linux where CANN is available)
+# Required Cython extensions (must build on every supported platform)
 # ---------------------------------------------------------------------------
-ext_modules = []
+required_extensions = [
+    Extension(
+        "candle._cython._stream",
+        ["src/candle/_cython/_stream.pyx"],
+    ),
+    Extension(
+        "candle._cython._future",
+        ["src/candle/_cython/_future.pyx"],
+    ),
+]
+
+linux_only_extensions = []
 if platform.system() == "Linux":
-    try:
-        from Cython.Build import cythonize
-        ext_modules = cythonize(
-            [
-                Extension(
-                    "candle._cython._aclnn_ffi",
-                    ["src/candle/_cython/_aclnn_ffi.pyx"],
-                    libraries=["dl"],
-                ),
-                Extension(
-                    "candle._cython._npu_ops",
-                    ["src/candle/_cython/_npu_ops.pyx"],
-                ),
-                Extension(
-                    "candle._cython._dispatch",
-                    ["src/candle/_cython/_dispatch.pyx"],
-                ),
-                Extension(
-                    "candle._cython._allocator",
-                    ["src/candle/_cython/_allocator.pyx"],
-                ),
-                Extension(
-                    "candle._cython._storage",
-                    ["src/candle/_cython/_storage.pyx"],
-                ),
-                Extension(
-                    "candle._cython._tensor_impl",
-                    ["src/candle/_cython/_tensor_impl.pyx"],
-                ),
-                Extension(
-                    "candle._cython._dispatcher_core",
-                    ["src/candle/_cython/_dispatcher_core.pyx"],
-                ),
-                Extension(
-                    "candle._cython._device",
-                    ["src/candle/_cython/_device.pyx"],
-                ),
-                Extension(
-                    "candle._cython._dtype",
-                    ["src/candle/_cython/_dtype.pyx"],
-                ),
-                Extension(
-                    "candle._cython._autograd_node",
-                    ["src/candle/_cython/_autograd_node.pyx"],
-                ),
-                Extension(
-                    "candle._cython._fast_ops",
-                    ["src/candle/_cython/_fast_ops.pyx"],
-                ),
-                Extension(
-                    "candle._cython._stream",
-                    ["src/candle/_cython/_stream.pyx"],
-                ),
-                Extension(
-                    "candle._cython._future",
-                    ["src/candle/_cython/_future.pyx"],
-                ),
-                Extension(
-                    "candle.distributed._c10d",
-                    ["src/candle/distributed/_c10d.pyx"],
-                ),
-                Extension(
-                    "candle.distributed._c10d_gloo",
-                    ["src/candle/distributed/_c10d_gloo.pyx"],
-                ),
-                Extension(
-                    "candle.distributed._c10d_hccl",
-                    ["src/candle/distributed/_c10d_hccl.pyx"],
-                ),
-            ],
-            compiler_directives={
-                "language_level": "3",
-                "boundscheck": False,
-                "wraparound": False,
-            },
-        )
-    except ImportError:
-        pass  # Cython not installed — skip extension, use fallback at runtime
+    linux_only_extensions = [
+        Extension(
+            "candle._cython._aclnn_ffi",
+            ["src/candle/_cython/_aclnn_ffi.pyx"],
+            libraries=["dl"],
+        ),
+        Extension(
+            "candle._cython._npu_ops",
+            ["src/candle/_cython/_npu_ops.pyx"],
+        ),
+        Extension(
+            "candle._cython._dispatch",
+            ["src/candle/_cython/_dispatch.pyx"],
+        ),
+        Extension(
+            "candle._cython._allocator",
+            ["src/candle/_cython/_allocator.pyx"],
+        ),
+        Extension(
+            "candle._cython._storage",
+            ["src/candle/_cython/_storage.pyx"],
+        ),
+        Extension(
+            "candle._cython._tensor_impl",
+            ["src/candle/_cython/_tensor_impl.pyx"],
+        ),
+        Extension(
+            "candle._cython._dispatcher_core",
+            ["src/candle/_cython/_dispatcher_core.pyx"],
+        ),
+        Extension(
+            "candle._cython._device",
+            ["src/candle/_cython/_device.pyx"],
+        ),
+        Extension(
+            "candle._cython._dtype",
+            ["src/candle/_cython/_dtype.pyx"],
+        ),
+        Extension(
+            "candle._cython._autograd_node",
+            ["src/candle/_cython/_autograd_node.pyx"],
+        ),
+        Extension(
+            "candle._cython._fast_ops",
+            ["src/candle/_cython/_fast_ops.pyx"],
+        ),
+        Extension(
+            "candle.distributed._c10d",
+            ["src/candle/distributed/_c10d.pyx"],
+        ),
+        Extension(
+            "candle.distributed._c10d_gloo",
+            ["src/candle/distributed/_c10d_gloo.pyx"],
+        ),
+        Extension(
+            "candle.distributed._c10d_hccl",
+            ["src/candle/distributed/_c10d_hccl.pyx"],
+        ),
+    ]
+
+ext_modules = cythonize(
+    required_extensions + linux_only_extensions,
+    compiler_directives={
+        "language_level": "3",
+        "boundscheck": False,
+        "wraparound": False,
+    },
+)
 
 
 class _BuildPy(build_py):

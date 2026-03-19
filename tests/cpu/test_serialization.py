@@ -2,7 +2,9 @@ import numpy as np
 import torch
 import io
 import builtins
+import importlib
 import pickle
+import sys
 import zipfile
 import collections
 from collections import OrderedDict
@@ -736,6 +738,29 @@ def test_serialization_uses_c_module_reader_writer_surface(tmp_path):
     reader = candle_torch._C.PyTorchFileReader(str(path))
     assert reader.has_record("data.pkl")
     assert isinstance(reader.get_all_records(), list)
+
+
+def test_stream_module_fails_without_compiled_extension(monkeypatch):
+    import candle
+    import candle._cython as cython_pkg
+    import candle._stream as stream_mod
+
+    with monkeypatch.context() as patch:
+        patch.delitem(sys.modules, "candle._stream", raising=False)
+        patch.delitem(sys.modules, "candle.serialization", raising=False)
+        patch.setitem(sys.modules, "candle._cython._stream", None)
+        patch.delattr(cython_pkg, "_stream", raising=False)
+        patch.delattr(candle, "_stream", raising=False)
+        patch.delattr(candle, "serialization", raising=False)
+
+        with pytest.raises(ModuleNotFoundError, match=r"candle\._cython\._stream"):
+            importlib.import_module("candle._stream")
+
+        with pytest.raises(ModuleNotFoundError, match=r"candle\._cython\._stream"):
+            importlib.import_module("candle.serialization")
+
+    importlib.reload(stream_mod)
+    importlib.reload(ser)
 
 
 
