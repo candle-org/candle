@@ -190,10 +190,12 @@ from .ops import (
     index_add_,
     scatter_,
     scatter_add_,
+    scatter_reduce,
     masked_scatter_,
     unfold,
     embedding,
     var_,
+    var_mean,
     norm_,
     prod_,
     floor_divide,
@@ -497,6 +499,7 @@ registry.register("index_fill_", "mps", index_fill_)
 registry.register("index_add_", "mps", index_add_)
 registry.register("scatter_", "mps", scatter_)
 registry.register("scatter_add_", "mps", scatter_add_)
+registry.register("scatter_reduce", "mps", scatter_reduce)
 registry.register("masked_scatter_", "mps", masked_scatter_)
 registry.register("unfold", "mps", unfold)
 
@@ -504,6 +507,7 @@ registry.register("unfold", "mps", unfold)
 # Var / norm / prod / floor_divide / rms_norm
 # ---------------------------------------------------------------------------
 registry.register("var", "mps", var_, meta=meta_infer.infer_sum)
+registry.register("var_mean", "mps", var_mean)
 registry.register("norm", "mps", norm_, meta=meta_infer.infer_sum)
 registry.register("prod", "mps", prod_, meta=meta_infer.infer_sum)
 registry.register("floor_divide", "mps", floor_divide, meta=meta_infer.infer_binary)
