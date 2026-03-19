@@ -28,18 +28,13 @@ required_extensions = [
     ),
 ]
 
-linux_only_extensions = []
-if platform.system() == "Linux":
-    linux_only_extensions = [
-        Extension(
-            "candle._cython._aclnn_ffi",
-            ["src/candle/_cython/_aclnn_ffi.pyx"],
-            libraries=["dl"],
-        ),
-        Extension(
-            "candle._cython._npu_ops",
-            ["src/candle/_cython/_npu_ops.pyx"],
-        ),
+# ---------------------------------------------------------------------------
+# Cross-platform extensions (Linux + macOS)
+# ---------------------------------------------------------------------------
+_system = platform.system()
+cross_platform_extensions = []
+if _system in ("Linux", "Darwin"):
+    cross_platform_extensions = [
         Extension(
             "candle._cython._dispatch",
             ["src/candle/_cython/_dispatch.pyx"],
@@ -84,6 +79,23 @@ if platform.system() == "Linux":
             "candle.distributed._c10d_gloo",
             ["src/candle/distributed/_c10d_gloo.pyx"],
         ),
+    ]
+
+# ---------------------------------------------------------------------------
+# Linux-only extensions (NPU/CANN/HCCL — not available on macOS)
+# ---------------------------------------------------------------------------
+linux_only_extensions = []
+if _system == "Linux":
+    linux_only_extensions = [
+        Extension(
+            "candle._cython._aclnn_ffi",
+            ["src/candle/_cython/_aclnn_ffi.pyx"],
+            libraries=["dl"],
+        ),
+        Extension(
+            "candle._cython._npu_ops",
+            ["src/candle/_cython/_npu_ops.pyx"],
+        ),
         Extension(
             "candle.distributed._c10d_hccl",
             ["src/candle/distributed/_c10d_hccl.pyx"],
@@ -91,7 +103,7 @@ if platform.system() == "Linux":
     ]
 
 ext_modules = cythonize(
-    required_extensions + linux_only_extensions,
+    required_extensions + cross_platform_extensions + linux_only_extensions,
     compiler_directives={
         "language_level": "3",
         "boundscheck": False,
