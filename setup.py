@@ -72,6 +72,10 @@ if platform.system() == "Linux":
                     ["src/candle/_cython/_stream.pyx"],
                 ),
                 Extension(
+                    "candle._cython._future",
+                    ["src/candle/_cython/_future.pyx"],
+                ),
+                Extension(
                     "candle.distributed._c10d",
                     ["src/candle/distributed/_c10d.pyx"],
                 ),
