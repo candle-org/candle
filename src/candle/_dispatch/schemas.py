@@ -524,6 +524,7 @@ def register_schemas():
 
     # New search ops
     registry.register_schema("unique", "unique(Tensor input, bool sorted=True, bool return_inverse=False, bool return_counts=False, int? dim=None) -> Any")
+    registry.register_schema("unique_consecutive", "unique_consecutive(Tensor input, bool return_inverse=False, bool return_counts=False, int? dim=None) -> Any")
     registry.register_schema("searchsorted", "searchsorted(Tensor sorted_sequence, Any values, bool out_int32=False, bool right=False, str? side=None, Tensor? sorter=None) -> Tensor")
     registry.register_schema("kthvalue", "kthvalue(Tensor input, int k, int dim=-1, bool keepdim=False) -> (Tensor, Tensor)")
     registry.register_schema("median", "median(Tensor input, int? dim=None, bool keepdim=False) -> Any")
@@ -665,6 +666,7 @@ def register_schemas():
     registry.register_schema("upsample_nearest1d", "upsample_nearest1d(Tensor input, Any output_size) -> Tensor")
     registry.register_schema("upsample_linear1d", "upsample_linear1d(Tensor input, Any output_size, bool align_corners=False, Any scales=None) -> Tensor")
     registry.register_schema("upsample_bicubic2d", "upsample_bicubic2d(Tensor input, Any output_size, bool align_corners=False, Any scales_h=None, Any scales_w=None) -> Tensor")
+    registry.register_schema("upsample_trilinear3d", "upsample_trilinear3d(Tensor input, Any output_size, bool align_corners=False, Any scales_d=None, Any scales_h=None, Any scales_w=None) -> Tensor")
     registry.register_schema("uniform", "uniform(Tensor input) -> Tensor")
     registry.register_schema("ctc_loss", "ctc_loss(Tensor log_probs, Any targets, Any input_lengths, Any target_lengths, int blank=0, str reduction='mean', bool zero_infinity=False) -> Tensor")
     registry.register_schema("adaptive_max_pool2d", "adaptive_max_pool2d(Tensor input, Any output_size, bool return_indices=False) -> Tensor")

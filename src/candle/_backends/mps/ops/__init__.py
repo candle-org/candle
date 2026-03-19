@@ -145,6 +145,7 @@ from .reduce import (  # noqa: F401
     median,
     kthvalue,
     unique,
+    unique_consecutive,
     searchsorted,
     argwhere,
 )
@@ -312,6 +313,7 @@ from .conv import (  # noqa: F401
     upsample_linear1d,
     upsample_bilinear2d,
     upsample_bicubic2d,
+    upsample_trilinear3d,
     pad,
     im2col,
     col2im,

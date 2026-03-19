@@ -616,6 +616,22 @@ def interpolate(input, size=None, scale_factor=None, mode='nearest',
             output_size = (int(W * sf),)
         else:
             raise ValueError("either size or scale_factor must be defined")
+    elif ndim == 5:
+        # 3D: (N, C, D, H, W)
+        if size is not None:
+            if isinstance(size, int):
+                output_size = (size, size, size)
+            else:
+                output_size = tuple(size)
+        elif scale_factor is not None:
+            if isinstance(scale_factor, (int, float)):
+                sf_d = sf_h = sf_w = float(scale_factor)
+            else:
+                sf_d, sf_h, sf_w = float(scale_factor[0]), float(scale_factor[1]), float(scale_factor[2])
+            D, H, W = input.shape[2], input.shape[3], input.shape[4]
+            output_size = (int(D * sf_d), int(H * sf_h), int(W * sf_w))
+        else:
+            raise ValueError("either size or scale_factor must be defined")
     else:
         # 2D: (N, C, H, W)
         if size is not None:
@@ -663,6 +679,16 @@ def interpolate(input, size=None, scale_factor=None, mode='nearest',
         else:
             sh, sw = 0.0, 0.0
         return dispatch("upsample_bicubic2d", input.device.type, input, output_size, ac, sh, sw)
+    elif mode == 'trilinear':
+        ac = align_corners if align_corners is not None else False
+        if scale_factor is not None and not recompute_scale_factor:
+            if isinstance(scale_factor, (int, float)):
+                sd = sh = sw = float(scale_factor)
+            else:
+                sd, sh, sw = float(scale_factor[0]), float(scale_factor[1]), float(scale_factor[2])
+        else:
+            sd, sh, sw = 0.0, 0.0, 0.0
+        return dispatch("upsample_trilinear3d", input.device.type, input, output_size, ac, sd, sh, sw)
     else:
         raise NotImplementedError(f"interpolate mode '{mode}' is not yet implemented")
 

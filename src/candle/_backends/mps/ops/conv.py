@@ -947,6 +947,50 @@ def upsample_bicubic2d(a, output_size, align_corners=False, scales_h=None, scale
                     out[:, :, j, i] += arr[:, :, hh, ww] * weight
     return _from_numpy(np.ascontiguousarray(out.astype(_to_numpy(a).dtype)), a.dtype, a.device)
 
+def upsample_trilinear3d(a, output_size, align_corners=False, scales_d=None, scales_h=None, scales_w=None):
+    """Trilinear 3D upsampling. Input: (N, C, D_in, H_in, W_in) -> (N, C, D_out, H_out, W_out)."""
+    arr = _to_numpy(a).astype(np.float64)
+    D_out, H_out, W_out = output_size
+    D_in, H_in, W_in = arr.shape[2], arr.shape[3], arr.shape[4]
+
+    if align_corners and D_in > 1 and D_out > 1:
+        d = np.linspace(0, D_in - 1, D_out)
+    else:
+        d = (np.arange(D_out, dtype=np.float64) + 0.5) * D_in / D_out - 0.5
+    if align_corners and H_in > 1 and H_out > 1:
+        h = np.linspace(0, H_in - 1, H_out)
+    else:
+        h = (np.arange(H_out, dtype=np.float64) + 0.5) * H_in / H_out - 0.5
+    if align_corners and W_in > 1 and W_out > 1:
+        w = np.linspace(0, W_in - 1, W_out)
+    else:
+        w = (np.arange(W_out, dtype=np.float64) + 0.5) * W_in / W_out - 0.5
+
+    d = np.clip(d, 0, D_in - 1)
+    h = np.clip(h, 0, H_in - 1)
+    w = np.clip(w, 0, W_in - 1)
+
+    d0 = np.floor(d).astype(np.intp)
+    d1 = np.minimum(d0 + 1, D_in - 1)
+    h0 = np.floor(h).astype(np.intp)
+    h1 = np.minimum(h0 + 1, H_in - 1)
+    w0 = np.floor(w).astype(np.intp)
+    w1 = np.minimum(w0 + 1, W_in - 1)
+
+    wd = (d - d0).reshape(1, 1, -1, 1, 1)
+    wh = (h - h0).reshape(1, 1, 1, -1, 1)
+    ww = (w - w0).reshape(1, 1, 1, 1, -1)
+
+    out = (arr[:, :, d0[:, None, None], h0[None, :, None], w0[None, None, :]] * (1 - wd) * (1 - wh) * (1 - ww) +
+           arr[:, :, d0[:, None, None], h0[None, :, None], w1[None, None, :]] * (1 - wd) * (1 - wh) * ww +
+           arr[:, :, d0[:, None, None], h1[None, :, None], w0[None, None, :]] * (1 - wd) * wh * (1 - ww) +
+           arr[:, :, d0[:, None, None], h1[None, :, None], w1[None, None, :]] * (1 - wd) * wh * ww +
+           arr[:, :, d1[:, None, None], h0[None, :, None], w0[None, None, :]] * wd * (1 - wh) * (1 - ww) +
+           arr[:, :, d1[:, None, None], h0[None, :, None], w1[None, None, :]] * wd * (1 - wh) * ww +
+           arr[:, :, d1[:, None, None], h1[None, :, None], w0[None, None, :]] * wd * wh * (1 - ww) +
+           arr[:, :, d1[:, None, None], h1[None, :, None], w1[None, None, :]] * wd * wh * ww)
+    return _from_numpy(np.ascontiguousarray(out.astype(_to_numpy(a).dtype)), a.dtype, a.device)
+
 def pad(a, pad_widths, mode='constant', value=0):
     ndim = len(a.shape)
 

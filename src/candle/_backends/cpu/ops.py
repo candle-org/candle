@@ -2684,6 +2684,56 @@ def unique(a, sorted=True, return_inverse=False, return_counts=False, dim=None):
     return _from_numpy(np.ascontiguousarray(result), a.dtype, a.device)
 
 
+def unique_consecutive(a, return_inverse=False, return_counts=False, dim=None):
+    arr = _to_numpy(a)
+    if dim is None:
+        flat = arr.flatten()
+        # Find where consecutive elements differ
+        if flat.size == 0:
+            mask = np.array([], dtype=bool)
+        else:
+            mask = np.concatenate(([True], flat[1:] != flat[:-1]))
+        output = flat[mask]
+        results = [_from_numpy(np.ascontiguousarray(output), a.dtype, a.device)]
+        if return_inverse:
+            inverse = np.cumsum(mask) - 1
+            results.append(_from_numpy(inverse.astype(np.int64), int64_dtype, a.device))
+        if return_counts:
+            indices = np.concatenate((np.where(mask)[0], [flat.size]))
+            counts = np.diff(indices)
+            results.append(_from_numpy(counts.astype(np.int64), int64_dtype, a.device))
+        return tuple(results) if len(results) > 1 else results[0]
+    # dim-based unique_consecutive
+    d = dim if dim >= 0 else dim + arr.ndim
+    n = arr.shape[d]
+    if n == 0:
+        results = [_from_numpy(np.ascontiguousarray(arr), a.dtype, a.device)]
+        if return_inverse:
+            results.append(_from_numpy(np.array([], dtype=np.int64), int64_dtype, a.device))
+        if return_counts:
+            results.append(_from_numpy(np.array([], dtype=np.int64), int64_dtype, a.device))
+        return tuple(results) if len(results) > 1 else results[0]
+    slices_prev = [slice(None)] * arr.ndim
+    slices_curr = [slice(None)] * arr.ndim
+    mask = [True]
+    for i in range(1, n):
+        slices_prev[d] = i - 1
+        slices_curr[d] = i
+        mask.append(not np.array_equal(arr[tuple(slices_prev)], arr[tuple(slices_curr)]))
+    mask = np.array(mask)
+    indices = np.where(mask)[0]
+    output = np.take(arr, indices, axis=d)
+    results = [_from_numpy(np.ascontiguousarray(output), a.dtype, a.device)]
+    if return_inverse:
+        inverse = np.cumsum(mask) - 1
+        results.append(_from_numpy(inverse.astype(np.int64), int64_dtype, a.device))
+    if return_counts:
+        count_indices = np.concatenate((np.where(mask)[0], [n]))
+        counts = np.diff(count_indices)
+        results.append(_from_numpy(counts.astype(np.int64), int64_dtype, a.device))
+    return tuple(results) if len(results) > 1 else results[0]
+
+
 def searchsorted(sorted_seq, values, out_int32=False, right=False, side=None, sorter=None):
     seq_np = _to_numpy(sorted_seq)
     val_np = _to_numpy(values) if isinstance(values, Tensor) else np.array(values)
@@ -4244,6 +4294,52 @@ def upsample_bilinear2d(a, output_size, align_corners=False, scales_h=None, scal
            arr[:, :, h0[:, None], w1[None, :]] * (1 - wh) * ww +
            arr[:, :, h1[:, None], w0[None, :]] * wh * (1 - ww) +
            arr[:, :, h1[:, None], w1[None, :]] * wh * ww)
+    return _from_numpy(np.ascontiguousarray(out.astype(_to_numpy(a).dtype)), a.dtype, a.device)
+
+
+def upsample_trilinear3d(a, output_size, align_corners=False, scales_d=None, scales_h=None, scales_w=None):
+    """Trilinear 3D upsampling. Input: (N, C, D_in, H_in, W_in) -> (N, C, D_out, H_out, W_out)."""
+    arr = _to_numpy(a).astype(np.float64)
+    D_out, H_out, W_out = output_size
+    D_in, H_in, W_in = arr.shape[2], arr.shape[3], arr.shape[4]
+
+    if align_corners and D_in > 1 and D_out > 1:
+        d = np.linspace(0, D_in - 1, D_out)
+    else:
+        d = (np.arange(D_out, dtype=np.float64) + 0.5) * D_in / D_out - 0.5
+    if align_corners and H_in > 1 and H_out > 1:
+        h = np.linspace(0, H_in - 1, H_out)
+    else:
+        h = (np.arange(H_out, dtype=np.float64) + 0.5) * H_in / H_out - 0.5
+    if align_corners and W_in > 1 and W_out > 1:
+        w = np.linspace(0, W_in - 1, W_out)
+    else:
+        w = (np.arange(W_out, dtype=np.float64) + 0.5) * W_in / W_out - 0.5
+
+    d = np.clip(d, 0, D_in - 1)
+    h = np.clip(h, 0, H_in - 1)
+    w = np.clip(w, 0, W_in - 1)
+
+    d0 = np.floor(d).astype(np.intp)
+    d1 = np.minimum(d0 + 1, D_in - 1)
+    h0 = np.floor(h).astype(np.intp)
+    h1 = np.minimum(h0 + 1, H_in - 1)
+    w0 = np.floor(w).astype(np.intp)
+    w1 = np.minimum(w0 + 1, W_in - 1)
+
+    wd = (d - d0).reshape(1, 1, -1, 1, 1)
+    wh = (h - h0).reshape(1, 1, 1, -1, 1)
+    ww = (w - w0).reshape(1, 1, 1, 1, -1)
+
+    # 8-point trilinear interpolation
+    out = (arr[:, :, d0[:, None, None], h0[None, :, None], w0[None, None, :]] * (1 - wd) * (1 - wh) * (1 - ww) +
+           arr[:, :, d0[:, None, None], h0[None, :, None], w1[None, None, :]] * (1 - wd) * (1 - wh) * ww +
+           arr[:, :, d0[:, None, None], h1[None, :, None], w0[None, None, :]] * (1 - wd) * wh * (1 - ww) +
+           arr[:, :, d0[:, None, None], h1[None, :, None], w1[None, None, :]] * (1 - wd) * wh * ww +
+           arr[:, :, d1[:, None, None], h0[None, :, None], w0[None, None, :]] * wd * (1 - wh) * (1 - ww) +
+           arr[:, :, d1[:, None, None], h0[None, :, None], w1[None, None, :]] * wd * (1 - wh) * ww +
+           arr[:, :, d1[:, None, None], h1[None, :, None], w0[None, None, :]] * wd * wh * (1 - ww) +
+           arr[:, :, d1[:, None, None], h1[None, :, None], w1[None, None, :]] * wd * wh * ww)
     return _from_numpy(np.ascontiguousarray(out.astype(_to_numpy(a).dtype)), a.dtype, a.device)
 
 

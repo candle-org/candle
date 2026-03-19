@@ -1295,6 +1295,10 @@ def unique(a, sorted=True, return_inverse=False, return_counts=False, dim=None):
     return dispatch("unique", a.device.type, a, sorted, return_inverse, return_counts, dim)
 
 
+def unique_consecutive(a, return_inverse=False, return_counts=False, dim=None):
+    return dispatch("unique_consecutive", a.device.type, a, return_inverse, return_counts, dim)
+
+
 def searchsorted(sorted_seq, values, out_int32=False, right=False, side=None, sorter=None):
     return dispatch(
         "searchsorted", sorted_seq.device.type,

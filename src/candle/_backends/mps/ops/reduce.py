@@ -914,6 +914,52 @@ def unique(a, sorted=True, return_inverse=False, return_counts=False, dim=None):
         return tuple(out)
     return _from_numpy(np.ascontiguousarray(result), a.dtype, a.device)
 
+def unique_consecutive(a, return_inverse=False, return_counts=False, dim=None):
+    arr = _to_numpy(a)
+    if dim is None:
+        flat = arr.flatten()
+        if flat.size == 0:
+            mask = np.array([], dtype=bool)
+        else:
+            mask = np.concatenate([[True], flat[1:] != flat[:-1]])
+        unique_vals = flat[mask]
+        result = [_from_numpy(np.ascontiguousarray(unique_vals), a.dtype, a.device)]
+        if return_inverse:
+            inverse = np.cumsum(mask) - 1
+            result.append(_from_numpy(inverse.astype(np.int64), int64_dtype, a.device))
+        if return_counts:
+            indices = np.concatenate([np.where(mask)[0], [len(flat)]])
+            counts = np.diff(indices)
+            result.append(_from_numpy(counts.astype(np.int64), int64_dtype, a.device))
+        return tuple(result) if len(result) > 1 else result[0]
+    # dim-based
+    ndim = arr.ndim
+    d = dim if dim >= 0 else dim + ndim
+    n = arr.shape[d]
+    if n == 0:
+        result = [_from_numpy(np.ascontiguousarray(arr), a.dtype, a.device)]
+        if return_inverse:
+            result.append(_from_numpy(np.array([], dtype=np.int64), int64_dtype, a.device))
+        if return_counts:
+            result.append(_from_numpy(np.array([], dtype=np.int64), int64_dtype, a.device))
+        return tuple(result) if len(result) > 1 else result[0]
+    mask = [True]
+    for i in range(1, n):
+        mask.append(not np.array_equal(
+            np.take(arr, [i], axis=d), np.take(arr, [i - 1], axis=d)))
+    mask = np.array(mask)
+    keep = np.where(mask)[0]
+    unique_arr = np.concatenate([np.take(arr, [k], axis=d) for k in keep], axis=d)
+    result = [_from_numpy(np.ascontiguousarray(unique_arr), a.dtype, a.device)]
+    if return_inverse:
+        inverse = np.cumsum(mask) - 1
+        result.append(_from_numpy(inverse.astype(np.int64), int64_dtype, a.device))
+    if return_counts:
+        indices = np.concatenate([keep, [n]])
+        counts = np.diff(indices)
+        result.append(_from_numpy(counts.astype(np.int64), int64_dtype, a.device))
+    return tuple(result) if len(result) > 1 else result[0]
+
 def searchsorted(sorted_seq, values, out_int32=False, right=False, side=None, sorter=None):
     seq_np = _to_numpy(sorted_seq)
     val_np = _to_numpy(values) if isinstance(values, Tensor) else np.array(values)
