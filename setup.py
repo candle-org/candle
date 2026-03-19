@@ -79,6 +79,10 @@ if _system in ("Linux", "Darwin"):
             "candle.distributed._c10d_gloo",
             ["src/candle/distributed/_c10d_gloo.pyx"],
         ),
+        Extension(
+            "candle._cython._mps_helpers",
+            ["src/candle/_cython/_mps_helpers.pyx"],
+        ),
     ]
 
 # ---------------------------------------------------------------------------
