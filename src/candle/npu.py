@@ -47,6 +47,9 @@ __all__ = [
     "current_stream",
     "stream",
     "set_stream",
+    "NPUGraph",
+    "graph",
+    "is_current_stream_capturing",
     "stream_priority_range",
     "empty_cache",
     "reset_accumulated_memory_stats",
@@ -473,8 +476,103 @@ def get_rng_state_all():
         n = 1
     return [get_rng_state(i) for i in range(n)]
 
-
 def set_rng_state_all(states):
     """Set RNG state for all NPU devices."""
     for i, state in enumerate(states):
         set_rng_state(state, device=i)
+
+
+_ERROR_MODE_MAP = {
+    "global": 0,
+    "thread_local": 1,
+    "relaxed": 2,
+}
+
+
+class NPUGraph:
+    def __init__(self):
+        from ._cython._aclgraph import _NPUGraphImpl  # pylint: disable=import-error,no-name-in-module
+
+        self._impl = _NPUGraphImpl()
+
+    def capture_begin(self, pool=None, capture_error_mode="global"):
+        del pool
+        _ensure_initialized()
+        if capture_error_mode not in _ERROR_MODE_MAP:
+            valid = ", ".join(sorted(_ERROR_MODE_MAP))
+            raise ValueError(
+                f"Invalid capture_error_mode: {capture_error_mode}. Expected one of: {valid}")
+        mode = _ERROR_MODE_MAP[capture_error_mode]
+        s = current_stream()
+        self._impl.capture_begin(s._handle, mode)
+
+    def capture_end(self):
+        self._impl.capture_end()
+
+    def replay(self):
+        self._impl.replay_async(self._impl.capture_stream)
+
+    def reset(self):
+        self._impl.reset()
+
+    def pool(self):
+        return None
+
+    def debug_dump(self, path):
+        self._impl.debug_dump(path)
+
+
+class graph:
+    def __init__(self, npu_graph, pool=None, stream=None, capture_error_mode="global"):
+        self._graph = npu_graph
+        self._pool = pool
+        self._stream = stream
+        self._capture_error_mode = capture_error_mode
+        self._stream_ctx = None
+        self._capture_stream_obj = None
+
+    def __enter__(self):
+        synchronize()
+        if self._stream is not None:
+            self._stream_ctx = globals()["stream"](self._stream)
+            self._stream_ctx.__enter__()
+        self._capture_stream_obj = current_stream()
+        try:
+            self._graph.capture_begin(
+                pool=self._pool,
+                capture_error_mode=self._capture_error_mode,
+            )
+        except BaseException:
+            if self._stream_ctx is not None:
+                self._stream_ctx.__exit__(None, None, None)
+                self._stream_ctx = None
+            raise
+        return self._graph
+
+    def __exit__(self, exc_type, exc, tb):
+        sync_exc = None
+        try:
+            if exc_type is not None:
+                self._graph._impl.abort()
+            else:
+                self._graph.capture_end()
+        finally:
+            try:
+                if self._capture_stream_obj is not None:
+                    self._capture_stream_obj.synchronize()
+            except BaseException as err:  # preserve explicit stream restoration
+                sync_exc = err
+            finally:
+                if self._stream_ctx is not None:
+                    self._stream_ctx.__exit__(exc_type, exc, tb)
+        if sync_exc is not None:
+            raise sync_exc
+        return False
+
+
+def is_current_stream_capturing():
+    from ._cython import _aclrt_ffi  # pylint: disable=import-error,no-name-in-module
+
+    _ensure_initialized()
+    status, _ = _aclrt_ffi.capture_get_info(current_stream()._handle)
+    return status == _aclrt_ffi.ACL_MODEL_RI_CAPTURE_STATUS_ACTIVE

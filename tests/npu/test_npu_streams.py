@@ -150,6 +150,37 @@ def test_npu_event_wait_stream(monkeypatch):
     assert runtime.wait_calls == [(s.stream, evt.event)]
 
 
+
+
+def test_runtime_get_aclrt_ffi_disables_aclgraph_on_old_cann(monkeypatch):
+    import sys
+    import candle._backends.npu.runtime as npu_runtime
+    import candle._cython as cython_pkg
+
+    calls = {}
+
+    class FakeAclrtFfi:
+        def is_initialized(self):
+            return False
+
+        def init(self, lib_path=None, enable_aclgraph=True):
+            calls["init"] = (lib_path, enable_aclgraph)
+
+    fake_mod = FakeAclrtFfi()
+    monkeypatch.setattr(npu_runtime, "_aclrt_ffi_mod", None)
+    monkeypatch.setattr(npu_runtime, "ensure_acl", lambda: None)
+    monkeypatch.setattr(npu_runtime.cann_discovery, "get_cann_version", lambda: (8, 3, 2))
+    monkeypatch.setattr(npu_runtime.cann_discovery, "get_lib_dirs", lambda: ["/tmp/cann"])
+    monkeypatch.setattr(npu_runtime.os.path, "exists", lambda p: p == "/tmp/cann/libascendcl.so")
+    monkeypatch.setattr(cython_pkg, "_aclrt_ffi", fake_mod, raising=False)
+    monkeypatch.setitem(sys.modules, "candle._cython._aclrt_ffi", fake_mod)
+
+    mod = npu_runtime._get_aclrt_ffi()
+
+    assert mod is fake_mod
+    assert calls["init"] == ("/tmp/cann/libascendcl.so", False)
+
+
 def test_npu_runtime_primitives_exist():
     import candle._backends.npu.runtime as npu_runtime
 
