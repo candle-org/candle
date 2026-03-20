@@ -498,6 +498,10 @@ class NPUGraph:
     def capture_begin(self, pool=None, capture_error_mode="global"):
         del pool
         _ensure_initialized()
+        if capture_error_mode not in _ERROR_MODE_MAP:
+            valid = ", ".join(sorted(_ERROR_MODE_MAP))
+            raise ValueError(
+                f"Invalid capture_error_mode: {capture_error_mode}. Expected one of: {valid}")
         mode = _ERROR_MODE_MAP[capture_error_mode]
         s = current_stream()
         self._impl.capture_begin(s._handle, mode)
@@ -538,13 +542,15 @@ class graph:
         return self._graph
 
     def __exit__(self, exc_type, exc, tb):
-        if exc_type is not None:
-            self._graph._impl.abort()
-        else:
-            self._graph.capture_end()
-        if self._stream_ctx is not None:
-            self._stream_ctx.__exit__(exc_type, exc, tb)
-        current_stream().synchronize()
+        try:
+            if exc_type is not None:
+                self._graph._impl.abort()
+            else:
+                self._graph.capture_end()
+        finally:
+            if self._stream_ctx is not None:
+                self._stream_ctx.__exit__(exc_type, exc, tb)
+            current_stream().synchronize()
         return False
 
 

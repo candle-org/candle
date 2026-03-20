@@ -166,6 +166,8 @@ class _Runtime:
 
     def synchronize_device(self):
         _get_aclrt_ffi().synchronize_device()
+
+    def defer_host_free(self, ptr):
         if ptr is None:
             return
         self._deferred_host_frees.append(ptr)

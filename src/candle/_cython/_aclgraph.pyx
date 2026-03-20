@@ -22,7 +22,16 @@ cdef class _NPUGraphImpl:
         self._name = b""
 
     def __dealloc__(self):
-        if self._state == STATE_CAPTURED and self._model_ri != NULL:
+        if self._state == STATE_CAPTURING and self._capture_stream != NULL:
+            # Abort in-progress capture: end it to get the partial handle,
+            # then destroy that handle immediately.
+            try:
+                handle = _aclrt_ffi.capture_end(<uintptr_t>self._capture_stream)
+                if handle:
+                    _aclrt_ffi.ri_destroy(handle)
+            except Exception:
+                pass
+        elif self._state == STATE_CAPTURED and self._model_ri != NULL:
             try:
                 _aclrt_ffi.ri_destroy(<uintptr_t>self._model_ri)
             except Exception:
@@ -63,15 +72,22 @@ cdef class _NPUGraphImpl:
         _aclrt_ffi.ri_execute_async(<uintptr_t>self._model_ri, stream)
 
     cpdef reset(self):
-        if self._model_ri != NULL:
+        if self._state == STATE_CAPTURED and self._model_ri != NULL:
             _aclrt_ffi.ri_destroy(<uintptr_t>self._model_ri)
         self._clear_handle()
         self._state = STATE_IDLE
 
     cpdef abort(self):
         self._require_state(STATE_CAPTURING, "abort")
-        if self._model_ri != NULL:
-            _aclrt_ffi.ri_abort(<uintptr_t>self._model_ri)
+        # During CAPTURING, _model_ri is NULL. To abort, we must end the
+        # capture on the stream (producing a partial handle) then destroy it.
+        if self._capture_stream != NULL:
+            try:
+                handle = _aclrt_ffi.capture_end(<uintptr_t>self._capture_stream)
+                if handle:
+                    _aclrt_ffi.ri_destroy(handle)
+            except Exception:
+                pass
         self._clear_handle()
         self._state = STATE_IDLE
 

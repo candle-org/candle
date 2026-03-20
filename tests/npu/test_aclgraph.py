@@ -140,3 +140,45 @@ def test_npu_is_current_stream_not_capturing(fake_graph_env, monkeypatch):
     )
 
     assert torch.npu.is_current_stream_capturing() is False
+
+
+def test_npu_graph_invalid_capture_error_mode(fake_graph_env):
+    g = torch.npu.NPUGraph()
+    with pytest.raises(ValueError, match="Invalid capture_error_mode"):
+        g.capture_begin(capture_error_mode="unknown_mode")
+
+
+# ---- Direct _NPUGraphImpl state-machine tests (no real hardware) ----
+
+
+def test_npu_graph_impl_replay_from_idle_raises():
+    from candle._cython._aclgraph import _NPUGraphImpl
+
+    impl = _NPUGraphImpl()
+    with pytest.raises(RuntimeError):
+        impl.replay_async(999)
+
+
+def test_npu_graph_impl_capture_end_without_begin_raises():
+    from candle._cython._aclgraph import _NPUGraphImpl
+
+    impl = _NPUGraphImpl()
+    with pytest.raises(RuntimeError):
+        impl.capture_end()
+
+
+def test_npu_graph_impl_abort_from_idle_raises():
+    from candle._cython._aclgraph import _NPUGraphImpl
+
+    impl = _NPUGraphImpl()
+    with pytest.raises(RuntimeError):
+        impl.abort()
+
+
+def test_npu_graph_impl_double_reset_is_safe():
+    from candle._cython._aclgraph import _NPUGraphImpl
+
+    impl = _NPUGraphImpl()
+    # reset from IDLE should not raise
+    impl.reset()
+    impl.reset()
