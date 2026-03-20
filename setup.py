@@ -102,6 +102,16 @@ if _system == "Linux":
             libraries=["dl"],
         ),
         Extension(
+            "candle._cython._aclrt_ffi",
+            ["src/candle/_cython/_aclrt_ffi.pyx"],
+            libraries=["dl"],
+        ),
+        Extension(
+            "candle._cython._aclgraph",
+            ["src/candle/_cython/_aclgraph.pyx"],
+            libraries=["dl"],
+        ),
+        Extension(
             "candle._cython._npu_ops",
             ["src/candle/_cython/_npu_ops.pyx"],
         ),
