@@ -63,6 +63,7 @@ ctypedef int32_t (*fn_aclmdlRIExecute_t)(void*, int32_t) noexcept nogil
 ctypedef int32_t (*fn_aclmdlRIDestroy_t)(void*) noexcept nogil
 ctypedef int32_t (*fn_aclmdlRISetName_t)(void*, const char*) noexcept nogil
 ctypedef int32_t (*fn_aclmdlRIGetName_t)(void*, uint32_t, char*) noexcept nogil
+ctypedef int32_t (*fn_aclmdlRIDebugPrint_t)(void*) noexcept nogil
 ctypedef int32_t (*fn_aclmdlRIDebugJsonPrint_t)(void*, const char*, uint32_t) noexcept nogil
 ctypedef int32_t (*fn_aclmdlRIAbort_t)(void*) noexcept nogil
 
@@ -102,6 +103,7 @@ cdef fn_aclmdlRIExecute_t               _fn_ri_exec = NULL
 cdef fn_aclmdlRIDestroy_t               _fn_ri_destroy = NULL
 cdef fn_aclmdlRISetName_t               _fn_ri_set_name = NULL
 cdef fn_aclmdlRIGetName_t               _fn_ri_get_name = NULL
+cdef fn_aclmdlRIDebugPrint_t            _fn_ri_debug = NULL
 cdef fn_aclmdlRIDebugJsonPrint_t        _fn_ri_debug_json = NULL
 cdef fn_aclmdlRIAbort_t                 _fn_ri_abort = NULL
 
@@ -156,7 +158,7 @@ def init(str lib_path=None):
     global _fn_capture_begin, _fn_capture_end, _fn_capture_get_info
     global _fn_capture_exchange_mode
     global _fn_ri_exec_async, _fn_ri_exec, _fn_ri_destroy
-    global _fn_ri_set_name, _fn_ri_get_name, _fn_ri_debug_json, _fn_ri_abort
+    global _fn_ri_set_name, _fn_ri_get_name, _fn_ri_debug, _fn_ri_debug_json, _fn_ri_abort
     global _fn_task_grp_begin, _fn_task_grp_end
     global _fn_task_update_begin, _fn_task_update_end
 
@@ -210,7 +212,8 @@ def init(str lib_path=None):
     _fn_ri_destroy = <fn_aclmdlRIDestroy_t>_sym(h, b"aclmdlRIDestroy")
     _fn_ri_set_name = <fn_aclmdlRISetName_t>_sym(h, b"aclmdlRISetName")
     _fn_ri_get_name = <fn_aclmdlRIGetName_t>_sym(h, b"aclmdlRIGetName")
-    _fn_ri_debug_json = <fn_aclmdlRIDebugJsonPrint_t>_sym(
+    _fn_ri_debug = <fn_aclmdlRIDebugPrint_t>_sym_optional(h, b"aclmdlRIDebugPrint")
+    _fn_ri_debug_json = <fn_aclmdlRIDebugJsonPrint_t>_sym_optional(
         h, b"aclmdlRIDebugJsonPrint")
     _fn_ri_abort = <fn_aclmdlRIAbort_t>_sym(h, b"aclmdlRIAbort")
 
@@ -437,9 +440,17 @@ cpdef ri_debug_json_print(uintptr_t model_ri, str path, uint32_t flags=0):
     cdef bytes bpath = path.encode("utf-8")
     cdef const char* cpath = <const char*>bpath
     cdef int32_t ret
-    with nogil:
-        ret = _fn_ri_debug_json(<void*>model_ri, cpath, flags)
-    _check_error(ret, b"aclmdlRIDebugJsonPrint")
+    if _fn_ri_debug_json != NULL:
+        with nogil:
+            ret = _fn_ri_debug_json(<void*>model_ri, cpath, flags)
+        _check_error(ret, b"aclmdlRIDebugJsonPrint")
+        return
+    if _fn_ri_debug != NULL:
+        with nogil:
+            ret = _fn_ri_debug(<void*>model_ri)
+        _check_error(ret, b"aclmdlRIDebugPrint")
+        return
+    raise RuntimeError("No debug print API available for aclmdlRI on this CANN version")
 
 cpdef ri_abort(uintptr_t model_ri):
     """Abort an in-progress capture."""
