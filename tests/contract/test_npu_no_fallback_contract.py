@@ -103,6 +103,10 @@ def _install_native_ffi_env(monkeypatch):
             calls.append(("tensor_scalar_dtype_op", getws_ptr, exec_ptr))
             return (0, 0)
 
+        def tensor_scalar_bool_out_op(self, getws_ptr, exec_ptr, *args):
+            calls.append(("tensor_scalar_bool_out_op", getws_ptr, exec_ptr))
+            return (0, 0)
+
         def tensor_two_ints_op(self, getws_ptr, exec_ptr, *args):
             calls.append(("tensor_two_ints_op", getws_ptr, exec_ptr))
             return (0, 0)
@@ -1054,7 +1058,7 @@ def test_scalar_family_eq_scalar_uses_native_ffi(monkeypatch):
     aclnn.eq_scalar(1, 2.0, 3, (2, 2), (2, 1), "float16", runtime)
 
     assert ("resolve_op", "EqScalar") in calls
-    assert ("tensor_scalar_op_no_alpha", "getws:EqScalar", "exec:EqScalar") in calls
+    assert ("tensor_scalar_bool_out_op", "getws:EqScalar", "exec:EqScalar") in calls
 
 
 

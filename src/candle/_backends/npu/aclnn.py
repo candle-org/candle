@@ -6911,6 +6911,7 @@ def clamp_max_tensor(self_ptr, max_ptr, out_ptr, self_shape, self_stride, max_sh
 
 def eq_scalar(self_ptr, scalar_value, out_ptr, shape, stride, dtype, runtime, stream=None):
     global acl
+    _require_native_npu_ffi("eq_scalar")
     if acl is None:
         acl = ensure_acl()
     bindings = get_bindings()
@@ -6919,14 +6920,13 @@ def eq_scalar(self_ptr, scalar_value, out_ptr, shape, stride, dtype, runtime, st
     stream_ptr = int(runtime.stream if stream is None else stream)
     dtype_code = _dtype_to_acl(dtype)
 
-    _require_native_npu_ffi("eq_scalar")
     executor = 0
     workspace = None
     scalar = 0
     try:
         scalar = _ffi.create_scalar(_scalar_bytes(scalar_value, dtype), dtype_code)
         getws_ptr, exec_ptr = _ffi.resolve_op("EqScalar")
-        ws_size, executor = _ffi.tensor_scalar_op_no_alpha(
+        ws_size, executor = _ffi.tensor_scalar_bool_out_op(
             getws_ptr, exec_ptr,
             shape, stride,
             shape, stride,
@@ -8826,6 +8826,7 @@ def batch_norm(input_ptr, weight_ptr, bias_ptr, running_mean_ptr, running_var_pt
                ext_save_mean_ptr=None, ext_save_invstd_ptr=None):
     """Compute batch normalization using aclnnBatchNorm."""
     global acl
+    _require_native_npu_ffi("batch_norm")
     if acl is None:
         acl = ensure_acl()
     bindings = get_bindings()
@@ -8835,7 +8836,6 @@ def batch_norm(input_ptr, weight_ptr, bias_ptr, running_mean_ptr, running_var_pt
     dtype_code = _dtype_to_acl(dtype)
     stats_dtype_code = _dtype_to_acl("float32")
 
-    _require_native_npu_ffi("batch_norm")
     C = input_shape[1] if len(input_shape) >= 2 else 1
     aux_shape = (C,)
     aux_stride = (1,)

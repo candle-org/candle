@@ -1296,6 +1296,66 @@ def axis_dtype_unary_op(
 
 
 
+def tensor_scalar_bool_out_op(
+        uintptr_t getws_ptr, uintptr_t exec_ptr,
+        self_shape, self_stride,
+        out_shape, out_stride,
+        int32_t self_dtype_code, int32_t fmt,
+        uintptr_t self_ptr, uintptr_t out_ptr,
+        uintptr_t scalar_handle,
+        uintptr_t stream):
+    cdef int self_ndim = len(self_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int64_t[MAX_NDIM] r_shape, r_stride
+    cdef int64_t[MAX_NDIM] out_storage_shape, out_storage_stride
+    cdef int i
+    cdef int32_t bool_dtype_code = 12
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(out_ndim):
+        r_shape[i] = out_shape[i]
+        r_stride[i] = out_stride[i]
+        out_storage_shape[i] = out_shape[i]
+        out_storage_stride[i] = out_stride[i]
+    cdef void* self_t = NULL
+    cdef void* out_t = NULL
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef int32_t ret
+    with nogil:
+        self_t = _fast_create_tensor(
+            s_shape, s_stride, <uint64_t>self_ndim,
+            self_dtype_code, fmt, <void*>self_ptr)
+        out_t = _fast_create_tensor_ex(
+            r_shape, r_stride, <uint64_t>out_ndim,
+            bool_dtype_code, fmt,
+            out_storage_shape, <uint64_t>out_ndim,
+            0,
+            <void*>out_ptr)
+    if self_t == NULL or out_t == NULL:
+        if self_t != NULL: _fast_destroy_tensor(self_t)
+        if out_t != NULL: _fast_destroy_tensor(out_t)
+        raise RuntimeError("aclCreateTensor returned null")
+    try:
+        with nogil:
+            ret = (<int32_t (*)(void*, void*, void*, uint64_t*, void**) noexcept nogil>getws_ptr)(
+                self_t, <void*>scalar_handle, out_t, &ws_size, &executor)
+        if ret != 0:
+            raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        if ws_size == 0:
+            with nogil:
+                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+            if ret != 0:
+                raise RuntimeError(f"Execute failed: {ret}")
+        return (ws_size, <uintptr_t>executor)
+    finally:
+        with nogil:
+            _fast_destroy_tensor(self_t)
+            _fast_destroy_tensor(out_t)
+
+
 def tensor_scalar_dtype_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         self_shape, self_stride,
