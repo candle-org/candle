@@ -598,9 +598,11 @@ class DataLoader:
         pin_done_queue = None
         pin_sent = 0
         pin_yielded = 0
+        pin_exc_cls = None
         if self.pin_memory:
-            from ._pin_memory_thread import PinMemoryThread
+            from ._pin_memory_thread import PinMemoryThread, _PinMemoryException
 
+            pin_exc_cls = _PinMemoryException
             pin_data_queue = queue.Queue(maxsize=self._queue_depth())
             pin_done_queue = queue.Queue(maxsize=self._queue_depth())
             pin_thread = PinMemoryThread(
@@ -620,7 +622,8 @@ class DataLoader:
 
             next_idx = 0
             use_cy_reorder = _CyReorderBuffer is not None
-            reorder = _CyReorderBuffer(send_count + 1) if use_cy_reorder else {}
+            reorder_capacity = max(2, self._queue_depth() + 1)
+            reorder = _CyReorderBuffer(reorder_capacity) if use_cy_reorder else {}
             while next_idx < send_count:
                 try:
                     if pending_events:
@@ -660,16 +663,37 @@ class DataLoader:
                         pin_sent += 1
                         while pin_yielded < pin_sent:
                             try:
-                                _, batch = pin_done_queue.get_nowait()
+                                pin_idx, batch = pin_done_queue.get_nowait()
                             except queue.Empty:
                                 break
+                            if isinstance(batch, pin_exc_cls):
+                                raise RuntimeError(
+                                    f"DataLoader pin_memory thread failed: {batch.message}"
+                                )
+                            if pin_idx != pin_yielded:
+                                raise RuntimeError(
+                                    "DataLoader pin_memory thread returned out-of-order batch"
+                                )
                             pin_yielded += 1
                             yield batch
 
             if pin_thread is not None:
                 pin_data_queue.put(None)
                 while pin_yielded < pin_sent:
-                    _, batch = pin_done_queue.get(timeout=self.timeout or 300)
+                    try:
+                        pin_idx, batch = pin_done_queue.get(timeout=self.timeout or 300)
+                    except queue.Empty as exc:
+                        raise RuntimeError(
+                            f"DataLoader timed out after {self.timeout} seconds"
+                        ) from exc
+                    if isinstance(batch, pin_exc_cls):
+                        raise RuntimeError(
+                            f"DataLoader pin_memory thread failed: {batch.message}"
+                        )
+                    if pin_idx != pin_yielded:
+                        raise RuntimeError(
+                            "DataLoader pin_memory thread returned out-of-order batch"
+                        )
                     pin_yielded += 1
                     yield batch
         finally:
@@ -701,9 +725,11 @@ class DataLoader:
         pin_done_queue = None
         pin_sent = 0
         pin_yielded = 0
+        pin_exc_cls = None
         if self.pin_memory:
-            from ._pin_memory_thread import PinMemoryThread
+            from ._pin_memory_thread import PinMemoryThread, _PinMemoryException
 
+            pin_exc_cls = _PinMemoryException
             pin_data_queue = queue.Queue(maxsize=self._queue_depth())
             pin_done_queue = queue.Queue(maxsize=self._queue_depth())
             pin_thread = PinMemoryThread(
@@ -754,16 +780,37 @@ class DataLoader:
                     pin_sent += 1
                     while pin_yielded < pin_sent:
                         try:
-                            _, batch = pin_done_queue.get_nowait()
+                            pin_idx, batch = pin_done_queue.get_nowait()
                         except queue.Empty:
                             break
+                        if isinstance(batch, pin_exc_cls):
+                            raise RuntimeError(
+                                f"DataLoader pin_memory thread failed: {batch.message}"
+                            )
+                        if pin_idx != pin_yielded:
+                            raise RuntimeError(
+                                "DataLoader pin_memory thread returned out-of-order batch"
+                            )
                         pin_yielded += 1
                         yield batch
 
             if pin_thread is not None:
                 pin_data_queue.put(None)
                 while pin_yielded < pin_sent:
-                    _, batch = pin_done_queue.get(timeout=self.timeout or 300)
+                    try:
+                        pin_idx, batch = pin_done_queue.get(timeout=self.timeout or 300)
+                    except queue.Empty as exc:
+                        raise RuntimeError(
+                            f"DataLoader timed out after {self.timeout} seconds"
+                        ) from exc
+                    if isinstance(batch, pin_exc_cls):
+                        raise RuntimeError(
+                            f"DataLoader pin_memory thread failed: {batch.message}"
+                        )
+                    if pin_idx != pin_yielded:
+                        raise RuntimeError(
+                            "DataLoader pin_memory thread returned out-of-order batch"
+                        )
                     pin_yielded += 1
                     yield batch
         finally:

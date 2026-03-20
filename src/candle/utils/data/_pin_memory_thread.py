@@ -8,6 +8,13 @@ on done_queue. Exits when it reads None sentinel from data_queue.
 import threading
 
 
+class _PinMemoryException:
+    """Pin-memory failure marker sent back through the done queue."""
+
+    def __init__(self, message):
+        self.message = message
+
+
 def _pin_batch(batch):
     """Recursively pin_memory on tensor-like objects."""
     if hasattr(batch, "pin_memory"):
@@ -29,7 +36,7 @@ class PinMemoryThread(threading.Thread):
     data_queue : queue.Queue
         Input: (idx, batch) tuples. None sentinel to stop.
     done_queue : queue.Queue
-        Output: (idx, pinned_batch) tuples.
+        Output: (idx, pinned_batch) tuples or (idx, _PinMemoryException).
     device_type : str
         Target device type ("cpu", "npu", "cuda").
     do_pin : bool
@@ -49,6 +56,10 @@ class PinMemoryThread(threading.Thread):
             if item is None:
                 return  # sentinel: stop thread
             idx, batch = item
-            if self._do_pin:
-                batch = _pin_batch(batch)
+            try:
+                if self._do_pin:
+                    batch = _pin_batch(batch)
+            except Exception as exc:  # pylint: disable=broad-except
+                self._done_queue.put((idx, _PinMemoryException(repr(exc))))
+                return
             self._done_queue.put((idx, batch))
