@@ -89,6 +89,10 @@ if _system in ("Linux", "Darwin"):
             ["src/candle/_cython/_mps_helpers.pyx"],
         ),
         Extension(
+            "candle._cython._mps_compute",
+            ["src/candle/_cython/_mps_compute.pyx"],
+        ),
+        Extension(
             "candle._cython._dataloader_ops",
             ["src/candle/_cython/_dataloader_ops.pyx"],
         ),
