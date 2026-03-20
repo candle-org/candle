@@ -8,6 +8,15 @@ cdef int STATE_IDLE = 0
 cdef int STATE_CAPTURING = 1
 cdef int STATE_CAPTURED = 2
 
+cdef inline const char* _state_name(int state):
+    if state == STATE_IDLE:
+        return b"IDLE"
+    if state == STATE_CAPTURING:
+        return b"CAPTURING"
+    if state == STATE_CAPTURED:
+        return b"CAPTURED"
+    return b"UNKNOWN"
+
 
 cdef class _NPUGraphImpl:
     cdef void* _model_ri
@@ -43,7 +52,8 @@ cdef class _NPUGraphImpl:
     cdef inline void _require_state(self, int expected, str opname):
         if self._state != expected:
             raise RuntimeError(
-                f"{opname} requires state {expected}, got {self._state}")
+                f"{opname} requires state {_state_name(expected).decode()}, "
+                f"got {_state_name(self._state).decode()}")
 
     cdef inline void _clear_handle(self):
         self._model_ri = NULL
@@ -72,6 +82,8 @@ cdef class _NPUGraphImpl:
         _aclrt_ffi.ri_execute_async(<uintptr_t>self._model_ri, stream)
 
     cpdef reset(self):
+        if self._state == STATE_CAPTURING:
+            raise RuntimeError("reset() is not allowed during CAPTURING; use abort()")
         if self._state == STATE_CAPTURED and self._model_ri != NULL:
             _aclrt_ffi.ri_destroy(<uintptr_t>self._model_ri)
         self._clear_handle()
@@ -79,8 +91,10 @@ cdef class _NPUGraphImpl:
 
     cpdef abort(self):
         self._require_state(STATE_CAPTURING, "abort")
-        # During CAPTURING, _model_ri is NULL. To abort, we must end the
-        # capture on the stream (producing a partial handle) then destroy it.
+        # aclmdlRIAbort() aborts an existing materialized modelRI. During
+        # CAPTURING there is no modelRI handle yet, so aborting capture means
+        # ending the capture on the stream to materialize the partial graph,
+        # then immediately destroying that handle.
         if self._capture_stream != NULL:
             try:
                 handle = _aclrt_ffi.capture_end(<uintptr_t>self._capture_stream)

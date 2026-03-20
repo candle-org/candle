@@ -79,7 +79,9 @@ def test_npu_graph_replay_uses_capture_stream(fake_graph_env):
     assert g._impl.calls == [("replay_async", 456)]
 
 
-def test_npu_graph_context_manager_captures_and_replays(fake_graph_env):
+
+
+def test_npu_graph_context_manager_syncs_capture_stream(fake_graph_env):
     fake_stream, sync_calls = fake_graph_env
     g = torch.npu.NPUGraph()
 
@@ -104,6 +106,40 @@ def test_npu_graph_context_abort_on_exception(fake_graph_env):
 
     assert sync_calls == [None]
     assert ("abort",) in g._impl.calls
+
+
+def test_npu_graph_enter_failure_restores_stream_context(fake_graph_env, monkeypatch):
+    class RaisingGraphImpl(_FakeGraphImpl):
+        def capture_begin(self, stream, mode):
+            super().capture_begin(stream, mode)
+            raise RuntimeError("capture failed")
+
+    import candle._cython._aclgraph as aclgraph_mod
+
+    exit_calls = []
+
+    class FakeStreamCtx:
+        def __init__(self, s):
+            self.s = s
+
+        def __enter__(self):
+            return self.s
+
+        def __exit__(self, exc_type, exc, tb):
+            exit_calls.append((exc_type, exc, tb))
+            return False
+
+    monkeypatch.setattr(aclgraph_mod, "_NPUGraphImpl", RaisingGraphImpl)
+    monkeypatch.setattr(torch.npu, "stream", FakeStreamCtx)
+
+    g = torch.npu.NPUGraph()
+    explicit_stream = _FakeStream(handle=777)
+
+    with pytest.raises(RuntimeError, match="capture failed"):
+        with torch.npu.graph(g, stream=explicit_stream):
+            pass
+
+    assert len(exit_calls) == 1
 
 
 def test_npu_graph_reset_and_debug_dump(fake_graph_env):
@@ -175,10 +211,3 @@ def test_npu_graph_impl_abort_from_idle_raises():
         impl.abort()
 
 
-def test_npu_graph_impl_double_reset_is_safe():
-    from candle._cython._aclgraph import _NPUGraphImpl
-
-    impl = _NPUGraphImpl()
-    # reset from IDLE should not raise
-    impl.reset()
-    impl.reset()

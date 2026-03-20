@@ -529,16 +529,24 @@ class graph:
         self._stream = stream
         self._capture_error_mode = capture_error_mode
         self._stream_ctx = None
+        self._capture_stream_obj = None
 
     def __enter__(self):
         synchronize()
         if self._stream is not None:
             self._stream_ctx = globals()["stream"](self._stream)
             self._stream_ctx.__enter__()
-        self._graph.capture_begin(
-            pool=self._pool,
-            capture_error_mode=self._capture_error_mode,
-        )
+        self._capture_stream_obj = current_stream()
+        try:
+            self._graph.capture_begin(
+                pool=self._pool,
+                capture_error_mode=self._capture_error_mode,
+            )
+        except BaseException:
+            if self._stream_ctx is not None:
+                self._stream_ctx.__exit__(None, None, None)
+                self._stream_ctx = None
+            raise
         return self._graph
 
     def __exit__(self, exc_type, exc, tb):
@@ -548,9 +556,10 @@ class graph:
             else:
                 self._graph.capture_end()
         finally:
+            if self._capture_stream_obj is not None:
+                self._capture_stream_obj.synchronize()
             if self._stream_ctx is not None:
                 self._stream_ctx.__exit__(exc_type, exc, tb)
-            current_stream().synchronize()
         return False
 
 
