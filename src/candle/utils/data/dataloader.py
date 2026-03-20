@@ -14,6 +14,14 @@ from ._utils import (
     _clear_worker_info,
 )
 
+try:
+    from ..._cython._dataloader_ops import ReorderBuffer as _CyReorderBuffer
+except ImportError:
+    try:
+        from ..._cython._dataloader_ops_fallback import ReorderBuffer as _CyReorderBuffer
+    except ImportError:
+        _CyReorderBuffer = None
+
 
 @dataclass
 class _WorkerException:
@@ -585,6 +593,24 @@ class DataLoader:
         pending_events = deque(pool.pending_events)
         pool.pending_events = []
 
+        pin_thread = None
+        pin_data_queue = None
+        pin_done_queue = None
+        pin_sent = 0
+        pin_yielded = 0
+        if self.pin_memory:
+            from ._pin_memory_thread import PinMemoryThread
+
+            pin_data_queue = queue.Queue(maxsize=self._queue_depth())
+            pin_done_queue = queue.Queue(maxsize=self._queue_depth())
+            pin_thread = PinMemoryThread(
+                pin_data_queue,
+                pin_done_queue,
+                device_type="cpu",
+                do_pin=True,
+            )
+            pin_thread.start()
+
         try:
             send_count = 0
             source_iter = self.batch_sampler if self._auto_collation else self.sampler
@@ -593,7 +619,8 @@ class DataLoader:
                 send_count += 1
 
             next_idx = 0
-            reorder = {}
+            use_cy_reorder = _CyReorderBuffer is not None
+            reorder = _CyReorderBuffer(send_count + 1) if use_cy_reorder else {}
             while next_idx < send_count:
                 try:
                     if pending_events:
@@ -614,12 +641,44 @@ class DataLoader:
                 if kind != "data":
                     continue
 
-                reorder[key] = payload
-                while next_idx in reorder:
-                    data = reorder.pop(next_idx)
-                    yield self._maybe_pin(data)
-                    next_idx += 1
+                if use_cy_reorder:
+                    reorder.put(key, payload)
+                    ready_items = reorder.drain()
+                    next_idx = reorder.next_idx
+                else:
+                    reorder[key] = payload
+                    ready_items = []
+                    while next_idx in reorder:
+                        ready_items.append(reorder.pop(next_idx))
+                        next_idx += 1
+
+                for data in ready_items:
+                    if pin_thread is None:
+                        yield self._maybe_pin(data)
+                    else:
+                        pin_data_queue.put((pin_sent, data))
+                        pin_sent += 1
+                        while pin_yielded < pin_sent:
+                            try:
+                                _, batch = pin_done_queue.get_nowait()
+                            except queue.Empty:
+                                break
+                            pin_yielded += 1
+                            yield batch
+
+            if pin_thread is not None:
+                pin_data_queue.put(None)
+                while pin_yielded < pin_sent:
+                    _, batch = pin_done_queue.get(timeout=self.timeout or 300)
+                    pin_yielded += 1
+                    yield batch
         finally:
+            if pin_thread is not None:
+                try:
+                    pin_data_queue.put_nowait(None)
+                except Exception:
+                    pass
+                pin_thread.join(timeout=5)
             if not persistent:
                 _shutdown_workers(workers)
 
@@ -637,9 +696,26 @@ class DataLoader:
             for _ in workers:
                 pool.control_queue.put(("iterate", epoch))
 
+        pin_thread = None
+        pin_data_queue = None
+        pin_done_queue = None
+        pin_sent = 0
+        pin_yielded = 0
+        if self.pin_memory:
+            from ._pin_memory_thread import PinMemoryThread
+
+            pin_data_queue = queue.Queue(maxsize=self._queue_depth())
+            pin_done_queue = queue.Queue(maxsize=self._queue_depth())
+            pin_thread = PinMemoryThread(
+                pin_data_queue,
+                pin_done_queue,
+                device_type="cpu",
+                do_pin=True,
+            )
+            pin_thread.start()
+
         try:
             worker_done = 0
-            batch = []
             while worker_done < len(workers):
                 try:
                     if pending_events:
@@ -671,8 +747,32 @@ class DataLoader:
                     continue
 
                 out = payload
-                yield self._maybe_pin(out)
+                if pin_thread is None:
+                    yield self._maybe_pin(out)
+                else:
+                    pin_data_queue.put((pin_sent, out))
+                    pin_sent += 1
+                    while pin_yielded < pin_sent:
+                        try:
+                            _, batch = pin_done_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        pin_yielded += 1
+                        yield batch
+
+            if pin_thread is not None:
+                pin_data_queue.put(None)
+                while pin_yielded < pin_sent:
+                    _, batch = pin_done_queue.get(timeout=self.timeout or 300)
+                    pin_yielded += 1
+                    yield batch
         finally:
+            if pin_thread is not None:
+                try:
+                    pin_data_queue.put_nowait(None)
+                except Exception:
+                    pass
+                pin_thread.join(timeout=5)
             if not persistent:
                 _shutdown_workers(workers)
 
