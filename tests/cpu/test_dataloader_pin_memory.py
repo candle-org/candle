@@ -5,8 +5,11 @@ import candle as torch
 import numpy as np
 import pytest
 
-from candle.utils.data._pin_memory_thread import PinMemoryThread, _PinMemoryException
 from candle.utils.data import DataLoader, Dataset, IterableDataset
+from candle.utils.data._pin_memory_thread import (
+    PinMemoryThread,
+    _PinMemoryException,
+)
 
 
 class _BrokenPin:
@@ -17,6 +20,45 @@ class _BrokenPin:
 
     def pin_memory(self):
         raise RuntimeError(f"boom-{self.value}")
+
+
+class SimpleDataset(Dataset):
+    """Dataset returning float tensors for pin_memory integration tests."""
+
+    def __init__(self, n):
+        self.n = n
+
+    def __len__(self):
+        return self.n
+
+    def __getitem__(self, idx):
+        return torch.tensor([float(idx)], dtype=torch.float32)
+
+
+class BrokenPinDataset(Dataset):
+    """Dataset returning objects that fail during pin_memory."""
+
+    def __len__(self):
+        return 2
+
+    def __getitem__(self, idx):
+        return _BrokenPin(idx)
+
+
+class SimpleIterableDataset(IterableDataset):
+    """Sharded iterable dataset for pin_memory tests."""
+
+    def __iter__(self):
+        from candle.utils.data import get_worker_info
+
+        worker_info = get_worker_info()
+        if worker_info is None:
+            worker_id, num_workers = 0, 1
+        else:
+            worker_id, num_workers = worker_info.id, worker_info.num_workers
+        for idx in range(8):
+            if idx % num_workers == worker_id:
+                yield torch.tensor([float(idx)], dtype=torch.float32)
 
 
 
@@ -95,89 +137,74 @@ def test_pin_memory_thread_reports_errors():
         thread.join(timeout=5)
 
 
-class SimpleDataset(Dataset):
-    """Dataset returning float tensors for pin_memory integration tests."""
 
-    def __init__(self, n):
-        self.n = n
-
-    def __len__(self):
-        return self.n
-
-    def __getitem__(self, idx):
-        return torch.tensor([float(idx)], dtype=torch.float32)
-
-
-class BrokenPinDataset(Dataset):
-    """Dataset returning objects that fail during pin_memory."""
-
-    def __len__(self):
-        return 2
-
-    def __getitem__(self, idx):
-        return _BrokenPin(idx)
-
-
-class SimpleIterableDataset(IterableDataset):
-    """Sharded iterable dataset for pin_memory tests."""
-
-    def __iter__(self):
-        from candle.utils.data import get_worker_info
-
-        worker_info = get_worker_info()
-        if worker_info is None:
-            worker_id, num_workers = 0, 1
-        else:
-            worker_id, num_workers = worker_info.id, worker_info.num_workers
-        for idx in range(8):
-            if idx % num_workers == worker_id:
-                yield torch.tensor([float(idx)], dtype=torch.float32)
-
-
-
-def test_dataloader_pin_memory_thread_integration():
-    """DataLoader with pin_memory=True uses the pin_memory thread."""
-    dataset = SimpleDataset(8)
-    loader = DataLoader(dataset, batch_size=2, num_workers=2, pin_memory=True)
-    batches = [batch.numpy().ravel().tolist() for batch in loader]
-    assert batches == [[0.0, 1.0], [2.0, 3.0], [4.0, 5.0], [6.0, 7.0]]
-
-
-
-def test_dataloader_pin_memory_thread_propagates_errors():
+def test_dataloader_pin_memory_thread_propagates_errors(monkeypatch):
     """DataLoader raises a RuntimeError when pin_memory thread fails."""
+    monkeypatch.setattr(torch.npu, "is_available", lambda verbose=False: True)
     loader = DataLoader(BrokenPinDataset(), batch_size=1, num_workers=1, pin_memory=True)
     with pytest.raises(RuntimeError, match="pin_memory thread failed"):
         list(loader)
 
 
 
-def test_dataloader_pin_memory_iterable_integration():
-    """Iterable pin_memory path returns the expected set of sharded batches."""
-    loader = DataLoader(
-        SimpleIterableDataset(),
-        batch_size=2,
-        num_workers=2,
-        pin_memory=True,
-        persistent_workers=True,
-    )
-    batches = [batch.numpy().ravel().tolist() for batch in loader]
-    flat = sorted(value for batch in batches for value in batch)
+def test_dataloader_pin_memory_thread_integration(monkeypatch):
+    """Without an accelerator, pin_memory=True warns and becomes a no-op."""
+    monkeypatch.setattr(torch.npu, "is_available", lambda verbose=False: False)
+    with pytest.warns(UserWarning, match="no accelerator is found"):
+        loader = DataLoader(SimpleDataset(8), batch_size=2, num_workers=2, pin_memory=True)
+    batches = list(loader)
+    assert [batch.numpy().ravel().tolist() for batch in batches] == [
+        [0.0, 1.0],
+        [2.0, 3.0],
+        [4.0, 5.0],
+        [6.0, 7.0],
+    ]
+    assert all(not batch.is_pinned() for batch in batches)
+
+
+
+def test_dataloader_pin_memory_iterable_integration(monkeypatch):
+    """Iterable multiprocess pin_memory path also warns and becomes a no-op."""
+    monkeypatch.setattr(torch.npu, "is_available", lambda verbose=False: False)
+    with pytest.warns(UserWarning, match="no accelerator is found"):
+        loader = DataLoader(
+            SimpleIterableDataset(),
+            batch_size=2,
+            num_workers=2,
+            pin_memory=True,
+            persistent_workers=True,
+        )
+    batches = list(loader)
+    flat = sorted(value for batch in batches for value in batch.numpy().ravel().tolist())
     assert flat == [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]
     assert len(batches) == 4
+    assert all(not batch.is_pinned() for batch in batches)
 
 
 
-def test_dataloader_pin_memory_persistent_workers_integration():
-    """Persistent workers work with pin_memory across epochs."""
-    dataset = SimpleDataset(8)
-    loader = DataLoader(
-        dataset,
-        batch_size=2,
-        num_workers=2,
-        pin_memory=True,
-        persistent_workers=True,
-    )
-    first = [batch.numpy().ravel().tolist() for batch in loader]
-    second = [batch.numpy().ravel().tolist() for batch in loader]
-    assert first == second == [[0.0, 1.0], [2.0, 3.0], [4.0, 5.0], [6.0, 7.0]]
+def test_dataloader_pin_memory_persistent_workers_integration(monkeypatch):
+    """Persistent workers with pin_memory=True degrade gracefully without accelerator."""
+    monkeypatch.setattr(torch.npu, "is_available", lambda verbose=False: False)
+    with pytest.warns(UserWarning, match="no accelerator is found"):
+        loader = DataLoader(
+            SimpleDataset(8),
+            batch_size=2,
+            num_workers=2,
+            pin_memory=True,
+            persistent_workers=True,
+        )
+    first = list(loader)
+    second = list(loader)
+    assert [batch.numpy().ravel().tolist() for batch in first] == [
+        [0.0, 1.0],
+        [2.0, 3.0],
+        [4.0, 5.0],
+        [6.0, 7.0],
+    ]
+    assert [batch.numpy().ravel().tolist() for batch in second] == [
+        [0.0, 1.0],
+        [2.0, 3.0],
+        [4.0, 5.0],
+        [6.0, 7.0],
+    ]
+    assert all(not batch.is_pinned() for batch in first + second)

@@ -1,5 +1,6 @@
 import queue
 import random
+import warnings
 from collections import deque
 from dataclasses import dataclass
 
@@ -326,6 +327,16 @@ class DataLoader:
         self.pin_memory = pin_memory
         self._is_iterable = isinstance(dataset, IterableDataset)
         self._auto_collation = batch_size is not None or batch_sampler is not None
+
+        if self.pin_memory:
+            from ... import npu as npu_api
+
+            if not npu_api.is_available():
+                warnings.warn(
+                    "'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.",
+                    stacklevel=2,
+                )
+                self.pin_memory = False
 
         if collate_fn is None:
             self.collate_fn = default_collate if self._auto_collation else default_convert
