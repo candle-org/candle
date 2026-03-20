@@ -142,6 +142,45 @@ def test_npu_graph_enter_failure_restores_stream_context(fake_graph_env, monkeyp
     assert len(exit_calls) == 1
 
 
+
+
+def test_npu_graph_exit_sync_failure_still_restores_stream_context(fake_graph_env, monkeypatch):
+    import candle._cython._aclgraph as aclgraph_mod
+
+    exit_calls = []
+
+    class FakeStreamCtx:
+        def __init__(self, s):
+            self.s = s
+
+        def __enter__(self):
+            return self.s
+
+        def __exit__(self, exc_type, exc, tb):
+            exit_calls.append((exc_type, exc, tb))
+            return False
+
+    fake_stream, _ = fake_graph_env
+
+    def _raise_sync():
+        raise RuntimeError("sync failed")
+
+    fake_stream.synchronize = _raise_sync
+    monkeypatch.setattr(torch.npu, "stream", FakeStreamCtx)
+    monkeypatch.setattr(aclgraph_mod, "_NPUGraphImpl", _FakeGraphImpl)
+
+    g = torch.npu.NPUGraph()
+    explicit_stream = _FakeStream(handle=777)
+
+    with pytest.raises(RuntimeError, match="sync failed"):
+        with torch.npu.graph(g, stream=explicit_stream):
+            pass
+
+    assert len(exit_calls) == 1
+
+
+
+
 def test_npu_graph_reset_and_debug_dump(fake_graph_env):
     g = torch.npu.NPUGraph()
 

@@ -550,16 +550,23 @@ class graph:
         return self._graph
 
     def __exit__(self, exc_type, exc, tb):
+        sync_exc = None
         try:
             if exc_type is not None:
                 self._graph._impl.abort()
             else:
                 self._graph.capture_end()
         finally:
-            if self._capture_stream_obj is not None:
-                self._capture_stream_obj.synchronize()
-            if self._stream_ctx is not None:
-                self._stream_ctx.__exit__(exc_type, exc, tb)
+            try:
+                if self._capture_stream_obj is not None:
+                    self._capture_stream_obj.synchronize()
+            except BaseException as err:  # preserve explicit stream restoration
+                sync_exc = err
+            finally:
+                if self._stream_ctx is not None:
+                    self._stream_ctx.__exit__(exc_type, exc, tb)
+        if sync_exc is not None:
+            raise sync_exc
         return False
 
 
