@@ -11,6 +11,10 @@ class Stream:
         self._stream = runtime.create_stream(self.priority)
 
     @property
+    def _handle(self):
+        return self._stream
+
+    @property
     def stream(self):
         return self._stream
 

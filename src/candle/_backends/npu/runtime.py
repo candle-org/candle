@@ -7,6 +7,24 @@ from .acl_loader import ensure_acl
 from . import cann_discovery
 
 acl = None
+_aclrt_ffi_mod = None
+
+
+def _get_aclrt_ffi():
+    global _aclrt_ffi_mod
+    if _aclrt_ffi_mod is None:
+        ensure_acl()
+        from ..._cython import _aclrt_ffi as mod
+        if not mod.is_initialized():
+            lib_path = None
+            for base in cann_discovery.get_lib_dirs():
+                candidate = os.path.join(base, "libascendcl.so")
+                if os.path.exists(candidate):
+                    lib_path = candidate
+                    break
+            mod.init(lib_path)
+        _aclrt_ffi_mod = mod
+    return _aclrt_ffi_mod
 
 ACL_ERROR_CODE = 0
 ACL_MEM_MALLOC_HUGE_FIRST = 0
@@ -104,33 +122,18 @@ class _Runtime:
             self.init(self.device_id)
         self.activate()
         priority = _normalize_priority(priority)
-        stream = None
-        ret = None
-        if hasattr(acl.rt, 'create_stream_with_config'):
-            try:
-                stream, ret = acl.rt.create_stream_with_config(priority, 0)
-            except TypeError:
-                stream = None
-                ret = None
-        if ret != ACL_ERROR_CODE:
-            stream, ret = acl.rt.create_stream()
-        if ret != ACL_ERROR_CODE:
-            raise RuntimeError(f'acl.rt.create_stream failed: {ret}')
-        return stream
+        ffi = _get_aclrt_ffi()
+        return ffi.create_stream(priority)
 
     def destroy_stream(self, stream):
         if stream is None:
             return
-        ret = acl.rt.destroy_stream(stream)
-        if ret != ACL_ERROR_CODE:
-            raise RuntimeError(f'acl.rt.destroy_stream failed: {ret}')
+        _get_aclrt_ffi().destroy_stream(stream)
 
     def synchronize_stream(self, stream):
         if stream is None:
             return
-        ret = acl.rt.synchronize_stream(stream)
-        if ret != ACL_ERROR_CODE:
-            raise RuntimeError(f'acl.rt.synchronize_stream failed: {ret}')
+        _get_aclrt_ffi().synchronize_stream(stream)
 
     def create_event(self, enable_timing, blocking, interprocess):
         if not self.initialized:
@@ -139,56 +142,30 @@ class _Runtime:
         flag = 0
         if enable_timing:
             flag |= 1
-        if hasattr(acl.rt, 'create_event_ex_with_flag'):
-            event, ret = acl.rt.create_event_ex_with_flag(flag)
-        elif hasattr(acl.rt, 'create_event_with_flag'):
-            event, ret = acl.rt.create_event_with_flag(flag)
-        else:
-            event, ret = acl.rt.create_event()
-        if ret != ACL_ERROR_CODE:
-            raise RuntimeError(f'acl.rt.create_event failed: {ret}')
-        return event
+        return _get_aclrt_ffi().create_event(flag)
 
     def destroy_event(self, event):
         if event is None:
             return
-        ret = acl.rt.destroy_event(event)
-        if ret != ACL_ERROR_CODE:
-            raise RuntimeError(f'acl.rt.destroy_event failed: {ret}')
+        _get_aclrt_ffi().destroy_event(event)
 
     def record_event(self, event, stream):
-        ret = acl.rt.record_event(event, stream)
-        if ret != ACL_ERROR_CODE:
-            raise RuntimeError(f'acl.rt.record_event failed: {ret}')
+        _get_aclrt_ffi().record_event(event, stream)
 
     def synchronize_event(self, event):
-        ret = acl.rt.synchronize_event(event)
-        if ret != ACL_ERROR_CODE:
-            raise RuntimeError(f'acl.rt.synchronize_event failed: {ret}')
+        _get_aclrt_ffi().synchronize_event(event)
 
     def query_event(self, event):
-        ret = acl.rt.query_event(event)
-        if ret != ACL_ERROR_CODE:
-            return False
-        return True
+        return _get_aclrt_ffi().query_event(event)
 
     def event_elapsed_time(self, start, end):
-        ms, ret = acl.rt.event_elapsed_time(start, end)
-        if ret != ACL_ERROR_CODE:
-            raise RuntimeError(f'acl.rt.event_elapsed_time failed: {ret}')
-        return float(ms)
+        return _get_aclrt_ffi().event_elapsed_time(start, end)
 
     def stream_wait_event(self, stream, event):
-        ret = acl.rt.stream_wait_event(stream, event)
-        if ret != ACL_ERROR_CODE:
-            raise RuntimeError(f'acl.rt.stream_wait_event failed: {ret}')
+        _get_aclrt_ffi().stream_wait_event(stream, event)
 
     def synchronize_device(self):
-        ret = acl.rt.synchronize_device()
-        if ret != ACL_ERROR_CODE:
-            raise RuntimeError(f'acl.rt.synchronize_device failed: {ret}')
-
-    def defer_host_free(self, ptr):
+        _get_aclrt_ffi().synchronize_device()
         if ptr is None:
             return
         self._deferred_host_frees.append(ptr)
