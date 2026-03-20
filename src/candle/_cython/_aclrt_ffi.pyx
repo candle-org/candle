@@ -115,6 +115,7 @@ cdef fn_aclmdlRICaptureTaskUpdateEnd_t  _fn_task_update_end = NULL
 
 cdef void* _acl_handle = NULL
 cdef bint _initialized = 0
+cdef bint _aclgraph_enabled = 1
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -144,12 +145,13 @@ cdef void* _sym_optional(void* handle, const char* name) nogil:
 # Initialization
 # ---------------------------------------------------------------------------
 
-def init(str lib_path=None):
-    """Load libascendcl.so and resolve all function pointers.
+def init(str lib_path=None, bint enable_aclgraph=True):
+    """Load libascendcl.so and resolve function pointers.
 
-    Called once at NPU backend startup.
+    Stream/event APIs are always loaded. aclgraph/aclmdlRI APIs are only
+    enabled when enable_aclgraph=True (CANN >= 8.5).
     """
-    global _acl_handle, _initialized
+    global _acl_handle, _initialized, _aclgraph_enabled
     global _fn_create_stream, _fn_create_stream_cfg, _fn_destroy_stream
     global _fn_sync_stream, _fn_stream_wait_event
     global _fn_create_event, _fn_create_event_flag, _fn_create_event_ex_flag
@@ -164,6 +166,8 @@ def init(str lib_path=None):
 
     if _initialized:
         return
+
+    _aclgraph_enabled = enable_aclgraph
 
     cdef bytes bpath
     if lib_path is not None:
@@ -200,32 +204,50 @@ def init(str lib_path=None):
     _fn_event_elapsed = <fn_aclrtEventElapsedTime_t>_sym(h, b"aclrtEventElapsedTime")
     _fn_sync_device = <fn_aclrtSynchronizeDevice_t>_sym(h, b"aclrtSynchronizeDevice")
 
-    # -- aclmdlRI capture/replay
-    _fn_capture_begin = <fn_aclmdlRICaptureBegin_t>_sym(h, b"aclmdlRICaptureBegin")
-    _fn_capture_end = <fn_aclmdlRICaptureEnd_t>_sym(h, b"aclmdlRICaptureEnd")
-    _fn_capture_get_info = <fn_aclmdlRICaptureGetInfo_t>_sym(
-        h, b"aclmdlRICaptureGetInfo")
-    _fn_capture_exchange_mode = <fn_aclmdlRICaptureThreadExchangeMode_t>_sym(
-        h, b"aclmdlRICaptureThreadExchangeMode")
-    _fn_ri_exec_async = <fn_aclmdlRIExecuteAsync_t>_sym(h, b"aclmdlRIExecuteAsync")
-    _fn_ri_exec = <fn_aclmdlRIExecute_t>_sym(h, b"aclmdlRIExecute")
-    _fn_ri_destroy = <fn_aclmdlRIDestroy_t>_sym(h, b"aclmdlRIDestroy")
-    _fn_ri_set_name = <fn_aclmdlRISetName_t>_sym(h, b"aclmdlRISetName")
-    _fn_ri_get_name = <fn_aclmdlRIGetName_t>_sym(h, b"aclmdlRIGetName")
-    _fn_ri_debug = <fn_aclmdlRIDebugPrint_t>_sym_optional(h, b"aclmdlRIDebugPrint")
-    _fn_ri_debug_json = <fn_aclmdlRIDebugJsonPrint_t>_sym_optional(
-        h, b"aclmdlRIDebugJsonPrint")
-    _fn_ri_abort = <fn_aclmdlRIAbort_t>_sym(h, b"aclmdlRIAbort")
+    # -- aclmdlRI capture/replay (CANN >= 8.5 only)
+    if enable_aclgraph:
+        _fn_capture_begin = <fn_aclmdlRICaptureBegin_t>_sym(h, b"aclmdlRICaptureBegin")
+        _fn_capture_end = <fn_aclmdlRICaptureEnd_t>_sym(h, b"aclmdlRICaptureEnd")
+        _fn_capture_get_info = <fn_aclmdlRICaptureGetInfo_t>_sym(
+            h, b"aclmdlRICaptureGetInfo")
+        _fn_capture_exchange_mode = <fn_aclmdlRICaptureThreadExchangeMode_t>_sym(
+            h, b"aclmdlRICaptureThreadExchangeMode")
+        _fn_ri_exec_async = <fn_aclmdlRIExecuteAsync_t>_sym(h, b"aclmdlRIExecuteAsync")
+        _fn_ri_exec = <fn_aclmdlRIExecute_t>_sym(h, b"aclmdlRIExecute")
+        _fn_ri_destroy = <fn_aclmdlRIDestroy_t>_sym(h, b"aclmdlRIDestroy")
+        _fn_ri_set_name = <fn_aclmdlRISetName_t>_sym(h, b"aclmdlRISetName")
+        _fn_ri_get_name = <fn_aclmdlRIGetName_t>_sym(h, b"aclmdlRIGetName")
+        _fn_ri_debug = <fn_aclmdlRIDebugPrint_t>_sym_optional(h, b"aclmdlRIDebugPrint")
+        _fn_ri_debug_json = <fn_aclmdlRIDebugJsonPrint_t>_sym_optional(
+            h, b"aclmdlRIDebugJsonPrint")
+        _fn_ri_abort = <fn_aclmdlRIAbort_t>_sym_optional(h, b"aclmdlRIAbort")
 
-    # -- Task group (optional — may not exist in older CANN)
-    _fn_task_grp_begin = <fn_aclmdlRICaptureTaskGrpBegin_t>_sym_optional(
-        h, b"aclmdlRICaptureTaskGrpBegin")
-    _fn_task_grp_end = <fn_aclmdlRICaptureTaskGrpEnd_t>_sym_optional(
-        h, b"aclmdlRICaptureTaskGrpEnd")
-    _fn_task_update_begin = <fn_aclmdlRICaptureTaskUpdateBegin_t>_sym_optional(
-        h, b"aclmdlRICaptureTaskUpdateBegin")
-    _fn_task_update_end = <fn_aclmdlRICaptureTaskUpdateEnd_t>_sym_optional(
-        h, b"aclmdlRICaptureTaskUpdateEnd")
+        # -- Task group (optional — may not exist in older/newer CANN variants)
+        _fn_task_grp_begin = <fn_aclmdlRICaptureTaskGrpBegin_t>_sym_optional(
+            h, b"aclmdlRICaptureTaskGrpBegin")
+        _fn_task_grp_end = <fn_aclmdlRICaptureTaskGrpEnd_t>_sym_optional(
+            h, b"aclmdlRICaptureTaskGrpEnd")
+        _fn_task_update_begin = <fn_aclmdlRICaptureTaskUpdateBegin_t>_sym_optional(
+            h, b"aclmdlRICaptureTaskUpdateBegin")
+        _fn_task_update_end = <fn_aclmdlRICaptureTaskUpdateEnd_t>_sym_optional(
+            h, b"aclmdlRICaptureTaskUpdateEnd")
+    else:
+        _fn_capture_begin = NULL
+        _fn_capture_end = NULL
+        _fn_capture_get_info = NULL
+        _fn_capture_exchange_mode = NULL
+        _fn_ri_exec_async = NULL
+        _fn_ri_exec = NULL
+        _fn_ri_destroy = NULL
+        _fn_ri_set_name = NULL
+        _fn_ri_get_name = NULL
+        _fn_ri_debug = NULL
+        _fn_ri_debug_json = NULL
+        _fn_ri_abort = NULL
+        _fn_task_grp_begin = NULL
+        _fn_task_grp_end = NULL
+        _fn_task_update_begin = NULL
+        _fn_task_update_end = NULL
 
     _initialized = 1
 
@@ -234,9 +256,17 @@ cdef inline void _ensure_loaded() except *:
     if not _initialized:
         init()
 
+cdef inline void _require_aclgraph() except *:
+    if not _aclgraph_enabled:
+        raise RuntimeError("aclgraph requires CANN >= 8.5; current CANN version does not support aclgraph")
+
 
 def is_initialized():
     return _initialized != 0
+
+
+def aclgraph_enabled():
+    return _aclgraph_enabled != 0
 
 # ===================================================================
 # Python-visible stream/event wrappers
@@ -356,6 +386,7 @@ def synchronize_device():
 cpdef capture_begin(uintptr_t stream, int mode):
     """Start recording ops on the stream."""
     _ensure_loaded()
+    _require_aclgraph()
     cdef int32_t ret
     with nogil:
         ret = _fn_capture_begin(<void*>stream, <int32_t>mode)
@@ -364,6 +395,7 @@ cpdef capture_begin(uintptr_t stream, int mode):
 cpdef uintptr_t capture_end(uintptr_t stream):
     """Stop recording and return the aclmdlRI handle."""
     _ensure_loaded()
+    _require_aclgraph()
     cdef void* model_ri = NULL
     cdef int32_t ret
     with nogil:
@@ -374,6 +406,7 @@ cpdef uintptr_t capture_end(uintptr_t stream):
 cpdef tuple capture_get_info(uintptr_t stream):
     """Query stream capture status. Returns (status_int, model_ri_handle)."""
     _ensure_loaded()
+    _require_aclgraph()
     cdef int32_t status = 0
     cdef void* model_ri = NULL
     cdef int32_t ret
@@ -385,6 +418,7 @@ cpdef tuple capture_get_info(uintptr_t stream):
 cpdef int capture_thread_exchange_mode(int mode):
     """Exchange capture mode for current thread. Returns old mode."""
     _ensure_loaded()
+    _require_aclgraph()
     cdef int32_t m = <int32_t>mode
     cdef int32_t ret
     with nogil:
@@ -395,6 +429,7 @@ cpdef int capture_thread_exchange_mode(int mode):
 cpdef ri_execute_async(uintptr_t model_ri, uintptr_t stream):
     """Replay captured graph asynchronously on the given stream."""
     _ensure_loaded()
+    _require_aclgraph()
     cdef int32_t ret
     with nogil:
         ret = _fn_ri_exec_async(<void*>model_ri, <void*>stream)
@@ -403,6 +438,7 @@ cpdef ri_execute_async(uintptr_t model_ri, uintptr_t stream):
 cpdef ri_execute(uintptr_t model_ri, int timeout=-1):
     """Execute captured graph synchronously with timeout (ms)."""
     _ensure_loaded()
+    _require_aclgraph()
     cdef int32_t ret
     with nogil:
         ret = _fn_ri_exec(<void*>model_ri, <int32_t>timeout)
@@ -411,6 +447,7 @@ cpdef ri_execute(uintptr_t model_ri, int timeout=-1):
 cpdef ri_destroy(uintptr_t model_ri):
     """Destroy a captured aclmdlRI handle."""
     _ensure_loaded()
+    _require_aclgraph()
     cdef int32_t ret
     with nogil:
         ret = _fn_ri_destroy(<void*>model_ri)
@@ -418,6 +455,7 @@ cpdef ri_destroy(uintptr_t model_ri):
 
 cpdef ri_set_name(uintptr_t model_ri, str name):
     _ensure_loaded()
+    _require_aclgraph()
     cdef bytes bname = name.encode("utf-8")
     cdef const char* cname = <const char*>bname
     cdef int32_t ret
@@ -427,6 +465,7 @@ cpdef ri_set_name(uintptr_t model_ri, str name):
 
 cpdef str ri_get_name(uintptr_t model_ri):
     _ensure_loaded()
+    _require_aclgraph()
     cdef char buf[256]
     memset(buf, 0, 256)
     cdef int32_t ret
@@ -437,6 +476,7 @@ cpdef str ri_get_name(uintptr_t model_ri):
 
 cpdef ri_debug_json_print(uintptr_t model_ri, str path, uint32_t flags=0):
     _ensure_loaded()
+    _require_aclgraph()
     cdef bytes bpath = path.encode("utf-8")
     cdef const char* cpath = <const char*>bpath
     cdef int32_t ret
@@ -453,8 +493,11 @@ cpdef ri_debug_json_print(uintptr_t model_ri, str path, uint32_t flags=0):
     raise RuntimeError("No debug print API available for aclmdlRI on this CANN version")
 
 cpdef ri_abort(uintptr_t model_ri):
-    """Abort an in-progress capture."""
+    """Abort an in-progress modelRI execution."""
     _ensure_loaded()
+    _require_aclgraph()
+    if _fn_ri_abort == NULL:
+        raise RuntimeError("aclmdlRIAbort is not available on this CANN version")
     cdef int32_t ret
     with nogil:
         ret = _fn_ri_abort(<void*>model_ri)

@@ -22,7 +22,9 @@ def _get_aclrt_ffi():
                 if os.path.exists(candidate):
                     lib_path = candidate
                     break
-            mod.init(lib_path)
+            version = cann_discovery.get_cann_version() or (0,)
+            enable_aclgraph = tuple(version) >= (8, 5)
+            mod.init(lib_path, enable_aclgraph=enable_aclgraph)
         _aclrt_ffi_mod = mod
     return _aclrt_ffi_mod
 
