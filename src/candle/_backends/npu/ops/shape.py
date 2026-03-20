@@ -257,6 +257,21 @@ def _npu_data_ptr(tensor):
     return int(_unwrap_storage(tensor).data_ptr()) + tensor.offset * itemsize
 
 
+def _npu_storage_meta(tensor):
+    """Return storage-base metadata for torch_npu-aligned aclCreateTensor."""
+    storage = _unwrap_storage(tensor)
+    itemsize = _dtype_itemsize(tensor.dtype)
+    storage_numel = storage.untyped_storage().nbytes() // max(itemsize, 1)
+    return int(storage.data_ptr()), int(tensor.offset), (int(storage_numel),)
+
+
+def _npu_empty_index_tensor(device):
+    runtime = npu_runtime.get_runtime((device.index or 0))
+    out_ptr = npu_runtime._alloc_device(8, runtime=runtime)
+    storage = npu_typed_storage_from_ptr(out_ptr, 1, int64_dtype, device=device)
+    return _wrap_tensor(storage, (0,), (1,))
+
+
 def _split_sections_from_count(dim_size, sections):
     if sections <= 0:
         raise ValueError("sections must be > 0")
@@ -892,12 +907,28 @@ def _npu_advanced_getitem(tensor, key):
     # Build entries list for aclnnIndex (None for dims not indexed)
     entries = [None] * prepared.dim()
     for dim_pos, idx_t in zip(adv_current_dims, expanded_idx_tensors):
+        idx_storage_ptr, idx_storage_offset, idx_storage_dims = _npu_storage_meta(idx_t)
         entries[dim_pos] = (
             _npu_data_ptr(idx_t),
             idx_t.shape,
             idx_t.stride,
             idx_t.dtype,
+            idx_storage_offset,
+            idx_storage_dims,
+            idx_storage_ptr,
         )
+    empty_index = _npu_empty_index_tensor(prepared.device)
+    empty_storage_ptr, empty_storage_offset, empty_storage_dims = _npu_storage_meta(empty_index)
+    empty_entry = (
+        _npu_data_ptr(empty_index),
+        empty_index.shape,
+        empty_index.stride,
+        empty_index.dtype,
+        empty_storage_offset,
+        empty_storage_dims,
+        empty_storage_ptr,
+    )
+    entries = [entry if entry is not None else empty_entry for entry in entries]
 
     # Compute output shape following PyTorch advanced indexing rules:
     # - If advanced dims are contiguous: broadcast_shape replaces them in-place
@@ -940,6 +971,7 @@ def _npu_advanced_getitem(tensor, key):
 
     out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
     src_ptr = _npu_data_ptr(prepared)
+    prepared_storage_ptr, prepared_storage_offset, prepared_storage_dims = _npu_storage_meta(prepared)
 
     aclnn.index(
         src_ptr,
@@ -953,6 +985,9 @@ def _npu_advanced_getitem(tensor, key):
         prepared.dtype,
         runtime,
         stream=stream.stream,
+        self_storage_offset=prepared_storage_offset,
+        self_storage_dims=prepared_storage_dims,
+        self_storage_ptr=prepared_storage_ptr,
     )
 
     storage = npu_typed_storage_from_ptr(out_ptr, out_numel, prepared.dtype, device=prepared.device)
@@ -1117,20 +1152,27 @@ def _npu_advanced_setitem(tensor, key, value):
     runtime = npu_runtime.get_runtime((prepared.device.index or 0))
     stream = npu_state.current_stream((prepared.device.index or 0))
 
-    index_ptrs = [_npu_data_ptr(t) for t in adv_index_tensors]
-    index_shapes = [t.shape for t in adv_index_tensors]
-    index_strides = [t.stride for t in adv_index_tensors]
-    index_dtypes = [t.dtype for t in adv_index_tensors]
+    index_entries = []
+    for t in adv_index_tensors:
+        idx_storage_ptr, idx_storage_offset, idx_storage_dims = _npu_storage_meta(t)
+        index_entries.append((
+            _npu_data_ptr(t),
+            t.shape,
+            t.stride,
+            t.dtype,
+            idx_storage_offset,
+            idx_storage_dims,
+            idx_storage_ptr,
+        ))
+    prepared_storage_ptr, prepared_storage_offset, prepared_storage_dims = _npu_storage_meta(prepared)
+    value_storage_ptr, value_storage_offset, value_storage_dims = _npu_storage_meta(value_tensor)
 
     aclnn.index_put_impl(
         _npu_data_ptr(prepared),
         prepared.shape,
         prepared.stride,
         prepared.dtype,
-        index_ptrs,
-        index_shapes,
-        index_strides,
-        index_dtypes,
+        index_entries,
         _npu_data_ptr(value_tensor),
         value_tensor.shape,
         value_tensor.stride,
@@ -1139,6 +1181,12 @@ def _npu_advanced_setitem(tensor, key, value):
         False,  # unsafe
         runtime,
         stream=stream.stream,
+        self_storage_offset=prepared_storage_offset,
+        self_storage_dims=prepared_storage_dims,
+        self_storage_ptr=prepared_storage_ptr,
+        values_storage_offset=value_storage_offset,
+        values_storage_dims=value_storage_dims,
+        values_storage_ptr=value_storage_ptr,
     )
 
 
@@ -2482,16 +2530,32 @@ def index_put_(a, indices, values, accumulate=False):
     """In-place index_put_ using aclnnIndexPutImpl."""
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    index_ptrs = [_npu_data_ptr(t) for t in indices]
-    index_shapes = [t.shape for t in indices]
-    index_strides = [t.stride for t in indices]
-    index_dtypes = [t.dtype for t in indices]
+    index_entries = []
+    for t in indices:
+        idx_storage_ptr, idx_storage_offset, idx_storage_dims = _npu_storage_meta(t)
+        index_entries.append((
+            _npu_data_ptr(t),
+            t.shape,
+            t.stride,
+            t.dtype,
+            idx_storage_offset,
+            idx_storage_dims,
+            idx_storage_ptr,
+        ))
+    a_storage_ptr, a_storage_offset, a_storage_dims = _npu_storage_meta(a)
+    value_storage_ptr, value_storage_offset, value_storage_dims = _npu_storage_meta(values)
     val_ptr = _npu_data_ptr(values)
     aclnn.index_put_impl(
         _npu_data_ptr(a), a.shape, a.stride, a.dtype,
-        index_ptrs, index_shapes, index_strides, index_dtypes,
+        index_entries,
         val_ptr, values.shape, values.stride, values.dtype,
         accumulate, False, runtime, stream=stream.stream,
+        self_storage_offset=a_storage_offset,
+        self_storage_dims=a_storage_dims,
+        self_storage_ptr=a_storage_ptr,
+        values_storage_offset=value_storage_offset,
+        values_storage_dims=value_storage_dims,
+        values_storage_ptr=value_storage_ptr,
     )
     return a
 
@@ -2572,6 +2636,8 @@ def scatter_(a, dim, index, src):
         src_dtype = src_t.dtype
     aclnn.scatter(
         _npu_data_ptr(a),
+        _npu_data_ptr(index),
+        src_ptr,
         _npu_data_ptr(a),
         a.shape, a.stride, a.dtype,
         index.shape, index.stride, index.dtype,

@@ -17,17 +17,25 @@ try:
     from ...._cython._npu_ops import fast_binary_op as _fast_binary_op  # pylint: disable=no-name-in-module
     _HAS_FAST_OPS = True
 except ImportError:
-    try:
-        from ...._cython._npu_ops_fallback import fast_binary_op as _fast_binary_op
-        _HAS_FAST_OPS = True
-    except ImportError:
-        _HAS_FAST_OPS = False
+    _HAS_FAST_OPS = False
+
+
+def _require_native_fast_ops(op_name):
+    if not _HAS_FAST_OPS:
+        raise RuntimeError(f"native NPU hot path unavailable for op {op_name}")
 
 
 def _unwrap_storage(tensor):
     if tensor.storage().device.type != "npu":
         raise ValueError("Expected NPU storage for NPU op")
     return tensor.storage()
+
+
+def _storage_meta(tensor):
+    storage = _unwrap_storage(tensor)
+    itemsize = _dtype_itemsize(tensor.dtype)
+    storage_numel = storage.untyped_storage().nbytes() // max(itemsize, 1)
+    return int(storage.data_ptr()), int(tensor.offset), (int(storage_numel),)
 
 
 def _wrap_tensor(storage, shape, stride):
@@ -192,19 +200,25 @@ def npu_index_put_impl(self_tensor, index_tensor, values, accumulate=False, unsa
     stream = npu_state.current_stream((self_tensor.device.index or 0))
     if not aclnn.index_put_impl_symbols_ok():
         raise RuntimeError("aclnnIndexPutImpl symbols not available")
-    self_storage = _unwrap_storage(self_tensor)
-    index_storage = _unwrap_storage(index_tensor)
-    values_storage = _unwrap_storage(values)
+    self_storage_ptr, self_storage_offset, self_storage_dims = _storage_meta(self_tensor)
+    index_storage_ptr, index_storage_offset, index_storage_dims = _storage_meta(index_tensor)
+    values_storage_ptr, values_storage_offset, values_storage_dims = _storage_meta(values)
+    index_entries = [(
+        int(index_storage_ptr) + int(index_storage_offset) * _dtype_itemsize(index_tensor.dtype),
+        index_tensor.shape,
+        index_tensor.stride,
+        index_tensor.dtype,
+        index_storage_offset,
+        index_storage_dims,
+        index_storage_ptr,
+    )]
     aclnn.index_put_impl(
-        self_storage.data_ptr(),
+        self_storage_ptr + self_storage_offset * _dtype_itemsize(self_tensor.dtype),
         self_tensor.shape,
         self_tensor.stride,
         self_tensor.dtype,
-        [index_storage.data_ptr()],
-        [index_tensor.shape],
-        [index_tensor.stride],
-        [index_tensor.dtype],
-        values_storage.data_ptr(),
+        index_entries,
+        values_storage_ptr + values_storage_offset * _dtype_itemsize(values.dtype),
         values.shape,
         values.stride,
         values.dtype,
@@ -212,6 +226,12 @@ def npu_index_put_impl(self_tensor, index_tensor, values, accumulate=False, unsa
         bool(unsafe),
         runtime,
         stream=stream.stream,
+        self_storage_offset=self_storage_offset,
+        self_storage_dims=self_storage_dims,
+        self_storage_ptr=self_storage_ptr,
+        values_storage_offset=values_storage_offset,
+        values_storage_dims=values_storage_dims,
+        values_storage_ptr=values_storage_ptr,
     )
 
 
@@ -298,9 +318,7 @@ def _unary_op(a, fn, name, out_dtype=None):
     return _wrap_tensor(out_storage, a.shape, a.stride)
 
 
-def _binary_op(a, b, fn, name):
-    if _HAS_FAST_OPS:
-        return _fast_binary_op(a, b, fn, name)
+def _binary_op_slow(a, b, fn, name):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu" or b.device.type != "npu":
@@ -329,6 +347,11 @@ def _binary_op(a, b, fn, name):
     )
     out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
     return _wrap_tensor(out_storage, out_shape, out_stride)
+
+
+def _binary_op(a, b, fn, name):
+    _require_native_fast_ops(name)
+    return _fast_binary_op(a, b, fn, name)
 
 
 def _normalize_reduction_dims(dim, ndim):
