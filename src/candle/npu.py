@@ -491,7 +491,7 @@ _ERROR_MODE_MAP = {
 
 class NPUGraph:
     def __init__(self):
-        from ._cython._aclgraph import _NPUGraphImpl  # pylint: disable=no-name-in-module
+        from ._cython._aclgraph import _NPUGraphImpl  # pylint: disable=import-error,no-name-in-module
 
         self._impl = _NPUGraphImpl()
 
@@ -571,7 +571,7 @@ class graph:
 
 
 def is_current_stream_capturing():
-    from ._cython import _aclrt_ffi
+    from ._cython import _aclrt_ffi  # pylint: disable=import-error,no-name-in-module
 
     _ensure_initialized()
     status, _ = _aclrt_ffi.capture_get_info(current_stream()._handle)

@@ -14,7 +14,7 @@ def _get_aclrt_ffi():
     global _aclrt_ffi_mod
     if _aclrt_ffi_mod is None:
         ensure_acl()
-        from ..._cython import _aclrt_ffi as mod
+        from ..._cython import _aclrt_ffi as mod  # pylint: disable=import-error,no-name-in-module
         if not mod.is_initialized():
             lib_path = None
             for base in cann_discovery.get_lib_dirs():
