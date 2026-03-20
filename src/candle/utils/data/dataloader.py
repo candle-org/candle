@@ -621,9 +621,7 @@ class DataLoader:
                 send_count += 1
 
             next_idx = 0
-            use_cy_reorder = _CyReorderBuffer is not None
-            reorder_capacity = max(2, self._queue_depth() + 1)
-            reorder = _CyReorderBuffer(reorder_capacity) if use_cy_reorder else {}
+            reorder = {}
             while next_idx < send_count:
                 try:
                     if pending_events:
@@ -644,38 +642,45 @@ class DataLoader:
                 if kind != "data":
                     continue
 
-                if use_cy_reorder:
-                    reorder.put(key, payload)
-                    ready_items = reorder.drain()
-                    next_idx = reorder.next_idx
-                else:
-                    reorder[key] = payload
-                    ready_items = []
-                    while next_idx in reorder:
-                        ready_items.append(reorder.pop(next_idx))
-                        next_idx += 1
+                reorder[key] = payload
+                ready_items = []
+                while next_idx in reorder:
+                    ready_items.append(reorder.pop(next_idx))
+                    next_idx += 1
 
                 for data in ready_items:
                     if pin_thread is None:
                         yield self._maybe_pin(data)
                     else:
-                        pin_data_queue.put((pin_sent, data))
-                        pin_sent += 1
+                        # Drain done_queue first to avoid blocking on full pin_data_queue
                         while pin_yielded < pin_sent:
                             try:
                                 pin_idx, batch = pin_done_queue.get_nowait()
                             except queue.Empty:
                                 break
                             if isinstance(batch, pin_exc_cls):
+                                if persistent:
+                                    self._shutdown_persistent_workers()
                                 raise RuntimeError(
                                     f"DataLoader pin_memory thread failed: {batch.message}"
                                 )
                             if pin_idx != pin_yielded:
+                                if persistent:
+                                    self._shutdown_persistent_workers()
                                 raise RuntimeError(
                                     "DataLoader pin_memory thread returned out-of-order batch"
                                 )
                             pin_yielded += 1
                             yield batch
+                        try:
+                            pin_data_queue.put((pin_sent, data), timeout=self.timeout or 300)
+                        except queue.Full as exc:
+                            if persistent:
+                                self._shutdown_persistent_workers()
+                            raise RuntimeError(
+                                f"DataLoader timed out after {self.timeout} seconds"
+                            ) from exc
+                        pin_sent += 1
 
             if pin_thread is not None:
                 pin_data_queue.put(None)
@@ -683,14 +688,20 @@ class DataLoader:
                     try:
                         pin_idx, batch = pin_done_queue.get(timeout=self.timeout or 300)
                     except queue.Empty as exc:
+                        if persistent:
+                            self._shutdown_persistent_workers()
                         raise RuntimeError(
                             f"DataLoader timed out after {self.timeout} seconds"
                         ) from exc
                     if isinstance(batch, pin_exc_cls):
+                        if persistent:
+                            self._shutdown_persistent_workers()
                         raise RuntimeError(
                             f"DataLoader pin_memory thread failed: {batch.message}"
                         )
                     if pin_idx != pin_yielded:
+                        if persistent:
+                            self._shutdown_persistent_workers()
                         raise RuntimeError(
                             "DataLoader pin_memory thread returned out-of-order batch"
                         )
@@ -776,23 +787,34 @@ class DataLoader:
                 if pin_thread is None:
                     yield self._maybe_pin(out)
                 else:
-                    pin_data_queue.put((pin_sent, out))
-                    pin_sent += 1
                     while pin_yielded < pin_sent:
                         try:
                             pin_idx, batch = pin_done_queue.get_nowait()
                         except queue.Empty:
                             break
                         if isinstance(batch, pin_exc_cls):
+                            if persistent:
+                                self._shutdown_persistent_workers()
                             raise RuntimeError(
                                 f"DataLoader pin_memory thread failed: {batch.message}"
                             )
                         if pin_idx != pin_yielded:
+                            if persistent:
+                                self._shutdown_persistent_workers()
                             raise RuntimeError(
                                 "DataLoader pin_memory thread returned out-of-order batch"
                             )
                         pin_yielded += 1
                         yield batch
+                    try:
+                        pin_data_queue.put((pin_sent, out), timeout=self.timeout or 300)
+                    except queue.Full as exc:
+                        if persistent:
+                            self._shutdown_persistent_workers()
+                        raise RuntimeError(
+                            f"DataLoader timed out after {self.timeout} seconds"
+                        ) from exc
+                    pin_sent += 1
 
             if pin_thread is not None:
                 pin_data_queue.put(None)
@@ -800,14 +822,20 @@ class DataLoader:
                     try:
                         pin_idx, batch = pin_done_queue.get(timeout=self.timeout or 300)
                     except queue.Empty as exc:
+                        if persistent:
+                            self._shutdown_persistent_workers()
                         raise RuntimeError(
                             f"DataLoader timed out after {self.timeout} seconds"
                         ) from exc
                     if isinstance(batch, pin_exc_cls):
+                        if persistent:
+                            self._shutdown_persistent_workers()
                         raise RuntimeError(
                             f"DataLoader pin_memory thread failed: {batch.message}"
                         )
                     if pin_idx != pin_yielded:
+                        if persistent:
+                            self._shutdown_persistent_workers()
                         raise RuntimeError(
                             "DataLoader pin_memory thread returned out-of-order batch"
                         )
