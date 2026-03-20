@@ -1,5 +1,6 @@
 import queue
 import random
+import warnings
 from collections import deque
 from dataclasses import dataclass
 
@@ -13,6 +14,14 @@ from ._utils import (
     _set_worker_info,
     _clear_worker_info,
 )
+
+try:
+    from ..._cython._dataloader_ops import ReorderBuffer as _CyReorderBuffer
+except ImportError:
+    try:
+        from ..._cython._dataloader_ops_fallback import ReorderBuffer as _CyReorderBuffer
+    except ImportError:
+        _CyReorderBuffer = None
 
 
 @dataclass
@@ -319,6 +328,16 @@ class DataLoader:
         self._is_iterable = isinstance(dataset, IterableDataset)
         self._auto_collation = batch_size is not None or batch_sampler is not None
 
+        if self.pin_memory:
+            from ... import npu as npu_api
+
+            if not npu_api.is_available():
+                warnings.warn(
+                    "'pin_memory' argument is set as true but no accelerator is found, then device pinned memory won't be used.",
+                    stacklevel=2,
+                )
+                self.pin_memory = False
+
         if collate_fn is None:
             self.collate_fn = default_collate if self._auto_collation else default_convert
         else:
@@ -585,6 +604,26 @@ class DataLoader:
         pending_events = deque(pool.pending_events)
         pool.pending_events = []
 
+        pin_thread = None
+        pin_data_queue = None
+        pin_done_queue = None
+        pin_sent = 0
+        pin_yielded = 0
+        pin_exc_cls = None
+        if self.pin_memory:
+            from ._pin_memory_thread import PinMemoryThread, _PinMemoryException
+
+            pin_exc_cls = _PinMemoryException
+            pin_data_queue = queue.Queue(maxsize=self._queue_depth())
+            pin_done_queue = queue.Queue(maxsize=self._queue_depth())
+            pin_thread = PinMemoryThread(
+                pin_data_queue,
+                pin_done_queue,
+                device_type="cpu",
+                do_pin=True,
+            )
+            pin_thread.start()
+
         try:
             send_count = 0
             source_iter = self.batch_sampler if self._auto_collation else self.sampler
@@ -615,11 +654,77 @@ class DataLoader:
                     continue
 
                 reorder[key] = payload
+                ready_items = []
                 while next_idx in reorder:
-                    data = reorder.pop(next_idx)
-                    yield self._maybe_pin(data)
+                    ready_items.append(reorder.pop(next_idx))
                     next_idx += 1
+
+                for data in ready_items:
+                    if pin_thread is None:
+                        yield self._maybe_pin(data)
+                    else:
+                        # Drain done_queue first to avoid blocking on full pin_data_queue
+                        while pin_yielded < pin_sent:
+                            try:
+                                pin_idx, batch = pin_done_queue.get_nowait()
+                            except queue.Empty:
+                                break
+                            if isinstance(batch, pin_exc_cls):
+                                if persistent:
+                                    self._shutdown_persistent_workers()
+                                raise RuntimeError(
+                                    f"DataLoader pin_memory thread failed: {batch.message}"
+                                )
+                            if pin_idx != pin_yielded:
+                                if persistent:
+                                    self._shutdown_persistent_workers()
+                                raise RuntimeError(
+                                    "DataLoader pin_memory thread returned out-of-order batch"
+                                )
+                            pin_yielded += 1
+                            yield batch
+                        try:
+                            pin_data_queue.put((pin_sent, data), timeout=self.timeout or 300)
+                        except queue.Full as exc:
+                            if persistent:
+                                self._shutdown_persistent_workers()
+                            raise RuntimeError(
+                                f"DataLoader timed out after {self.timeout} seconds"
+                            ) from exc
+                        pin_sent += 1
+
+            if pin_thread is not None:
+                pin_data_queue.put(None)
+                while pin_yielded < pin_sent:
+                    try:
+                        pin_idx, batch = pin_done_queue.get(timeout=self.timeout or 300)
+                    except queue.Empty as exc:
+                        if persistent:
+                            self._shutdown_persistent_workers()
+                        raise RuntimeError(
+                            f"DataLoader timed out after {self.timeout} seconds"
+                        ) from exc
+                    if isinstance(batch, pin_exc_cls):
+                        if persistent:
+                            self._shutdown_persistent_workers()
+                        raise RuntimeError(
+                            f"DataLoader pin_memory thread failed: {batch.message}"
+                        )
+                    if pin_idx != pin_yielded:
+                        if persistent:
+                            self._shutdown_persistent_workers()
+                        raise RuntimeError(
+                            "DataLoader pin_memory thread returned out-of-order batch"
+                        )
+                    pin_yielded += 1
+                    yield batch
         finally:
+            if pin_thread is not None:
+                try:
+                    pin_data_queue.put_nowait(None)
+                except Exception:
+                    pass
+                pin_thread.join(timeout=5)
             if not persistent:
                 _shutdown_workers(workers)
 
@@ -637,9 +742,28 @@ class DataLoader:
             for _ in workers:
                 pool.control_queue.put(("iterate", epoch))
 
+        pin_thread = None
+        pin_data_queue = None
+        pin_done_queue = None
+        pin_sent = 0
+        pin_yielded = 0
+        pin_exc_cls = None
+        if self.pin_memory:
+            from ._pin_memory_thread import PinMemoryThread, _PinMemoryException
+
+            pin_exc_cls = _PinMemoryException
+            pin_data_queue = queue.Queue(maxsize=self._queue_depth())
+            pin_done_queue = queue.Queue(maxsize=self._queue_depth())
+            pin_thread = PinMemoryThread(
+                pin_data_queue,
+                pin_done_queue,
+                device_type="cpu",
+                do_pin=True,
+            )
+            pin_thread.start()
+
         try:
             worker_done = 0
-            batch = []
             while worker_done < len(workers):
                 try:
                     if pending_events:
@@ -671,8 +795,70 @@ class DataLoader:
                     continue
 
                 out = payload
-                yield self._maybe_pin(out)
+                if pin_thread is None:
+                    yield self._maybe_pin(out)
+                else:
+                    while pin_yielded < pin_sent:
+                        try:
+                            pin_idx, batch = pin_done_queue.get_nowait()
+                        except queue.Empty:
+                            break
+                        if isinstance(batch, pin_exc_cls):
+                            if persistent:
+                                self._shutdown_persistent_workers()
+                            raise RuntimeError(
+                                f"DataLoader pin_memory thread failed: {batch.message}"
+                            )
+                        if pin_idx != pin_yielded:
+                            if persistent:
+                                self._shutdown_persistent_workers()
+                            raise RuntimeError(
+                                "DataLoader pin_memory thread returned out-of-order batch"
+                            )
+                        pin_yielded += 1
+                        yield batch
+                    try:
+                        pin_data_queue.put((pin_sent, out), timeout=self.timeout or 300)
+                    except queue.Full as exc:
+                        if persistent:
+                            self._shutdown_persistent_workers()
+                        raise RuntimeError(
+                            f"DataLoader timed out after {self.timeout} seconds"
+                        ) from exc
+                    pin_sent += 1
+
+            if pin_thread is not None:
+                pin_data_queue.put(None)
+                while pin_yielded < pin_sent:
+                    try:
+                        pin_idx, batch = pin_done_queue.get(timeout=self.timeout or 300)
+                    except queue.Empty as exc:
+                        if persistent:
+                            self._shutdown_persistent_workers()
+                        raise RuntimeError(
+                            f"DataLoader timed out after {self.timeout} seconds"
+                        ) from exc
+                    if isinstance(batch, pin_exc_cls):
+                        if persistent:
+                            self._shutdown_persistent_workers()
+                        raise RuntimeError(
+                            f"DataLoader pin_memory thread failed: {batch.message}"
+                        )
+                    if pin_idx != pin_yielded:
+                        if persistent:
+                            self._shutdown_persistent_workers()
+                        raise RuntimeError(
+                            "DataLoader pin_memory thread returned out-of-order batch"
+                        )
+                    pin_yielded += 1
+                    yield batch
         finally:
+            if pin_thread is not None:
+                try:
+                    pin_data_queue.put_nowait(None)
+                except Exception:
+                    pass
+                pin_thread.join(timeout=5)
             if not persistent:
                 _shutdown_workers(workers)
 

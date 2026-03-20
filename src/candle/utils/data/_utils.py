@@ -7,6 +7,11 @@ import numpy as np
 from ..._functional import stack as _stack
 from ..._creation import from_numpy as _from_numpy
 
+try:
+    from ..._cython._dataloader_ops import cy_fast_collate_tensors as _cy_collate
+except ImportError:
+    _cy_collate = None
+
 
 @dataclass
 class WorkerInfo:
@@ -42,6 +47,8 @@ def default_collate(batch):
     first = batch[0]
     # Candle tensors
     if hasattr(first, "device") and hasattr(first, "shape"):
+        if _cy_collate is not None:
+            return _cy_collate(batch)
         return _stack(batch, dim=0)
     # Numpy arrays -> convert to tensors then stack
     if isinstance(first, np.ndarray):
