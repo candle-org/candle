@@ -1,5 +1,51 @@
+import os
+import subprocess
+import sys
+import textwrap
+
 import candle as torch
 import pytest
+
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_SRC_DIR = os.path.join(_PROJECT_ROOT, "src")
+
+
+def test_tensor_module_fails_without_compiled_extension():
+    env = os.environ.copy()
+    python_path = _SRC_DIR
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        python_path = python_path + os.pathsep + existing
+    env["PYTHONPATH"] = python_path
+
+    code = textwrap.dedent("""\
+        import importlib
+        import sys
+
+        import candle
+        import candle._cython as cython_pkg
+
+        sys.modules.pop("candle._tensor", None)
+        sys.modules["candle._cython._tensor_impl"] = None
+        if hasattr(cython_pkg, "_tensor_impl"):
+            delattr(cython_pkg, "_tensor_impl")
+        if hasattr(candle, "_tensor"):
+            delattr(candle, "_tensor")
+
+        importlib.import_module("candle._tensor")
+    """)
+
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "candle._cython._tensor_impl" in result.stderr
 
 
 def test_tensor_item_int_float_bool_tolist_cpu():

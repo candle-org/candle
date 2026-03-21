@@ -75,14 +75,9 @@ from ._functional import reciprocal as reciprocal_dispatch, addmm as addmm_dispa
 from ._functional import log1p as log1p_dispatch, expm1 as expm1_dispatch
 from .autograd.engine import backward as _backward
 
-# TensorImpl base class: Cython if available, else pure-Python fallback
-try:
-    from ._cython._tensor_impl import TensorImpl as _TensorBase
-    from ._cython._tensor_impl import _VersionCounterProxy  # noqa: F401
-    _HAS_CYTHON_TENSOR_IMPL = True
-except ImportError:
-    from ._cython._tensor_impl_fallback import TensorImpl as _TensorBase
-    _HAS_CYTHON_TENSOR_IMPL = False
+# TensorImpl base class: compiled Cython extension required.
+from ._cython._tensor_impl import TensorImpl as _TensorBase  # pylint: disable=import-error,no-name-in-module
+from ._cython._tensor_impl import _VersionCounterProxy  # noqa: F401  # pylint: disable=import-error,no-name-in-module
 
 
 class _StrideTuple(tuple):

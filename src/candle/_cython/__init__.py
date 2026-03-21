@@ -11,7 +11,6 @@ Feature flags (set after import):
     _HAS_CYTHON_STORAGE         — True if _storage.pyx compiled successfully
     _HAS_CYTHON_NPU_OPS         — True if _npu_ops.pyx compiled successfully
     _HAS_CYTHON_ACLNN_FFI       — True if _aclnn_ffi.pyx compiled successfully
-    _HAS_CYTHON_TENSOR_IMPL     — True if _tensor_impl.pyx compiled successfully
     _HAS_CYTHON_DISPATCHER_CORE — True if _dispatcher_core.pyx compiled
     _HAS_CYTHON_DEVICE          — True if _device.pyx compiled successfully
     _HAS_CYTHON_DTYPE           — True if _dtype.pyx compiled successfully
@@ -28,7 +27,6 @@ _HAS_CYTHON_ALLOCATOR = False
 _HAS_CYTHON_STORAGE = False
 _HAS_CYTHON_NPU_OPS = False
 _HAS_CYTHON_ACLNN_FFI = False
-_HAS_CYTHON_TENSOR_IMPL = False
 _HAS_CYTHON_DISPATCHER_CORE = False
 _HAS_CYTHON_DEVICE = False
 _HAS_CYTHON_DTYPE = False
@@ -76,11 +74,7 @@ try:
 except ImportError:
     pass
 
-try:
-    from ._tensor_impl import TensorImpl, _VersionCounterProxy  # noqa: F401
-    _HAS_CYTHON_TENSOR_IMPL = True
-except ImportError:
-    pass
+from ._tensor_impl import TensorImpl, _VersionCounterProxy  # noqa: F401  # pylint: disable=import-error,no-name-in-module
 
 try:
     from ._dispatcher_core import cy_dispatch_with_keyset_fast  # noqa: F401

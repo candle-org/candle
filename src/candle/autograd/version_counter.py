@@ -1,10 +1,8 @@
 """Version counter for tensor mutation tracking.
 
-When Cython TensorImpl is available, the version counter is inlined as
-``TensorImpl._version_value`` (C int64) and accessed via a lightweight
-``_VersionCounterProxy``.  This module provides the fallback
-``VersionCounter`` class for use when Cython is not available, and
-re-exports the proxy for compatibility.
+This module provides ``VersionCounter`` for contexts that do not use
+``TensorImpl`` as a base. The ``_VersionCounterProxy`` used by
+``TensorImpl`` is provided by the compiled ``_tensor_impl`` extension.
 """
 
 

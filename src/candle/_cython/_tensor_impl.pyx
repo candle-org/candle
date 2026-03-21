@@ -429,48 +429,38 @@ cdef class TensorImpl:
     # ---------------------------------------------------------------
     # Comparison dunders (migrated from Tensor)
     # ---------------------------------------------------------------
+    # Cython cdef classes require __richcmp__ instead of individual
+    # __eq__/__ne__/__lt__/__le__/__gt__/__ge__ methods.
 
-    def __gt__(self, other):
-        from candle._tensor import Tensor
-        from candle._functional import gt as gt_dispatch
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return gt_dispatch(self, other)
-        return NotImplemented
-
-    def __lt__(self, other):
-        from candle._tensor import Tensor
-        from candle._functional import lt as lt_dispatch
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return lt_dispatch(self, other)
-        return NotImplemented
-
-    def __ge__(self, other):
-        from candle._tensor import Tensor
-        from candle._functional import ge as ge_dispatch
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return ge_dispatch(self, other)
-        return NotImplemented
-
-    def __le__(self, other):
-        from candle._tensor import Tensor
-        from candle._functional import le as le_dispatch
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return le_dispatch(self, other)
-        return NotImplemented
-
-    def __eq__(self, other):
+    def __richcmp__(self, other, int op):
         from candle._tensor import Tensor
         from candle._functional import eq as eq_dispatch
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return eq_dispatch(self, other)
-        return False
-
-    def __ne__(self, other):
-        from candle._tensor import Tensor
         from candle._functional import ne as ne_dispatch
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+        from candle._functional import lt as lt_dispatch
+        from candle._functional import le as le_dispatch
+        from candle._functional import gt as gt_dispatch
+        from candle._functional import ge as ge_dispatch
+
+        if not (isinstance(other, Tensor) or self._is_scalar_comparable(other)):
+            if op == 2:    # Py_EQ
+                return False
+            if op == 3:    # Py_NE
+                return True
+            return NotImplemented
+
+        if op == 0:        # Py_LT
+            return lt_dispatch(self, other)
+        if op == 1:        # Py_LE
+            return le_dispatch(self, other)
+        if op == 2:        # Py_EQ
+            return eq_dispatch(self, other)
+        if op == 3:        # Py_NE
             return ne_dispatch(self, other)
-        return True
+        if op == 4:        # Py_GT
+            return gt_dispatch(self, other)
+        if op == 5:        # Py_GE
+            return ge_dispatch(self, other)
+        return NotImplemented
 
     # ---------------------------------------------------------------
     # Pickle support
