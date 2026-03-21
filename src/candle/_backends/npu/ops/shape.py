@@ -1321,14 +1321,12 @@ def _diag_310b_fallback(a, diagonal=0):
         if n == 0:
             return out
 
-        idx = _npu_arange_1d(n, a.device)
-        if diagonal >= 0:
-            rows = idx
-            cols = idx if diagonal == 0 else add(idx, diagonal)
-        else:
-            rows = add(idx, -diagonal)
-            cols = idx
-        return index_put_(out, (rows, cols), a, accumulate=False)
+        for i in range(n):
+            row = i if diagonal >= 0 else i - diagonal
+            col = i + diagonal if diagonal >= 0 else i
+            view = _npu_basic_getitem_view(out, (row, col))
+            _npu_assign_to_view(view, select(a, 0, i))
+        return out
 
     m = int(a.shape[0])
     n = int(a.shape[1])

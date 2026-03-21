@@ -14,28 +14,23 @@ from ._helpers import (
     npu_typed_storage_from_ptr, reshape,
     aclnn, npu_runtime, npu_state, ops_soc,
 )
+from ...._dtype import float16 as float16_dtype
 from .math import add, div, mul, rsqrt, sqrt, sub
 from .random import copy_
 from .reduce import maximum, mean, norm_
 
 
-def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
-    """Compute layer normalization using aclnnLayerNorm."""
-    if _use_soc_fallback("layer_norm"):
-        return _layer_norm_310b_fallback(input, normalized_shape, weight=weight, bias=bias, eps=eps)
-
+def _layer_norm_native(input, normalized_shape, weight=None, bias=None, eps=1e-5):
     runtime = npu_runtime.get_runtime((input.device.index or 0))
     stream = npu_state.current_stream((input.device.index or 0))
 
     if not aclnn.layer_norm_symbols_ok():
         raise RuntimeError("aclnnLayerNorm not available")
 
-    # Compute stats shape (all dims except normalized dims)
     if isinstance(normalized_shape, int):
         normalized_shape = (normalized_shape,)
 
     num_normalized_dims = len(normalized_shape)
-    # Stats (mean/rstd) must have same rank as input, with normalized dims replaced by 1
     if num_normalized_dims > 0:
         stats_shape = tuple(
             s if i < len(input.shape) - num_normalized_dims else 1
@@ -52,14 +47,12 @@ def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
     itemsize = _dtype_itemsize(input.dtype)
 
     out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
-    # Allocate mean/rstd for backward pass (layer_norm backward needs them)
     stats_numel_val = max(stats_numel, 1)
-    float_dtype = input.dtype  # same dtype for stats
-    mean_ptr = npu_runtime._alloc_device(stats_numel_val * 4, runtime=runtime)  # float32
-    rstd_ptr = npu_runtime._alloc_device(stats_numel_val * 4, runtime=runtime)  # float32
-    # Wrap in Storage to prevent early deallocation
-    mean_storage = npu_typed_storage_from_ptr(mean_ptr, stats_numel_val, float_dtype, device=input.device)
-    rstd_storage = npu_typed_storage_from_ptr(rstd_ptr, stats_numel_val, float_dtype, device=input.device)
+    stats_dtype = input.dtype
+    mean_ptr = npu_runtime._alloc_device(stats_numel_val * _dtype_itemsize(stats_dtype), runtime=runtime)
+    rstd_ptr = npu_runtime._alloc_device(stats_numel_val * _dtype_itemsize(stats_dtype), runtime=runtime)
+    mean_storage = npu_typed_storage_from_ptr(mean_ptr, stats_numel_val, stats_dtype, device=input.device)
+    rstd_storage = npu_typed_storage_from_ptr(rstd_ptr, stats_numel_val, stats_dtype, device=input.device)
 
     weight_ptr = _unwrap_storage(weight).data_ptr() if weight is not None else None
     bias_ptr = _unwrap_storage(bias).data_ptr() if bias is not None else None
@@ -86,7 +79,6 @@ def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
 
     out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, input.dtype, device=input.device)
     out = _wrap_tensor(out_storage, out_shape, out_stride)
-    # Attach mean/rstd for backward pass
     out._backward_data = {
         "mean_ptr": mean_ptr, "rstd_ptr": rstd_ptr,
         "mean_storage": mean_storage, "rstd_storage": rstd_storage,
@@ -94,6 +86,13 @@ def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
         "normalized_shape": tuple(normalized_shape),
     }
     return out
+
+
+def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
+    """Compute layer normalization using aclnnLayerNorm."""
+    if _use_soc_fallback("layer_norm"):
+        return _layer_norm_310b_fallback(input, normalized_shape, weight=weight, bias=bias, eps=eps)
+    return _layer_norm_native(input, normalized_shape, weight=weight, bias=bias, eps=eps)
 
 
 def _layer_norm_310b_fallback(input, normalized_shape, weight=None, bias=None, eps=1e-5):
@@ -108,7 +107,7 @@ def _layer_norm_310b_fallback(input, normalized_shape, weight=None, bias=None, e
     lead = input.dim() - n_norm
     stats_shape = (1,) * lead + tuple(normalized_shape)
 
-    x = input if input.dtype == float_dtype else _cast_tensor_dtype(input, float_dtype)
+    x = input if input.dtype == float16_dtype else _cast_tensor_dtype(input, float16_dtype)
     mean_t = mean(x, dim=axis_dims, keepdim=True)
     diff = sub(x, mean_t)
     var = mean(mul(diff, diff), dim=axis_dims, keepdim=True)
@@ -117,15 +116,15 @@ def _layer_norm_310b_fallback(input, normalized_shape, weight=None, bias=None, e
     out = mul(diff, inv_std)
 
     if weight is not None:
-        w = weight if weight.dtype == float_dtype else _cast_tensor_dtype(weight, float_dtype)
+        w = weight if weight.dtype == float16_dtype else _cast_tensor_dtype(weight, float16_dtype)
         w = reshape(w, stats_shape)
         out = mul(out, w)
     if bias is not None:
-        b = bias if bias.dtype == float_dtype else _cast_tensor_dtype(bias, float_dtype)
+        b = bias if bias.dtype == float16_dtype else _cast_tensor_dtype(bias, float16_dtype)
         b = reshape(b, stats_shape)
         out = add(out, b)
 
-    if input.dtype != float_dtype:
+    if input.dtype != float16_dtype:
         out = _cast_tensor_dtype(out, input.dtype)
     return out
 
@@ -154,11 +153,9 @@ def batch_norm(input, running_mean, running_var, weight=None, bias=None,
     running_mean_ptr = _unwrap_storage(running_mean).data_ptr() if running_mean is not None else None
     running_var_ptr = _unwrap_storage(running_var).data_ptr() if running_var is not None else None
 
-    # Allocate save_mean/save_invstd externally for backward pass
     C = input.shape[1] if len(input.shape) >= 2 else 1
     save_mean_ptr = npu_runtime._alloc_device(C * 4, runtime=runtime)
     save_invstd_ptr = npu_runtime._alloc_device(C * 4, runtime=runtime)
-    # Wrap in Storage to prevent GC
     save_mean_storage = npu_typed_storage_from_ptr(save_mean_ptr, C, input.dtype, device=input.device)
     save_invstd_storage = npu_typed_storage_from_ptr(save_invstd_ptr, C, input.dtype, device=input.device)
 
@@ -248,7 +245,6 @@ def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
     if not aclnn.layer_norm_symbols_ok():
         raise RuntimeError("aclnnLayerNorm not available (required for group_norm)")
 
-    # Extract dimensions
     N = input.shape[0]
     C = input.shape[1]
     spatial_dims = input.shape[2:]
@@ -261,26 +257,20 @@ def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
 
     channels_per_group = C // num_groups
 
-    # Step 1: Reshape to (N*num_groups, channels_per_group * spatial_size)
     reshaped_shape = (N * num_groups, channels_per_group * spatial_size)
     reshaped = reshape(input, reshaped_shape)
 
-    # Step 2: Apply layer_norm over the last dimension (no weight/bias yet)
     normalized_shape = (channels_per_group * spatial_size,)
     normalized = layer_norm(reshaped, normalized_shape, weight=None, bias=None, eps=eps)
 
-    # Step 3: Reshape back to original shape
     result = reshape(normalized, input.shape)
 
-    # Step 4: Apply affine transform if weight/bias provided
     if weight is not None:
-        # Reshape weight from (C,) to (1, C, 1, 1, ...) for broadcasting
         weight_shape = (1, C) + (1,) * len(spatial_dims)
         weight_reshaped = reshape(weight, weight_shape)
         result = mul(result, weight_reshaped)
 
     if bias is not None:
-        # Reshape bias from (C,) to (1, C, 1, 1, ...) for broadcasting
         bias_shape = (1, C) + (1,) * len(spatial_dims)
         bias_reshaped = reshape(bias, bias_shape)
         result = add(result, bias_reshaped)
