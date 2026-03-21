@@ -740,7 +740,6 @@ cdef class MetalKernelDispatcher:
     cpdef void dispatch_where_scalar(self, str kernel_name, object cond_buf,
                                      object tensor_buf, object scalar,
                                      object out_buf, int numel,
-                                     bint scalar_is_other,
                                      str scalar_fmt="f"):
         """Encode where_scalar kernel (cond ? tensor : scalar or cond ? scalar : tensor)."""
         from candle._backends.mps.runtime import get_runtime  # pylint: disable=import-error,no-name-in-module
@@ -816,13 +815,12 @@ cdef class MetalKernelDispatcher:
 
     cpdef void dispatch_tril_triu(self, str kernel_name, object a_buf,
                                   object out_buf, int rows, int cols,
-                                  int diagonal):
+                                  int diagonal, int numel):
         """Encode tril or triu kernel."""
         from candle._backends.mps.runtime import get_runtime  # pylint: disable=import-error,no-name-in-module
         rt = get_runtime()
         cdef object pipeline = self._get_pipeline(kernel_name)
         cdef int tpg = self._threads_per_group(pipeline)
-        cdef int numel = rows * cols
         cdef int groups = (numel + tpg - 1) // tpg
 
         cmd = rt.create_command_buffer()
@@ -835,12 +833,14 @@ cdef class MetalKernelDispatcher:
             enc.setBytes_length_atIndex_(struct.pack("I", rows), 4, 2)
             enc.setBytes_length_atIndex_(struct.pack("I", cols), 4, 3)
             enc.setBytes_length_atIndex_(struct.pack("i", diagonal), 4, 4)
+            enc.setBytes_length_atIndex_(struct.pack("I", numel), 4, 5)
             enc.dispatchThreadgroups_threadsPerThreadgroup_(
                 _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
             enc.endEncoding()
         else:
             _encode_tril_triu_ctypes(enc, pipeline, a_buf, out_buf,
-                                     rows, cols, diagonal, groups, tpg)
+                                     rows, cols, diagonal, numel,
+                                     groups, tpg)
 
         rt.commit_and_wait(cmd)
 
@@ -851,13 +851,13 @@ cdef class MetalKernelDispatcher:
     cpdef void dispatch_index_gather(self, str kernel_name, object input_buf,
                                      object index_buf, object out_buf,
                                      int outer_size, int idx_size,
-                                     int inner_size, int input_dim_size):
+                                     int inner_size, int input_dim_size,
+                                     int numel):
         """Encode index_gather kernel."""
         from candle._backends.mps.runtime import get_runtime  # pylint: disable=import-error,no-name-in-module
         rt = get_runtime()
         cdef object pipeline = self._get_pipeline(kernel_name)
         cdef int tpg = self._threads_per_group(pipeline)
-        cdef int numel = outer_size * idx_size * inner_size
         cdef int groups = (numel + tpg - 1) // tpg
 
         cmd = rt.create_command_buffer()
@@ -975,7 +975,8 @@ cdef class MetalKernelDispatcher:
         rt = get_runtime()
         cdef object pipeline = self._get_pipeline(kernel_name)
         cdef int tpg = self._threads_per_group(pipeline)
-        cdef int groups = outer_size
+        cdef int numel = outer_size * inner_size
+        cdef int groups = (numel + tpg - 1) // tpg
 
         cmd = rt.create_command_buffer()
         enc = rt.get_compute_encoder(cmd)
@@ -1015,7 +1016,8 @@ cdef class MetalKernelDispatcher:
         rt = get_runtime()
         cdef object pipeline = self._get_pipeline(kernel_name)
         cdef int tpg = self._threads_per_group(pipeline)
-        cdef int groups = outer_size
+        cdef int numel = outer_size * inner_size
+        cdef int groups = (numel + tpg - 1) // tpg
 
         cmd = rt.create_command_buffer()
         enc = rt.get_compute_encoder(cmd)
@@ -1051,7 +1053,7 @@ cdef class MetalKernelDispatcher:
         rt = get_runtime()
         cdef object pipeline = self._get_pipeline(kernel_name)
         cdef int tpg = self._threads_per_group(pipeline)
-        cdef int groups = C
+        cdef int groups = (C + tpg - 1) // tpg
 
         cmd = rt.create_command_buffer()
         enc = rt.get_compute_encoder(cmd)
@@ -1082,16 +1084,15 @@ cdef class MetalKernelDispatcher:
                                          object mean_buf, object var_buf,
                                          object weight_buf, object bias_buf,
                                          object output_buf,
-                                         int N, int C, int HW,
+                                         int C, int spatial_size,
                                          float eps, int has_weight,
-                                         int has_bias):
+                                         int has_bias, int total):
         """Encode batch_norm_apply kernel."""
         from candle._backends.mps.runtime import get_runtime  # pylint: disable=import-error,no-name-in-module
         rt = get_runtime()
         cdef object pipeline = self._get_pipeline(kernel_name)
         cdef int tpg = self._threads_per_group(pipeline)
-        cdef int numel = N * C * HW
-        cdef int groups = (numel + tpg - 1) // tpg
+        cdef int groups = (total + tpg - 1) // tpg
 
         cmd = rt.create_command_buffer()
         enc = rt.get_compute_encoder(cmd)
@@ -1104,12 +1105,12 @@ cdef class MetalKernelDispatcher:
             enc.setBuffer_offset_atIndex_(weight_buf, 0, 3)
             enc.setBuffer_offset_atIndex_(bias_buf, 0, 4)
             enc.setBuffer_offset_atIndex_(output_buf, 0, 5)
-            enc.setBytes_length_atIndex_(struct.pack("I", N), 4, 6)
-            enc.setBytes_length_atIndex_(struct.pack("I", C), 4, 7)
-            enc.setBytes_length_atIndex_(struct.pack("I", HW), 4, 8)
-            enc.setBytes_length_atIndex_(struct.pack("f", eps), 4, 9)
-            enc.setBytes_length_atIndex_(struct.pack("I", has_weight), 4, 10)
-            enc.setBytes_length_atIndex_(struct.pack("I", has_bias), 4, 11)
+            enc.setBytes_length_atIndex_(struct.pack("I", C), 4, 6)
+            enc.setBytes_length_atIndex_(struct.pack("I", spatial_size), 4, 7)
+            enc.setBytes_length_atIndex_(struct.pack("f", eps), 4, 8)
+            enc.setBytes_length_atIndex_(struct.pack("I", has_weight), 4, 9)
+            enc.setBytes_length_atIndex_(struct.pack("I", has_bias), 4, 10)
+            enc.setBytes_length_atIndex_(struct.pack("I", total), 4, 11)
             enc.dispatchThreadgroups_threadsPerThreadgroup_(
                 _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
             enc.endEncoding()
@@ -1117,8 +1118,9 @@ cdef class MetalKernelDispatcher:
             _encode_batch_norm_apply_ctypes(enc, pipeline, input_buf,
                                             mean_buf, var_buf, weight_buf,
                                             bias_buf, output_buf,
-                                            N, C, HW, eps, has_weight,
-                                            has_bias, groups, tpg)
+                                            C, spatial_size, eps,
+                                            has_weight, has_bias, total,
+                                            groups, tpg)
 
         rt.commit_and_wait(cmd)
 
@@ -1358,8 +1360,8 @@ cdef class MetalKernelDispatcher:
     cpdef void dispatch_upsample(self, str kernel_name, object input_buf,
                                  object output_buf, int N, int C,
                                  int H_in, int W_in, int H_out, int W_out,
-                                 int total):
-        """Encode upsample kernel."""
+                                 int extra_uint, int total):
+        """Encode upsample kernel (extra_uint is align_corners for bilinear)."""
         from candle._backends.mps.runtime import get_runtime  # pylint: disable=import-error,no-name-in-module
         rt = get_runtime()
         cdef object pipeline = self._get_pipeline(kernel_name)
@@ -1379,14 +1381,15 @@ cdef class MetalKernelDispatcher:
             enc.setBytes_length_atIndex_(struct.pack("I", W_in), 4, 5)
             enc.setBytes_length_atIndex_(struct.pack("I", H_out), 4, 6)
             enc.setBytes_length_atIndex_(struct.pack("I", W_out), 4, 7)
-            enc.setBytes_length_atIndex_(struct.pack("I", total), 4, 8)
+            enc.setBytes_length_atIndex_(struct.pack("I", extra_uint), 4, 8)
+            enc.setBytes_length_atIndex_(struct.pack("I", total), 4, 9)
             enc.dispatchThreadgroups_threadsPerThreadgroup_(
                 _MTLSize(groups, 1, 1), _MTLSize(tpg, 1, 1))
             enc.endEncoding()
         else:
             _encode_upsample_ctypes(enc, pipeline, input_buf, output_buf,
                                     N, C, H_in, W_in, H_out, W_out,
-                                    total, groups, tpg)
+                                    extra_uint, total, groups, tpg)
 
         rt.commit_and_wait(cmd)
 
@@ -1506,7 +1509,8 @@ cdef class MetalKernelDispatcher:
     # ------------------------------------------------------------------
 
     cpdef void dispatch_philox_fill(self, str kernel_name, object out_buf,
-                                    int seed_lo, int seed_hi, int offset,
+                                    unsigned int seed_lo, unsigned int seed_hi,
+                                    unsigned int offset,
                                     object param1, object param2, int numel,
                                     str param_fmt="f"):
         """Encode Philox fill (uniform/normal) kernel."""
@@ -1547,8 +1551,9 @@ cdef class MetalKernelDispatcher:
     # ------------------------------------------------------------------
 
     cpdef void dispatch_philox_bernoulli(self, str kernel_name, object out_buf,
-                                         float prob, int seed_lo, int seed_hi,
-                                         int offset, int numel):
+                                         float prob, unsigned int seed_lo,
+                                         unsigned int seed_hi,
+                                         unsigned int offset, int numel):
         """Encode Philox bernoulli kernel."""
         from candle._backends.mps.runtime import get_runtime  # pylint: disable=import-error,no-name-in-module
         rt = get_runtime()
@@ -1584,7 +1589,8 @@ cdef class MetalKernelDispatcher:
 
     cpdef void dispatch_philox_randint(self, str kernel_name, object out_buf,
                                        object low, object high,
-                                       int seed_lo, int seed_hi, int offset,
+                                       unsigned int seed_lo, unsigned int seed_hi,
+                                       unsigned int offset,
                                        int numel, str int_fmt="i"):
         """Encode Philox randint kernel."""
         from candle._backends.mps.runtime import get_runtime  # pylint: disable=import-error,no-name-in-module
@@ -1627,7 +1633,8 @@ cdef class MetalKernelDispatcher:
 
     cpdef void dispatch_philox_dropout(self, str kernel_name, object a_buf,
                                        object out_buf, float prob, float scale,
-                                       int seed_lo, int seed_hi, int offset,
+                                       unsigned int seed_lo, unsigned int seed_hi,
+                                       unsigned int offset,
                                        int numel):
         """Encode fused Philox dropout kernel."""
         from candle._backends.mps.runtime import get_runtime  # pylint: disable=import-error,no-name-in-module
@@ -1716,8 +1723,11 @@ cdef class MetalKernelDispatcher:
             enc.setBytes_length_atIndex_(struct.pack("I", rows), 4, 2)
             enc.setBytes_length_atIndex_(struct.pack("I", cols), 4, 3)
             tpg_x = min(32, cols)
+            tpg_y = min(8, rows)
+            groups_x = (cols + tpg_x - 1) // tpg_x
+            groups_y = (rows + tpg_y - 1) // tpg_y
             enc.dispatchThreadgroups_threadsPerThreadgroup_(
-                _MTLSize(rows, 1, 1), _MTLSize(tpg_x, 1, 1))
+                _MTLSize(groups_x, groups_y, 1), _MTLSize(tpg_x, tpg_y, 1))
             enc.endEncoding()
         else:
             _encode_softmax_ctypes(enc, pipeline, a_buf, out_buf, rows, cols)

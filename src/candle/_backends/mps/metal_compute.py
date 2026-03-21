@@ -9,11 +9,8 @@ import threading
 
 from .runtime import get_runtime, buffer_contents, _HAS_PYOBJC
 
-import os as _os
 _CYTHON_DISPATCHER = False
 _cy_get_dispatcher = None
-# Set CANDLE_USE_CYTHON_MPS_DISPATCHER=1 to activate the Cython fast-path.
-_USE_CYTHON_DISPATCHER = _os.environ.get("CANDLE_USE_CYTHON_MPS_DISPATCHER", "0") == "1"
 
 _MTLSize = None
 if _HAS_PYOBJC:
@@ -34,7 +31,7 @@ _dispatcher_lock = threading.Lock()
 
 def get_dispatcher():
     """Return the singleton MetalKernelDispatcher (lazy init)."""
-    if _CYTHON_DISPATCHER and _USE_CYTHON_DISPATCHER:
+    if _CYTHON_DISPATCHER:
         return _cy_get_dispatcher()
     global _dispatcher
     if _dispatcher is not None:
