@@ -70,6 +70,15 @@ cdef class FastNPUStorage:
     def untyped_storage(self):
         return self
 
+    def size(self):
+        """Byte count (for untyped storage, size == nbytes)."""
+        return self._nbytes
+
+    @property
+    def dtype(self):
+        """Untyped storage has no dtype — returns None for compat."""
+        return None
+
     @property
     def _finalizer(self):
         """No-op shim — FastNPUStorage has no weakref finalizer.
