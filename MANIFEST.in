@@ -1,0 +1,6 @@
+include README.md
+include LICENSE
+include src/candle-torch-compat.pth
+recursive-include src/candle *.pyx *.pxd
+recursive-include src/candle *.py
+recursive-include src/candle *.typed
