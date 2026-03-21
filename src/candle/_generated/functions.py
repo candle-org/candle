@@ -105,7 +105,12 @@ def _div_tensor_self_backward_helper(grad, other, dtype, *extra_and_keyset):
 
 def _div_tensor_other_backward_helper(grad, self_, other, *extra_and_keyset):
     keyset = extra_and_keyset[-1]
-    return redispatch("neg", keyset, redispatch("div", keyset, redispatch("mul", keyset, grad, self_), redispatch("mul", keyset, other, other)))
+    if hasattr(other, 'shape'):
+        denom = redispatch("mul", keyset, other, other)
+    else:
+        denom = other * other
+    num = redispatch("mul", keyset, grad, self_)
+    return redispatch("neg", keyset, redispatch("div", keyset, num, denom))
 
 
 def _matmul_backward_helper(grad, self_, other, grad_input_mask, keyset):
@@ -1531,7 +1536,7 @@ class AddTensorBackward0(Node):
         alpha = self._alpha
         with _grad_context(keyset):
             grad_self = _sum_to_backward_helper(grad, self_.shape, keyset)
-            grad_other = _sum_to_backward_helper(redispatch("mul", keyset, grad, alpha), other.shape, keyset)
+            grad_other = _sum_to_backward_helper(redispatch("mul", keyset, grad, alpha), other.shape, keyset) if hasattr(other, "shape") else None
         return (grad_self, grad_other,)
 
 class AddScalarBackward0(Node):
@@ -2085,7 +2090,8 @@ class AtanhBackward0(Node):
         _saved = self.saved_tensors()
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("mul", keyset, grad, redispatch("div", keyset, 1, redispatch("sub", keyset, 1, redispatch("pow", keyset, self_, 2))))
+            _one = _scalar_tensor_like(self_, 1.0)
+            grad_self = redispatch("mul", keyset, grad, redispatch("div", keyset, _one, redispatch("sub", keyset, _one, redispatch("pow", keyset, self_, 2))))
         return (grad_self,)
 
 class AsStridedBackward0(Node):
@@ -3198,7 +3204,7 @@ class CumprodBackward0(Node):
         dim = self._dim
         dtype = self._dtype
         with _grad_context(keyset):
-            grad_self = _cumprod_backward_helper(grad, self_, dim, result, keyset)
+            grad_self = _cumprod_backward_helper(grad, self_, dim, keyset)
         return (grad_self,)
 
 class CumsumBackward0(Node):
@@ -3261,10 +3267,7 @@ class CummaxBackward0(Node):
         indices = _saved[self._saved_indices_idx]
         dim = self._dim
         with _grad_context(keyset):
-            # cummaxmin_backward: use index-based accumulation
-            # cummax/cummin backward: approximate with index-based accumulation
-            _grad_zeros = redispatch("zeros", keyset, self_.shape, dtype=grad.dtype, device=grad.device)
-            grad_self = _grad_zeros
+            grad_self = _cummax_backward_helper(grad, self_, indices, dim, keyset)
         return (grad_self,)
 
 class CumminBackward0(Node):
@@ -3299,10 +3302,7 @@ class CumminBackward0(Node):
         indices = _saved[self._saved_indices_idx]
         dim = self._dim
         with _grad_context(keyset):
-            # cummaxmin_backward: use index-based accumulation
-            # cummax/cummin backward: approximate with index-based accumulation
-            _grad_zeros = redispatch("zeros", keyset, self_.shape, dtype=grad.dtype, device=grad.device)
-            grad_self = _grad_zeros
+            grad_self = _cummax_backward_helper(grad, self_, indices, dim, keyset)
         return (grad_self,)
 
 class ConvTbcBackward0(Node):
@@ -4278,7 +4278,9 @@ class SumToSizeBackward0(Node):
         from .._dispatch.dispatcher import current_dispatch_keyset
         keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
         with _grad_context(keyset):
-            grad_self = redispatch("expand", keyset, grad, self._self_shape)
+            grad_self = redispatch("add", keyset,
+                redispatch("zeros", keyset, self._self_shape, dtype=grad.dtype, device=grad.device),
+                grad)
         return (grad_self,)
 
 
@@ -4563,7 +4565,7 @@ class FmodTensorBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
             grad_self = grad
-            grad_other = redispatch("mul", keyset, redispatch("neg", keyset, grad), redispatch("div", keyset, self_, other, "trunc"))
+            grad_other = redispatch("mul", keyset, redispatch("neg", keyset, grad), redispatch("trunc", keyset, redispatch("div", keyset, self_, other)))
         return (grad_self, grad_other,)
 
 class FracBackward0(Node):
@@ -6187,8 +6189,9 @@ class LogaddexpBackward0(Node):
         other = _saved[self._saved_other_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("div", keyset, grad, redispatch("add", keyset, 1, redispatch("exp", keyset, redispatch("sub", keyset, other, self_))))
-            grad_other = redispatch("div", keyset, grad, redispatch("add", keyset, 1, redispatch("exp", keyset, redispatch("sub", keyset, self_, other))))
+            _one = _scalar_tensor_like(grad, 1.0)
+            grad_self = redispatch("div", keyset, grad, redispatch("add", keyset, _one, redispatch("exp", keyset, redispatch("sub", keyset, other, self_))))
+            grad_other = redispatch("div", keyset, grad, redispatch("add", keyset, _one, redispatch("exp", keyset, redispatch("sub", keyset, self_, other))))
         return (grad_self, grad_other,)
 
 class Logaddexp2Backward0(Node):
@@ -6221,8 +6224,10 @@ class Logaddexp2Backward0(Node):
         other = _saved[self._saved_other_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("div", keyset, grad, redispatch("add", keyset, 1, redispatch("pow", keyset, 2, redispatch("sub", keyset, other, self_))))
-            grad_other = redispatch("div", keyset, grad, redispatch("add", keyset, 1, redispatch("pow", keyset, 2, redispatch("sub", keyset, self_, other))))
+            _two = _scalar_tensor_like(grad, 2.0)
+            _one = _scalar_tensor_like(grad, 1.0)
+            grad_self = redispatch("div", keyset, grad, redispatch("add", keyset, _one, redispatch("pow", keyset, _two, redispatch("sub", keyset, other, self_))))
+            grad_other = redispatch("div", keyset, grad, redispatch("add", keyset, _one, redispatch("pow", keyset, _two, redispatch("sub", keyset, self_, other))))
         return (grad_self, grad_other,)
 
 class XlogyTensorBackward0(Node):
@@ -7042,8 +7047,9 @@ class MaximumBackward0(Node):
         other = _saved[self._saved_other_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("masked_fill_", keyset, redispatch("where", keyset, redispatch("eq", keyset, self_, other), redispatch("div", keyset, grad, 2), grad), redispatch("lt", keyset, self_, other), 0)
-            grad_other = redispatch("masked_fill_", keyset, redispatch("where", keyset, redispatch("eq", keyset, self_, other), redispatch("div", keyset, grad, 2), grad), redispatch("gt", keyset, self_, other), 0)
+            _zero = _scalar_tensor_like(grad, 0.)
+            grad_self = redispatch("where", keyset, redispatch("ge", keyset, self_, other), grad, _zero)
+            grad_other = redispatch("where", keyset, redispatch("lt", keyset, self_, other), grad, _zero)
         return (grad_self, grad_other,)
 
 class FmaxBackward0(Node):
@@ -7076,7 +7082,7 @@ class FmaxBackward0(Node):
         other = _saved[self._saved_other_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("masked_fill", keyset, grad, redispatch("logical_not_", keyset, redispatch("logical_or", keyset, redispatch("ge", keyset, self_, other), redispatch("isnan", keyset, other))), 0)
+            grad_self = redispatch("masked_fill", keyset, grad, redispatch("logical_not", keyset, redispatch("logical_or", keyset, redispatch("ge", keyset, self_, other), redispatch("isnan", keyset, other))), 0)
             grad_other = redispatch("masked_fill", keyset, grad, redispatch("logical_or", keyset, redispatch("ge", keyset, self_, other), redispatch("isnan", keyset, other)), 0)
         return (grad_self, grad_other,)
 
@@ -7380,8 +7386,9 @@ class MinimumBackward0(Node):
         other = _saved[self._saved_other_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("masked_fill_", keyset, redispatch("where", keyset, redispatch("eq", keyset, self_, other), redispatch("div", keyset, grad, 2), grad), redispatch("gt", keyset, self_, other), 0)
-            grad_other = redispatch("masked_fill_", keyset, redispatch("where", keyset, redispatch("eq", keyset, self_, other), redispatch("div", keyset, grad, 2), grad), redispatch("lt", keyset, self_, other), 0)
+            _zero = _scalar_tensor_like(grad, 0.)
+            grad_self = redispatch("where", keyset, redispatch("le", keyset, self_, other), grad, _zero)
+            grad_other = redispatch("where", keyset, redispatch("gt", keyset, self_, other), grad, _zero)
         return (grad_self, grad_other,)
 
 class FminBackward0(Node):
@@ -7414,7 +7421,7 @@ class FminBackward0(Node):
         other = _saved[self._saved_other_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("masked_fill", keyset, grad, redispatch("logical_not_", keyset, redispatch("logical_or", keyset, redispatch("le", keyset, self_, other), redispatch("isnan", keyset, other))), 0)
+            grad_self = redispatch("masked_fill", keyset, grad, redispatch("logical_not", keyset, redispatch("logical_or", keyset, redispatch("le", keyset, self_, other), redispatch("isnan", keyset, other))), 0)
             grad_other = redispatch("masked_fill", keyset, grad, redispatch("logical_or", keyset, redispatch("le", keyset, self_, other), redispatch("isnan", keyset, other)), 0)
         return (grad_self, grad_other,)
 
@@ -9583,7 +9590,7 @@ class RemainderTensorBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
             grad_self = grad
-            grad_other = redispatch("mul", keyset, redispatch("neg", keyset, grad), redispatch("div", keyset, self_, other, "floor"))
+            grad_other = redispatch("mul", keyset, redispatch("neg", keyset, grad), redispatch("floor", keyset, redispatch("div", keyset, self_, other)))
         return (grad_self, grad_other,)
 
 class RenormBackward0(Node):
@@ -9758,7 +9765,7 @@ class ReshapeAliasBackward0(Node):
         size = self._size
         stride = self._stride
         with _grad_context(keyset):
-            grad_self = redispatch("reshape_symint", keyset, grad, self_.shape)
+            grad_self = redispatch("reshape", keyset, grad, self_.shape)
         return (grad_self,)
 
 class RoundBackward0(Node):
@@ -10955,7 +10962,9 @@ class SumBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         dtype = self._dtype
         with _grad_context(keyset):
-            grad_self = redispatch("expand", keyset, grad, self_.shape)
+            grad_self = redispatch("add", keyset,
+                redispatch("zeros", keyset, self_.shape, dtype=grad.dtype, device=grad.device),
+                grad)
         return (grad_self,)
 
 class SumDimIntListBackward0(Node):
@@ -11156,7 +11165,7 @@ class Rot90Backward0(Node):
         k = self._k
         dims = self._dims
         with _grad_context(keyset):
-            grad_self = redispatch("rot90", keyset, grad, redispatch("neg", keyset, k), dims)
+            grad_self = redispatch("rot90", keyset, grad, -int(k), dims)
         return (grad_self,)
 
 class TakeBackward0(Node):
@@ -11189,10 +11198,7 @@ class TakeBackward0(Node):
         index = _saved[self._saved_index_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            _grad_out = redispatch("zeros", keyset, self_.shape, dtype=grad.dtype, device=grad.device)
-            _flat = redispatch("reshape", keyset, _grad_out, (-1,))
-            redispatch("index_put_", keyset, _flat, (index,), grad)
-            grad_self = redispatch("reshape", keyset, _flat, self_.shape)
+            grad_self = _take_backward_helper(grad, self_, index, keyset)
         return (grad_self,)
 
 class TanBackward0(Node):
@@ -11218,7 +11224,7 @@ class TanBackward0(Node):
         _saved = self.saved_tensors()
         result = _saved[self._saved_result_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("mul", keyset, grad, redispatch("add", keyset, 1, redispatch("pow", keyset, result, 2)))
+            grad_self = redispatch("mul", keyset, grad, redispatch("add", keyset, _scalar_tensor_like(result, 1.0), redispatch("pow", keyset, result, 2)))
         return (grad_self,)
 
 class TanhBackward0(Node):
@@ -11914,7 +11920,7 @@ class UnsafeViewBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         size = self._size
         with _grad_context(keyset):
-            grad_self = redispatch("reshape_symint", keyset, grad, self_.shape)
+            grad_self = redispatch("reshape", keyset, grad, self_.shape)
         return (grad_self,)
 
 class LiftBackward0(Node):
@@ -12047,7 +12053,7 @@ class ViewBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         size = self._size
         with _grad_context(keyset):
-            grad_self = redispatch("reshape_symint", keyset, grad, self_.shape)
+            grad_self = redispatch("reshape", keyset, grad, self_.shape)
         return (grad_self,)
 
 class ReshapeBackward0(Node):
@@ -12131,8 +12137,9 @@ class WhereSelfBackward0(Node):
         _saved = self.saved_tensors()
         condition = _saved[self._saved_condition_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("where", keyset, condition, grad, 0)
-            grad_other = redispatch("where", keyset, condition, 0, grad)
+            _zero = _scalar_tensor_like(grad, 0.)
+            grad_self = redispatch("where", keyset, condition, grad, _zero)
+            grad_other = redispatch("where", keyset, condition, _zero, grad)
         return (grad_self, grad_other,)
 
 class WeightNormInterfaceBackward0(Node):
@@ -13135,7 +13142,7 @@ class MishBackward0(Node):
         _saved = self.saved_tensors()
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = (redispatch("infinitely_differentiable_mish_backward", keyset, grad, self_) if True else redispatch("mish_backward", keyset, grad, self_))
+            grad_self = _mish_grad(grad, self_, keyset)
         return (grad_self,)
 
 class EluBackward0(Node):
@@ -13167,7 +13174,7 @@ class EluBackward0(Node):
         scale = self._scale
         input_scale = self._input_scale
         with _grad_context(keyset):
-            grad_self = redispatch("elu_backward", keyset, grad, alpha, scale, input_scale, False, self_)
+            grad_self = _elu_grad(grad, self_, alpha, keyset)
         return (grad_self,)
 
 class CeluBackward0(Node):
@@ -13195,7 +13202,7 @@ class CeluBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         alpha = self._alpha
         with _grad_context(keyset):
-            grad_self = redispatch("elu_backward", keyset, grad, alpha, 1, redispatch("div", keyset, 1.0, float(alpha)), False, self_)
+            grad_self = _celu_grad(grad, self_, alpha, keyset)
         return (grad_self,)
 
 class GeluBackward0(Node):
@@ -13396,7 +13403,7 @@ class LeakyReluBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         negative_slope = self._negative_slope
         with _grad_context(keyset):
-            grad_self = redispatch("leaky_relu_backward", keyset, grad, self_, negative_slope, False)
+            grad_self = _leaky_relu_grad(grad, self_, negative_slope, keyset)
         return (grad_self,)
 
 class LogSigmoidForwardBackward0(Node):
@@ -14862,8 +14869,8 @@ class MaxPool2dBackward0(Node):
         dilation = self._dilation
         ceil_mode = self._ceil_mode
         with _grad_context(keyset):
-            _, _pool_result = redispatch("max_pool2d", keyset, self_, kernel_size, stride, padding, dilation, ceil_mode, True)
-            grad_self = _max_pool2d_backward_helper(grad, self_, _pool_result, kernel_size, stride, padding, dilation, ceil_mode, keyset)
+            _pool_output, _pool_indices = redispatch("max_pool2d", keyset, self_, kernel_size, stride, padding, dilation, ceil_mode, True)
+            grad_self = _max_pool2d_backward_helper(grad, self_, _pool_output, kernel_size, stride, padding, dilation, ceil_mode, keyset)
         return (grad_self,)
 
 class MpsConvolutionBackward0(Node):
@@ -20205,7 +20212,7 @@ class ReshapeCopyBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         size = self._size
         with _grad_context(keyset):
-            grad_self = redispatch("reshape_symint", keyset, grad, self_.shape)
+            grad_self = redispatch("reshape", keyset, grad, self_.shape)
         return (grad_self,)
 
 class NarrowCopyBackward0(Node):

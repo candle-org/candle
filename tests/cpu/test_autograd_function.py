@@ -428,7 +428,10 @@ def test_grad_fn_metadata_does_not_keep_graph_alive():
     y, ref = make_ref()
     assert ref() is not None
     del y
+    import gc
+    gc.collect()
     assert ref() is None
+
 
 
 

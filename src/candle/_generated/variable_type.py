@@ -9933,7 +9933,7 @@ def cummax_autograd_post(result, self_, dim, *, raw_keyset, active_keyset, **_kw
     if GradMode.enabled and (self_.requires_grad):
         grad_fn = _F.CummaxBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, indices=result)
+        grad_fn._save(self_=self_, indices=result[1])
         grad_fn._dim = dim
         result[0].grad_fn = grad_fn
         result[0].requires_grad = True
@@ -9946,7 +9946,7 @@ def cummin_autograd_post(result, self_, dim, *, raw_keyset, active_keyset, **_kw
     if GradMode.enabled and (self_.requires_grad):
         grad_fn = _F.CumminBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, indices=result)
+        grad_fn._save(self_=self_, indices=result[1])
         grad_fn._dim = dim
         result[0].grad_fn = grad_fn
         result[0].requires_grad = True
@@ -16443,8 +16443,8 @@ fill_autograd = fill_scalar_autograd
 fill_autograd_post = fill_scalar_autograd_post
 fill__autograd = fill__scalar_autograd
 fill__autograd_post = fill__scalar_autograd_post
-fmod_autograd = fmod_scalar_autograd
-fmod_autograd_post = fmod_scalar_autograd_post
+fmod_autograd = fmod_tensor_autograd
+fmod_autograd_post = fmod_tensor_autograd_post
 frexp_autograd = frexp_tensor_autograd
 frexp_autograd_post = frexp_tensor_autograd_post
 ge__autograd = ge__scalar_autograd
@@ -16479,8 +16479,8 @@ mul_autograd = mul_tensor_autograd
 mul_autograd_post = mul_tensor_autograd_post
 ne__autograd = ne__scalar_autograd
 ne__autograd_post = ne__scalar_autograd_post
-norm_autograd = norm_scalar_autograd
-norm_autograd_post = norm_scalar_autograd_post
+norm_autograd = norm_scalaropt_dim_autograd
+norm_autograd_post = norm_scalaropt_dim_autograd_post
 normal_autograd = normal_tensor_float_autograd
 normal_autograd_post = normal_tensor_float_autograd_post
 pow_autograd = pow_tensor_scalar_autograd
@@ -16491,8 +16491,8 @@ def pow_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_
     return pow_tensor_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
 random__autograd = random__from_autograd
 random__autograd_post = random__from_autograd_post
-remainder_autograd = remainder_scalar_autograd
-remainder_autograd_post = remainder_scalar_autograd_post
+remainder_autograd = remainder_tensor_autograd
+remainder_autograd_post = remainder_tensor_autograd_post
 scatter_autograd = scatter_src_autograd
 scatter_autograd_post = scatter_src_autograd_post
 select_autograd = select_int_autograd

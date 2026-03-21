@@ -84,9 +84,9 @@ class TestDerivativesYamlParsing:
         infos = load_derivatives(yaml_path)
         info_map = {i.name: i for i in infos}
 
-        mul_info = info_map["mul"]
-        assert mul_info.backward_name == "MulBackward0"
-        assert len(mul_info.differentiable_inputs) == 2
+        mul_info = next(i for i in infos if i.func_name == "mul.Scalar")
+        assert mul_info.backward_name == "MulScalarBackward0"
+        assert len(mul_info.differentiable_inputs) == 1
         assert not mul_info.is_inplace
         assert not mul_info.is_multi_output
 

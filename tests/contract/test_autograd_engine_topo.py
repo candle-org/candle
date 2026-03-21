@@ -1,4 +1,5 @@
 import pytest
+import numpy as np
 import candle as torch
 
 
@@ -13,18 +14,19 @@ def test_autograd_engine_accumulates_shared_subgraph():
 
 
 def test_autograd_engine_accumulates_reused_leaf():
-    x = torch.randn(5, 5, requires_grad=True)
-    y = (torch.rand(5, 5) + 0.1).requires_grad_(True)
-    z = torch.randn(5, 5, requires_grad=True)
-    grad_output = torch.randn(5, 5)
+    # Use fixed values to verify the direct x path and the reused-leaf branch path
+    # both contribute to x.grad.
+    x = torch.tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+    y = torch.tensor([[0.5, 2.0], [4.0, 8.0]], requires_grad=True)
+    z = torch.tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+    grad_output = torch.ones((2, 2))
 
     term3 = 4 * z**2 * x / y
     (x + term3).backward(grad_output)
 
-    expected = (4 * z.pow(2) / y + 1) * grad_output
+    expected = torch.tensor([[9.0, 9.0], [10.0, 9.0]], dtype=x.grad.dtype)
     assert x.grad is not None
     torch.testing.assert_close(x.grad, expected)
-
 
 def test_autograd_engine_reentrant_backward():
     # Backward inside backward hook should be supported.

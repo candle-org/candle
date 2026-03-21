@@ -1,5 +1,6 @@
 # cython: language_level=3, boundscheck=False, wraparound=False
 import weakref
+_METADATA_BY_NODE = weakref.WeakKeyDictionary()
 
 _RELEASED_SAVED_TENSORS_ERROR = (
     "Trying to backward through the graph a second time (or directly access saved tensors after they have already been freed). "
@@ -187,9 +188,11 @@ cdef class AccumulateGrad:
 
     @property
     def metadata(self):
-        if self._metadata is None:
-            self._metadata = weakref.WeakValueDictionary()
-        return self._metadata
+        meta = _METADATA_BY_NODE.get(self)
+        if meta is None:
+            meta = {}
+            _METADATA_BY_NODE[self] = meta
+        return meta
 
     def name(self):
         return self._name
@@ -317,9 +320,11 @@ cdef class Node:
         cdef str key
         cdef object saved
         if name == "metadata":
-            if self._metadata is None:
-                self._metadata = {}
-            return self._metadata
+            meta = _METADATA_BY_NODE.get(self)
+            if meta is None:
+                meta = {}
+                _METADATA_BY_NODE[self] = meta
+            return meta
         if name == "_raw_saved_tensors":
             return tuple(self._saved_tensors_list)
         if name == "_saved_tensors":
@@ -331,11 +336,11 @@ cdef class Node:
             out = []
             for saved in saved_tensors:
                 if isinstance(saved, SavedTensor):
-                    key = id(saved)
-                    materialized = seen_materialized.get(key)
+                    saved_id = id(saved)
+                    materialized = seen_materialized.get(saved_id)
                     if materialized is None:
                         materialized = saved.materialize()
-                        seen_materialized[key] = materialized
+                        seen_materialized[saved_id] = materialized
                     out.append(materialized)
                 else:
                     out.append(saved.materialize())

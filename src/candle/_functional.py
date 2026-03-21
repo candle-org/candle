@@ -1,3 +1,4 @@
+import weakref
 from ._dispatch.dispatcher import dispatch
 from .autograd.grad_mode import GradMode, no_grad
 from ._device import device as Device, get_default_device
@@ -287,11 +288,15 @@ def hardtanh(a, min_val=-1.0, max_val=1.0):
 
 
 def min(a, b):
-    return dispatch("min", a.device.type, a, b)
+    if getattr(a.device, 'type', None) == 'meta':
+        return zeros(a.shape, dtype=a.dtype, device=a.device)
+    return dispatch("minimum", a.device.type, a, b)
 
 
 def max(a, b):
-    return dispatch("max", a.device.type, a, b)
+    if getattr(a.device, 'type', None) == 'meta':
+        return zeros(a.shape, dtype=a.dtype, device=a.device)
+    return dispatch("maximum", a.device.type, a, b)
 
 
 def amin(a, dim=None, keepdim=False):
@@ -1191,11 +1196,11 @@ def addmm(input, mat1, mat2, *, beta=1, alpha=1):
 
 
 def maximum(a, b):
-    return dispatch("maximum", None, a, b)
+    return dispatch("maximum", a.device.type, a, b)
 
 
 def minimum(a, b):
-    return dispatch("minimum", None, a, b)
+    return dispatch("minimum", a.device.type, a, b)
 
 
 def dot(a, b):
