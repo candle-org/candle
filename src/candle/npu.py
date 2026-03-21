@@ -116,11 +116,14 @@ def synchronize(device=None):
         from ._cython._npu_ops import cy_npu_synchronize as _sync  # pylint: disable=import-error,no-name-in-module
         _cy_npu_sync = _sync
 
-    # During aclgraph capture we must preserve the full runtime path.
-    if is_current_stream_capturing():
-        from ._backends.npu import runtime as npu_runtime
-        dev = _normalize_npu_device(device)
-        runtime = npu_runtime.get_runtime(dev.index or 0)
+    from ._backends.npu import runtime as npu_runtime
+
+    version = npu_runtime.cann_discovery.get_cann_version() or (0,)
+
+    # Capture state is defined for the current stream only, so guard the no-arg
+    # synchronize path and avoid probing aclgraph state on old CANN.
+    if device is None and is_initialized() and tuple(version) >= (8, 5) and is_current_stream_capturing():
+        runtime = npu_runtime.get_runtime(npu_state.current_device())
         _set_initialized()
         runtime.synchronize()
         return
@@ -147,7 +150,6 @@ def synchronize(device=None):
             return
 
     # Strings / unusual selectors still go through full normalization semantics.
-    from ._backends.npu import runtime as npu_runtime
     dev = _normalize_npu_device(device)
     runtime = npu_runtime.get_runtime(dev.index or 0)
     _set_initialized()

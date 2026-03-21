@@ -89,6 +89,26 @@ def test_fast_synchronize_skips_fast_path_during_capture(monkeypatch):
     assert seen["fast"] == 0
 
 
+def test_fast_synchronize_skips_aclgraph_probe_on_old_cann(monkeypatch):
+    """Fast synchronize should not query aclgraph capture state on old CANN."""
+    import candle.npu as npu
+    from candle._backends.npu import runtime as npu_runtime
+
+    seen = {"fast": 0}
+
+    monkeypatch.setattr(npu_runtime.cann_discovery, "get_cann_version", lambda: (8, 3, 2))
+    monkeypatch.setattr(npu, "_cy_npu_sync", lambda dev_idx: seen.__setitem__("fast", seen["fast"] + 1))
+
+    def fail_probe():
+        raise AssertionError("should not query aclgraph capture state on old CANN")
+
+    monkeypatch.setattr(npu, "is_current_stream_capturing", fail_probe)
+
+    npu.synchronize()
+
+    assert seen["fast"] == 1
+
+
 def test_fast_storage_clone_is_independent(npu_device):
     """FastTypedStorage.clone() should allocate independent device memory."""
     import candle as torch

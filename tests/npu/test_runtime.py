@@ -185,8 +185,40 @@ def test_npu_synchronize_prefers_full_runtime_sync_over_device_only(monkeypatch)
     from candle._backends.npu import runtime as npu_runtime
 
     monkeypatch.setattr(npu_runtime, "get_runtime", lambda device_id=0: DummyRuntime())
+    monkeypatch.setattr(npu_runtime.cann_discovery, "get_cann_version", lambda: (8, 5, 0))
 
     import candle.npu as npu
+
+    monkeypatch.setattr(npu, "_NPU_INITIALIZED", True)
+
+    def fail_probe():
+        raise AssertionError("string device synchronize should not query current capture state")
+
+    monkeypatch.setattr(npu, "is_current_stream_capturing", fail_probe)
+
+    npu.synchronize("npu:0")
+
+    assert calls == ["sync"]
+
+
+def test_npu_synchronize_string_device_skips_aclgraph_probe_on_old_cann(monkeypatch):
+    calls = []
+
+    class DummyRuntime:
+        def synchronize(self):
+            calls.append("sync")
+
+    from candle._backends.npu import runtime as npu_runtime
+
+    monkeypatch.setattr(npu_runtime.cann_discovery, "get_cann_version", lambda: (8, 3, 2))
+    monkeypatch.setattr(npu_runtime, "get_runtime", lambda device_id=0: DummyRuntime())
+
+    import candle.npu as npu
+
+    def fail_probe():
+        raise AssertionError("should not query aclgraph capture state on old CANN")
+
+    monkeypatch.setattr(npu, "is_current_stream_capturing", fail_probe)
 
     npu.synchronize("npu:0")
 
