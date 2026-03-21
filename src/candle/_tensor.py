@@ -1844,3 +1844,29 @@ class Tensor(_TensorBase):
 
     def __xor__(self, other):
         return ne_dispatch(self.bool(), other.bool() if isinstance(other, Tensor) else bool(other))
+
+    def __hash__(self):
+        return id(self)
+
+
+from . import _cython as _cython_mod
+
+if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
+    Tensor.__add__ = _cython_mod.tensor_add
+    Tensor.__sub__ = _cython_mod.tensor_sub
+    Tensor.__mul__ = _cython_mod.tensor_mul
+    Tensor.__matmul__ = _cython_mod.tensor_matmul
+    Tensor.__iadd__ = _cython_mod.tensor_iadd
+    Tensor.__imul__ = _cython_mod.tensor_imul
+    Tensor.__neg__ = _cython_mod.tensor_neg
+    Tensor.clone = _cython_mod.tensor_clone
+    Tensor.detach = _cython_mod.tensor_detach
+    Tensor.to = _cython_mod.tensor_to
+    Tensor.backward = _cython_mod.tensor_backward
+    Tensor.relu = _cython_mod.tensor_relu
+    Tensor.reshape = _cython_mod.tensor_reshape
+    Tensor.transpose = _cython_mod.tensor_transpose
+    Tensor.view = _cython_mod.tensor_view
+    Tensor.size = _cython_mod.tensor_size
+    Tensor.dim = _cython_mod.tensor_dim
+

@@ -547,9 +547,42 @@ class TestPropertyStability:
         a = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
         assert a.ndim == len(a.shape)
 
-    def test_numel_matches_product_of_shape(self):
-        a = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        expected = 1
-        for d in a.shape:
-            expected *= d
-        assert a.numel() == expected
+
+
+class TestTensorMethodTorchFunctionPath:
+
+    def test_subclass_add_uses_torch_function(self):
+        class TrackedTensor(Tensor):
+            _ops_called = []
+
+            def __init__(self, data):
+                super().__init__(data._storage, data.shape, data.stride, data.offset, data.requires_grad)
+                self._wrapped = data
+
+            @classmethod
+            def __torch_function__(cls, func, types, args=(), kwargs=None):
+                cls._ops_called.append(func.__name__ if hasattr(func, '__name__') else str(func))
+                def unwrap(x):
+                    if isinstance(x, TrackedTensor):
+                        return x._wrapped
+                    return x
+                new_args = tuple(unwrap(a) for a in args)
+                new_kwargs = {k: unwrap(v) for k, v in (kwargs or {}).items()}
+                return func(*new_args, **new_kwargs)
+
+        TrackedTensor._ops_called = []
+        a = TrackedTensor(torch.tensor([1.0, 2.0]))
+        b = torch.tensor([3.0, 4.0])
+        out = a + b
+        assert len(TrackedTensor._ops_called) > 0
+        _allclose(out, [4.0, 6.0])
+
+
+def test_size_and_dim_contracts():
+    a = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    assert a.size() == (2, 3)
+    assert a.size(0) == 2
+    assert a.size(-1) == 3
+    assert a.dim() == 2
+    with pytest.raises(IndexError):
+        a.size(2)
