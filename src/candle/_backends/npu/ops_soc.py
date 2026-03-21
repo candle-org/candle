@@ -106,11 +106,11 @@ _SUPPORTED_DISTRIBUTED_OPS = {
 _CHIP_FLAGS = {
     "910a": {
         "use_smallop_arange_1d": False,
-        "use_smallop_linspace": False,
+        "use_smallop_linspace": True,
     },
     "910b": {
         "use_smallop_arange_1d": False,
-        "use_smallop_linspace": False,
+        "use_smallop_linspace": True,
     },
     "310b": {
         "use_smallop_arange_1d": True,
