@@ -410,3 +410,11 @@ def random_(a, from_=0, to=None, generator=None):
 # Group 5: Shape ops
 # ---------------------------------------------------------------------------
 
+try:
+    from candle._cython._mps_ops import (  # pylint: disable=import-error,no-name-in-module
+        add_, mul_, sub_, div_, relu_, zero_, fill_, clamp_, copy_,
+        uniform_, normal_, bernoulli_, exponential_, log_normal_,
+        cauchy_, geometric_, erfinv_, randint_, random_,
+    )
+except ImportError:
+    pass

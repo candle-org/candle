@@ -290,3 +290,13 @@ def bitwise_right_shift(a, b):
 # Group 4: Random in-place op
 # ---------------------------------------------------------------------------
 
+try:
+    from candle._cython._mps_ops import (  # pylint: disable=import-error,no-name-in-module
+        eq, ne, lt, le, gt, ge,
+        allclose, isclose, equal,
+        logical_and, logical_or, logical_not, logical_xor,
+        bitwise_and, bitwise_or, bitwise_xor, bitwise_not,
+        bitwise_left_shift, bitwise_right_shift,
+    )
+except ImportError:
+    pass
