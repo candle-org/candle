@@ -1,4 +1,3 @@
-import gc
 import pytest
 
 
@@ -11,7 +10,7 @@ def npu_device():
 
 
 def test_storage_dealloc_returns_to_pool(npu_device):
-    """Storage.__dealloc__ must return device memory to pool synchronously."""
+    """FastNPUStorage.__dealloc__ returns device memory to pool synchronously (no gc.collect needed)."""
     import candle as torch
     from candle._backends.npu import allocator as am
     alloc = am.get_allocator(0)
@@ -21,10 +20,14 @@ def test_storage_dealloc_returns_to_pool(npu_device):
     active_mid = alloc.memory_stats()["active_bytes.all.current"]
     assert active_mid > 0
 
+    # Drop the only reference — CPython refcount should call __dealloc__ synchronously
     del a
-    gc.collect()
+    # No gc.collect() needed — if dealloc is truly synchronous, stats drop immediately
     active_after = alloc.memory_stats()["active_bytes.all.current"]
-    assert active_after < active_mid
+    assert active_after < active_mid, (
+        "Expected active bytes to drop after del — "
+        "__dealloc__ may not be called synchronously"
+    )
 
 
 def test_storage_data_ptr_nonzero(npu_device):

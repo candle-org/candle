@@ -39,7 +39,13 @@ cdef class FastNPUStorage:
         try:
             self._alloc = _get_alloc(device.index or 0)
         except Exception:  # pylint: disable=broad-except
-            # Prefer memory leak over crash at interpreter shutdown
+            import sys
+            if not sys.is_finalizing():
+                import warnings
+                warnings.warn(
+                    f"FastNPUStorage: allocator unavailable for device {device}, "
+                    "device memory will not be freed",
+                    RuntimeWarning, stacklevel=2)
             self._alloc = None
 
     def __dealloc__(self):
@@ -171,8 +177,12 @@ cdef class FastTypedStorage:
         alloc = _get_alloc(device_id)
         runtime.activate()
         new_ptr = alloc.malloc(nbytes, stream=stream)
-        if nbytes:
-            npu_runtime.memcpy_d2d(new_ptr, nbytes, self._untyped._device_ptr,
-                                   runtime=runtime, stream=stream)
-        new_untyped = FastNPUStorage(new_ptr, nbytes, self.device)
+        try:
+            if nbytes:
+                npu_runtime.memcpy_d2d(new_ptr, nbytes, self._untyped._device_ptr,
+                                       runtime=runtime, stream=stream)
+            new_untyped = FastNPUStorage(new_ptr, nbytes, self.device)
+        except Exception:  # pylint: disable=broad-except
+            alloc.free(new_ptr, stream)
+            raise
         return FastTypedStorage(new_untyped, self._dtype, self._size)
