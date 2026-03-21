@@ -1131,18 +1131,15 @@ cpdef object bitwise_right_shift(object a, object b):
 
 cpdef object allclose(object a, object b, object rtol=1e-05, object atol=1e-08, object equal_nan=False):
     close = isclose(a, b, rtol=rtol, atol=atol, equal_nan=equal_nan)
-    from candle._backends.mps.ops.reduce import all_
     return bool(all_(close).item())
 
 
 cpdef object isclose(object a, object b, object rtol=1e-05, object atol=1e-08, object equal_nan=False):
     if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
-        from candle._backends.mps.ops.math import abs as _abs, sub as _sub, mul as _mul, add as _add
-        diff = _abs(_sub(a, b))
-        tol = _add(_dispatch_binary_gpu(_abs(b), float(rtol), "mul"), float(atol))
+        diff = abs(sub(a, b))
+        tol = add(mul(abs(b), float(rtol)), float(atol))
         close = le(diff, tol)
         if equal_nan:
-            from candle._backends.mps.ops.math import isnan
             both_nan = logical_and(isnan(a), isnan(b))
             close = logical_or(close, both_nan)
         return close
@@ -1153,7 +1150,6 @@ cpdef object equal(object a, object b):
     if _can_use_gpu(a) and isinstance(b, Tensor) and _can_use_gpu(b):
         if a.shape != b.shape:
             return False
-        from candle._backends.mps.ops.reduce import all_
         return bool(all_(eq(a, b)).item())
     _unsupported_dtype("equal", a)
 
@@ -1633,10 +1629,7 @@ def lerp(a, b, weight):
     if _can_use_gpu(a) and _can_use_gpu(b):
         # lerp(a, b, w) = a + w * (b - a)
         diff = sub(b, a)
-        if isinstance(weight, Tensor):
-            return add(a, mul(diff, weight))
-        else:
-            return add(a, mul(diff, weight))
+        return add(a, mul(diff, weight))
     _unsupported_dtype("lerp", a)
 
 def addcmul(a, b, c, value=1.0):
@@ -1806,12 +1799,21 @@ def bucketize(a, boundaries, out_int32=False, right=False):
 def isin(elements, test_elements):
     """Tests if each element is in test_elements."""
     if _can_use_gpu(elements):
-        from candle._backends.mps.ops.comparison import eq, logical_or
-        from candle._backends.mps.ops._helpers import _read_scalar
         # Iterate over test_elements, accumulate eq() with logical_or()
         te_flat = test_elements.contiguous().reshape((-1,))
         n_test = te_flat.numel()
-        result = eq(elements, _read_scalar(te_flat[0]) if n_test > 0 else 0)
+        if n_test == 0:
+            from candle._tensor import _compute_strides
+            out_buf = _alloc_output_buf(max(elements.numel(), 1), bool_dtype)
+            _get_dispatcher().dispatch_fill("fill_u8", out_buf, 0, max(elements.numel(), 1), scalar_fmt="B")
+            return _from_metal_buffer(
+                out_buf,
+                tuple(elements.shape),
+                tuple(_compute_strides(tuple(elements.shape))),
+                bool_dtype,
+                elements.device,
+            )
+        result = eq(elements, _read_scalar(te_flat[0]))
         for i in range(1, n_test):
             result = logical_or(result, eq(elements, _read_scalar(te_flat[i])))
         return result
@@ -1822,9 +1824,7 @@ def isin(elements, test_elements):
 
 def uniform(a):
     """Return tensor of same shape filled with Uniform(0,1) samples."""
-    from candle._backends.mps.ops._helpers import _empty_like
     if _can_use_gpu(a) and a.dtype in (float32_dtype, float16_dtype):
-        from candle._backends.mps.ops.random import uniform_
         out = _empty_like(a)
         uniform_(out, 0.0, 1.0)
         return out
