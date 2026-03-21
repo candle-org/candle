@@ -320,14 +320,19 @@ class _CPUUntypedStorage(UntypedStorage):
         return self._filename
 
 
+_npu_allocator_mod = None  # cached after first NPU storage creation
+
+
 class _NPUUntypedStorage(UntypedStorage):
     def __init__(self, device_ptr, nbytes, device=None):
         super().__init__(device or Device("npu"))
         self._device_ptr = int(device_ptr)
         self._nbytes = int(nbytes)
-        from ._backends.npu import allocator as npu_allocator
-
-        alloc = npu_allocator.get_allocator(self.device.index or 0)
+        global _npu_allocator_mod
+        if _npu_allocator_mod is None:
+            from ._backends.npu import allocator as _npu_alloc
+            _npu_allocator_mod = _npu_alloc
+        alloc = _npu_allocator_mod.get_allocator(self.device.index or 0)
         self._finalizer = weakref.finalize(self, alloc.free, self._device_ptr, None)
 
     def nbytes(self):

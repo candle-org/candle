@@ -36,6 +36,18 @@ cdef int _c_dtype_itemsize(object dtype):
 # Fast storage creation
 # ---------------------------------------------------------------------------
 
+# Cached class references — loaded once on first call
+cdef object _NPUUntypedStorage_cls = None
+cdef object _TypedStorage_cls = None
+
+cdef inline void _ensure_storage_classes():
+    global _NPUUntypedStorage_cls, _TypedStorage_cls
+    if _NPUUntypedStorage_cls is None:
+        from candle._storage import _NPUUntypedStorage, TypedStorage
+        _NPUUntypedStorage_cls = _NPUUntypedStorage
+        _TypedStorage_cls = TypedStorage
+
+
 def cy_npu_storage_from_ptr(int64_t device_ptr, int64_t size,
                              object dtype, object device=None):
     """Create TypedStorage from device pointer — fast path.
@@ -45,9 +57,9 @@ def cy_npu_storage_from_ptr(int64_t device_ptr, int64_t size,
     - _NPUUntypedStorage(ptr, nbytes, device)   -> direct construction
     - TypedStorage(untyped, dtype, size)         -> direct construction
     """
-    from candle._storage import _NPUUntypedStorage, TypedStorage
+    _ensure_storage_classes()
 
     cdef int itemsize = _c_dtype_itemsize(dtype)
     cdef int64_t nbytes = size * itemsize
-    untyped = _NPUUntypedStorage(device_ptr, nbytes, device=device)
-    return TypedStorage(untyped, dtype, size)
+    untyped = _NPUUntypedStorage_cls(device_ptr, nbytes, device=device)
+    return _TypedStorage_cls(untyped, dtype, size)
