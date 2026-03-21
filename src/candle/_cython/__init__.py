@@ -174,7 +174,8 @@ except ImportError:
     pass
 
 try:
-    from . import _fast_ops as _legacy_fast_ops  # noqa: F401
+    import importlib
+    _legacy_fast_ops = importlib.import_module(f"{__name__}._fast_ops")  # noqa: F401
     _HAS_CYTHON_FAST_OPS = True
 except ImportError:
     pass
