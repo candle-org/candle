@@ -5,6 +5,11 @@ from ._backends.npu.runtime import device_count
 from ._backends.npu.streams import Event, Stream
 from ._device import device as Device
 
+try:
+    from ._cython._npu_ops import cy_npu_synchronize as _cy_npu_sync  # pylint: disable=import-error,no-name-in-module
+except ImportError:
+    _cy_npu_sync = None
+
 _MEMORY_FRACTION = None
 _NPU_INITIALIZED = False
 
@@ -108,8 +113,19 @@ def _get_allocator(device=None):
 
 
 def synchronize(device=None):
-    from ._backends.npu import runtime as npu_runtime
+    if _cy_npu_sync is not None:
+        # Fast path: resolve device_id without constructing a Device object
+        if device is None:
+            dev_idx = npu_state.current_device()
+        elif isinstance(device, int):
+            dev_idx = device
+        else:
+            dev_idx = int(getattr(device, 'index', None) or 0)
+        _cy_npu_sync(dev_idx)
+        return
 
+    # Fallback: original path
+    from ._backends.npu import runtime as npu_runtime
     dev = _normalize_npu_device(device)
     runtime = npu_runtime.get_runtime(dev.index or 0)
     _set_initialized()
