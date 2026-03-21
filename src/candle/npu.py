@@ -114,17 +114,28 @@ def _get_allocator(device=None):
 
 def synchronize(device=None):
     if _cy_npu_sync is not None:
-        # Fast path: resolve device_id without constructing a Device object
-        if device is None:
-            dev_idx = npu_state.current_device()
-        elif isinstance(device, int):
-            dev_idx = device
-        else:
-            dev_idx = int(getattr(device, 'index', None) or 0)
-        _cy_npu_sync(dev_idx)
-        return
+        # Never use the fast path while the current stream is under aclgraph capture.
+        try:
+            if not is_current_stream_capturing():
+                # Fast path for the common cases without constructing a fresh Device.
+                if device is None:
+                    _cy_npu_sync(npu_state.current_device())
+                    return
+                if isinstance(device, int):
+                    _cy_npu_sync(device)
+                    return
+                if isinstance(device, Device):
+                    _cy_npu_sync(device.index or npu_state.current_device())
+                    return
+                dev_index = getattr(device, "index", None)
+                if dev_index is not None:
+                    _cy_npu_sync(int(dev_index))
+                    return
+        except Exception:
+            # Fall back to the original path on any fast-path guard failure.
+            pass
 
-    # Fallback: original path
+    # Fallback: original path (preserves full device normalization semantics)
     from ._backends.npu import runtime as npu_runtime
     dev = _normalize_npu_device(device)
     runtime = npu_runtime.get_runtime(dev.index or 0)
