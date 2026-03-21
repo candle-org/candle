@@ -314,3 +314,13 @@ def uniform(a):
 # Upsample ops — CPU numpy implementations
 # ---------------------------------------------------------------------------
 
+try:
+    from candle._cython._mps_ops import (  # pylint: disable=import-error,no-name-in-module
+        where, lerp, addcmul, addcdiv,
+        logaddexp, logaddexp2, hypot,
+        remainder, fmod, heaviside,
+        diff, bincount, histc, histogram, bucketize,
+        isin, uniform,
+    )
+except ImportError:
+    pass
