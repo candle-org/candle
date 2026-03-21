@@ -61,6 +61,8 @@ def _function_apply(cls, args, kwargs):
 
     Called from Function.apply(cls, *args, **kwargs) in the Python layer.
     """
+    import weakref
+
     from candle._tensor import Tensor
     from candle.autograd.grad_mode import is_grad_enabled
     from candle._cython._autograd_node import Node, InputMetadata
@@ -71,11 +73,9 @@ def _function_apply(cls, args, kwargs):
     )
     cdef bint any_grad_needed = any(needs_input_grad) and is_grad_enabled()
 
-    # Create context
     cdef FunctionCtx ctx = FunctionCtx()
     ctx._needs_input_grad = needs_input_grad
 
-    # Execute forward
     cdef object output
     if cls._new_style:
         output = cls.forward(*args, **kwargs)
@@ -86,38 +86,86 @@ def _function_apply(cls, args, kwargs):
     if not any_grad_needed:
         return output
 
-    # Build autograd graph
     cdef list input_tensors = [a for a in args if isinstance(a, Tensor) and a.requires_grad]
-
-    # Capture materialize flag
     cdef bint materialize = ctx._materialize_grads
-
-    def _backward(grad):
-        if materialize and grad is None:
-            from candle._functional import zeros_like
-            grad = zeros_like(output)
-        return cls.backward(ctx, grad)
-
-    # Create Node
-    cdef object node = Node(_backward, input_tensors, name=f"{cls.__name__}Backward")
-    annotate_node_creation(node)
-    node._input_metadata = [InputMetadata(t) for t in input_tensors]
-
-    # Wire saved tensors through Node
-    if ctx._to_save is not None:
-        node.save_for_backward(*ctx._to_save)
-        ctx._saved_tensors = node._saved_tensors_list
-
-    # Set grad_fn on outputs
     cdef set non_diff = ctx._non_differentiable
     cdef object o
-    cdef object view_meta
+    cdef object node
+    cdef object node_holder
+    cdef object first_saved_list = None
+    cdef tuple outputs
+    cdef list differentiable_outputs = []
+    cdef int differentiable_count
+    cdef int diff_index
 
     if isinstance(output, Tensor):
+        def _backward(grad):
+            if materialize and grad is None:
+                from candle._functional import zeros_like
+                grad = zeros_like(output)
+            return cls.backward(ctx, grad)
+
+        node = Node(_backward, input_tensors, name=f"{cls.__name__}Backward")
+        annotate_node_creation(node)
+        node._input_metadata = [InputMetadata(t) for t in input_tensors]
+
+        if ctx._to_save is not None:
+            node.save_for_backward(*ctx._to_save)
+            ctx._saved_tensors = node._saved_tensors_list
+
         _mark_output(output, non_diff, node, Tensor)
-    elif isinstance(output, tuple):
-        for o in output:
+        return output
+
+    if isinstance(output, tuple):
+        outputs = output
+        for o in outputs:
+            if isinstance(o, Tensor) and id(o) not in non_diff:
+                differentiable_outputs.append(o)
+
+        differentiable_count = len(differentiable_outputs)
+        for diff_index, o in enumerate(differentiable_outputs):
+            node_holder = {}
+
+            def _backward(grad, _output=o, _diff_index=diff_index, _diff_outputs=tuple(differentiable_outputs), _node_holder=node_holder):
+                cdef list backward_grads
+                cdef int i
+                cdef object _node
+                if materialize and grad is None:
+                    from candle._functional import zeros_like
+                    grad = zeros_like(_output)
+                backward_grads = []
+                for i, _out in enumerate(_diff_outputs):
+                    if i == _diff_index:
+                        backward_grads.append(grad)
+                    elif materialize:
+                        from candle._functional import zeros_like
+                        backward_grads.append(zeros_like(_out))
+                    else:
+                        backward_grads.append(None)
+                if ctx._to_save is not None:
+                    _node = _node_holder["node"]
+                    ctx._saved_tensors = _node._saved_tensors_list
+                return cls.backward(ctx, *backward_grads)
+
+            node = Node(_backward, input_tensors, name=f"{cls.__name__}Backward")
+            annotate_node_creation(node)
+            node._input_metadata = [InputMetadata(t) for t in input_tensors]
+
+            if ctx._to_save is not None:
+                node.save_for_backward(*ctx._to_save)
+                if first_saved_list is None:
+                    first_saved_list = node._saved_tensors_list
+
+            node_holder["node"] = weakref.proxy(node)
             _mark_output(o, non_diff, node, Tensor)
+
+        for o in outputs:
+            if not (isinstance(o, Tensor) and id(o) not in non_diff):
+                _mark_output(o, non_diff, None, Tensor)
+
+        if first_saved_list is not None:
+            ctx._saved_tensors = first_saved_list
+        return output
 
     return output
 
