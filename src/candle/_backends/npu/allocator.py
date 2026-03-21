@@ -217,6 +217,9 @@ def _round_size(size):
 
 
 class NpuAllocator:
+    # Number of events to pre-create on first use and keep in the pool.
+    _EVENT_POOL_SIZE = 64
+
     def __init__(self, device_id):
         conf = _load_alloc_conf()
         self.max_split_size = _parse_max_split_size_mb(conf.get("max_split_size_mb"))
@@ -226,6 +229,8 @@ class NpuAllocator:
         self._active = {}
         self._cached = {"small_pool": [], "large_pool": []}
         self._pending = []
+        self._event_pool = []   # reusable ACL event handles
+        self._event_pool_ready = False
         self._init_stats()
 
     def _pool_for_size(self, size):
@@ -299,9 +304,25 @@ class NpuAllocator:
                 pending.append(block)
         self._pending = pending
         for block in ready:
+            # Return the event to the pool for reuse instead of leaking it.
+            if block.event is not None:
+                self._event_pool.append(block.event)
+                block.event = None
             self._cached[block.pool].append(block)
             self._bump("inactive_split_bytes", block.pool, current=block.size, allocated=block.size)
             self._bump("inactive_split", block.pool, current=1, allocated=1)
+
+    def _ensure_event_pool(self, runtime):
+        """Pre-create a pool of reusable ACL events on first use."""
+        if self._event_pool_ready:
+            return
+        for _ in range(self._EVENT_POOL_SIZE):
+            try:
+                event = runtime.create_event(False, False, False)
+                self._event_pool.append(event)
+            except Exception:  # pylint: disable=broad-except
+                break
+        self._event_pool_ready = True
 
     def _record_event(self, stream):
         from . import runtime as npu_runtime
@@ -311,10 +332,14 @@ class NpuAllocator:
         if stream is None:
             stream = npu_state.current_stream(self.device_id).stream
         try:
-            event = runtime.create_event(False, False, False)
+            self._ensure_event_pool(runtime)
+            if self._event_pool:
+                event = self._event_pool.pop()
+            else:
+                event = runtime.create_event(False, False, False)
             runtime.record_event(event, stream)
             return event
-        except Exception:
+        except Exception:  # pylint: disable=broad-except
             return None
 
     def _event_complete(self, event):
