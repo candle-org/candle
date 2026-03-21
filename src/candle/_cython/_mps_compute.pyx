@@ -1507,8 +1507,8 @@ cdef class MetalKernelDispatcher:
 
     cpdef void dispatch_philox_fill(self, str kernel_name, object out_buf,
                                     int seed_lo, int seed_hi, int offset,
-                                    bytes p1_bytes, bytes p2_bytes,
-                                    int p_size, int numel):
+                                    object param1, object param2, int numel,
+                                    str param_fmt="f"):
         """Encode Philox fill (uniform/normal) kernel."""
         from candle._backends.mps.runtime import get_runtime  # pylint: disable=import-error,no-name-in-module
         rt = get_runtime()
@@ -1516,6 +1516,9 @@ cdef class MetalKernelDispatcher:
         cdef int tpg = self._threads_per_group(pipeline)
         cdef int threads = (numel + 3) // 4
         cdef int groups = (threads + tpg - 1) // tpg
+        cdef bytes p1_bytes = struct.pack(param_fmt, param1)
+        cdef bytes p2_bytes = struct.pack(param_fmt, param2)
+        cdef int p_size = len(p1_bytes)
 
         cmd = rt.create_command_buffer()
         enc = rt.get_compute_encoder(cmd)
