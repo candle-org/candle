@@ -144,7 +144,8 @@ cdef class FastTypedStorage:
     """Typed NPU storage wrapping FastNPUStorage.
 
     Replaces Python TypedStorage for the NPU path. Exposes the same
-    interface: device, dtype, data_ptr(), untyped_storage(), size(), nbytes().
+    interface as far as NPU callers require: device, dtype, data_ptr(),
+    untyped_storage(), size(), nbytes(), copy_(), _reinterpret(), resize_(), clone().
     """
     cdef public FastNPUStorage _untyped
     cdef public object _dtype
@@ -181,6 +182,31 @@ cdef class FastTypedStorage:
     def is_shared(self):
         return False
 
+    def copy_(self, other):
+        """Copy from another storage of the same device type."""
+        if self.device.type != other.device.type:
+            raise NotImplementedError("cross-device copy_ not supported")
+        if self.device.type == "npu":
+            from candle._backends.npu import runtime as npu_runtime
+            size = min(self.nbytes(), other.nbytes())
+            runtime = npu_runtime.get_runtime(self.device.index or 0)
+            runtime.activate()
+            npu_runtime.memcpy_d2d(
+                self.data_ptr(),
+                size,
+                other.data_ptr(),
+                runtime=runtime,
+            )
+            return self
+        raise NotImplementedError(f"Unsupported device: {self.device}")
+
+    def _reinterpret(self, dtype):
+        """Return a view of the same bytes with a different dtype."""
+        if dtype == self._dtype:
+            return self
+        itemsize = getattr(dtype, 'itemsize', 4)
+        size = int(self.nbytes() // itemsize)
+        return FastTypedStorage(self._untyped, dtype, size)
 
     def resize_(self, new_size):
         """Resize typed storage by delegating to untyped resize_."""
