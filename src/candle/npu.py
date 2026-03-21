@@ -119,16 +119,20 @@ def synchronize(device=None):
             if not is_current_stream_capturing():
                 # Fast path for the common cases without constructing a fresh Device.
                 if device is None:
+                    _set_initialized()
                     _cy_npu_sync(npu_state.current_device())
                     return
                 if isinstance(device, int):
+                    _set_initialized()
                     _cy_npu_sync(device)
                     return
                 if isinstance(device, Device):
+                    _set_initialized()
                     _cy_npu_sync(device.index or npu_state.current_device())
                     return
                 dev_index = getattr(device, "index", None)
                 if dev_index is not None:
+                    _set_initialized()
                     _cy_npu_sync(int(dev_index))
                     return
         except Exception:

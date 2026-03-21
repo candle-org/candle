@@ -8,6 +8,7 @@ eliminating weakref.finalize overhead (~8-10 us per NPU op).
 from libc.stdint cimport int64_t
 
 cdef object _allocator_mod = None
+cdef object _runtime_mod = None
 
 
 cdef inline object _get_alloc(int device_id):
@@ -16,6 +17,14 @@ cdef inline object _get_alloc(int device_id):
         from candle._backends.npu import allocator as _am
         _allocator_mod = _am
     return _allocator_mod.get_allocator(device_id)
+
+
+cdef inline object _get_runtime(int device_id):
+    global _runtime_mod
+    if _runtime_mod is None:
+        from candle._backends.npu import runtime as _rt
+        _runtime_mod = _rt
+    return _runtime_mod.get_runtime(device_id)
 
 
 cdef class FastNPUStorage:
@@ -49,13 +58,21 @@ cdef class FastNPUStorage:
             self._alloc = None
 
     def __dealloc__(self):
-        """Called synchronously by CPython refcount — no GC delay.
+        """Synchronous Python object teardown, but asynchronous device free.
 
-        stream=None tells FastNpuAllocator.free() to skip event recording
-        and return the block to the cached pool immediately.
+        We cannot safely return the device pointer directly to the allocator's
+        free-list here because the producing stream may still have in-flight
+        kernels touching the buffer. Instead, mirror the runtime.py behavior:
+        defer the free into runtime._deferred_frees and let synchronize() drain
+        it after the stream sync point.
         """
         if self._device_ptr != 0 and self._alloc is not None:
-            self._alloc.free(self._device_ptr, None)
+            try:
+                runtime = _get_runtime(self.device.index or 0)
+                runtime.defer_free(self._device_ptr)
+            except Exception:  # pylint: disable=broad-except
+                # If runtime is unavailable at interpreter shutdown, leak rather than crash.
+                pass
             self._device_ptr = 0
 
     def data_ptr(self):
@@ -93,7 +110,7 @@ cdef class FastNPUStorage:
         return _NoopFinalizer()
 
     def resize_(self, new_nbytes):
-        """In-place resize: allocate new buffer, D2D copy, free old."""
+        """In-place resize: allocate new buffer, D2D copy, free old on stream."""
         from candle._backends.npu import runtime as npu_runtime
         from candle._backends.npu import state as npu_state
         new_nbytes = int(new_nbytes)
@@ -117,10 +134,8 @@ cdef class FastNPUStorage:
 
 class _NoopFinalizer:
     """No-op shim for weakref finalizer compatibility."""
-
     def detach(self):
         pass
-
     def __bool__(self):
         return False
 
@@ -165,6 +180,14 @@ cdef class FastTypedStorage:
 
     def is_shared(self):
         return False
+
+
+    def resize_(self, new_size):
+        """Resize typed storage by delegating to untyped resize_."""
+        cdef object itemsize = getattr(self._dtype, 'itemsize', 4)
+        self._untyped.resize_(int(new_size) * itemsize)
+        self._size = int(new_size)
+        return self
 
     def clone(self):
         """Return a copy with independently-owned device memory."""
