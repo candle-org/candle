@@ -34,6 +34,7 @@ jobs:
     runs-on: [self-hosted, linux, ascend, 310b]
     timeout-minutes: 60
     env:
+      JOB_CONDA_ENV: /tmp/candle-npu-ci-310b
       ASCEND_ENV_SCRIPT: ${{ steps.resolve-ascend-env.outputs.script }}
     steps:
     - uses: actions/checkout@v4
@@ -47,8 +48,7 @@ jobs:
           "/usr/local/Ascend/latest/set_env.sh"
           "/opt/Ascend/ascend-toolkit/set_env.sh"
           "/opt/Ascend/ascend-toolkit/latest/set_env.sh"
-          "/opt/Ascend/latest/set_env.sh"
-          "/home/HwHiAiUser/Ascend/ascend-toolkit/set_env.sh"
+          "/home/HwHiAiUser/.conda/envs/cann85/Ascend/cann-8.5.0/set_env.sh"
           "/home/HwHiAiUser/Ascend/ascend-toolkit/latest/set_env.sh"
         )
         for path in "${candidates[@]}"; do
