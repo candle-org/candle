@@ -5,6 +5,13 @@ not available.  The Tensor class inherits from this unconditionally —
 when Cython IS available, the .pyx version replaces this module.
 """
 
+import builtins as _builtins
+
+from candle._dtype import float32, float16, float64, bfloat16, int8, int16, int32, int64, uint8
+from candle._dtype import bool as dtype_bool
+from candle._functional import eq as eq_dispatch, ne as ne_dispatch, lt as lt_dispatch, le as le_dispatch, gt as gt_dispatch, ge as ge_dispatch
+from candle._printing import format_tensor
+
 
 class _VersionCounterProxy:
     """Lightweight proxy wrapping TensorImpl._version_value."""
@@ -122,3 +129,181 @@ class TensorImpl:
 
     def element_size(self):
         return self._itemsize
+
+    @property
+    def output_nr(self):
+        return 0
+
+    @property
+    def is_cuda(self):
+        return self.device.type == "cuda"
+
+    @property
+    def is_cpu(self):
+        return self.device.type == "cpu"
+
+    @property
+    def is_npu(self):
+        return self.device.type == "npu"
+
+    @property
+    def is_meta(self):
+        return self.device.type == "meta"
+
+    @property
+    def is_leaf(self):
+        return self.grad_fn is None
+
+    @property
+    def is_sparse(self):
+        return _builtins.bool(getattr(self, "_is_sparse", False))
+
+    @property
+    def layout(self):
+        return getattr(self, "_layout", "strided")
+
+    @layout.setter
+    def layout(self, value):
+        self._layout = value
+
+    @property
+    def is_quantized(self):
+        return False
+
+    def storage_offset(self):
+        return self.offset
+
+    def get_device(self):
+        if self.device.type == "cpu":
+            return -1
+        return self.device.index if self.device.index is not None else 0
+
+    def ndimension(self):
+        return self._ndim
+
+    def size(self, dim=None):
+        if dim is None:
+            return self.shape
+        if dim < 0:
+            dim += len(self.shape)
+        if dim < 0 or dim >= len(self.shape):
+            raise IndexError("Dimension out of range")
+        return self.shape[dim]
+
+    def nelement(self):
+        return self.numel()
+
+    def item(self):
+        if self.numel() != 1:
+            raise ValueError("only one element tensors can be converted to Python scalars")
+        if self.device.type != "cpu":
+            return self.to("cpu").item()
+        return self._numpy_view().flat[0].item()
+
+    def tolist(self):
+        if self.device.type != "cpu":
+            return self.to("cpu").tolist()
+        return self._numpy_view().tolist()
+
+    def __int__(self):
+        return _builtins.int(self.item())
+
+    def __float__(self):
+        return _builtins.float(self.item())
+
+    def __bool__(self):
+        if self.numel() == 0:
+            raise RuntimeError("Boolean value of Tensor with no values is ambiguous")
+        if self.numel() > 1:
+            raise RuntimeError("Boolean value of Tensor with more than one value is ambiguous")
+        return _builtins.bool(self.item())
+
+    def __repr__(self):
+        return format_tensor(self)
+
+    def __str__(self):
+        return format_tensor(self)
+
+    def __len__(self):
+        if self.dim() == 0:
+            raise TypeError("len() of a 0-d tensor")
+        return self.shape[0]
+
+    def __iter__(self):
+        if self.dim() == 0:
+            raise TypeError("iteration over a 0-d tensor")
+        for i in range(len(self)):
+            yield self[i]
+
+    @staticmethod
+    def _is_scalar_comparable(other):
+        return isinstance(other, (_builtins.int, _builtins.float, _builtins.bool))
+
+    def float(self):
+        return self._to_dtype(float32) if self.dtype != float32 else self
+
+    def half(self):
+        return self._to_dtype(float16) if self.dtype != float16 else self
+
+    def double(self):
+        return self._to_dtype(float64) if self.dtype != float64 else self
+
+    def bfloat16(self):
+        return self._to_dtype(bfloat16) if self.dtype != bfloat16 else self
+
+    def long(self):
+        return self._to_dtype(int64) if self.dtype != int64 else self
+
+    def int(self):
+        return self._to_dtype(int32) if self.dtype != int32 else self
+
+    def short(self):
+        return self._to_dtype(int16) if self.dtype != int16 else self
+
+    def char(self):
+        return self._to_dtype(int8) if self.dtype != int8 else self
+
+    def byte(self):
+        return self._to_dtype(uint8) if self.dtype != uint8 else self
+
+    def bool(self):
+        return self._to_dtype(dtype_bool) if self.dtype != dtype_bool else self
+
+    def __gt__(self, other):
+        from candle._tensor import Tensor
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return gt_dispatch(self, other)
+        return NotImplemented
+
+    def __lt__(self, other):
+        from candle._tensor import Tensor
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return lt_dispatch(self, other)
+        return NotImplemented
+
+    def __ge__(self, other):
+        from candle._tensor import Tensor
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return ge_dispatch(self, other)
+        return NotImplemented
+
+    def __le__(self, other):
+        from candle._tensor import Tensor
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return le_dispatch(self, other)
+        return NotImplemented
+
+    def __eq__(self, other):
+        from candle._tensor import Tensor
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return eq_dispatch(self, other)
+        return False
+
+    def __ne__(self, other):
+        from candle._tensor import Tensor
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return ne_dispatch(self, other)
+        return True
+
+    def __hash__(self):
+        return id(self)

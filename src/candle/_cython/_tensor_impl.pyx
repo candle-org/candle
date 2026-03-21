@@ -8,6 +8,8 @@ VersionCounter is inlined as a C int64.
 
 from libc.stdint cimport int64_t
 
+import candle._dtype as _dtype_mod
+
 DEF MAX_NDIM = 64
 
 # Dispatch key bit values (must match keys.py DispatchKey enum)
@@ -269,6 +271,206 @@ cdef class TensorImpl:
 
     def element_size(self):
         return self._itemsize
+
+    # ---------------------------------------------------------------
+    # Safe read-only metadata / scalar helpers (migrated from Tensor)
+    # ---------------------------------------------------------------
+
+    @property
+    def output_nr(self):
+        return 0
+
+    @property
+    def is_cuda(self):
+        return self._device_type == 2
+
+    @property
+    def is_cpu(self):
+        return self._device_type == 0
+
+    @property
+    def is_npu(self):
+        return self._device_type == 1
+
+    @property
+    def is_meta(self):
+        return self._device_type == 4
+
+    @property
+    def is_leaf(self):
+        return self.grad_fn is None
+
+    @property
+    def is_sparse(self):
+        return bool(getattr(self, "_is_sparse", False))
+
+    @property
+    def layout(self):
+        return getattr(self, "_layout", "strided")
+
+    @layout.setter
+    def layout(self, value):
+        self._layout = value
+
+    @property
+    def is_quantized(self):
+        return False
+
+    def storage_offset(self):
+        return self._c_offset
+
+    def get_device(self):
+        if self._device_type == 0:
+            return -1
+        return self._device_index if self._device_index >= 0 else 0
+
+    def ndimension(self):
+        return self._ndim
+
+    def size(self, dim=None):
+        if dim is None:
+            return self._shape_tuple
+        if dim < 0:
+            dim += self._ndim
+        if dim < 0 or dim >= self._ndim:
+            raise IndexError("Dimension out of range")
+        return self._c_shape[dim]
+
+    def nelement(self):
+        return self._c_numel
+
+    def item(self):
+        if self._c_numel != 1:
+            raise ValueError("only one element tensors can be converted to Python scalars")
+        if self._device_type != 0:
+            return self.to("cpu").item()
+        return self._numpy_view().flat[0].item()
+
+    def tolist(self):
+        if self._device_type != 0:
+            return self.to("cpu").tolist()
+        return self._numpy_view().tolist()
+
+    def __int__(self):
+        return int(self.item())
+
+    def __float__(self):
+        return float(self.item())
+
+    def __bool__(self):
+        if self._c_numel == 0:
+            raise RuntimeError("Boolean value of Tensor with no values is ambiguous")
+        if self._c_numel > 1:
+            raise RuntimeError("Boolean value of Tensor with more than one value is ambiguous")
+        return bool(self.item())
+
+    def __repr__(self):
+        from candle._printing import format_tensor
+        return format_tensor(self)
+
+    def __str__(self):
+        from candle._printing import format_tensor
+        return format_tensor(self)
+
+    def __len__(self):
+        if self._ndim == 0:
+            raise TypeError("len() of a 0-d tensor")
+        return self._c_shape[0]
+
+    def __iter__(self):
+        if self._ndim == 0:
+            raise TypeError("iteration over a 0-d tensor")
+        cdef int64_t i
+        cdef int64_t n = self._c_shape[0]
+        for i in range(n):
+            yield self[i]
+
+    @staticmethod
+    def _is_scalar_comparable(other):
+        return isinstance(other, (int, float, bool))
+
+    def __hash__(self):
+        return id(self)
+
+    # ---------------------------------------------------------------
+    # Dtype shorthand wrappers (migrated from Tensor)
+    # ---------------------------------------------------------------
+
+    def float(self):
+        return self._to_dtype(_dtype_mod.float32) if self.dtype != _dtype_mod.float32 else self
+
+    def half(self):
+        return self._to_dtype(_dtype_mod.float16) if self.dtype != _dtype_mod.float16 else self
+
+    def double(self):
+        return self._to_dtype(_dtype_mod.float64) if self.dtype != _dtype_mod.float64 else self
+
+    def bfloat16(self):
+        return self._to_dtype(_dtype_mod.bfloat16) if self.dtype != _dtype_mod.bfloat16 else self
+
+    def long(self):
+        return self._to_dtype(_dtype_mod.int64) if self.dtype != _dtype_mod.int64 else self
+
+    def int(self):
+        return self._to_dtype(_dtype_mod.int32) if self.dtype != _dtype_mod.int32 else self
+
+    def short(self):
+        return self._to_dtype(_dtype_mod.int16) if self.dtype != _dtype_mod.int16 else self
+
+    def char(self):
+        return self._to_dtype(_dtype_mod.int8) if self.dtype != _dtype_mod.int8 else self
+
+    def byte(self):
+        return self._to_dtype(_dtype_mod.uint8) if self.dtype != _dtype_mod.uint8 else self
+
+    def bool(self):
+        return self._to_dtype(_dtype_mod.bool) if self.dtype != _dtype_mod.bool else self
+
+    # ---------------------------------------------------------------
+    # Comparison dunders (migrated from Tensor)
+    # ---------------------------------------------------------------
+
+    def __gt__(self, other):
+        from candle._tensor import Tensor
+        from candle._functional import gt as gt_dispatch
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return gt_dispatch(self, other)
+        return NotImplemented
+
+    def __lt__(self, other):
+        from candle._tensor import Tensor
+        from candle._functional import lt as lt_dispatch
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return lt_dispatch(self, other)
+        return NotImplemented
+
+    def __ge__(self, other):
+        from candle._tensor import Tensor
+        from candle._functional import ge as ge_dispatch
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return ge_dispatch(self, other)
+        return NotImplemented
+
+    def __le__(self, other):
+        from candle._tensor import Tensor
+        from candle._functional import le as le_dispatch
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return le_dispatch(self, other)
+        return NotImplemented
+
+    def __eq__(self, other):
+        from candle._tensor import Tensor
+        from candle._functional import eq as eq_dispatch
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return eq_dispatch(self, other)
+        return False
+
+    def __ne__(self, other):
+        from candle._tensor import Tensor
+        from candle._functional import ne as ne_dispatch
+        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
+            return ne_dispatch(self, other)
+        return True
 
     # ---------------------------------------------------------------
     # Pickle support
