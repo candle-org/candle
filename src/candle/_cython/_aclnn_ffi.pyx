@@ -9128,6 +9128,15 @@ def binary_two_inputs_op(
                 self_t, other_t, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>other_t)] if other_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        other_t = NULL
+        out_t = NULL
         if ws_size == 0:
             try:
                 with nogil:
@@ -9143,9 +9152,12 @@ def binary_two_inputs_op(
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(other_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if other_t != NULL:
+                _fast_destroy_tensor(other_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def leaky_relu_op(

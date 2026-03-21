@@ -5966,7 +5966,29 @@ def test_binary_op_with_alpha_defers_tensor_cleanup_until_executor_destroy(tmp_p
     assert state['destroy_before'] == 0
     assert state['destroy_after'] == 3
     assert state['destroy_executor_before'] == 0
-    assert state['destroy_executor_after'] == 1
+    assert state['destroy_executor_after' ] == 1
+
+
+def test_binary_two_inputs_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_pow_tensor_tensor',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnPowTensorTensorGetWorkspaceSize(void* self, void* other, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnPowTensorTensorGetWorkspaceSize',
+            'aclnnPowTensorTensor',
+        ),
+        op_name='PowTensorTensor',
+        ffi_call='ws_size, executor = ffi.binary_two_inputs_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 9, 9, 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size' ] == 64
+    assert state['executor' ] == 0xBEEF
+    assert state['create' ] == 3
+    assert state['destroy_before' ] == 0
+    assert state['destroy_after' ] == 3
+    assert state['destroy_executor_before' ] == 0
+    assert state['destroy_executor_after' ] == 1
 
 
 def test_add_defers_alpha_scalar_cleanup_until_executor_destroy(monkeypatch):

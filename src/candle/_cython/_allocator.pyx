@@ -203,6 +203,8 @@ cdef class FastNpuAllocator:
     cdef public dict _active
     cdef public dict _cached
     cdef public list _pending_events
+    cdef public list _event_pool
+    cdef public bint _event_pool_ready
     cdef public object max_split_size
     cdef public object gc_threshold
     cdef dict __dict__  # allow monkey-patching (needed by tests)
@@ -216,6 +218,8 @@ cdef class FastNpuAllocator:
         self._active = {}
         self._cached = {"small_pool": [], "large_pool": []}
         self._pending_events = []
+        self._event_pool = []
+        self._event_pool_ready = False
         cdef int i
         for i in range(STAT_COUNT + 6):
             self._stats_arr[i] = 0
@@ -295,16 +299,11 @@ cdef class FastNpuAllocator:
         return block, remainder
 
     def _drain_pending(self):
-        from candle._backends.npu import runtime as npu_runtime
-
         still_pending = []
         for event, block in self._pending_events:
             if self._event_complete(event):
                 if event is not None:
-                    try:
-                        npu_runtime.get_runtime(self.device_id).destroy_event(event)
-                    except Exception:
-                        pass
+                    self._event_pool.append(event)
                 block.event_count -= 1
                 if block.event_count == 0:
                     self._cached[block.pool].append(block)
@@ -315,6 +314,18 @@ cdef class FastNpuAllocator:
                 still_pending.append((event, block))
         self._pending_events = still_pending
 
+    def _ensure_event_pool(self, runtime):
+        if self._event_pool_ready:
+            return
+        cdef int i
+        for i in range(64):
+            try:
+                event = runtime.create_event(False, False, False)
+                self._event_pool.append(event)
+            except Exception:
+                break
+        self._event_pool_ready = True
+
     def _record_event(self, stream):
         from candle._backends.npu import runtime as npu_runtime
         from candle._backends.npu import state as npu_state
@@ -322,7 +333,11 @@ cdef class FastNpuAllocator:
         if stream is None:
             stream = npu_state.current_stream(self.device_id).stream
         try:
-            event = runtime.create_event(False, False, False)
+            self._ensure_event_pool(runtime)
+            if self._event_pool:
+                event = self._event_pool.pop()
+            else:
+                event = runtime.create_event(False, False, False)
             runtime.record_event(event, stream)
             return event
         except Exception:
