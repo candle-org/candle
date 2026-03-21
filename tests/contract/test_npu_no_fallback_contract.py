@@ -1,9 +1,22 @@
+import importlib.machinery
+import json
+import shutil
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import pytest
 
 from candle._backends.npu import aclnn
+from candle._backends.npu import creation as npu_creation
 from candle._backends.npu.ops import _helpers
+
+
+@pytest.fixture(autouse=True)
+def _isolate_deferred_executor_state(monkeypatch):
+    monkeypatch.setattr(aclnn, "_DEFERRED_EXECUTORS", [])
+    monkeypatch.setattr(aclnn, "_DEFERRED_EXECUTOR_CLEANUP", {})
 
 
 class _FakeRuntime:
@@ -26,6 +39,17 @@ class _FakeAcl:
         @staticmethod
         def malloc(size, flag):
             return (0xCAFE, 0)
+
+
+def _compiled_cython_extension_path(repo_root, stem):
+    cython_dir = repo_root / 'src/candle/_cython'
+    for suffix in importlib.machinery.EXTENSION_SUFFIXES:
+        candidate = cython_dir / f'{stem}{suffix}'
+        if candidate.exists():
+            return candidate
+    so_matches = sorted(cython_dir.glob(f'{stem}*.so'))
+    assert so_matches, f'compiled {stem} extension not found'
+    return so_matches[0]
 
 
 def _install_native_ffi_env(monkeypatch):
@@ -2006,6 +2030,538 @@ def test_repeat_interleave_int_with_dim_uses_native_ffi(monkeypatch):
     ) in calls
 
 
+def test_repeat_interleave_tensor_allocates_workspace_before_execute(monkeypatch):
+    calls = []
+
+    class _FakeFfi:
+        def is_initialized(self):
+            return True
+
+        def create_tensor(self, shape, stride, dtype_code, ptr, fmt):
+            handle = 0x1000 + len([x for x in calls if x[0] == "create_tensor"])
+            calls.append(("create_tensor", tuple(shape), tuple(stride), dtype_code, ptr, fmt, handle))
+            return handle
+
+        def destroy_tensor(self, handle):
+            calls.append(("destroy_tensor", handle))
+
+    class _FakeBindings:
+        aclnn_repeat_interleave_get_workspace = object()
+        aclnn_repeat_interleave = object()
+        aclnn_repeat_interleave_with_dim_get_workspace = object()
+        aclnn_repeat_interleave_with_dim = object()
+
+        @staticmethod
+        def aclnn_repeat_interleave_with_dim_get_workspace(
+            self_handle,
+            repeats_handle,
+            dim,
+            output_size,
+            out_handle,
+            workspace_size_ptr,
+            executor_ptr,
+        ):
+            calls.append((
+                "get_workspace_with_dim",
+                self_handle.value,
+                repeats_handle.value,
+                dim.value,
+                output_size.value,
+                out_handle.value,
+            ))
+            workspace_size_ptr._obj.value = 64
+            executor_ptr._obj.value = 0xBEEF
+            return 0
+
+        @staticmethod
+        def aclnn_repeat_interleave_with_dim(workspace_ptr, workspace_size, executor, stream):
+            calls.append((
+                "execute_with_dim",
+                workspace_ptr.value,
+                workspace_size.value,
+                executor.value,
+                stream.value,
+            ))
+            return 0
+
+    class _FakeAclWithMalloc:
+        class rt:
+            @staticmethod
+            def malloc(size, flag):
+                calls.append(("malloc", size, flag))
+                return (0xCAFE, 0)
+
+    monkeypatch.setattr(aclnn, "acl", None)
+    monkeypatch.setattr(aclnn, "ensure_acl", lambda: _FakeAclWithMalloc())
+    monkeypatch.setattr(aclnn, "get_bindings", lambda: _FakeBindings())
+    monkeypatch.setattr(aclnn, "_ffi", _FakeFfi())
+    monkeypatch.setattr(aclnn, "_maybe_sync", lambda runtime: calls.append(("maybe_sync", runtime.stream)))
+    monkeypatch.setattr(aclnn, "_defer_executor", lambda executor, cleanup=None: calls.append(("defer_executor", aclnn._executor_handle(executor), cleanup)))
+
+    runtime = _FakeRuntime()
+    aclnn.repeat_interleave_tensor(
+        1,
+        2,
+        3,
+        (2, 3),
+        (3, 1),
+        "float16",
+        (3,),
+        (1,),
+        "int64",
+        1,
+        6,
+        (2, 6),
+        (6, 1),
+        runtime,
+    )
+
+    assert ("malloc", 64, 0) in calls
+    assert ("execute_with_dim", 0xCAFE, 64, 0xBEEF, runtime.stream) in calls
+    assert any(entry[0] == "defer_executor" and entry[1] == 0xBEEF for entry in calls)
+    assert ("raw", 0xCAFE) in runtime.freed
+
+
+def test_repeat_interleave_tensor_defers_tensor_handle_cleanup_until_executor_destroy(monkeypatch):
+    calls = []
+
+    class _FakeFfi:
+        def is_initialized(self):
+            return True
+
+        def create_tensor(self, shape, stride, dtype_code, ptr, fmt):
+            handle = 0x2000 + len([x for x in calls if x[0] == "create_tensor"])
+            calls.append(("create_tensor", handle))
+            return handle
+
+        def destroy_tensor(self, handle):
+            calls.append(("destroy_tensor", handle))
+
+    class _FakeBindings:
+        aclnn_repeat_interleave_get_workspace = object()
+        aclnn_repeat_interleave = object()
+        aclnn_repeat_interleave_with_dim_get_workspace = object()
+        aclnn_repeat_interleave_with_dim = object()
+
+        @staticmethod
+        def aclnn_repeat_interleave_with_dim_get_workspace(
+            self_handle, repeats_handle, dim, output_size, out_handle, workspace_size_ptr, executor_ptr
+        ):
+            workspace_size_ptr._obj.value = 0
+            executor_ptr._obj.value = 0xD00D
+            return 0
+
+        @staticmethod
+        def aclnn_repeat_interleave_with_dim(workspace_ptr, workspace_size, executor, stream):
+            calls.append(("execute_with_dim", executor.value))
+            return 0
+
+    deferred = []
+    monkeypatch.setattr(aclnn, "acl", None)
+    monkeypatch.setattr(aclnn, "ensure_acl", lambda: _FakeAcl())
+    monkeypatch.setattr(aclnn, "get_bindings", lambda: _FakeBindings())
+    monkeypatch.setattr(aclnn, "_ffi", _FakeFfi())
+    monkeypatch.setattr(aclnn, "_maybe_sync", lambda runtime: None)
+    monkeypatch.setattr(aclnn, "_defer_executor", lambda executor, cleanup=None: deferred.append((aclnn._executor_handle(executor), cleanup)))
+
+    runtime = _FakeRuntime()
+    aclnn.repeat_interleave_tensor(
+        1, 2, 3,
+        (2, 3), (3, 1), "float16",
+        (3,), (1,), "int64",
+        1, 6, (2, 6), (6, 1), runtime,
+    )
+
+    assert len(deferred) == 1
+    assert deferred[0][0] == 0xD00D
+    assert deferred[0][1] == [("tensor", 0x2000), ("tensor", 0x2001), ("tensor", 0x2002)]
+    assert not [entry for entry in calls if entry[0] == "destroy_tensor"]
+
+
+
+
+
+def test_two_tensor_two_bools_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    if sys.platform != "linux":
+        pytest.skip("requires linux shared-library test harness")
+    if shutil.which("gcc") is None:
+        pytest.skip("gcc not available")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    so_path = _compiled_cython_extension_path(repo_root, "_aclnn_ffi")
+    source_path = tmp_path / "fake_aclnn_searchsorted.c"
+    lib_path = tmp_path / "libfake_aclnn_searchsorted.so"
+    source_path.write_text(
+        textwrap.dedent(
+            r"""
+            #include <stdint.h>
+
+            static int g_create_tensor_count = 0;
+            static int g_destroy_tensor_count = 0;
+            static int g_destroy_executor_count = 0;
+            static uintptr_t g_next_tensor_handle = 0x1000;
+
+            void* aclCreateTensor(
+                const int64_t* shape, uint64_t ndim, int32_t dtype,
+                const int64_t* stride, int64_t storage_offset, int32_t format,
+                const int64_t* storage_dims, uint64_t storage_ndim, void* data_ptr) {
+                (void)shape;
+                (void)ndim;
+                (void)dtype;
+                (void)stride;
+                (void)storage_offset;
+                (void)format;
+                (void)storage_dims;
+                (void)storage_ndim;
+                (void)data_ptr;
+                g_create_tensor_count += 1;
+                g_next_tensor_handle += 0x10;
+                return (void*)g_next_tensor_handle;
+            }
+
+            int32_t aclDestroyTensor(void* tensor) {
+                if (tensor != 0) {
+                    g_destroy_tensor_count += 1;
+                }
+                return 0;
+            }
+
+            void* aclCreateScalar(void* value, int32_t dtype) {
+                (void)value;
+                (void)dtype;
+                return (void*)0x2000;
+            }
+
+            int32_t aclDestroyScalar(void* scalar) {
+                (void)scalar;
+                return 0;
+            }
+
+            void* aclCreateIntArray(const int64_t* values, uint64_t size) {
+                (void)values;
+                (void)size;
+                return (void*)0x3000;
+            }
+
+            int32_t aclDestroyIntArray(void* array) {
+                (void)array;
+                return 0;
+            }
+
+            void* aclCreateBoolArray(const uint8_t* values, uint64_t size) {
+                (void)values;
+                (void)size;
+                return (void*)0x4000;
+            }
+
+            int32_t aclDestroyBoolArray(void* array) {
+                (void)array;
+                return 0;
+            }
+
+            void* aclCreateTensorList(void** tensors, uint64_t size) {
+                (void)tensors;
+                (void)size;
+                return (void*)0x5000;
+            }
+
+            int32_t aclDestroyTensorList(void* tensor_list) {
+                (void)tensor_list;
+                return 0;
+            }
+
+            int32_t aclDestroyAclOpExecutor(void* executor) {
+                if (executor != 0) {
+                    g_destroy_executor_count += 1;
+                }
+                return 0;
+            }
+
+            int32_t aclnnSearchSortedGetWorkspaceSize(
+                void* first, void* second, int flag_a, int flag_b, void* sorter, void* out,
+                uint64_t* workspace_size, void** executor) {
+                (void)first;
+                (void)second;
+                (void)flag_a;
+                (void)flag_b;
+                (void)sorter;
+                (void)out;
+                *workspace_size = (uint64_t)64;
+                *executor = (void*)0xBEEF;
+                return 0;
+            }
+
+            int32_t aclnnSearchSorted(void* workspace, uint64_t workspace_size, void* executor, void* stream) {
+                (void)workspace;
+                (void)workspace_size;
+                (void)executor;
+                (void)stream;
+                return 0;
+            }
+
+            int test_get_create_tensor_count(void) {
+                return g_create_tensor_count;
+            }
+
+            int test_get_destroy_tensor_count(void) {
+                return g_destroy_tensor_count;
+            }
+
+            int test_get_destroy_executor_count(void) {
+                return g_destroy_executor_count;
+            }
+
+            void test_reset_counts(void) {
+                g_create_tensor_count = 0;
+                g_destroy_tensor_count = 0;
+                g_destroy_executor_count = 0;
+                g_next_tensor_handle = 0x1000;
+            }
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    compile_result = subprocess.run(
+        ["gcc", "-shared", "-fPIC", "-O0", "-o", str(lib_path), str(source_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert compile_result.returncode == 0, compile_result.stderr
+
+    code = textwrap.dedent(
+        f"""
+        import ctypes
+        import importlib.util
+        import json
+        import sys
+        import types
+
+        so_path = {str(so_path)!r}
+        lib_path = {str(lib_path)!r}
+        candle_path = {str(repo_root / 'src/candle')!r}
+        cython_path = {str(repo_root / 'src/candle/_cython')!r}
+
+        pkg = types.ModuleType('candle')
+        pkg.__path__ = [candle_path]
+        subpkg = types.ModuleType('candle._cython')
+        subpkg.__path__ = [cython_path]
+        sys.modules['candle'] = pkg
+        sys.modules['candle._cython'] = subpkg
+
+        spec = importlib.util.spec_from_file_location('candle._cython._aclnn_ffi', so_path)
+        ffi = importlib.util.module_from_spec(spec)
+        sys.modules['candle._cython._aclnn_ffi'] = ffi
+        spec.loader.exec_module(ffi)
+
+        lib = ctypes.CDLL(lib_path)
+        lib.test_reset_counts()
+        ffi.init([lib_path])
+        getws_ptr, exec_ptr = ffi.resolve_op('SearchSorted')
+        ws_size, executor = ffi.two_tensor_two_bools_op(
+            getws_ptr,
+            exec_ptr,
+            (3,), (1,),
+            (3,), (1,),
+            (3,), (1,),
+            False, True,
+            9, 9, 9, 2,
+            1, 2, 3,
+            0,
+        )
+        state = {{
+            'ws_size': int(ws_size),
+            'executor': int(executor),
+            'create': int(lib.test_get_create_tensor_count()),
+            'destroy_before': int(lib.test_get_destroy_tensor_count()),
+            'destroy_executor_before': int(lib.test_get_destroy_executor_count()),
+        }}
+        ffi.destroy_executor(executor)
+        state['destroy_after'] = int(lib.test_get_destroy_tensor_count())
+        state['destroy_executor_after'] = int(lib.test_get_destroy_executor_count())
+        print(json.dumps(state))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"subprocess failed with rc={result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    state = json.loads(result.stdout.strip())
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_binary_op_no_alpha_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    if sys.platform != "linux":
+        pytest.skip("requires linux shared-library test harness")
+    if shutil.which("gcc") is None:
+        pytest.skip("gcc not available")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    so_path = _compiled_cython_extension_path(repo_root, "_aclnn_ffi")
+    source_path = tmp_path / "fake_aclnn_mul.c"
+    lib_path = tmp_path / "libfake_aclnn_mul.so"
+    source_path.write_text(
+        textwrap.dedent(
+            r"""
+            #include <stdint.h>
+
+            static int g_create_tensor_count = 0;
+            static int g_destroy_tensor_count = 0;
+            static int g_destroy_executor_count = 0;
+            static uintptr_t g_next_tensor_handle = 0x1000;
+
+            void* aclCreateTensor(
+                const int64_t* shape, uint64_t ndim, int32_t dtype,
+                const int64_t* stride, int64_t storage_offset, int32_t format,
+                const int64_t* storage_dims, uint64_t storage_ndim, void* data_ptr) {
+                (void)shape; (void)ndim; (void)dtype; (void)stride;
+                (void)storage_offset; (void)format; (void)storage_dims; (void)storage_ndim; (void)data_ptr;
+                g_create_tensor_count += 1;
+                g_next_tensor_handle += 0x10;
+                return (void*)g_next_tensor_handle;
+            }
+
+            int32_t aclDestroyTensor(void* tensor) {
+                if (tensor != 0) {
+                    g_destroy_tensor_count += 1;
+                }
+                return 0;
+            }
+
+            void* aclCreateScalar(void* value, int32_t dtype) { (void)value; (void)dtype; return (void*)0x2000; }
+            int32_t aclDestroyScalar(void* scalar) { (void)scalar; return 0; }
+            void* aclCreateIntArray(const int64_t* values, uint64_t size) { (void)values; (void)size; return (void*)0x3000; }
+            int32_t aclDestroyIntArray(void* array) { (void)array; return 0; }
+            void* aclCreateBoolArray(const uint8_t* values, uint64_t size) { (void)values; (void)size; return (void*)0x4000; }
+            int32_t aclDestroyBoolArray(void* array) { (void)array; return 0; }
+            void* aclCreateTensorList(void** tensors, uint64_t size) { (void)tensors; (void)size; return (void*)0x5000; }
+            int32_t aclDestroyTensorList(void* tensor_list) { (void)tensor_list; return 0; }
+
+            int32_t aclDestroyAclOpExecutor(void* executor) {
+                if (executor != 0) {
+                    g_destroy_executor_count += 1;
+                }
+                return 0;
+            }
+
+            int32_t aclnnMulGetWorkspaceSize(void* self, void* other, void* out, uint64_t* workspace_size, void** executor) {
+                (void)self; (void)other; (void)out;
+                *workspace_size = 64;
+                *executor = (void*)0xBEEF;
+                return 0;
+            }
+
+            int32_t aclnnMul(void* workspace, uint64_t workspace_size, void* executor, void* stream) {
+                (void)workspace; (void)workspace_size; (void)executor; (void)stream;
+                return 0;
+            }
+
+            int test_get_create_tensor_count(void) { return g_create_tensor_count; }
+            int test_get_destroy_tensor_count(void) { return g_destroy_tensor_count; }
+            int test_get_destroy_executor_count(void) { return g_destroy_executor_count; }
+            void test_reset_counts(void) {
+                g_create_tensor_count = 0;
+                g_destroy_tensor_count = 0;
+                g_destroy_executor_count = 0;
+                g_next_tensor_handle = 0x1000;
+            }
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    compile_result = subprocess.run(
+        ["gcc", "-shared", "-fPIC", "-O0", "-o", str(lib_path), str(source_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert compile_result.returncode == 0, compile_result.stderr
+
+    code = textwrap.dedent(
+        f"""
+        import ctypes
+        import importlib.util
+        import json
+        import sys
+        import types
+
+        so_path = {str(so_path)!r}
+        lib_path = {str(lib_path)!r}
+        candle_path = {str(repo_root / 'src/candle')!r}
+        cython_path = {str(repo_root / 'src/candle/_cython')!r}
+
+        pkg = types.ModuleType('candle')
+        pkg.__path__ = [candle_path]
+        subpkg = types.ModuleType('candle._cython')
+        subpkg.__path__ = [cython_path]
+        sys.modules['candle'] = pkg
+        sys.modules['candle._cython'] = subpkg
+
+        spec = importlib.util.spec_from_file_location('candle._cython._aclnn_ffi', so_path)
+        ffi = importlib.util.module_from_spec(spec)
+        sys.modules['candle._cython._aclnn_ffi'] = ffi
+        spec.loader.exec_module(ffi)
+
+        lib = ctypes.CDLL(lib_path)
+        lib.test_reset_counts()
+        ffi.init([lib_path])
+        getws_ptr, exec_ptr = ffi.resolve_op('Mul')
+        ws_size, executor = ffi.binary_op_no_alpha(
+            getws_ptr,
+            exec_ptr,
+            (3,), (1,),
+            (3,), (1,),
+            (3,), (1,),
+            9,
+            2,
+            1, 2, 3,
+            0,
+        )
+        state = {{
+            'ws_size': int(ws_size),
+            'executor': int(executor),
+            'create': int(lib.test_get_create_tensor_count()),
+            'destroy_before': int(lib.test_get_destroy_tensor_count()),
+            'destroy_executor_before': int(lib.test_get_destroy_executor_count()),
+        }}
+        ffi.destroy_executor(executor)
+        state['destroy_after'] = int(lib.test_get_destroy_tensor_count())
+        state['destroy_executor_after'] = int(lib.test_get_destroy_executor_count())
+        print(json.dumps(state))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"subprocess failed with rc={result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    state = json.loads(result.stdout.strip())
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
 
 def test_scatter_uses_native_ffi(monkeypatch):
     calls = _install_native_ffi_env(monkeypatch)
@@ -3058,6 +3614,123 @@ def test_inplace_zero_uses_native_ffi(monkeypatch):
 
     assert ("resolve_op", "InplaceZero") in calls
     assert ("inplace_unary_op", "getws:InplaceZero", "exec:InplaceZero") in calls
+
+
+def test_ones_zero_symbols_ok_requires_native_inplace_one_zero(monkeypatch):
+    ok_bindings = type(
+        "_FakeBindings",
+        (),
+        {
+            "aclnn_inplace_one_get_workspace": object(),
+            "aclnn_inplace_one": object(),
+            "aclnn_inplace_zero_get_workspace": object(),
+            "aclnn_inplace_zero": object(),
+            "aclnn_inplace_fill_scalar_get_workspace": None,
+            "aclnn_inplace_fill_scalar": None,
+        },
+    )()
+    monkeypatch.setattr(aclnn, "get_bindings", lambda: ok_bindings)
+    assert aclnn.ones_zero_symbols_ok() is True
+
+    missing_zero = type(
+        "_FakeBindingsMissingZero",
+        (),
+        {
+            "aclnn_inplace_one_get_workspace": object(),
+            "aclnn_inplace_one": object(),
+            "aclnn_inplace_zero_get_workspace": None,
+            "aclnn_inplace_zero": object(),
+            "aclnn_inplace_fill_scalar_get_workspace": object(),
+            "aclnn_inplace_fill_scalar": object(),
+        },
+    )()
+    monkeypatch.setattr(aclnn, "get_bindings", lambda: missing_zero)
+    assert aclnn.ones_zero_symbols_ok() is False
+
+
+def test_ones_create_uses_native_inplace_one(monkeypatch):
+    runtime = _FakeRuntime()
+    stream = type("_FakeStream", (), {"stream": 456})()
+    calls = []
+
+    monkeypatch.setattr(npu_creation.npu_runtime, "get_runtime", lambda device_id: runtime)
+    monkeypatch.setattr(npu_creation.npu_state, "current_stream", lambda device_id: stream)
+    monkeypatch.setattr(npu_creation.npu_runtime, "_alloc_device", lambda size, runtime=None: 0xD000 + int(size))
+    monkeypatch.setattr(npu_creation.npu_runtime, "_contiguous_stride", lambda shape: (3, 1))
+    monkeypatch.setattr(npu_creation.aclnn, "ones_zero_symbols_ok", lambda: True)
+    monkeypatch.setattr(
+        npu_creation.aclnn,
+        "inplace_one",
+        lambda ptr, shape, stride, dtype, runtime_arg, stream=None: calls.append(
+            (ptr, shape, stride, dtype, runtime_arg, stream)
+        ),
+    )
+    monkeypatch.setattr(
+        npu_creation,
+        "npu_typed_storage_from_ptr",
+        lambda ptr, size, dtype, device=None: ("storage", ptr, size, dtype, device),
+    )
+    monkeypatch.setattr(
+        npu_creation,
+        "_wrap_tensor",
+        lambda storage, shape, stride, requires_grad: {
+            "storage": storage,
+            "shape": shape,
+            "stride": stride,
+            "requires_grad": requires_grad,
+        },
+    )
+
+    out = npu_creation.ones_create((2, 3), dtype="float16", device="npu:0", requires_grad=True)
+
+    assert calls == [(0xD000 + 12, (2, 3), (3, 1), "float16", runtime, 456)]
+    assert out["storage"] == ("storage", 0xD000 + 12, 6, "float16", "npu:0")
+    assert out["shape"] == (2, 3)
+    assert out["stride"] == (3, 1)
+    assert out["requires_grad"] is True
+
+
+
+def test_zeros_create_uses_native_inplace_zero(monkeypatch):
+    runtime = _FakeRuntime()
+    stream = type("_FakeStream", (), {"stream": 789})()
+    calls = []
+
+    monkeypatch.setattr(npu_creation.npu_runtime, "get_runtime", lambda device_id: runtime)
+    monkeypatch.setattr(npu_creation.npu_state, "current_stream", lambda device_id: stream)
+    monkeypatch.setattr(npu_creation.npu_runtime, "_alloc_device", lambda size, runtime=None: 0xD100 + int(size))
+    monkeypatch.setattr(npu_creation.npu_runtime, "_contiguous_stride", lambda shape: (3, 1))
+    monkeypatch.setattr(npu_creation.aclnn, "ones_zero_symbols_ok", lambda: True)
+    monkeypatch.setattr(
+        npu_creation.aclnn,
+        "inplace_zero",
+        lambda ptr, shape, stride, dtype, runtime_arg, stream=None: calls.append(
+            (ptr, shape, stride, dtype, runtime_arg, stream)
+        ),
+    )
+    monkeypatch.setattr(
+        npu_creation,
+        "npu_typed_storage_from_ptr",
+        lambda ptr, size, dtype, device=None: ("storage", ptr, size, dtype, device),
+    )
+    monkeypatch.setattr(
+        npu_creation,
+        "_wrap_tensor",
+        lambda storage, shape, stride, requires_grad: {
+            "storage": storage,
+            "shape": shape,
+            "stride": stride,
+            "requires_grad": requires_grad,
+        },
+    )
+
+    out = npu_creation.zeros_create((2, 3), dtype="float16", device="npu:0", requires_grad=False)
+
+    assert calls == [(0xD100 + 12, (2, 3), (3, 1), "float16", runtime, 789)]
+    assert out["storage"] == ("storage", 0xD100 + 12, 6, "float16", "npu:0")
+    assert out["shape"] == (2, 3)
+    assert out["stride"] == (3, 1)
+    assert out["requires_grad"] is False
 
 
 def test_inplace_normal_uses_native_ffi(monkeypatch):
@@ -5101,3 +5774,1541 @@ def test_remaining_backward_complex_wrappers_use_native_ffi(
 
     assert ("resolve_op", ffi_name) in calls
     assert (helper_name, f"getws:{ffi_name}", f"exec:{ffi_name}") in calls
+
+
+
+def _run_compiled_executor_cleanup_contract(
+    tmp_path, *, lib_stem, c_source, op_name, ffi_call, destroy_returned_executor=True
+):
+    if sys.platform != "linux":
+        pytest.skip("requires linux shared-library test harness")
+    if shutil.which("gcc") is None:
+        pytest.skip("gcc not available")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    so_path = _compiled_cython_extension_path(repo_root, "_aclnn_ffi")
+    source_path = tmp_path / f"{lib_stem}.c"
+    lib_path = tmp_path / f"lib{lib_stem}.so"
+    source_path.write_text(textwrap.dedent(c_source), encoding="utf-8")
+
+    compile_result = subprocess.run(
+        ["gcc", "-shared", "-fPIC", "-O0", "-o", str(lib_path), str(source_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert compile_result.returncode == 0, compile_result.stderr
+
+    code = textwrap.dedent(
+        f"""
+        import ctypes
+        import importlib.util
+        import json
+        import sys
+        import types
+
+        so_path = {str(so_path)!r}
+        lib_path = {str(lib_path)!r}
+        candle_path = {str(repo_root / 'src/candle')!r}
+        cython_path = {str(repo_root / 'src/candle/_cython')!r}
+
+        pkg = types.ModuleType('candle')
+        pkg.__path__ = [candle_path]
+        subpkg = types.ModuleType('candle._cython')
+        subpkg.__path__ = [cython_path]
+        sys.modules['candle'] = pkg
+        sys.modules['candle._cython'] = subpkg
+
+        spec = importlib.util.spec_from_file_location('candle._cython._aclnn_ffi', so_path)
+        ffi = importlib.util.module_from_spec(spec)
+        sys.modules['candle._cython._aclnn_ffi'] = ffi
+        spec.loader.exec_module(ffi)
+
+        lib = ctypes.CDLL(lib_path)
+
+        def _read_counter(name):
+            try:
+                return int(getattr(lib, name)())
+            except AttributeError:
+                return 0
+
+        lib.test_reset_counts()
+        ffi.init([lib_path])
+        getws_ptr, exec_ptr = ffi.resolve_op({op_name!r})
+        {ffi_call}
+        state = {{
+            'ws_size': int(ws_size),
+            'executor': int(executor),
+            'create': _read_counter('test_get_create_tensor_count'),
+            'destroy_before': _read_counter('test_get_destroy_tensor_count'),
+            'create_int_array': _read_counter('test_get_create_int_array_count'),
+            'destroy_int_array_before': _read_counter('test_get_destroy_int_array_count'),
+            'destroy_executor_before': _read_counter('test_get_destroy_executor_count'),
+        }}
+        if {destroy_returned_executor!r} and int(executor) != 0:
+            ffi.destroy_executor(executor)
+        state['destroy_after'] = _read_counter('test_get_destroy_tensor_count')
+        state['destroy_int_array_after'] = _read_counter('test_get_destroy_int_array_count')
+        state['destroy_executor_after'] = _read_counter('test_get_destroy_executor_count')
+        print(json.dumps(state))
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"subprocess failed with rc={result.returncode}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    return json.loads(result.stdout.strip())
+
+
+def _tensor_cleanup_contract_source(getws_signature, getws_name, exec_name, workspace_size=64):
+    return f"""
+    #include <stdint.h>
+
+    static int g_create_tensor_count = 0;
+    static int g_destroy_tensor_count = 0;
+    static int g_create_int_array_count = 0;
+    static int g_destroy_int_array_count = 0;
+    static int g_destroy_executor_count = 0;
+    static uintptr_t g_next_tensor_handle = 0x1000;
+
+    void* aclCreateTensor(
+        const int64_t* shape, uint64_t ndim, int32_t dtype,
+        const int64_t* stride, int64_t storage_offset, int32_t format,
+        const int64_t* storage_dims, uint64_t storage_ndim, void* data_ptr) {{
+        (void)shape; (void)ndim; (void)dtype; (void)stride;
+        (void)storage_offset; (void)format; (void)storage_dims; (void)storage_ndim; (void)data_ptr;
+        g_create_tensor_count += 1;
+        g_next_tensor_handle += 0x10;
+        return (void*)g_next_tensor_handle;
+    }}
+
+    int32_t aclDestroyTensor(void* tensor) {{
+        if (tensor != 0) {{
+            g_destroy_tensor_count += 1;
+        }}
+        return 0;
+    }}
+
+    void* aclCreateScalar(void* value, int32_t dtype) {{ (void)value; (void)dtype; return (void*)0x2000; }}
+    int32_t aclDestroyScalar(void* scalar) {{ (void)scalar; return 0; }}
+    void* aclCreateIntArray(const int64_t* values, uint64_t size) {{
+        (void)values;
+        (void)size;
+        g_create_int_array_count += 1;
+        return (void*)0x3000;
+    }}
+    int32_t aclDestroyIntArray(void* array) {{
+        if (array != 0) {{
+            g_destroy_int_array_count += 1;
+        }}
+        return 0;
+    }}
+    void* aclCreateBoolArray(const uint8_t* values, uint64_t size) {{ (void)values; (void)size; return (void*)0x4000; }}
+    int32_t aclDestroyBoolArray(void* array) {{ (void)array; return 0; }}
+    void* aclCreateTensorList(void** tensors, uint64_t size) {{ (void)tensors; (void)size; return (void*)0x5000; }}
+    int32_t aclDestroyTensorList(void* tensor_list) {{ (void)tensor_list; return 0; }}
+
+    int32_t aclDestroyAclOpExecutor(void* executor) {{
+        if (executor != 0) {{
+            g_destroy_executor_count += 1;
+        }}
+        return 0;
+    }}
+
+    int32_t {getws_signature} {{
+        *workspace_size = (uint64_t){int(workspace_size)};
+        *executor = (void*)0xBEEF;
+        return 0;
+    }}
+
+    int32_t {exec_name}(void* workspace, uint64_t workspace_size, void* executor, void* stream) {{
+        (void)workspace; (void)workspace_size; (void)executor; (void)stream;
+        return 0;
+    }}
+
+    int test_get_create_tensor_count(void) {{ return g_create_tensor_count; }}
+    int test_get_destroy_tensor_count(void) {{ return g_destroy_tensor_count; }}
+    int test_get_create_int_array_count(void) {{ return g_create_int_array_count; }}
+    int test_get_destroy_int_array_count(void) {{ return g_destroy_int_array_count; }}
+    int test_get_destroy_executor_count(void) {{ return g_destroy_executor_count; }}
+    void test_reset_counts(void) {{
+        g_create_tensor_count = 0;
+        g_destroy_tensor_count = 0;
+        g_create_int_array_count = 0;
+        g_destroy_int_array_count = 0;
+        g_destroy_executor_count = 0;
+        g_next_tensor_handle = 0x1000;
+    }}
+    """
+
+
+def test_binary_op_with_alpha_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_add',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnAddGetWorkspaceSize(void* self, void* other, void* alpha, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnAddGetWorkspaceSize',
+            'aclnnAdd',
+        ),
+        op_name='Add',
+        ffi_call='ws_size, executor = ffi.binary_op_with_alpha(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 9, 2, 1, 2, 3, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_add_defers_alpha_scalar_cleanup_until_executor_destroy(monkeypatch):
+    runtime = _FakeRuntime()
+    calls = []
+
+    class _FakeFfi:
+        def is_initialized(self):
+            return True
+
+        def create_scalar(self, scalar_bytes, dtype_code):
+            handle = 0x2000 + len([entry for entry in calls if entry[0] == 'create_scalar'])
+            calls.append(("create_scalar", handle, dtype_code, bytes(scalar_bytes)))
+            return handle
+
+        def destroy_scalar(self, handle):
+            calls.append(("destroy_scalar", handle))
+
+        def resolve_op(self, op_name):
+            calls.append(("resolve_op", op_name))
+            return (f"getws:{op_name}", f"exec:{op_name}")
+
+        def binary_op_with_alpha(self, getws_ptr, exec_ptr, *args):
+            calls.append(("binary_op_with_alpha", getws_ptr, exec_ptr))
+            return (64, 0xBEEF)
+
+        def execute(self, exec_ptr, workspace_ptr, workspace_size, executor, stream):
+            calls.append(("execute", exec_ptr, workspace_ptr, workspace_size, executor, stream))
+            return 0
+
+    monkeypatch.setattr(aclnn, "acl", None)
+    monkeypatch.setattr(aclnn, "ensure_acl", lambda: _FakeAcl())
+    monkeypatch.setattr(aclnn, "_ffi", _FakeFfi())
+    monkeypatch.setattr(aclnn, "get_bindings", lambda: object())
+    monkeypatch.setattr(aclnn, "_maybe_sync", lambda runtime_arg: None)
+
+    deferred = []
+    monkeypatch.setattr(aclnn, "_defer_executor", lambda executor, cleanup=None: deferred.append((aclnn._executor_handle(executor), cleanup)))
+
+    aclnn.add(
+        1, 2, 3,
+        (3,), (1,),
+        (3,), (1,),
+        (3,), (1,),
+        "float16",
+        runtime,
+    )
+
+    assert any(entry[0] == "binary_op_with_alpha" for entry in calls)
+    assert deferred == [(0xBEEF, [("scalar", 0x2000)])]
+    assert not [entry for entry in calls if entry[0] == "destroy_scalar"]
+
+
+def test_binary_op_with_alpha_fast_path_releases_cleanup_and_returns_null_executor(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_add_fastpath',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnAddGetWorkspaceSize(void* self, void* other, void* alpha, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnAddGetWorkspaceSize',
+            'aclnnAdd',
+            workspace_size=0,
+        ),
+        op_name='Add',
+        ffi_call='ws_size, executor = ffi.binary_op_with_alpha(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 9, 2, 1, 2, 3, 0x2000, 0)',
+        destroy_returned_executor=False,
+    )
+
+    assert state['ws_size'] == 0
+    assert state['executor'] == 0
+    assert state['create'] == 3
+    assert state['destroy_before'] == 3
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 0
+
+
+def test_tensor_list_axis_op_fast_path_defers_cleanup_and_keeps_executor(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_stack_fastpath',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnStackGetWorkspaceSize(void* tensors, int64_t dim, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnStackGetWorkspaceSize',
+            'aclnnStack',
+            workspace_size=0,
+        ),
+        op_name='Stack',
+        ffi_call="ws_size, executor = ffi.tensor_list_axis_op(getws_ptr, exec_ptr, (1, 2), ((4,), (4,)), ((1,), (1,)), ('float16', 'float16'), 1, (4, 2), (2, 1), 9, 2, 3, 0)",
+        destroy_returned_executor=True,
+    )
+
+    assert state['ws_size'] == 0
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_inplace_unary_op_fast_path_releases_cleanup_and_returns_null_executor(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_inplace_one_fastpath',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnInplaceOneGetWorkspaceSize(void* self, uint64_t* workspace_size, void** executor)',
+            'aclnnInplaceOneGetWorkspaceSize',
+            'aclnnInplaceOne',
+            workspace_size=0,
+        ),
+        op_name='InplaceOne',
+        ffi_call='ws_size, executor = ffi.inplace_unary_op(getws_ptr, exec_ptr, (3,), (1,), 9, 2, 1, 0)',
+        destroy_returned_executor=False,
+    )
+
+    assert state['ws_size'] == 0
+    assert state['executor'] == 0
+    assert state['create'] == 1
+    assert state['destroy_before'] == 1
+    assert state['destroy_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 0
+
+
+def test_flush_deferred_executors_releases_cleanup_without_destroying_executor(monkeypatch):
+    calls = []
+
+    class _FakeFfi:
+        def is_initialized(self):
+            return True
+
+        def destroy_executor(self, handle):
+            calls.append(("destroy_executor", handle))
+
+        def destroy_scalar(self, handle):
+            calls.append(("destroy_scalar", handle))
+
+        def destroy_tensor(self, handle):
+            calls.append(("destroy_tensor", handle))
+
+    monkeypatch.setattr(aclnn, "_ffi", _FakeFfi())
+    monkeypatch.setattr(aclnn, "_DEFERRED_EXECUTORS", [0xBEEF])
+    monkeypatch.setattr(aclnn, "_DEFERRED_EXECUTOR_CLEANUP", {0xBEEF: [("scalar", 0x2000), ("tensor", 0x3000)]})
+
+    aclnn.flush_deferred_executors()
+
+    assert ("destroy_scalar", 0x2000) in calls
+    assert ("destroy_tensor", 0x3000) in calls
+    assert not [entry for entry in calls if entry[0] == "destroy_executor"]
+    assert aclnn._DEFERRED_EXECUTORS == []
+    assert aclnn._DEFERRED_EXECUTOR_CLEANUP == {}
+
+
+def test_add_fast_path_destroys_alpha_scalar_immediately_when_executor_is_zero(monkeypatch):
+    runtime = _FakeRuntime()
+    calls = []
+
+    class _FakeFfi:
+        def is_initialized(self):
+            return True
+
+        def create_scalar(self, scalar_bytes, dtype_code):
+            handle = 0x2000
+            calls.append(("create_scalar", handle, dtype_code, bytes(scalar_bytes)))
+            return handle
+
+        def destroy_scalar(self, handle):
+            calls.append(("destroy_scalar", handle))
+
+        def resolve_op(self, op_name):
+            calls.append(("resolve_op", op_name))
+            return (f"getws:{op_name}", f"exec:{op_name}")
+
+        def binary_op_with_alpha(self, getws_ptr, exec_ptr, *args):
+            calls.append(("binary_op_with_alpha", getws_ptr, exec_ptr))
+            return (0, 0)
+
+    monkeypatch.setattr(aclnn, "acl", None)
+    monkeypatch.setattr(aclnn, "ensure_acl", lambda: _FakeAcl())
+    monkeypatch.setattr(aclnn, "_ffi", _FakeFfi())
+    monkeypatch.setattr(aclnn, "get_bindings", lambda: object())
+    monkeypatch.setattr(aclnn, "_maybe_sync", lambda runtime_arg: None)
+
+    aclnn.add(
+        1, 2, 3,
+        (3,), (1,),
+        (3,), (1,),
+        (3,), (1,),
+        "float16",
+        runtime,
+    )
+
+    assert any(entry[0] == "binary_op_with_alpha" for entry in calls)
+    assert ("destroy_scalar", 0x2000) in calls
+    assert not aclnn._DEFERRED_EXECUTORS
+
+
+def test_unary_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_relu',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnReluGetWorkspaceSize(void* self, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnReluGetWorkspaceSize',
+            'aclnnRelu',
+        ),
+        op_name='Relu',
+        ffi_call='ws_size, executor = ffi.unary_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_arg_reduce_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_argmax',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnArgMaxGetWorkspaceSize(void* self, int64_t dim, int keepdim, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnArgMaxGetWorkspaceSize',
+            'aclnnArgMax',
+        ),
+        op_name='ArgMax',
+        ffi_call='ws_size, executor = ffi.arg_reduce_op(getws_ptr, exec_ptr, (3, 4), (4, 1), (3,), (1,), 1, False, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_cast_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_cast',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnCastGetWorkspaceSize(void* self, int32_t dtype, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnCastGetWorkspaceSize',
+            'aclnnCast',
+        ),
+        op_name='Cast',
+        ffi_call='ws_size, executor = ffi.cast_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 6, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_scalar_op_with_alpha_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_adds',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnAddsGetWorkspaceSize(void* self, void* scalar, void* alpha, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnAddsGetWorkspaceSize',
+            'aclnnAdds',
+        ),
+        op_name='Adds',
+        ffi_call='ws_size, executor = ffi.tensor_scalar_op_with_alpha(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 2, 1, 2, 0x2000, 0x2001, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_scalar_op_no_alpha_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_subs',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnSubsGetWorkspaceSize(void* self, void* scalar, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnSubsGetWorkspaceSize',
+            'aclnnSubs',
+        ),
+        op_name='Subs',
+        ffi_call='ws_size, executor = ffi.tensor_scalar_op_no_alpha(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 2, 1, 2, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_scalar_dtype_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_cumprod',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnCumprodGetWorkspaceSize(void* self, void* scalar, int32_t out_dtype, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnCumprodGetWorkspaceSize',
+            'aclnnCumprod',
+        ),
+        op_name='Cumprod',
+        ffi_call='ws_size, executor = ffi.tensor_scalar_dtype_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 9, 2, 1, 2, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_axis_unary_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_tril',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnTrilGetWorkspaceSize(void* self, int64_t diagonal, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnTrilGetWorkspaceSize',
+            'aclnnTril',
+        ),
+        op_name='Tril',
+        ffi_call='ws_size, executor = ffi.axis_unary_op(getws_ptr, exec_ptr, (3, 3), (3, 1), (3, 3), (3, 1), -1, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_reduce_dims_dtype_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_reduce_nansum',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnReduceNansumGetWorkspaceSize(void* self, void* dims, int keepdim, int32_t out_dtype, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnReduceNansumGetWorkspaceSize',
+            'aclnnReduceNansum',
+        ),
+        op_name='ReduceNansum',
+        ffi_call='ws_size, executor = ffi.reduce_dims_dtype_op(getws_ptr, exec_ptr, (3, 4), (4, 1), (3,), (1,), (1,), False, 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['create_int_array'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_reduce_all_dtype_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_prod',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnProdGetWorkspaceSize(void* self, int32_t out_dtype, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnProdGetWorkspaceSize',
+            'aclnnProd',
+        ),
+        op_name='Prod',
+        ffi_call='ws_size, executor = ffi.reduce_all_dtype_op(getws_ptr, exec_ptr, (3,), (1,), (1,), (1,), 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_scalar_bool_out_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_gt_scalar',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnGtScalarGetWorkspaceSize(void* self, void* scalar, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnGtScalarGetWorkspaceSize',
+            'aclnnGtScalar',
+        ),
+        op_name='GtScalar',
+        ffi_call='ws_size, executor = ffi.tensor_scalar_bool_out_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 2, 1, 2, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_inplace_fill_scalar_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_inplace_fill_scalar',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnInplaceFillScalarGetWorkspaceSize(void* self, void* scalar, uint64_t* workspace_size, void** executor)',
+            'aclnnInplaceFillScalarGetWorkspaceSize',
+            'aclnnInplaceFillScalar',
+        ),
+        op_name='InplaceFillScalar',
+        ffi_call='ws_size, executor = ffi.inplace_fill_scalar_op(getws_ptr, exec_ptr, (3,), (1,), 9, 2, 1, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_inplace_unary_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_inplace_one',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnInplaceOneGetWorkspaceSize(void* self, uint64_t* workspace_size, void** executor)',
+            'aclnnInplaceOneGetWorkspaceSize',
+            'aclnnInplaceOne',
+        ),
+        op_name='InplaceOne',
+        ffi_call='ws_size, executor = ffi.inplace_unary_op(getws_ptr, exec_ptr, (3,), (1,), 9, 2, 1, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+
+def test_inplace_copy_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_inplace_copy',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnInplaceCopyGetWorkspaceSize(void* dst, void* src, uint64_t* workspace_size, void** executor)',
+            'aclnnInplaceCopyGetWorkspaceSize',
+            'aclnnInplaceCopy',
+        ),
+        op_name='InplaceCopy',
+        ffi_call='ws_size, executor = ffi.inplace_copy_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+
+def test_inplace_masked_fill_scalar_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_inplace_masked_fill_scalar',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnInplaceMaskedFillScalarGetWorkspaceSize(void* self, void* mask, void* scalar, uint64_t* workspace_size, void** executor)',
+            'aclnnInplaceMaskedFillScalarGetWorkspaceSize',
+            'aclnnInplaceMaskedFillScalar',
+        ),
+        op_name='InplaceMaskedFillScalar',
+        ffi_call='ws_size, executor = ffi.inplace_masked_fill_scalar_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 12, 2, 1, 2, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+
+def test_inplace_index_fill_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_inplace_index_fill',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnInplaceIndexFillGetWorkspaceSize(void* self, int64_t dim, void* index, void* scalar, uint64_t* workspace_size, void** executor)',
+            'aclnnInplaceIndexFillGetWorkspaceSize',
+            'aclnnInplaceIndexFill',
+        ),
+        op_name='InplaceIndexFill',
+        ffi_call='ws_size, executor = ffi.inplace_index_fill_op(getws_ptr, exec_ptr, (3, 4), (4, 1), (2,), (1,), 1, 9, 3, 2, 1, 2, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+
+def test_inplace_index_copy_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_inplace_index_copy',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnInplaceIndexCopyGetWorkspaceSize(void* self, int64_t dim, void* index, void* source, uint64_t* workspace_size, void** executor)',
+            'aclnnInplaceIndexCopyGetWorkspaceSize',
+            'aclnnInplaceIndexCopy',
+        ),
+        op_name='InplaceIndexCopy',
+        ffi_call='ws_size, executor = ffi.inplace_index_copy_op(getws_ptr, exec_ptr, (3, 4), (4, 1), (2,), (1,), (3, 2), (2, 1), 1, 9, 3, 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_int_array_two_bools_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_var',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnVarGetWorkspaceSize(void* self, void* dims, int unbiased, int keepdim, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnVarGetWorkspaceSize',
+            'aclnnVar',
+        ),
+        op_name='Var',
+        ffi_call='ws_size, executor = ffi.tensor_int_array_two_bools_op(getws_ptr, exec_ptr, (3, 4), (4, 1), (3,), (1,), (1,), True, False, 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['create_int_array'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_scalar_int_array_bool_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_norm',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnNormGetWorkspaceSize(void* self, void* scalar, void* dims, int keepdim, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnNormGetWorkspaceSize',
+            'aclnnNorm',
+        ),
+        op_name='Norm',
+        ffi_call='ws_size, executor = ffi.tensor_scalar_int_array_bool_op(getws_ptr, exec_ptr, (3, 4), (4, 1), (3,), (1,), (1,), False, 9, 9, 2, 1, 2, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['create_int_array'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_int_array_bool_two_doubles_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_upsample_bilinear2d',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnUpsampleBilinear2dGetWorkspaceSize(void* self, void* output_size, int align_corners, double scales_h, double scales_w, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnUpsampleBilinear2dGetWorkspaceSize',
+            'aclnnUpsampleBilinear2d',
+        ),
+        op_name='UpsampleBilinear2d',
+        ffi_call='ws_size, executor = ffi.tensor_int_array_bool_two_doubles_op(getws_ptr, exec_ptr, (1, 1, 3, 3), (9, 9, 3, 1), (1, 1, 6, 6), (36, 36, 6, 1), (6, 6), True, 2.0, 2.0, 9, 9, 0, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['create_int_array'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+
+
+
+
+
+
+
+
+def test_unary_two_bools_two_outputs_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_unique2',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnUnique2GetWorkspaceSize(void* self, int flag_a, int flag_b, void* out, void* inverse, uint64_t* workspace_size, void** executor)',
+            'aclnnUnique2GetWorkspaceSize',
+            'aclnnUnique2',
+        ),
+        op_name='Unique2',
+        ffi_call='ws_size, executor = ffi.unary_two_bools_two_outputs_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), True, False, 9, 9, 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_output_tensor_three_scalars_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_linspace',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnLinspaceGetWorkspaceSize(void* scalar_a, void* scalar_b, void* scalar_c, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnLinspaceGetWorkspaceSize',
+            'aclnnLinspace',
+        ),
+        op_name='Linspace',
+        ffi_call='ws_size, executor = ffi.output_tensor_three_scalars_op(getws_ptr, exec_ptr, (3,), (1,), 9, 2, 1, 0x2000, 0x2001, 0x2002, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_output_tensor_two_ints_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_arange2',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnArange2GetWorkspaceSize(int64_t value_a, int64_t value_b, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnArange2GetWorkspaceSize',
+            'aclnnArange2',
+        ),
+        op_name='Arange2',
+        ffi_call='ws_size, executor = ffi.output_tensor_two_ints_op(getws_ptr, exec_ptr, (3,), (1,), 0, 10, 9, 2, 1, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_output_tensor_three_ints_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_arange3',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnArange3GetWorkspaceSize(int64_t value_a, int64_t value_b, int64_t value_c, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnArange3GetWorkspaceSize',
+            'aclnnArange3',
+        ),
+        op_name='Arange3',
+        ffi_call='ws_size, executor = ffi.output_tensor_three_ints_op(getws_ptr, exec_ptr, (3,), (1,), 0, 10, 2, 9, 2, 1, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_int_array_two_outputs_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_min_dim',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnMinDimGetWorkspaceSize(void* self, void* dims, void* out_a, void* out_b, uint64_t* workspace_size, void** executor)',
+            'aclnnMinDimGetWorkspaceSize',
+            'aclnnMinDim',
+        ),
+        op_name='MinDim',
+        ffi_call='ws_size, executor = ffi.tensor_int_array_two_outputs_op(getws_ptr, exec_ptr, (3, 4), (4, 1), (3,), (1,), (3,), (1,), (1,), 9, 9, 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['create_int_array'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_int_array_bool_two_outputs_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_topk2',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnTopk2GetWorkspaceSize(void* self, void* dims, int keepdim, void* out_a, void* out_b, uint64_t* workspace_size, void** executor)',
+            'aclnnTopk2GetWorkspaceSize',
+            'aclnnTopk2',
+        ),
+        op_name='Topk2',
+        ffi_call='ws_size, executor = ffi.tensor_int_array_bool_two_outputs_op(getws_ptr, exec_ptr, (3, 4), (4, 1), (3,), (1,), (3,), (1,), (1,), False, 9, 9, 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['create_int_array'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_three_tensor_two_outputs_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_batch_norm_stats',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnBatchNormStatsGetWorkspaceSize(void* a, void* b, void* c, void* out_a, void* out_b, uint64_t* workspace_size, void** executor)',
+            'aclnnBatchNormStatsGetWorkspaceSize',
+            'aclnnBatchNormStats',
+        ),
+        op_name='BatchNormStats',
+        ffi_call='ws_size, executor = ffi.three_tensor_two_outputs_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), (3,), (1,), (3,), (1,), 9, 9, 9, 9, 9, 2, 1, 2, 3, 4, 5, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 5
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 5
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+def test_four_tensor_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_addcmul',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnAddcmulGetWorkspaceSize(void* a, void* b, void* c, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnAddcmulGetWorkspaceSize',
+            'aclnnAddcmul',
+        ),
+        op_name='Addcmul',
+        ffi_call='ws_size, executor = ffi.four_tensor_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), (3,), (1,), 9, 9, 9, 9, 2, 1, 2, 3, 4, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 4
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 4
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_two_tensor_two_scalars_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_hypot',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnHypotGetWorkspaceSize(void* a, void* b, void* scalar_a, void* scalar_b, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnHypotGetWorkspaceSize',
+            'aclnnHypot',
+        ),
+        op_name='Hypot',
+        ffi_call='ws_size, executor = ffi.two_tensor_two_scalars_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 9, 9, 9, 2, 1, 2, 3, 0x2000, 0x2001, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_two_tensor_scalar_bool_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_smooth_l1_loss_backward',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnSmoothL1LossBackwardGetWorkspaceSize(void* a, void* b, void* scalar, int flag, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnSmoothL1LossBackwardGetWorkspaceSize',
+            'aclnnSmoothL1LossBackward',
+        ),
+        op_name='SmoothL1LossBackward',
+        ffi_call='ws_size, executor = ffi.two_tensor_scalar_bool_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 9, 9, 9, 2, 1, 2, 3, 0x2000, True, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_two_tensor_three_scalars_bool_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_huber_loss_backward',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnHuberLossBackwardGetWorkspaceSize(void* a, void* scalar_a, void* scalar_b, void* scalar_c, int flag, void* b, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnHuberLossBackwardGetWorkspaceSize',
+            'aclnnHuberLossBackward',
+        ),
+        op_name='HuberLossBackward',
+        ffi_call='ws_size, executor = ffi.two_tensor_three_scalars_bool_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 9, 9, 9, 2, 1, 2, 3, 0x2000, 0x2001, 0x2002, False, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_two_tensor_scalar_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_addcdiv',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnAddcdivGetWorkspaceSize(void* a, void* b, void* scalar, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnAddcdivGetWorkspaceSize',
+            'aclnnAddcdiv',
+        ),
+        op_name='Addcdiv',
+        ffi_call='ws_size, executor = ffi.two_tensor_scalar_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 9, 9, 9, 2, 1, 2, 3, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_two_tensor_one_double_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_special_zeta',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnSpecialZetaGetWorkspaceSize(void* a, void* b, double scalar_value, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnSpecialZetaGetWorkspaceSize',
+            'aclnnSpecialZeta',
+        ),
+        op_name='SpecialZeta',
+        ffi_call='ws_size, executor = ffi.two_tensor_one_double_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 0.5, 9, 9, 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_three_tensor_scalar_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_addcmul_scalar',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnAddcmulScalarGetWorkspaceSize(void* a, void* b, void* c, void* scalar, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnAddcmulScalarGetWorkspaceSize',
+            'aclnnAddcmulScalar',
+        ),
+        op_name='AddcmulScalar',
+        ffi_call='ws_size, executor = ffi.three_tensor_scalar_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), (3,), (1,), 9, 9, 9, 9, 2, 1, 2, 3, 4, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 4
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 4
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+def test_tensor_two_int_arrays_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_slice_scatter',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnSliceScatterGetWorkspaceSize(void* self, void* first, void* second, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnSliceScatterGetWorkspaceSize',
+            'aclnnSliceScatter',
+        ),
+        op_name='SliceScatter',
+        ffi_call='ws_size, executor = ffi.tensor_two_int_arrays_op(getws_ptr, exec_ptr, (2, 3, 4), (12, 4, 1), (0, 2), (1, 3), (2, 3, 4), (12, 4, 1), 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['create_int_array'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_four_int_arrays_two_ints_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_grid_sampler2d',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnGridSampler2dGetWorkspaceSize(void* self, void* first, void* second, int64_t value_a, void* third, void* fourth, int64_t value_b, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnGridSampler2dGetWorkspaceSize',
+            'aclnnGridSampler2d',
+        ),
+        op_name='GridSampler2d',
+        ffi_call='ws_size, executor = ffi.tensor_four_int_arrays_two_ints_op(getws_ptr, exec_ptr, (1, 3, 8, 8), (192, 64, 8, 1), (8, 8), (0, 0), (0, 0), (1, 1), (1, 3, 8, 8), (192, 64, 8, 1), 0, 1, 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['create_int_array'] == 4
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 4
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_three_int_arrays_two_bools_int64_int8_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_grid_sampler3d',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnGridSampler3dGetWorkspaceSize(void* self, void* first, void* second, void* third, int flag_a, int flag_b, int64_t value_a, int8_t value_b, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnGridSampler3dGetWorkspaceSize',
+            'aclnnGridSampler3d',
+        ),
+        op_name='GridSampler3d',
+        ffi_call='ws_size, executor = ffi.tensor_three_int_arrays_two_bools_int64_int8_op(getws_ptr, exec_ptr, (1, 3, 8, 8, 8), (1536, 512, 64, 8, 1), (8, 8, 8), (0, 0, 0), (1, 1, 1), (1, 3, 8, 8, 8), (1536, 512, 64, 8, 1), True, False, 1, 0, 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['create_int_array'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_four_int_arrays_bool_two_outputs_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_unique_dim',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnUniqueDimGetWorkspaceSize(void* self, void* first, void* second, void* third, void* fourth, int flag, void* out_a, void* out_b, uint64_t* workspace_size, void** executor)',
+            'aclnnUniqueDimGetWorkspaceSize',
+            'aclnnUniqueDim',
+        ),
+        op_name='UniqueDim',
+        ffi_call='ws_size, executor = ffi.tensor_four_int_arrays_bool_two_outputs_op(getws_ptr, exec_ptr, (2, 3, 4), (12, 4, 1), (0,), (1,), (2,), (3,), (2, 3, 4), (12, 4, 1), (2, 3, 4), (12, 4, 1), False, 9, 9, 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['create_int_array'] == 4
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 4
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_four_tensor_three_int_arrays_two_bools_int64_int8_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_grid_sampler3d_backward',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnGridSampler3dBackwardGetWorkspaceSize(void* a, void* b, void* first, void* second, void* third, int flag_a, int flag_b, int64_t value_a, int8_t value_b, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnGridSampler3dBackwardGetWorkspaceSize',
+            'aclnnGridSampler3dBackward',
+        ),
+        op_name='GridSampler3dBackward',
+        ffi_call='ws_size, executor = ffi.four_tensor_three_int_arrays_two_bools_int64_int8_op(getws_ptr, exec_ptr, (1, 3, 8, 8, 8), (1536, 512, 64, 8, 1), (1, 3, 8, 8, 8), (1536, 512, 64, 8, 1), (1, 3, 8, 8, 8), (1536, 512, 64, 8, 1), (8, 8, 8), (0, 0, 0), (1, 1, 1), True, False, 1, 0, 9, 9, 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['create_int_array'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_four_tensor_four_int_arrays_bool_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_roll_backward',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnRollBackwardGetWorkspaceSize(void* a, void* b, void* c, void* first, void* second, void* third, void* fourth, int flag, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnRollBackwardGetWorkspaceSize',
+            'aclnnRollBackward',
+        ),
+        op_name='RollBackward',
+        ffi_call='ws_size, executor = ffi.four_tensor_four_int_arrays_bool_op(getws_ptr, exec_ptr, (2, 3, 4), (12, 4, 1), (2, 3, 4), (12, 4, 1), (2, 3, 4), (12, 4, 1), (2, 3, 4), (12, 4, 1), (1,), (2,), (3,), (4,), True, 9, 9, 9, 9, 2, 1, 2, 3, 4, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 4
+    assert state['create_int_array'] == 4
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 4
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 4
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+def test_tensor_two_scalars_dim_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_hardtanh',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnHardtanhGetWorkspaceSize(void* self, void* min_val, int64_t dim, void* max_val, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnHardtanhGetWorkspaceSize',
+            'aclnnHardtanh',
+        ),
+        op_name='Hardtanh',
+        ffi_call='ws_size, executor = ffi.tensor_two_scalars_dim_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 0, 9, 9, 2, 1, 2, 0x2000, 0x2001, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_three_scalars_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_hardsigmoid',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnHardsigmoidGetWorkspaceSize(void* self, void* scalar_a, void* scalar_b, void* scalar_c, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnHardsigmoidGetWorkspaceSize',
+            'aclnnHardsigmoid',
+        ),
+        op_name='Hardsigmoid',
+        ffi_call='ws_size, executor = ffi.tensor_three_scalars_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 9, 2, 1, 2, 0x2000, 0x2001, 0x2002, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_int_array_scalar_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_pad_v3',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnPadV3GetWorkspaceSize(void* self, void* pad, void* scalar, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnPadV3GetWorkspaceSize',
+            'aclnnPadV3',
+        ),
+        op_name='PadV3',
+        ffi_call='ws_size, executor = ffi.tensor_int_array_scalar_op(getws_ptr, exec_ptr, (3, 4), (4, 1), (1, 1, 2, 2), (5, 8), (8, 1), 9, 9, 2, 1, 2, 0x2000, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['create_int_array'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_optional_tensor_int_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_embedding_renorm',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnEmbeddingRenormGetWorkspaceSize(void* self, void* optional, int64_t scalar, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnEmbeddingRenormGetWorkspaceSize',
+            'aclnnEmbeddingRenorm',
+        ),
+        op_name='EmbeddingRenorm',
+        ffi_call='ws_size, executor = ffi.optional_tensor_int_op(getws_ptr, exec_ptr, (8, 16), (16, 1), (4,), (1,), (8, 16), (16, 1), 2, 9, 2, 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_tensor_int_array_three_ints_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_movedim',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnMovedimGetWorkspaceSize(void* self, void* dims, int64_t value_a, int64_t value_b, int64_t value_c, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnMovedimGetWorkspaceSize',
+            'aclnnMovedim',
+        ),
+        op_name='Movedim',
+        ffi_call='ws_size, executor = ffi.tensor_int_array_three_ints_op(getws_ptr, exec_ptr, (2, 3, 4), (12, 4, 1), (0, 2), (2, 3, 4), (12, 4, 1), 1, 2, 3, 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['create_int_array'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_slice_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_slice',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnSliceGetWorkspaceSize(void* self, int64_t dim, int64_t start, int64_t end, int64_t step, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnSliceGetWorkspaceSize',
+            'aclnnSlice',
+        ),
+        op_name='Slice',
+        ffi_call='ws_size, executor = ffi.slice_op(getws_ptr, exec_ptr, (4, 4), (4, 1), (4, 2), (2, 1), 1, 0, 2, 1, 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_index_add_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_index_add',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnIndexAddGetWorkspaceSize(void* self, int64_t dim, void* index, void* source, void* alpha, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnIndexAddGetWorkspaceSize',
+            'aclnnIndexAdd',
+        ),
+        op_name='IndexAdd',
+        ffi_call='ws_size, executor = ffi.index_add_op(getws_ptr, exec_ptr, (4, 4), (4, 1), (2,), (1,), (2, 4), (4, 1), (4, 4), (4, 1), 0, 9, 4, 9, 9, 2, 1, 2, 3, 0x2000, 4, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 4
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 4
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_scatter_add_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_scatter_add',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnScatterAddGetWorkspaceSize(void* self, int64_t dim, void* index, void* src, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnScatterAddGetWorkspaceSize',
+            'aclnnScatterAdd',
+        ),
+        op_name='ScatterAdd',
+        ffi_call='ws_size, executor = ffi.scatter_add_op(getws_ptr, exec_ptr, (4, 4), (4, 1), (4, 4), (4, 1), (4, 4), (4, 1), (4, 4), (4, 1), 0, 9, 4, 9, 9, 2, 1, 2, 3, 4, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 4
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 4
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_scatter_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_scatter',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnScatterGetWorkspaceSize(void* self, int64_t dim, void* index, void* src, int64_t reduce, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnScatterGetWorkspaceSize',
+            'aclnnScatter',
+        ),
+        op_name='Scatter',
+        ffi_call='ws_size, executor = ffi.ternary_two_inputs_with_dims_op(getws_ptr, exec_ptr, (4, 4), (4, 1), (4, 4), (4, 1), (4, 4), (4, 1), (4, 4), (4, 1), 0, 0, 9, 4, 9, 9, 2, 1, 2, 3, 4, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 4
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 4
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+
+def test_two_tensor_ints_bool_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_gather',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnGatherGetWorkspaceSize(void* first, void* second, int64_t value_a, int flag, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnGatherGetWorkspaceSize',
+            'aclnnGather',
+        ),
+        op_name='Gather',
+        ffi_call='ws_size, executor = ffi.two_tensor_ints_bool_op(getws_ptr, exec_ptr, (2, 3), (3, 1), (2, 3), (3, 1), (2, 3), (3, 1), 1, True, 9, 2, 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 3
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+def test_tensor_int_array_bool_double_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_upsample_linear1d',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnUpsampleLinear1dGetWorkspaceSize(void* self, void* output_size, int align_corners, double scales, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnUpsampleLinear1dGetWorkspaceSize',
+            'aclnnUpsampleLinear1d',
+        ),
+        op_name='UpsampleLinear1d',
+        ffi_call='ws_size, executor = ffi.tensor_int_array_bool_double_op(getws_ptr, exec_ptr, (1, 1, 3), (3, 3, 1), (1, 1, 6), (6, 6, 1), (6,), False, 2.0, 9, 9, 2, 1, 2, 0)',
+    )
+
+    assert state['ws_size'] == 64
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['create_int_array'] == 1
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_int_array_before'] == 0
+    assert state['destroy_int_array_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1

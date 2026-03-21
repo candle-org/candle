@@ -42,6 +42,7 @@ _BINDINGS = None
 _ACLNN_INITIALIZED = False
 _ACLNN_FINALIZED = False
 _DEFERRED_EXECUTORS = []
+_DEFERRED_EXECUTOR_CLEANUP = {}
 _CLEANUP_REGISTERED = False
 
 
@@ -522,6 +523,45 @@ class AclnnBindings:
         self.aclnn_repeat_interleave_int_with_dim = _optional_symbol(
             libs,
             "aclnnRepeatInterleaveIntWithDim",
+            ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
+        )
+        self.aclnn_repeat_interleave_get_workspace = _optional_symbol(
+            libs,
+            "aclnnRepeatInterleaveGetWorkspaceSize",
+            ctypes.c_int32,
+            [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_int64,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_uint64),
+                ctypes.POINTER(ctypes.c_void_p),
+            ],
+        )
+        self.aclnn_repeat_interleave = _optional_symbol(
+            libs,
+            "aclnnRepeatInterleave",
+            ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
+        )
+        self.aclnn_repeat_interleave_with_dim_get_workspace = _optional_symbol(
+            libs,
+            "aclnnRepeatInterleaveWithDimGetWorkspaceSize",
+            ctypes.c_int32,
+            [
+                ctypes.c_void_p,
+                ctypes.c_void_p,
+                ctypes.c_int64,
+                ctypes.c_int64,
+                ctypes.c_void_p,
+                ctypes.POINTER(ctypes.c_uint64),
+                ctypes.POINTER(ctypes.c_void_p),
+            ],
+        )
+        self.aclnn_repeat_interleave_with_dim = _optional_symbol(
+            libs,
+            "aclnnRepeatInterleaveWithDim",
             ctypes.c_int32,
             [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
         )
@@ -4203,31 +4243,76 @@ def _register_cleanup():
     _CLEANUP_REGISTERED = True
 
 
+def _executor_handle(executor):
+    if executor is None:
+        return 0
+    value = getattr(executor, "value", executor)
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _apply_deferred_cleanup(cleanup):
+    if cleanup is None:
+        return
+    for kind, resource in cleanup:
+        try:
+            if _ffi is None or not _ffi.is_initialized():
+                continue
+            if kind == "tensor":
+                _ffi.destroy_tensor(int(resource))
+            elif kind == "scalar":
+                _ffi.destroy_scalar(int(resource))
+        except Exception:
+            pass
+
+
+def _run_deferred_executor_cleanup(handle):
+    cleanup = _DEFERRED_EXECUTOR_CLEANUP.pop(handle, None)
+    _apply_deferred_cleanup(cleanup)
+
+
+def _register_deferred_executor_cleanup(executor, cleanup):
+    handle = _executor_handle(executor)
+    if handle == 0 or not cleanup:
+        return
+    _register_cleanup()
+    _DEFERRED_EXECUTOR_CLEANUP.setdefault(handle, []).extend(cleanup)
+
+
+def _destroy_deferred_executor(executor):
+    handle = _executor_handle(executor)
+    if handle == 0:
+        return
+    _run_deferred_executor_cleanup(handle)
+
+
 def _cleanup_aclnn():
     global _ACLNN_FINALIZED, _DEFERRED_EXECUTORS
     if _ACLNN_FINALIZED:
         return
-    bindings = _BINDINGS
-    if bindings is not None:
-        for executor in _DEFERRED_EXECUTORS:
-            try:
-                bindings.acl_destroy_executor(executor)
-            except Exception:
-                pass
-        _DEFERRED_EXECUTORS = []
+    for executor in _DEFERRED_EXECUTORS:
+        try:
+            _destroy_deferred_executor(executor)
+        except Exception:
+            pass
+    _DEFERRED_EXECUTORS = []
     _ACLNN_FINALIZED = True
 
 
-def _defer_executor(executor):
-    if not executor:
-        return
-    try:
-        if int(executor) == 0:
-            return
-    except Exception:
+def _defer_executor(executor, cleanup=None):
+    handle = _executor_handle(executor)
+    if handle == 0:
+        if cleanup:
+            _apply_deferred_cleanup(cleanup)
         return
     _register_cleanup()
-    _DEFERRED_EXECUTORS.append(executor)
+    if cleanup:
+        _register_deferred_executor_cleanup(handle, cleanup)
+    _DEFERRED_EXECUTORS.append(handle)
 
 
 def flush_deferred_executors():
@@ -4241,14 +4326,11 @@ def flush_deferred_executors():
     global _DEFERRED_EXECUTORS  # pylint: disable=global-statement
     if not _DEFERRED_EXECUTORS:
         return
-    bindings = _BINDINGS
-    if bindings is None:
-        return
     executors = _DEFERRED_EXECUTORS
     _DEFERRED_EXECUTORS = []
     for executor in executors:
         try:
-            bindings.acl_destroy_executor(executor)
+            _destroy_deferred_executor(executor)
         except Exception:
             pass
 
@@ -4325,8 +4407,10 @@ def add(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
                 raise RuntimeError(f"aclnnAdd failed: {ret}")
         _maybe_sync(runtime)
     finally:
-        _defer_executor(ctypes.c_void_p(executor))
-        _ffi.destroy_scalar(alpha_handle)
+        cleanup = [("scalar", int(alpha_handle))] if int(alpha_handle) != 0 else None
+        _defer_executor(ctypes.c_void_p(executor), cleanup=cleanup)
+        if cleanup is None:
+            _ffi.destroy_scalar(alpha_handle)
         if workspace is not None:
             runtime.defer_raw_free(workspace)
 
@@ -4404,8 +4488,10 @@ def sub(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, othe
                 raise RuntimeError(f"aclnnSub failed: {ret}")
         _maybe_sync(runtime)
     finally:
-        _defer_executor(ctypes.c_void_p(executor))
-        _ffi.destroy_scalar(alpha_handle)
+        cleanup = [("scalar", int(alpha_handle))] if int(alpha_handle) != 0 else None
+        _defer_executor(ctypes.c_void_p(executor), cleanup=cleanup)
+        if cleanup is None:
+            _ffi.destroy_scalar(alpha_handle)
         if workspace is not None:
             runtime.defer_raw_free(workspace)
 
@@ -4482,9 +4568,17 @@ def add_scalar(self_ptr, scalar_value, out_ptr, shape, stride, dtype, runtime, s
                 raise RuntimeError(f"aclnnAdds failed: {ret}")
         _maybe_sync(runtime)
     finally:
-        _defer_executor(ctypes.c_void_p(executor))
-        _ffi.destroy_scalar(scalar_handle)
-        _ffi.destroy_scalar(alpha_handle)
+        cleanup = []
+        if int(scalar_handle) != 0:
+            cleanup.append(("scalar", int(scalar_handle)))
+        if int(alpha_handle) != 0:
+            cleanup.append(("scalar", int(alpha_handle)))
+        _defer_executor(ctypes.c_void_p(executor), cleanup=cleanup or None)
+        if not cleanup:
+            if int(scalar_handle) != 0:
+                _ffi.destroy_scalar(scalar_handle)
+            if int(alpha_handle) != 0:
+                _ffi.destroy_scalar(alpha_handle)
         if workspace is not None:
             runtime.defer_raw_free(workspace)
 
@@ -5835,6 +5929,144 @@ def repeat(self_ptr, out_ptr, shape, stride, dtype, repeats, out_shape, out_stri
         _maybe_sync(runtime)
     finally:
         _defer_executor(ctypes.c_void_p(executor))
+        if workspace is not None:
+            runtime.defer_raw_free(workspace)
+
+
+def _destroy_tensor_handles(handles):
+    if _ffi is None:
+        return
+    for handle in handles:
+        if handle:
+            _ffi.destroy_tensor(int(handle))
+
+
+def repeat_interleave_tensor(
+    self_ptr,
+    repeats_ptr,
+    out_ptr,
+    shape,
+    stride,
+    dtype,
+    repeats_shape,
+    repeats_stride,
+    repeats_dtype,
+    dim,
+    output_size,
+    out_shape,
+    out_stride,
+    runtime,
+    stream=None,
+):
+    global acl
+    if acl is None:
+        acl = ensure_acl()
+    bindings = get_bindings()
+
+    use_dim = dim is not None
+    if use_dim:
+        if (
+            bindings.aclnn_repeat_interleave_with_dim_get_workspace is None
+            or bindings.aclnn_repeat_interleave_with_dim is None
+        ):
+            raise RuntimeError("aclnnRepeatInterleaveWithDim symbols not available")
+    else:
+        if (
+            bindings.aclnn_repeat_interleave_get_workspace is None
+            or bindings.aclnn_repeat_interleave is None
+        ):
+            raise RuntimeError("aclnnRepeatInterleave symbols not available")
+
+    stream_ptr = int(runtime.stream if stream is None else stream)
+    dtype_code = _dtype_to_acl(dtype)
+    repeats_dtype_code = _dtype_to_acl(repeats_dtype)
+
+    _require_native_npu_ffi("repeat_interleave_tensor")
+    executor = ctypes.c_void_p()
+    workspace_size = ctypes.c_uint64(0)
+    workspace = None
+    self_handle = 0
+    repeats_handle = 0
+    out_handle = 0
+    try:
+        self_handle = _ffi.create_tensor(shape, stride, dtype_code, int(self_ptr), _ACL_FORMAT_ND)
+        repeats_handle = _ffi.create_tensor(
+            repeats_shape, repeats_stride, repeats_dtype_code, int(repeats_ptr), _ACL_FORMAT_ND
+        )
+        out_handle = _ffi.create_tensor(out_shape, out_stride, dtype_code, int(out_ptr), _ACL_FORMAT_ND)
+
+        if use_dim:
+            ret = bindings.aclnn_repeat_interleave_with_dim_get_workspace(
+                ctypes.c_void_p(int(self_handle)),
+                ctypes.c_void_p(int(repeats_handle)),
+                ctypes.c_int64(int(dim)),
+                ctypes.c_int64(int(output_size)),
+                ctypes.c_void_p(int(out_handle)),
+                ctypes.byref(workspace_size),
+                ctypes.byref(executor),
+            )
+        else:
+            ret = bindings.aclnn_repeat_interleave_get_workspace(
+                ctypes.c_void_p(int(self_handle)),
+                ctypes.c_void_p(int(repeats_handle)),
+                ctypes.c_int64(int(output_size)),
+                ctypes.c_void_p(int(out_handle)),
+                ctypes.byref(workspace_size),
+                ctypes.byref(executor),
+            )
+        if ret != 0:
+            raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+
+        exec_handle = _executor_handle(executor)
+        if exec_handle == 0:
+            raise RuntimeError("aclnn repeat_interleave returned null executor")
+
+        if workspace_size.value:
+            workspace_ptr, ret = acl.rt.malloc(int(workspace_size.value), 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            workspace = workspace_ptr
+
+        if use_dim:
+            ret = bindings.aclnn_repeat_interleave_with_dim(
+                ctypes.c_void_p(int(workspace or 0)),
+                ctypes.c_uint64(int(workspace_size.value)),
+                ctypes.c_void_p(exec_handle),
+                ctypes.c_void_p(stream_ptr),
+            )
+            if ret != 0:
+                raise RuntimeError(f"aclnnRepeatInterleaveWithDim failed: {ret}")
+        else:
+            ret = bindings.aclnn_repeat_interleave(
+                ctypes.c_void_p(int(workspace or 0)),
+                ctypes.c_uint64(int(workspace_size.value)),
+                ctypes.c_void_p(exec_handle),
+                ctypes.c_void_p(stream_ptr),
+            )
+            if ret != 0:
+                raise RuntimeError(f"aclnnRepeatInterleave failed: {ret}")
+
+        cleanup = [
+            ("tensor", self_handle),
+            ("tensor", repeats_handle),
+            ("tensor", out_handle),
+        ]
+        self_handle = repeats_handle = out_handle = 0
+        _defer_executor(executor, cleanup=cleanup)
+        executor = ctypes.c_void_p()
+        if runtime is not None:
+            runtime.synchronize()
+        _maybe_sync(runtime)
+    finally:
+        if _executor_handle(executor):
+            cleanup = [
+                ("tensor", self_handle),
+                ("tensor", repeats_handle),
+                ("tensor", out_handle),
+            ]
+            self_handle = repeats_handle = out_handle = 0
+            _defer_executor(executor, cleanup=cleanup)
+        _destroy_tensor_handles((self_handle, repeats_handle, out_handle))
         if workspace is not None:
             runtime.defer_raw_free(workspace)
 
@@ -7331,17 +7563,27 @@ def matmul(a_ptr, b_ptr, out_ptr, a_shape, a_stride, b_shape, b_stride, out_shap
             runtime.defer_raw_free(workspace)
 
 
+def fill_scalar_symbols_ok():
+    try:
+        bindings = get_bindings()
+        return all([
+            bindings.aclnn_inplace_fill_scalar_get_workspace,
+            bindings.aclnn_inplace_fill_scalar,
+        ])
+    except Exception:
+        return False
+
+
+
 def ones_zero_symbols_ok():
     try:
         bindings = get_bindings()
-        return all(
-            [
-                bindings.aclnn_inplace_one_get_workspace,
-                bindings.aclnn_inplace_one,
-                bindings.aclnn_inplace_zero_get_workspace,
-                bindings.aclnn_inplace_zero,
-            ]
-        )
+        return all([
+            bindings.aclnn_inplace_one_get_workspace,
+            bindings.aclnn_inplace_one,
+            bindings.aclnn_inplace_zero_get_workspace,
+            bindings.aclnn_inplace_zero,
+        ])
     except Exception:
         return False
 
@@ -7755,6 +7997,19 @@ def repeat_interleave_int_symbols_ok():
             bindings.aclnn_repeat_interleave_int,
             bindings.aclnn_repeat_interleave_int_with_dim_get_workspace,
             bindings.aclnn_repeat_interleave_int_with_dim,
+        ])
+    except Exception:
+        return False
+
+
+def repeat_interleave_tensor_symbols_ok():
+    try:
+        bindings = get_bindings()
+        return all([
+            bindings.aclnn_repeat_interleave_get_workspace,
+            bindings.aclnn_repeat_interleave,
+            bindings.aclnn_repeat_interleave_with_dim_get_workspace,
+            bindings.aclnn_repeat_interleave_with_dim,
         ])
     except Exception:
         return False
@@ -9258,8 +9513,10 @@ def inplace_fill_scalar(self_ptr, shape, stride, dtype, value, runtime, stream=N
                 raise RuntimeError(f"aclnnInplaceFillScalar failed: {ret}")
         _maybe_sync(runtime)
     finally:
-        _defer_executor(ctypes.c_void_p(executor))
-        _ffi.destroy_scalar(int(value_scalar))
+        cleanup = [("scalar", int(value_scalar))] if int(value_scalar) != 0 else None
+        _defer_executor(ctypes.c_void_p(executor), cleanup=cleanup)
+        if cleanup is None:
+            _ffi.destroy_scalar(int(value_scalar))
         if workspace is not None:
             runtime.defer_raw_free(workspace)
 
@@ -9528,8 +9785,10 @@ def inplace_masked_fill_scalar(self_ptr, self_shape, self_stride, self_dtype,
                 raise RuntimeError(f"aclnnInplaceMaskedFillScalar failed: {ret}")
         _maybe_sync(runtime)
     finally:
-        _defer_executor(ctypes.c_void_p(executor))
-        _ffi.destroy_scalar(int(scalar))
+        cleanup = [("scalar", int(scalar))] if int(scalar) != 0 else None
+        _defer_executor(ctypes.c_void_p(executor), cleanup=cleanup)
+        if cleanup is None:
+            _ffi.destroy_scalar(int(scalar))
         if workspace is not None:
             runtime.defer_free(workspace)
 
@@ -9637,8 +9896,10 @@ def inplace_index_fill(self_ptr, self_shape, self_stride, self_dtype,
                 raise RuntimeError(f"aclnnInplaceIndexFill failed: {ret}")
         _maybe_sync(runtime)
     finally:
-        _defer_executor(ctypes.c_void_p(executor))
-        _ffi.destroy_scalar(int(scalar))
+        cleanup = [("scalar", int(scalar))] if int(scalar) != 0 else None
+        _defer_executor(ctypes.c_void_p(executor), cleanup=cleanup)
+        if cleanup is None:
+            _ffi.destroy_scalar(int(scalar))
         if workspace is not None:
             runtime.defer_free(workspace)
 
@@ -9702,8 +9963,10 @@ def index_add(self_ptr, self_shape, self_stride, self_dtype,
                 raise RuntimeError(f"aclnnIndexAdd failed: {ret}")
         _maybe_sync(runtime)
     finally:
-        _defer_executor(ctypes.c_void_p(executor))
-        _ffi.destroy_scalar(int(alpha_scalar))
+        cleanup = [("scalar", int(alpha_scalar))] if int(alpha_scalar) != 0 else None
+        _defer_executor(ctypes.c_void_p(executor), cleanup=cleanup)
+        if cleanup is None:
+            _ffi.destroy_scalar(int(alpha_scalar))
         if workspace is not None:
             runtime.defer_free(workspace)
 

@@ -55,3 +55,5 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | Op | ACLNN kernel | Error | Workaround | Verified on |
 |---|---|---|---|---|
 | `allclose` | 6-op composite | ACLNN 561000 under executor pool pressure | composite: `isclose(...).all()` | CANN 8.x |
+| `ones` / `zeros` creation via scalar fill | `aclnnInplaceFillScalar` | native creation path can segfault after prior NPU functionalize traffic | use native `aclnnInplaceOne` / `aclnnInplaceZero` for tensor creation; keep `fill_` on `aclnnInplaceFillScalar` | CANN 8.3 RC1 / 910A |
+| `repeat_interleave` (tensor repeats) | `aclnnRepeatInterleave` / `aclnnRepeatInterleaveWithDim` | cross-op state corruption after native execution | composite: on-device `cumsum + searchsorted + index_select` | CANN 8.3 RC1 / 910A |

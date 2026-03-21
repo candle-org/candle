@@ -65,6 +65,35 @@ def test_allocator_free_uses_pending_events(monkeypatch):
     assert stats["active_bytes.all.current"] == 0
 
 
+def test_allocator_synchronize_destroys_completed_events(monkeypatch):
+    from candle._backends.npu import allocator
+
+    alloc = allocator.NpuAllocator(device_id=0)
+    monkeypatch.setattr(alloc, "_raw_malloc", lambda size: (1234, size))
+    monkeypatch.setattr(alloc, "_event_complete", lambda event: True)
+    monkeypatch.setattr(alloc, "_sync_device", lambda: None)
+
+    event = object()
+    monkeypatch.setattr(alloc, "_record_event", lambda stream: event)
+
+    destroyed = []
+
+    class _DummyRuntime:
+        def destroy_event(self, handle):
+            destroyed.append(handle)
+
+    import candle._backends.npu.runtime as npu_runtime
+
+    monkeypatch.setattr(npu_runtime, "get_runtime", lambda device_id=0: _DummyRuntime())
+
+    ptr = alloc.malloc(512, stream="s0")
+    alloc.free(ptr, stream="s0")
+
+    alloc.synchronize()
+
+    assert destroyed == [event]
+
+
 def test_empty_cache_releases_cached(monkeypatch):
     from candle._backends.npu import allocator
 

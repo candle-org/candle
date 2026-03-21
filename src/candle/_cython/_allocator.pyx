@@ -295,9 +295,16 @@ cdef class FastNpuAllocator:
         return block, remainder
 
     def _drain_pending(self):
+        from candle._backends.npu import runtime as npu_runtime
+
         still_pending = []
         for event, block in self._pending_events:
             if self._event_complete(event):
+                if event is not None:
+                    try:
+                        npu_runtime.get_runtime(self.device_id).destroy_event(event)
+                    except Exception:
+                        pass
                 block.event_count -= 1
                 if block.event_count == 0:
                     self._cached[block.pool].append(block)

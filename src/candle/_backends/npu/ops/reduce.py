@@ -584,7 +584,7 @@ def searchsorted(sorted_sequence, values, out_int32=False, right=False, side=Non
     sorted_storage = _unwrap_storage(sorted_sequence)
     values_storage = _unwrap_storage(values)
 
-    out_dtype = "int32" if out_int32 else "int64"
+    out_dtype = int32_dtype if out_int32 else int64_dtype
     out_shape = tuple(values.shape)
     out_stride = npu_runtime._contiguous_stride(out_shape)
     out_numel = max(_numel(out_shape), 1)

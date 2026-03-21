@@ -113,10 +113,7 @@ def synchronize(device=None):
     dev = _normalize_npu_device(device)
     runtime = npu_runtime.get_runtime(dev.index or 0)
     _set_initialized()
-    if hasattr(runtime, "synchronize_device"):
-        runtime.synchronize_device()
-    else:
-        runtime.synchronize()
+    runtime.synchronize()
 
 
 def _set_initialized():

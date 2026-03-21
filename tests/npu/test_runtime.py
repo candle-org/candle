@@ -172,6 +172,27 @@ def test_npu_synchronize_uses_runtime(monkeypatch):
     assert calls == ["sync"]
 
 
+def test_npu_synchronize_prefers_full_runtime_sync_over_device_only(monkeypatch):
+    calls = []
+
+    class DummyRuntime:
+        def synchronize_device(self):
+            calls.append("sync_device")
+
+        def synchronize(self):
+            calls.append("sync")
+
+    from candle._backends.npu import runtime as npu_runtime
+
+    monkeypatch.setattr(npu_runtime, "get_runtime", lambda device_id=0: DummyRuntime())
+
+    import candle.npu as npu
+
+    npu.synchronize("npu:0")
+
+    assert calls == ["sync"]
+
+
 def test_npu_mem_get_info(monkeypatch):
     from candle._backends.npu import runtime as npu_runtime
 

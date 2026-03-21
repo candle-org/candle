@@ -76,6 +76,8 @@ _PREFER_OPAPI = frozenset({
 # Cache: op_name -> (getws_ptr, exec_ptr) as uintptr_t
 _op_cache = {}
 
+cdef dict _executor_cleanup = {}
+
 # ---------------------------------------------------------------------------
 # dlsym helpers
 # ---------------------------------------------------------------------------
@@ -293,6 +295,7 @@ def destroy_executor(uintptr_t handle):
     cdef int32_t ret
     with nogil:
         ret = _fn_destroy_executor(<void*>handle)
+    _release_executor_cleanup(handle)
     return ret
 
 # ---------------------------------------------------------------------------
@@ -360,6 +363,44 @@ def execute(uintptr_t exec_ptr, uintptr_t workspace_ptr,
         ret = fn(<void*>workspace_ptr, workspace_size,
                  <void*>executor, <void*>stream)
     return ret
+
+cdef void _release_executor_cleanup(uintptr_t executor):
+    cdef object cleanup
+    cdef object item
+    cdef object kind
+    cdef uintptr_t handle
+    if executor == 0:
+        return
+    cleanup = _executor_cleanup.pop(int(executor), None)
+    if cleanup is None:
+        return
+    for item in cleanup:
+        kind = item[0]
+        handle = <uintptr_t>item[1]
+        if handle == 0:
+            continue
+        if _fn_destroy_tensor_list != NULL and kind == 'l':
+            with nogil:
+                _fn_destroy_tensor_list(<void*>handle)
+        elif _fn_destroy_tensor != NULL and kind == 't':
+            with nogil:
+                _fn_destroy_tensor(<void*>handle)
+        elif _fn_destroy_int_array != NULL and kind == 'i':
+            with nogil:
+                _fn_destroy_int_array(<void*>handle)
+        elif _fn_destroy_bool_array != NULL and kind == 'b':
+            with nogil:
+                _fn_destroy_bool_array(<void*>handle)
+        elif _fn_destroy_scalar != NULL and kind == 's':
+            with nogil:
+                _fn_destroy_scalar(<void*>handle)
+
+
+cdef void _register_executor_cleanup(uintptr_t executor, object cleanup):
+    if executor == 0 or cleanup is None:
+        return
+    _executor_cleanup[int(executor)] = cleanup
+
 
 # ---------------------------------------------------------------------------
 # Binary op helpers — full create+getws+(exec)+destroy in minimal Python calls
@@ -441,21 +482,40 @@ def binary_op_with_alpha(
                 &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>other_t)] if other_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        other_t = NULL
+        out_t = NULL
 
         # Fast path: no workspace needed, execute immediately
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(
-                    NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(
+                        NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
 
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(other_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if other_t != NULL:
+                _fast_destroy_tensor(other_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def binary_op_no_alpha(
@@ -523,20 +583,39 @@ def binary_op_no_alpha(
                 &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>other_t)] if other_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        other_t = NULL
+        out_t = NULL
 
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(
-                    NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(
+                        NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
 
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(other_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if other_t != NULL:
+                _fast_destroy_tensor(other_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def tensor_scalar_op_with_alpha(
@@ -589,19 +668,33 @@ def tensor_scalar_op_with_alpha(
                 &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
 
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(
-                    NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(
+                        NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
 
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def tensor_scalar_op_no_alpha(
@@ -654,19 +747,33 @@ def tensor_scalar_op_no_alpha(
                 &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
 
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(
-                    NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(
+                        NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
 
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def unary_op(
@@ -716,18 +823,32 @@ def unary_op(
                 self_t, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
 
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
 
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def unary_out_dtype_op(
@@ -768,16 +889,32 @@ def unary_out_dtype_op(
                 self_t, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def reduce_sum_op(
@@ -838,19 +975,36 @@ def reduce_sum_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
 
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>dims_handle)] if dims_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        dims_handle = NULL
+        self_t = NULL
+        out_t = NULL
+
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
 
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
             if dims_handle != NULL:
                 _fn_destroy_int_array(dims_handle)
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def reduce_dims_dtype_op(
@@ -898,18 +1052,36 @@ def reduce_dims_dtype_op(
                 self_t, dims_handle, keepdim, out_dtype_code, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>dims_handle)] if dims_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        dims_handle = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
             if dims_handle != NULL:
                 _fn_destroy_int_array(dims_handle)
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def arg_reduce_op(
@@ -961,18 +1133,32 @@ def arg_reduce_op(
                 self_t, dim, keepdim, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
 
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
 
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def cast_op(
@@ -1011,16 +1197,32 @@ def cast_op(
                 self_t, dst_dtype_code, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def argsort_op(
@@ -1059,16 +1261,32 @@ def argsort_op(
                 self_t, dim, descending, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def dual_output_with_indices_op(
@@ -1136,17 +1354,36 @@ def dual_output_with_indices_op(
             raise RuntimeError(f"unsupported dual output variant: {variant}")
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>values_t)] if values_t != NULL else [])
+            + ([('t', <uintptr_t>indices_t)] if indices_t != NULL else []),
+        )
+        self_t = NULL
+        values_t = NULL
+        indices_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(values_t)
-            _fast_destroy_tensor(indices_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if values_t != NULL:
+                _fast_destroy_tensor(values_t)
+            if indices_t != NULL:
+                _fast_destroy_tensor(indices_t)
 
 
 def reduce_all_dtype_op(
@@ -1185,16 +1422,32 @@ def reduce_all_dtype_op(
                 self_t, out_dtype_code, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 
@@ -1235,16 +1488,32 @@ def axis_keepdim_dtype_op(
                 self_t, dim, keepdim, out_dtype_code, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def axis_dtype_unary_op(
@@ -1283,16 +1552,32 @@ def axis_dtype_unary_op(
                 self_t, dim, out_dtype_code, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 
@@ -1344,16 +1629,32 @@ def tensor_scalar_bool_out_op(
                 self_t, <void*>scalar_handle, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def tensor_scalar_dtype_op(
@@ -1393,16 +1694,32 @@ def tensor_scalar_dtype_op(
                 self_t, <void*>scalar_handle, out_dtype_code, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 
@@ -1442,16 +1759,32 @@ def axis_unary_op(
                 self_t, dim, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def layer_norm_op(
@@ -1549,10 +1882,17 @@ def layer_norm_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -1611,16 +1951,32 @@ def tensor_two_scalars_dim_op(
                 self_t, <void*>scalar_a, dim, <void*>scalar_b, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 
@@ -1672,18 +2028,36 @@ def tensor_int_array_two_bools_op(
                 self_t, dims_handle, flag_a, flag_b, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>dims_handle)] if dims_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        dims_handle = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
             if dims_handle != NULL:
                 _fn_destroy_int_array(dims_handle)
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 
@@ -1736,18 +2110,36 @@ def tensor_int_array_bool_two_doubles_op(
                 self_t, dims_handle, flag, scalar_a, scalar_b, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>dims_handle)] if dims_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        dims_handle = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
             if dims_handle != NULL:
                 _fn_destroy_int_array(dims_handle)
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def tensor_int_array_bool_double_op(
@@ -1799,18 +2191,36 @@ def tensor_int_array_bool_double_op(
                 self_t, dims_handle, flag, scalar_value, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>dims_handle)] if dims_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        dims_handle = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
             if dims_handle != NULL:
                 _fn_destroy_int_array(dims_handle)
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def tensor_scalar_int_array_bool_op(
@@ -1862,18 +2272,36 @@ def tensor_scalar_int_array_bool_op(
                 self_t, <void*>scalar_handle, dims_handle, keepdim, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>dims_handle)] if dims_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        dims_handle = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
             if dims_handle != NULL:
                 _fn_destroy_int_array(dims_handle)
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def tensor_three_scalars_op(
@@ -1915,16 +2343,32 @@ def tensor_three_scalars_op(
                 self_t, <void*>scalar_a, <void*>scalar_b, <void*>scalar_c, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def inplace_unary_op(
@@ -1953,15 +2397,28 @@ def inplace_unary_op(
                 tensor, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            [('t', <uintptr_t>tensor)] if tensor != NULL else [],
+        )
+        tensor = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(tensor)
+            if tensor != NULL:
+                _fast_destroy_tensor(tensor)
 
 
 def inplace_normal_op(
@@ -1995,10 +2452,17 @@ def inplace_normal_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -2036,10 +2500,17 @@ def inplace_uniform_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -2073,15 +2544,28 @@ def inplace_fill_scalar_op(
                 tensor, <void*>scalar_handle, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            [('t', <uintptr_t>tensor)] if tensor != NULL else [],
+        )
+        tensor = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(tensor)
+            if tensor != NULL:
+                _fast_destroy_tensor(tensor)
 
 
 def inplace_copy_op(
@@ -2122,16 +2606,32 @@ def inplace_copy_op(
                 dst_t, src_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>dst_t)] if dst_t != NULL else [])
+            + ([('t', <uintptr_t>src_t)] if src_t != NULL else []),
+        )
+        dst_t = NULL
+        src_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(dst_t)
-            _fast_destroy_tensor(src_t)
+            if dst_t != NULL:
+                _fast_destroy_tensor(dst_t)
+            if src_t != NULL:
+                _fast_destroy_tensor(src_t)
 
 
 def inplace_masked_fill_scalar_op(
@@ -2173,16 +2673,32 @@ def inplace_masked_fill_scalar_op(
                 self_t, mask_t, <void*>scalar_handle, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>mask_t)] if mask_t != NULL else []),
+        )
+        self_t = NULL
+        mask_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(mask_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if mask_t != NULL:
+                _fast_destroy_tensor(mask_t)
 
 
 def inplace_index_fill_op(
@@ -2225,16 +2741,32 @@ def inplace_index_fill_op(
                 self_t, dim, index_t, <void*>scalar_handle, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>index_t)] if index_t != NULL else []),
+        )
+        self_t = NULL
+        index_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(index_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if index_t != NULL:
+                _fast_destroy_tensor(index_t)
 
 
 def inplace_index_copy_op(
@@ -2286,17 +2818,36 @@ def inplace_index_copy_op(
                 self_t, dim, index_t, source_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>index_t)] if index_t != NULL else [])
+            + ([('t', <uintptr_t>source_t)] if source_t != NULL else []),
+        )
+        self_t = NULL
+        index_t = NULL
+        source_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(index_t)
-            _fast_destroy_tensor(source_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if index_t != NULL:
+                _fast_destroy_tensor(index_t)
+            if source_t != NULL:
+                _fast_destroy_tensor(source_t)
 
 
 def scatter_add_op(
@@ -2360,18 +2911,40 @@ def scatter_add_op(
                 self_t, dim, index_t, src_t, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>index_t)] if index_t != NULL else [])
+            + ([('t', <uintptr_t>src_t)] if src_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        index_t = NULL
+        src_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(index_t)
-            _fast_destroy_tensor(src_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if index_t != NULL:
+                _fast_destroy_tensor(index_t)
+            if src_t != NULL:
+                _fast_destroy_tensor(src_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 
@@ -2424,10 +2997,17 @@ def inplace_masked_scatter_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -2498,18 +3078,40 @@ def index_add_op(
                 self_t, dim, index_t, source_t, <void*>alpha_handle, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>index_t)] if index_t != NULL else [])
+            + ([('t', <uintptr_t>source_t)] if source_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        index_t = NULL
+        source_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(index_t)
-            _fast_destroy_tensor(source_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if index_t != NULL:
+                _fast_destroy_tensor(index_t)
+            if source_t != NULL:
+                _fast_destroy_tensor(source_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 
@@ -2844,11 +3446,29 @@ def tensor_list_axis_op(
                 tensor_list, dim, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            [('l', <uintptr_t>tensor_list)]
+            + [('t', <uintptr_t>created_tensors[i]) for i in range(n) if created_tensors[i] != NULL]
+            + [('t', <uintptr_t>out_t)],
+        )
+        tensor_list = NULL
+        for i in range(n):
+            created_tensors[i] = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                # cat/stack fast-path must keep tensor-list cleanup deferred until a
+                # later runtime synchronize; releasing it immediately corrupts ACLNN
+                # state for subsequent ops on 910A.
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -2950,10 +3570,17 @@ def tensor_list_string_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -3015,17 +3642,36 @@ def two_tensor_two_bools_op(
                 first_t, second_t, flag_a, flag_b, NULL, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>first_t)] if first_t != NULL else [])
+            + ([('t', <uintptr_t>second_t)] if second_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        first_t = NULL
+        second_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(first_t)
-            _fast_destroy_tensor(second_t)
-            _fast_destroy_tensor(out_t)
+            if first_t != NULL:
+                _fast_destroy_tensor(first_t)
+            if second_t != NULL:
+                _fast_destroy_tensor(second_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 
@@ -3078,20 +3724,36 @@ def unary_two_bools_two_outputs_op(
                 self_t, flag_a, flag_b, out_t, inverse_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else [])
+            + ([('t', <uintptr_t>inverse_t)] if inverse_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
+        inverse_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
-            _fast_destroy_tensor(inverse_t)
-
-
-
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
+            if inverse_t != NULL:
+                _fast_destroy_tensor(inverse_t)
 def output_tensor_three_scalars_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         out_shape, out_stride,
@@ -3119,17 +3781,28 @@ def output_tensor_three_scalars_op(
                 <void*>scalar_a, <void*>scalar_b, <void*>scalar_c, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            [('t', <uintptr_t>out_t)] if out_t != NULL else [],
+        )
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(out_t)
-
-
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 def output_tensor_two_ints_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         out_shape, out_stride,
@@ -3157,18 +3830,28 @@ def output_tensor_two_ints_op(
                 value_a, value_b, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            [('t', <uintptr_t>out_t)] if out_t != NULL else [],
+        )
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(out_t)
-
-
-
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 def output_tensor_three_ints_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         out_shape, out_stride,
@@ -3196,17 +3879,28 @@ def output_tensor_three_ints_op(
                 value_a, value_b, value_c, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            [('t', <uintptr_t>out_t)] if out_t != NULL else [],
+        )
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(out_t)
-
-
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 def output_tensor_int_array_double_two_ints_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         out_shape, out_stride,
@@ -3246,10 +3940,17 @@ def output_tensor_int_array_double_two_ints_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -3307,10 +4008,17 @@ def tensor_int_array_bool_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -3359,16 +4067,32 @@ def tensor_two_ints_op(
                 self_t, value_a, value_b, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 
@@ -3412,10 +4136,17 @@ def tensor_three_ints_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -3480,11 +4211,27 @@ def tensor_int_array_scalar_op(
                 self_t, pad_arr, <void*>scalar_handle, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>pad_arr)] if pad_arr != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        pad_arr = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -3554,11 +4301,27 @@ def tensor_int_array_op(
                 self_t, array_handle, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>array_handle)] if array_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        array_handle = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -3702,10 +4465,17 @@ def batch_norm_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -3824,10 +4594,17 @@ def group_norm_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -3954,10 +4731,17 @@ def convolution_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -4048,11 +4832,29 @@ def tensor_two_int_arrays_op(
                 self_t, first_handle, second_handle, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>first_handle)] if first_handle != NULL else [])
+            + ([('i', <uintptr_t>second_handle)] if second_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        first_handle = NULL
+        second_handle = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -4068,8 +4870,6 @@ def tensor_two_int_arrays_op(
             free(first_buf)
         if second_buf != NULL:
             free(second_buf)
-
-
 def tensor_four_int_arrays_two_ints_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         self_shape, self_stride,
@@ -4184,11 +4984,33 @@ def tensor_four_int_arrays_two_ints_op(
                 self_t, first_handle, second_handle, value_a, third_handle, fourth_handle, value_b, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>first_handle)] if first_handle != NULL else [])
+            + ([('i', <uintptr_t>second_handle)] if second_handle != NULL else [])
+            + ([('i', <uintptr_t>third_handle)] if third_handle != NULL else [])
+            + ([('i', <uintptr_t>fourth_handle)] if fourth_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        first_handle = NULL
+        second_handle = NULL
+        third_handle = NULL
+        fourth_handle = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -4212,8 +5034,6 @@ def tensor_four_int_arrays_two_ints_op(
             free(third_buf)
         if fourth_buf != NULL:
             free(fourth_buf)
-
-
 def tensor_three_int_arrays_two_bools_int64_int8_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         self_shape, self_stride,
@@ -4307,11 +5127,31 @@ def tensor_three_int_arrays_two_bools_int64_int8_op(
                 self_t, first_handle, second_handle, third_handle, flag_a, flag_b, value_a, value_b, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>first_handle)] if first_handle != NULL else [])
+            + ([('i', <uintptr_t>second_handle)] if second_handle != NULL else [])
+            + ([('i', <uintptr_t>third_handle)] if third_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        first_handle = NULL
+        second_handle = NULL
+        third_handle = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -4331,8 +5171,6 @@ def tensor_three_int_arrays_two_bools_int64_int8_op(
             free(second_buf)
         if third_buf != NULL:
             free(third_buf)
-
-
 def tensor_four_int_arrays_bool_two_outputs_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         self_shape, self_stride,
@@ -4457,11 +5295,35 @@ def tensor_four_int_arrays_bool_two_outputs_op(
                 self_t, first_handle, second_handle, third_handle, fourth_handle, flag, out_a_t, out_b_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>first_handle)] if first_handle != NULL else [])
+            + ([('i', <uintptr_t>second_handle)] if second_handle != NULL else [])
+            + ([('i', <uintptr_t>third_handle)] if third_handle != NULL else [])
+            + ([('i', <uintptr_t>fourth_handle)] if fourth_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_a_t)] if out_a_t != NULL else [])
+            + ([('t', <uintptr_t>out_b_t)] if out_b_t != NULL else []),
+        )
+        first_handle = NULL
+        second_handle = NULL
+        third_handle = NULL
+        fourth_handle = NULL
+        self_t = NULL
+        out_a_t = NULL
+        out_b_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -4487,8 +5349,6 @@ def tensor_four_int_arrays_bool_two_outputs_op(
             free(third_buf)
         if fourth_buf != NULL:
             free(fourth_buf)
-
-
 def optional_tensor_int_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         self_shape, self_stride,
@@ -4540,11 +5400,27 @@ def optional_tensor_int_op(
                 self_t, optional_t, scalar_value, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>optional_t)] if optional_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        optional_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -4615,18 +5491,40 @@ def ternary_two_inputs_with_dims_op(
                 self_t, dim, index_t, src_t, reduce, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>index_t)] if index_t != NULL else [])
+            + ([('t', <uintptr_t>src_t)] if src_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        index_t = NULL
+        src_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(index_t)
-            _fast_destroy_tensor(src_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if index_t != NULL:
+                _fast_destroy_tensor(index_t)
+            if src_t != NULL:
+                _fast_destroy_tensor(src_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def slice_op(
@@ -4668,16 +5566,32 @@ def slice_op(
                 self_t, dim, start, end, step, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def three_tensor_one_int_op(
@@ -4730,10 +5644,17 @@ def three_tensor_one_int_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -4803,10 +5724,17 @@ def four_tensor_two_ints_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -4866,17 +5794,36 @@ def three_tensor_two_ints_bool_op(
                 self_t, value_a, value_b, flag, values_t, indices_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>values_t)] if values_t != NULL else [])
+            + ([('t', <uintptr_t>indices_t)] if indices_t != NULL else []),
+        )
+        self_t = NULL
+        values_t = NULL
+        indices_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(values_t)
-            _fast_destroy_tensor(indices_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if values_t != NULL:
+                _fast_destroy_tensor(values_t)
+            if indices_t != NULL:
+                _fast_destroy_tensor(indices_t)
 
 
 
@@ -4941,10 +5888,17 @@ def four_tensor_two_scalars_one_int8_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -5013,21 +5967,40 @@ def tensor_int_array_two_outputs_op(
                 self_t, dims_handle, out_a_t, out_b_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>dims_handle)] if dims_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_a_t)] if out_a_t != NULL else [])
+            + ([('t', <uintptr_t>out_b_t)] if out_b_t != NULL else []),
+        )
+        dims_handle = NULL
+        self_t = NULL
+        out_a_t = NULL
+        out_b_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
             if dims_handle != NULL:
                 _fn_destroy_int_array(dims_handle)
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_a_t)
-            _fast_destroy_tensor(out_b_t)
-
-
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_a_t != NULL:
+                _fast_destroy_tensor(out_a_t)
+            if out_b_t != NULL:
+                _fast_destroy_tensor(out_b_t)
 def tensor_int_array_bool_two_outputs_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         self_shape, self_stride,
@@ -5086,22 +6059,40 @@ def tensor_int_array_bool_two_outputs_op(
                 self_t, dims_handle, keepdim, out_a_t, out_b_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>dims_handle)] if dims_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_a_t)] if out_a_t != NULL else [])
+            + ([('t', <uintptr_t>out_b_t)] if out_b_t != NULL else []),
+        )
+        dims_handle = NULL
+        self_t = NULL
+        out_a_t = NULL
+        out_b_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
             if dims_handle != NULL:
                 _fn_destroy_int_array(dims_handle)
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_a_t)
-            _fast_destroy_tensor(out_b_t)
-
-
-
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_a_t != NULL:
+                _fast_destroy_tensor(out_a_t)
+            if out_b_t != NULL:
+                _fast_destroy_tensor(out_b_t)
 def four_tensor_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         a_shape, a_stride,
@@ -5160,22 +6151,40 @@ def four_tensor_op(
                 a_t, b_t, c_t, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>c_t)] if c_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        a_t = NULL
+        b_t = NULL
+        c_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(a_t)
-            _fast_destroy_tensor(b_t)
-            _fast_destroy_tensor(c_t)
-            _fast_destroy_tensor(out_t)
-
-
-
-
+            if a_t != NULL:
+                _fast_destroy_tensor(a_t)
+            if b_t != NULL:
+                _fast_destroy_tensor(b_t)
+            if c_t != NULL:
+                _fast_destroy_tensor(c_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 def four_tensor_three_int_arrays_two_bools_int64_int8_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         a_shape, a_stride,
@@ -5279,11 +6288,33 @@ def four_tensor_three_int_arrays_two_bools_int64_int8_op(
                 a_t, b_t, first_handle, second_handle, third_handle, flag_a, flag_b, value_a, value_b, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>first_handle)] if first_handle != NULL else [])
+            + ([('i', <uintptr_t>second_handle)] if second_handle != NULL else [])
+            + ([('i', <uintptr_t>third_handle)] if third_handle != NULL else [])
+            + ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        first_handle = NULL
+        second_handle = NULL
+        third_handle = NULL
+        a_t = NULL
+        b_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -5305,8 +6336,6 @@ def four_tensor_three_int_arrays_two_bools_int64_int8_op(
             free(second_buf)
         if third_buf != NULL:
             free(third_buf)
-
-
 def four_tensor_four_int_arrays_bool_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         a_shape, a_stride,
@@ -5441,11 +6470,37 @@ def four_tensor_four_int_arrays_bool_op(
                 a_t, b_t, c_t, first_handle, second_handle, third_handle, fourth_handle, flag, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>first_handle)] if first_handle != NULL else [])
+            + ([('i', <uintptr_t>second_handle)] if second_handle != NULL else [])
+            + ([('i', <uintptr_t>third_handle)] if third_handle != NULL else [])
+            + ([('i', <uintptr_t>fourth_handle)] if fourth_handle != NULL else [])
+            + ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>c_t)] if c_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        first_handle = NULL
+        second_handle = NULL
+        third_handle = NULL
+        fourth_handle = NULL
+        a_t = NULL
+        b_t = NULL
+        c_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -5473,8 +6528,6 @@ def four_tensor_four_int_arrays_bool_op(
             free(third_buf)
         if fourth_buf != NULL:
             free(fourth_buf)
-
-
 def tensor_int_array_three_ints_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         self_shape, self_stride,
@@ -5524,18 +6577,36 @@ def tensor_int_array_three_ints_op(
                 self_t, dims_handle, value_a, value_b, value_c, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>dims_handle)] if dims_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        dims_handle = NULL
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
             if dims_handle != NULL:
                 _fn_destroy_int_array(dims_handle)
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def two_tensor_ints_bool_op(
@@ -5587,17 +6658,36 @@ def two_tensor_ints_bool_op(
                 first_t, second_t, value_a, flag, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>first_t)] if first_t != NULL else [])
+            + ([('t', <uintptr_t>second_t)] if second_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        first_t = NULL
+        second_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(first_t)
-            _fast_destroy_tensor(second_t)
-            _fast_destroy_tensor(out_t)
+            if first_t != NULL:
+                _fast_destroy_tensor(first_t)
+            if second_t != NULL:
+                _fast_destroy_tensor(second_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def tensor_two_int_arrays_bool_two_doubles_op(
@@ -5675,10 +6765,17 @@ def tensor_two_int_arrays_bool_two_doubles_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -5771,10 +6868,17 @@ def tensor_two_int_arrays_bool_double_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -5841,19 +6945,36 @@ def two_tensor_two_scalars_op(
                 a_t, b_t, <void*>scalar_a, <void*>scalar_b, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        a_t = NULL
+        b_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(a_t)
-            _fast_destroy_tensor(b_t)
-            _fast_destroy_tensor(out_t)
-
-
+            if a_t != NULL:
+                _fast_destroy_tensor(a_t)
+            if b_t != NULL:
+                _fast_destroy_tensor(b_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 def two_tensor_scalar_bool_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         a_shape, a_stride,
@@ -5903,19 +7024,36 @@ def two_tensor_scalar_bool_op(
                 a_t, b_t, <void*>scalar_handle, flag, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        a_t = NULL
+        b_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(a_t)
-            _fast_destroy_tensor(b_t)
-            _fast_destroy_tensor(out_t)
-
-
+            if a_t != NULL:
+                _fast_destroy_tensor(a_t)
+            if b_t != NULL:
+                _fast_destroy_tensor(b_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 def two_tensor_three_scalars_bool_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         a_shape, a_stride,
@@ -5965,19 +7103,36 @@ def two_tensor_three_scalars_bool_op(
                 a_t, <void*>scalar_a, <void*>scalar_b, <void*>scalar_c, flag, b_t, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        a_t = NULL
+        b_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(a_t)
-            _fast_destroy_tensor(b_t)
-            _fast_destroy_tensor(out_t)
-
-
+            if a_t != NULL:
+                _fast_destroy_tensor(a_t)
+            if b_t != NULL:
+                _fast_destroy_tensor(b_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 def layer_norm_backward_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         grad_shape, grad_stride,
@@ -6104,10 +7259,17 @@ def layer_norm_backward_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -6197,10 +7359,17 @@ def rms_norm_grad_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -6350,10 +7519,17 @@ def batch_norm_backward_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -6483,10 +7659,17 @@ def group_norm_backward_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -6653,10 +7836,17 @@ def convolution_backward_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -6748,10 +7938,17 @@ def grid_sampler2d_backward_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -6832,20 +8029,44 @@ def three_tensor_two_outputs_op(
                 a_t, b_t, c_t, out_a_t, out_b_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>c_t)] if c_t != NULL else [])
+            + ([('t', <uintptr_t>out_a_t)] if out_a_t != NULL else [])
+            + ([('t', <uintptr_t>out_b_t)] if out_b_t != NULL else []),
+        )
+        a_t = NULL
+        b_t = NULL
+        c_t = NULL
+        out_a_t = NULL
+        out_b_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(a_t)
-            _fast_destroy_tensor(b_t)
-            _fast_destroy_tensor(c_t)
-            _fast_destroy_tensor(out_a_t)
-            _fast_destroy_tensor(out_b_t)
-
+            if a_t != NULL:
+                _fast_destroy_tensor(a_t)
+            if b_t != NULL:
+                _fast_destroy_tensor(b_t)
+            if c_t != NULL:
+                _fast_destroy_tensor(c_t)
+            if out_a_t != NULL:
+                _fast_destroy_tensor(out_a_t)
+            if out_b_t != NULL:
+                _fast_destroy_tensor(out_b_t)
 def two_tensor_scalar_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         a_shape, a_stride,
@@ -6895,19 +8116,36 @@ def two_tensor_scalar_op(
                 a_t, b_t, <void*>scalar_handle, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        a_t = NULL
+        b_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(a_t)
-            _fast_destroy_tensor(b_t)
-            _fast_destroy_tensor(out_t)
-
-
+            if a_t != NULL:
+                _fast_destroy_tensor(a_t)
+            if b_t != NULL:
+                _fast_destroy_tensor(b_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 def two_tensor_one_double_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         a_shape, a_stride,
@@ -6957,19 +8195,36 @@ def two_tensor_one_double_op(
                 a_t, b_t, scalar_value, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        a_t = NULL
+        b_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(a_t)
-            _fast_destroy_tensor(b_t)
-            _fast_destroy_tensor(out_t)
-
-
+            if a_t != NULL:
+                _fast_destroy_tensor(a_t)
+            if b_t != NULL:
+                _fast_destroy_tensor(b_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 def three_tensor_scalar_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         a_shape, a_stride,
@@ -7029,20 +8284,40 @@ def three_tensor_scalar_op(
                 a_t, b_t, c_t, <void*>scalar_handle, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>c_t)] if c_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        a_t = NULL
+        b_t = NULL
+        c_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(a_t)
-            _fast_destroy_tensor(b_t)
-            _fast_destroy_tensor(c_t)
-            _fast_destroy_tensor(out_t)
-
-
+            if a_t != NULL:
+                _fast_destroy_tensor(a_t)
+            if b_t != NULL:
+                _fast_destroy_tensor(b_t)
+            if c_t != NULL:
+                _fast_destroy_tensor(c_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 def six_tensor_string_double_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
         a_shape, a_stride,
@@ -7120,10 +8395,17 @@ def six_tensor_string_double_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7212,10 +8494,17 @@ def six_tensor_five_floats_two_bools_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7287,10 +8576,17 @@ def where_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7340,10 +8636,17 @@ def clamp_optional_scalars_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7410,10 +8713,17 @@ def clamp_tensor_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7463,10 +8773,17 @@ def tensor_two_scalars_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7523,17 +8840,36 @@ def binary_two_inputs_with_dim_op(
                 self_t, dim, other_t, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>other_t)] if other_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        other_t = NULL
+        out_t = NULL
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(other_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if other_t != NULL:
+                _fast_destroy_tensor(other_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def binary_two_inputs_with_int8_op(
@@ -7586,10 +8922,17 @@ def binary_two_inputs_with_int8_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7649,10 +8992,17 @@ def two_tensor_two_ints_bool_mixed_fmt_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7711,10 +9061,17 @@ def binary_two_inputs_three_attrs_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7772,10 +9129,17 @@ def binary_two_inputs_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7824,10 +9188,17 @@ def leaky_relu_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
@@ -7895,10 +9266,17 @@ def rms_norm_op(
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
         if ws_size == 0:
-            with nogil:
-                ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
-            if ret != 0:
-                raise RuntimeError(f"Execute failed: {ret}")
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:

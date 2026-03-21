@@ -62,6 +62,7 @@ def test_soc_910a_fallback_ops_cover_expected_watchlist_set():
         "matmul",
         "addmm",
         "mv",
+        "repeat_interleave_tensor",
     }
     got = set(ops_soc.fallback_ops("910a"))
     assert got == expected

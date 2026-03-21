@@ -100,14 +100,15 @@ def _strided_copy(a):
 
 
 def _build_repeat_interleave_indices(dim_size, repeats, device):
-    from ..creation import zeros_create
+    from ..creation import empty_create
+    from .reduce import amin, cumsum, searchsorted, sum_
 
     if isinstance(repeats, int):
         if repeats < 0:
             raise ValueError("repeats must be non-negative")
         output_size = int(dim_size) * int(repeats)
         if output_size == 0:
-            return zeros_create((0,), dtype=int64_dtype, device=device), output_size
+            return empty_create((0,), dtype=int64_dtype, device=device), output_size
         base = _npu_arange_1d(int(dim_size), device)
         idx = repeat(base, (int(repeats),))
         return idx, output_size
@@ -125,32 +126,22 @@ def _build_repeat_interleave_indices(dim_size, repeats, device):
             f"repeats must have the same size as input along dim, but got repeats.size(0) = {repeats.shape[0]} and input.size(0) = {dim_size}"
         )
 
-    rep_list = repeats.to("cpu").tolist()
-    if any(int(v) < 0 for v in rep_list):
+    if _read_int64_scalar(amin(repeats, dim=None, keepdim=False)) < 0:
         raise ValueError("repeats must be non-negative")
 
     if repeats.shape[0] == 1:
-        rep = int(rep_list[0])
+        rep = _read_int64_scalar(repeats)
         return _build_repeat_interleave_indices(dim_size, rep, device)
 
-    output_size = int(sum(int(v) for v in rep_list))
+    total = sum_(repeats, dim=0, keepdim=False)
+    output_size = _read_int64_scalar(total)
     if output_size == 0:
-        return zeros_create((0,), dtype=int64_dtype, device=device), output_size
+        return empty_create((0,), dtype=int64_dtype, device=device), output_size
 
-    idx_chunks = []
-    for i, rep in enumerate(rep_list):
-        rep = int(rep)
-        if rep == 0:
-            continue
-        from ..creation import full_create
-        chunk = full_create((rep,), i, dtype=int64_dtype, device=device)
-        idx_chunks.append(chunk)
-
-    if not idx_chunks:
-        return zeros_create((0,), dtype=int64_dtype, device=device), 0
-    if len(idx_chunks) == 1:
-        return idx_chunks[0], output_size
-    return cat(idx_chunks, dim=0), output_size
+    offsets = cumsum(repeats, dim=0)
+    positions = _npu_arange_1d(output_size, device)
+    idx = searchsorted(offsets, positions, out_int32=False, right=True)
+    return idx, output_size
 
 
 def _read_bool_scalar(tensor):
@@ -1444,24 +1435,99 @@ def repeat_interleave(a, repeats, dim=None):
         raise ValueError("NPU repeat_interleave expects NPU tensors")
 
     from ..creation import zeros_create
+    from .reduce import sum_
 
     if hasattr(repeats, "shape"):
-        # Tensor repeats: use on-device index_select approach
-        if dim is None:
-            flat = view_backend.reshape(a, (a.numel(),))
-            idx, out_size = _build_repeat_interleave_indices(flat.shape[0], repeats, a.device)
-            if out_size == 0:
-                return zeros_create((0,), dtype=a.dtype, device=a.device)
-            return index_select(flat, 0, idx)
+        if repeats.device.type != "npu":
+            raise ValueError("NPU repeat_interleave expects NPU repeats tensor")
 
-        dim = _normalize_dim(dim, a.dim())
-        idx, out_size = _build_repeat_interleave_indices(a.shape[dim], repeats, a.device)
+        runtime = npu_runtime.get_runtime((a.device.index or 0))
+        stream = npu_state.current_stream((a.device.index or 0))
+
+        if dim is None:
+            in_tensor = view_backend.reshape(a, (a.numel(),))
+            dim_size = in_tensor.shape[0]
+            native_dim = None
+        else:
+            native_dim = _normalize_dim(dim, a.dim())
+            in_tensor = a
+            dim_size = in_tensor.shape[native_dim]
+
+        if aclnn.repeat_interleave_tensor_symbols_ok() and not _use_soc_fallback("repeat_interleave_tensor"):
+            # TODO: re-enable native tensor-repeat_interleave when CANN fixes cross-op
+            # state corruption on 910A after aclnnRepeatInterleave{WithDim}.
+            if repeats.dtype != int64_dtype:
+                raise TypeError("repeats tensor must be int64")
+            if repeats.dim() == 0:
+                output_size = in_tensor.numel() * _read_int64_scalar(repeats) if native_dim is None else dim_size * _read_int64_scalar(repeats)
+            else:
+                if repeats.dim() != 1:
+                    raise RuntimeError("repeats must be 0-dim or 1-dim tensor")
+                expected = in_tensor.numel() if native_dim is None else int(dim_size)
+                if repeats.shape[0] not in (1, expected):
+                    raise RuntimeError(
+                        f"repeats must have the same size as input along dim, but got repeats.size(0) = {repeats.shape[0]} and input.size(0) = {expected}"
+                    )
+                if repeats.shape[0] == 1:
+                    rep = _read_int64_scalar(repeats)
+                    output_size = in_tensor.numel() * rep if native_dim is None else dim_size * rep
+                else:
+                    output_size = _read_int64_scalar(sum_(repeats, dim=0, keepdim=False))
+
+            if native_dim is None:
+                out_shape = (int(output_size),)
+            else:
+                out_shape = list(a.shape)
+                out_shape[native_dim] = int(output_size)
+                out_shape = tuple(out_shape)
+
+            if int(output_size) == 0:
+                return zeros_create(out_shape, dtype=a.dtype, device=a.device)
+
+            out_stride = npu_runtime._contiguous_stride(out_shape)
+            out_ptr = npu_runtime._alloc_device(max(_numel(out_shape), 1) * _dtype_itemsize(a.dtype), runtime=runtime)
+            aclnn.repeat_interleave_tensor(
+                _unwrap_storage(in_tensor).data_ptr(),
+                _unwrap_storage(repeats).data_ptr(),
+                out_ptr,
+                in_tensor.shape,
+                in_tensor.stride,
+                in_tensor.dtype,
+                repeats.shape,
+                repeats.stride,
+                repeats.dtype,
+                None if native_dim is None else int(native_dim),
+                int(output_size),
+                out_shape,
+                out_stride,
+                runtime,
+                stream=stream.stream,
+            )
+            out_storage = npu_typed_storage_from_ptr(out_ptr, max(_numel(out_shape), 1), a.dtype, device=a.device)
+            return _wrap_tensor(out_storage, out_shape, out_stride)
+
+        # Tensor repeats: use on-device index_select approach
+        if native_dim is None:
+            idx, out_size = _build_repeat_interleave_indices(dim_size, repeats, a.device)
+            if out_size == 0:
+                out = zeros_create((0,), dtype=a.dtype, device=a.device)
+            else:
+                out = _index_select_known_nonnegative(in_tensor, 0, idx)
+            if _use_soc_fallback("repeat_interleave_tensor"):
+                runtime.synchronize()
+            return out
+
+        idx, out_size = _build_repeat_interleave_indices(dim_size, repeats, a.device)
         out_shape = list(a.shape)
-        out_shape[dim] = out_size
+        out_shape[native_dim] = out_size
         out_shape = tuple(out_shape)
         if out_size == 0:
-            return zeros_create(out_shape, dtype=a.dtype, device=a.device)
-        return index_select(a, dim, idx)
+            out = zeros_create(out_shape, dtype=a.dtype, device=a.device)
+        else:
+            out = _index_select_known_nonnegative(a, native_dim, idx)
+        if _use_soc_fallback("repeat_interleave_tensor"):
+            runtime.synchronize()
+        return out
 
     if isinstance(repeats, int) and aclnn.repeat_interleave_int_symbols_ok():
         rep = int(repeats)
@@ -1505,7 +1571,7 @@ def repeat_interleave(a, repeats, dim=None):
         idx, out_size = _build_repeat_interleave_indices(flat.shape[0], repeats, a.device)
         if out_size == 0:
             return zeros_create((0,), dtype=a.dtype, device=a.device)
-        return index_select(flat, 0, idx)
+        return _index_select_known_nonnegative(flat, 0, idx)
 
     dim = _normalize_dim(dim, a.dim())
     idx, out_size = _build_repeat_interleave_indices(a.shape[dim], repeats, a.device)
@@ -1514,7 +1580,7 @@ def repeat_interleave(a, repeats, dim=None):
     out_shape = tuple(out_shape)
     if out_size == 0:
         return zeros_create(out_shape, dtype=a.dtype, device=a.device)
-    return index_select(a, dim, idx)
+    return _index_select_known_nonnegative(a, dim, idx)
 
 
 def tril(a, diagonal=0):
@@ -2369,6 +2435,24 @@ def gather(a, dim, index):
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
+def _index_select_known_nonnegative(a, dim, index):
+    dim = _normalize_dim(dim, a.dim())
+    _require_int64_indices(index, "index_select")
+    if index.dim() != 1:
+        raise ValueError("index must be 1D")
+    index_shape = list(a.shape)
+    index_shape[dim] = index.shape[0]
+    index_shape = tuple(index_shape)
+    expand_shape = [1] * a.dim()
+    expand_shape[dim] = index.shape[0]
+    expanded = view_backend.reshape(index, tuple(expand_shape))
+    repeats = []
+    for axis, size in enumerate(index_shape):
+        repeats.append(1 if axis == dim else int(size))
+    expanded = repeat(expanded, tuple(repeats))
+    return gather(a, dim, expanded)
+
+
 def index_select(a, dim, index):
     dim = _normalize_dim(dim, a.dim())
     _require_int64_indices(index, "index_select")
@@ -2377,14 +2461,7 @@ def index_select(a, dim, index):
     dim_size = a.shape[dim]
     _validate_index_bounds(index, dim_size, allow_negative=True, name="index_select")
     norm_index = _normalize_negative_indices(index, dim_size)
-    index_shape = list(a.shape)
-    index_shape[dim] = norm_index.shape[0]
-    index_shape = tuple(index_shape)
-    expand_shape = [1] * a.dim()
-    expand_shape[dim] = norm_index.shape[0]
-    expanded = view_backend.reshape(norm_index, tuple(expand_shape))
-    expanded = _npu_broadcast_to(expanded, index_shape)
-    return gather(a, dim, expanded)
+    return _index_select_known_nonnegative(a, dim, norm_index)
 
 
 def take(a, index):
