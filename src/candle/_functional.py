@@ -7,10 +7,11 @@ from ._dtype import to_numpy_dtype
 import builtins as _builtins
 
 
-def _has_torch_function(args, kwargs):
+def _py_has_torch_function(args, kwargs):
     """Fast check: do any tensor args have __torch_function__ overrides?"""
     from ._tensor import Tensor
     _builtin_any = _builtins.any
+
     def _check(val):
         if isinstance(val, Tensor) and type(val) is not Tensor:
             cls = type(val)
@@ -19,6 +20,7 @@ def _has_torch_function(args, kwargs):
         if isinstance(val, (list, tuple)):
             return _builtin_any(_check(v) for v in val)
         return False
+
     for a in args:
         if _check(a):
             return True
@@ -29,12 +31,13 @@ def _has_torch_function(args, kwargs):
     return False
 
 
-def _handle_torch_function(func, args, kwargs):
+def _py_handle_torch_function(func, args, kwargs):
     """Dispatch to __torch_function__ if any arg is an overriding tensor subclass."""
     from ._tensor import Tensor
     if not _has_torch_function(args, kwargs):
         return NotImplemented
     types = set()
+
     def _collect(val):
         if isinstance(val, Tensor) and type(val) is not Tensor:
             cls = type(val)
@@ -43,6 +46,7 @@ def _handle_torch_function(func, args, kwargs):
         if isinstance(val, (list, tuple)):
             for v in val:
                 _collect(v)
+
     for a in args:
         _collect(a)
     if kwargs:
@@ -56,8 +60,8 @@ def _handle_torch_function(func, args, kwargs):
     return NotImplemented
 
 
-def add(*args, **kwargs):
-    r = _handle_torch_function(add, args, kwargs)
+def _py_add(*args, **kwargs):
+    r = _handle_torch_function(_py_add, args, kwargs)
     if r is not NotImplemented:
         return r
     alpha = kwargs.pop("alpha", 1)
@@ -70,11 +74,11 @@ def add(*args, **kwargs):
     return dispatch("add", None, *args, **kwargs)
 
 
-def transpose(*args, **kwargs):
+def _py_transpose(*args, **kwargs):
     return dispatch("transpose", None, *args, **kwargs)
 
 
-def reshape(*args, **kwargs):
+def _py_reshape(*args, **kwargs):
     a = args[0] if args else kwargs.get('input')
     device = a.device.type if hasattr(a, 'device') else None
     return dispatch("reshape", device, *args, **kwargs)
@@ -88,22 +92,22 @@ def view_as_complex(a):
     return dispatch("view_as_complex", a.device.type, a)
 
 
-def mul(*args, **kwargs):
-    r = _handle_torch_function(mul, args, kwargs)
+def _py_mul(*args, **kwargs):
+    r = _handle_torch_function(_py_mul, args, kwargs)
     if r is not NotImplemented:
         return r
     return dispatch("mul", None, *args, **kwargs)
 
 
-def matmul(*args, **kwargs):
-    r = _handle_torch_function(matmul, args, kwargs)
+def _py_matmul(*args, **kwargs):
+    r = _handle_torch_function(_py_matmul, args, kwargs)
     if r is not NotImplemented:
         return r
     return dispatch("matmul", None, *args, **kwargs)
 
 
-def relu(*args, **kwargs):
-    r = _handle_torch_function(relu, args, kwargs)
+def _py_relu(*args, **kwargs):
+    r = _handle_torch_function(_py_relu, args, kwargs)
     if r is not NotImplemented:
         return r
     return dispatch("relu", None, *args, **kwargs)
@@ -113,11 +117,89 @@ def abs(a):
     return dispatch("abs", a.device.type, a)
 
 
-def neg(a):
-    r = _handle_torch_function(neg, (a,), {})
+def _py_neg(a):
+    r = _handle_torch_function(_py_neg, (a,), {})
     if r is not NotImplemented:
         return r
     return dispatch("neg", a.device.type, a)
+
+
+_py_add.__name__ = "add"
+_py_mul.__name__ = "mul"
+_py_matmul.__name__ = "matmul"
+_py_relu.__name__ = "relu"
+_py_neg.__name__ = "neg"
+
+_has_torch_function_impl = _py_has_torch_function
+_handle_torch_function_impl = _py_handle_torch_function
+_add_impl = _py_add
+_mul_impl = _py_mul
+_matmul_impl = _py_matmul
+_relu_impl = _py_relu
+_transpose_impl = _py_transpose
+_reshape_impl = _py_reshape
+_neg_impl = _py_neg
+
+try:
+    from ._cython._functional_ops import (
+        _has_torch_function as _cy_has_torch_function,
+        _handle_torch_function as _cy_handle_torch_function,
+        add as _cy_add,
+        mul as _cy_mul,
+        matmul as _cy_matmul,
+        relu as _cy_relu,
+        transpose as _cy_transpose,
+        reshape as _cy_reshape,
+        neg as _cy_neg,
+    )
+
+    _has_torch_function_impl = _cy_has_torch_function
+    _handle_torch_function_impl = _cy_handle_torch_function
+    _add_impl = _cy_add
+    _mul_impl = _cy_mul
+    _matmul_impl = _cy_matmul
+    _relu_impl = _cy_relu
+    _transpose_impl = _cy_transpose
+    _reshape_impl = _cy_reshape
+    _neg_impl = _cy_neg
+except ImportError:
+    pass
+
+
+def _has_torch_function(args, kwargs):
+    return _has_torch_function_impl(args, kwargs)
+
+
+def _handle_torch_function(func, args, kwargs):
+    return _handle_torch_function_impl(func, args, kwargs)
+
+
+def add(*args, **kwargs):
+    return _add_impl(*args, **kwargs)
+
+
+def transpose(*args, **kwargs):
+    return _transpose_impl(*args, **kwargs)
+
+
+def reshape(*args, **kwargs):
+    return _reshape_impl(*args, **kwargs)
+
+
+def mul(*args, **kwargs):
+    return _mul_impl(*args, **kwargs)
+
+
+def matmul(*args, **kwargs):
+    return _matmul_impl(*args, **kwargs)
+
+
+def relu(*args, **kwargs):
+    return _relu_impl(*args, **kwargs)
+
+
+def neg(a):
+    return _neg_impl(a)
 
 
 def exp(a):
@@ -374,6 +456,9 @@ def div(a, b, *, rounding_mode=None):
     if r is not NotImplemented:
         return r
     return dispatch("div", a.device.type, a, b)
+
+_py_div = div
+_py_div.__name__ = "div"
 
 
 def true_divide(a, b):
@@ -1178,6 +1263,9 @@ def sub(*args, **kwargs):
         return dispatch("sub", None, a, b)
     return dispatch("sub", None, *args, **kwargs)
 
+_py_sub = sub
+_py_sub.__name__ = "sub"
+
 
 def log1p(a):
     return dispatch("log1p", a.device.type, a)
@@ -1734,29 +1822,3 @@ def blackman_window(window_length, periodic=True, *, dtype=None, device=None):
                    mul(_tensor(a2, dtype=dtype, device=device), cos(t2))),
                mul(_tensor(a1, dtype=dtype, device=device), cos(t1)))
 
-
-# ---------------------------------------------------------------------------
-# Cython fast-path: replace top ops if Cython extension is available.
-# These skip __torch_function__ scanning for base Tensor instances.
-# Save originals first so fast_ops can reference them for __torch_function__.
-# ---------------------------------------------------------------------------
-_py_add = add
-_py_mul = mul
-_py_matmul = matmul
-_py_sub = sub
-_py_div = div
-_py_relu = relu
-_py_neg = neg
-
-try:
-    from ._cython._fast_ops import (
-        add,  # noqa: F811
-        mul,  # noqa: F811
-        matmul,  # noqa: F811
-        sub,  # noqa: F811
-        div,  # noqa: F811
-        relu,  # noqa: F811
-        neg,  # noqa: F811
-    )
-except ImportError:
-    pass

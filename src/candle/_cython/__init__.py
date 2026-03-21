@@ -3,7 +3,7 @@
 This package provides Cython implementations of performance-critical code
 paths (dispatcher, allocator, storage creation, NPU ops, ACLNN FFI,
 TensorImpl, dispatcher core, device, dtype, autograd node, autograd graph,
-fast ops).
+autograd function, autograd ops, functional wrappers, fast ops, tensor API).
 
 Feature flags (set after import):
     _HAS_CYTHON_DISPATCH        — True if _dispatch.pyx compiled successfully
@@ -19,7 +19,9 @@ Feature flags (set after import):
     _HAS_CYTHON_AUTOGRAD_ENGINE — always True (hard import, no fallback)
     _HAS_CYTHON_AUTOGRAD_FUNCTION — always True (hard import, no fallback)
     _HAS_CYTHON_AUTOGRAD_OPS    — always True (hard import, no fallback)
+    _HAS_CYTHON_FUNCTIONAL_OPS  — True if _functional_ops.pyx compiled successfully
     _HAS_CYTHON_FAST_OPS        — True if _fast_ops.pyx compiled successfully
+    _HAS_CYTHON_TENSOR_API      — True if _tensor_api.pyx compiled successfully
 """
 
 _HAS_CYTHON_DISPATCH = False
@@ -30,12 +32,15 @@ _HAS_CYTHON_ACLNN_FFI = False
 _HAS_CYTHON_DISPATCHER_CORE = False
 _HAS_CYTHON_DEVICE = False
 _HAS_CYTHON_DTYPE = False
-# Autograd core modules are required (hard imports below — no fallback).
+# Autograd core modules are required (hard imports below -- no fallback).
 _HAS_CYTHON_AUTOGRAD_NODE = False
 _HAS_CYTHON_AUTOGRAD_GRAPH = False
 _HAS_CYTHON_AUTOGRAD_ENGINE = False
 _HAS_CYTHON_AUTOGRAD_FUNCTION = False
 _HAS_CYTHON_AUTOGRAD_OPS = False
+_HAS_CYTHON_FUNCTIONAL_OPS = False
+_HAS_CYTHON_FAST_OPS = False
+_HAS_CYTHON_TENSOR_API = False
 
 try:
     from ._dispatch import cy_dispatch, cy_dispatch_with_keyset  # noqa: F401
@@ -153,7 +158,47 @@ from ._autograd_ops import (  # noqa: F401  # pylint: disable=import-error,no-na
 _HAS_CYTHON_AUTOGRAD_OPS = True
 
 try:
-    from ._fast_ops import add, mul, matmul  # noqa: F401
+    from ._functional_ops import (  # noqa: F401  # pylint: disable=import-error,no-name-in-module
+        _has_torch_function as cy_has_torch_function,
+        _handle_torch_function as cy_handle_torch_function,
+        add as functional_add,
+        mul as functional_mul,
+        matmul as functional_matmul,
+        relu as functional_relu,
+        transpose as functional_transpose,
+        reshape as functional_reshape,
+        neg as functional_neg,
+    )
+    _HAS_CYTHON_FUNCTIONAL_OPS = True
+except ImportError:
+    pass
+
+try:
+    from . import _fast_ops as _legacy_fast_ops  # noqa: F401
     _HAS_CYTHON_FAST_OPS = True
+except ImportError:
+    pass
+
+try:
+    from ._tensor_api import (  # noqa: F401  # pylint: disable=import-error,no-name-in-module
+        tensor_add,
+        tensor_backward,
+        tensor_clone,
+        tensor_detach,
+        tensor_dim,
+        tensor_iadd,
+        tensor_imul,
+        tensor_matmul,
+        tensor_mul,
+        tensor_neg,
+        tensor_relu,
+        tensor_reshape,
+        tensor_size,
+        tensor_to,
+        tensor_transpose,
+        tensor_view,
+        tensor_sub,
+    )
+    _HAS_CYTHON_TENSOR_API = True
 except ImportError:
     pass

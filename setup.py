@@ -84,8 +84,16 @@ if _system in ("Linux", "Darwin"):
             ["src/candle/_cython/_autograd_ops.pyx"],
         ),
         Extension(
+            "candle._cython._functional_ops",
+            ["src/candle/_cython/_functional_ops.pyx"],
+        ),
+        Extension(
             "candle._cython._fast_ops",
             ["src/candle/_cython/_fast_ops.pyx"],
+        ),
+        Extension(
+            "candle._cython._tensor_api",
+            ["src/candle/_cython/_tensor_api.pyx"],
         ),
         Extension(
             "candle._cython._cpu_kernels",
