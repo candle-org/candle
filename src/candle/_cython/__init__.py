@@ -6,19 +6,21 @@ TensorImpl, dispatcher core, device, dtype, autograd node, autograd graph,
 fast ops).
 
 Feature flags (set after import):
-    _HAS_CYTHON_DISPATCH   — True if _dispatch.pyx compiled successfully
-    _HAS_CYTHON_ALLOCATOR  — True if _allocator.pyx compiled successfully
-    _HAS_CYTHON_STORAGE    — True if _storage.pyx compiled successfully
-    _HAS_CYTHON_NPU_OPS    — True if _npu_ops.pyx compiled successfully
-    _HAS_CYTHON_ACLNN_FFI  — True if _aclnn_ffi.pyx compiled successfully
-    _HAS_CYTHON_TENSOR_IMPL — True if _tensor_impl.pyx compiled successfully
+    _HAS_CYTHON_DISPATCH        — True if _dispatch.pyx compiled successfully
+    _HAS_CYTHON_ALLOCATOR       — True if _allocator.pyx compiled successfully
+    _HAS_CYTHON_STORAGE         — True if _storage.pyx compiled successfully
+    _HAS_CYTHON_NPU_OPS         — True if _npu_ops.pyx compiled successfully
+    _HAS_CYTHON_ACLNN_FFI       — True if _aclnn_ffi.pyx compiled successfully
+    _HAS_CYTHON_TENSOR_IMPL     — True if _tensor_impl.pyx compiled successfully
     _HAS_CYTHON_DISPATCHER_CORE — True if _dispatcher_core.pyx compiled
-    _HAS_CYTHON_DEVICE     — True if _device.pyx compiled successfully
-    _HAS_CYTHON_DTYPE      — True if _dtype.pyx compiled successfully
-    _HAS_CYTHON_AUTOGRAD_NODE — True if _autograd_node.pyx compiled
-    _HAS_CYTHON_AUTOGRAD_GRAPH — True if _autograd_graph.pyx compiled
-    _HAS_CYTHON_AUTOGRAD_FUNCTION — True if _autograd_function.pyx compiled
-    _HAS_CYTHON_FAST_OPS   — True if _fast_ops.pyx compiled successfully
+    _HAS_CYTHON_DEVICE          — True if _device.pyx compiled successfully
+    _HAS_CYTHON_DTYPE           — True if _dtype.pyx compiled successfully
+    _HAS_CYTHON_AUTOGRAD_NODE   — always True (hard import, no fallback)
+    _HAS_CYTHON_AUTOGRAD_GRAPH  — always True (hard import, no fallback)
+    _HAS_CYTHON_AUTOGRAD_ENGINE — always True (hard import, no fallback)
+    _HAS_CYTHON_AUTOGRAD_FUNCTION — always True (hard import, no fallback)
+    _HAS_CYTHON_AUTOGRAD_OPS    — always True (hard import, no fallback)
+    _HAS_CYTHON_FAST_OPS        — True if _fast_ops.pyx compiled successfully
 """
 
 _HAS_CYTHON_DISPATCH = False
@@ -30,9 +32,12 @@ _HAS_CYTHON_TENSOR_IMPL = False
 _HAS_CYTHON_DISPATCHER_CORE = False
 _HAS_CYTHON_DEVICE = False
 _HAS_CYTHON_DTYPE = False
+# Autograd core modules are required (hard imports below — no fallback).
+_HAS_CYTHON_AUTOGRAD_NODE = False
 _HAS_CYTHON_AUTOGRAD_GRAPH = False
 _HAS_CYTHON_AUTOGRAD_ENGINE = False
 _HAS_CYTHON_AUTOGRAD_FUNCTION = False
+_HAS_CYTHON_AUTOGRAD_OPS = False
 
 try:
     from ._dispatch import cy_dispatch, cy_dispatch_with_keyset  # noqa: F401
@@ -95,7 +100,7 @@ try:
 except ImportError:
     pass
 
-from ._autograd_node import (
+from ._autograd_node import (  # pylint: disable=no-name-in-module
     AccumulateGrad,  # noqa: F401
     FastNode,  # noqa: F401
     InputMetadata,  # noqa: F401
@@ -106,7 +111,7 @@ from ._autograd_node import (
 )
 _HAS_CYTHON_AUTOGRAD_NODE = True
 
-from ._autograd_graph import (  # noqa: F401
+from ._autograd_graph import (  # noqa: F401  # pylint: disable=no-name-in-module
     GradientEdge,
     current_saved_tensors_hooks,
     get_gradient_edge,
@@ -114,7 +119,7 @@ from ._autograd_graph import (  # noqa: F401
 )
 _HAS_CYTHON_AUTOGRAD_GRAPH = True
 
-from ._autograd_engine import (  # noqa: F401
+from ._autograd_engine import (  # noqa: F401  # pylint: disable=no-name-in-module
     _GraphTask,
     _build_dependencies,
     _run_backward,
@@ -131,13 +136,13 @@ from ._autograd_engine import (  # noqa: F401
 )
 _HAS_CYTHON_AUTOGRAD_ENGINE = True
 
-from ._autograd_function import (  # noqa: F401
+from ._autograd_function import (  # noqa: F401  # pylint: disable=no-name-in-module
     FunctionCtx,
     _function_apply,
 )
 _HAS_CYTHON_AUTOGRAD_FUNCTION = True
 
-from ._autograd_ops import (  # noqa: F401
+from ._autograd_ops import (  # noqa: F401  # pylint: disable=no-name-in-module
     _strip_autograd_keys,
     _grad_context,
     _backward_dispatch_keyset,

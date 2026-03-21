@@ -1,6 +1,6 @@
 import inspect
 
-from .._cython._autograd_function import FunctionCtx, _function_apply
+from .._cython._autograd_function import FunctionCtx, _function_apply  # pylint: disable=no-name-in-module
 
 
 class FunctionMeta(type):
