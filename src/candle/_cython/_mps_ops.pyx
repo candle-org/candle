@@ -784,16 +784,17 @@ cpdef object softmax(object a, object dim):
             d = _get_dispatcher()
             sfx = _kernel_suffix(a.dtype)
             numel = a.numel()
-            cols = a.shape[-1]
+            cols = a.shape[ndim - 1]
             rows = numel // cols
             out_buf = _alloc_output_buf(numel, a.dtype)
             d.dispatch_softmax_2d(f"softmax_{sfx}", _metal_buf(a), out_buf,
                                   rows, cols)
-            return _from_metal_buffer(out_buf, a.shape, a.stride, a.dtype, a.device)
+            return _from_metal_buffer(out_buf, tuple(a.shape), tuple(a.stride), a.dtype, a.device)
         perm = list(range(ndim))
-        perm[actual_dim], perm[-1] = perm[-1], perm[actual_dim]
+        last = ndim - 1
+        perm[actual_dim], perm[last] = perm[last], perm[actual_dim]
         a_t = a.permute(*perm).contiguous()
-        out_t = softmax(a_t, -1)
+        out_t = softmax(a_t, last)
         return out_t.permute(*perm).contiguous()
     _unsupported_dtype("softmax", a)
 
