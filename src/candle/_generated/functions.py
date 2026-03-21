@@ -9412,8 +9412,8 @@ class PowTensorTensorBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         result = _saved[self._saved_result_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("pow_backward_self", keyset, grad, self_, exponent)
-            grad_exponent = redispatch("pow_backward_exponent", keyset, grad, self_, exponent, result)
+            grad_self = _pow_backward_self_helper(grad, self_, exponent, keyset)
+            grad_exponent = _pow_backward_exponent_helper(grad, self_, exponent, result, keyset)
         return (grad_self, grad_exponent,)
 
 class PowScalarBackward0(Node):
@@ -15283,7 +15283,8 @@ class MaxPool2dBackward0(Node):
         dilation = self._dilation
         ceil_mode = self._ceil_mode
         with _grad_context(keyset):
-            grad_self = _max_pool2d_backward_helper(grad, self_, None, kernel_size, stride, padding, dilation, ceil_mode, keyset)
+            _, _pool_result = redispatch("max_pool2d", keyset, self_, kernel_size, stride, padding, dilation, ceil_mode, True)
+            grad_self = _max_pool2d_backward_helper(grad, self_, _pool_result, kernel_size, stride, padding, dilation, ceil_mode, keyset)
         return (grad_self,)
 
 class MpsConvolutionBackward0(Node):

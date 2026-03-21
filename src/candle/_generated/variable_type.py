@@ -16484,7 +16484,11 @@ norm_autograd_post = norm_scalar_autograd_post
 normal_autograd = normal_tensor_float_autograd
 normal_autograd_post = normal_tensor_float_autograd_post
 pow_autograd = pow_tensor_scalar_autograd
-pow_autograd_post = pow_tensor_scalar_autograd_post
+def pow_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_kwargs):
+    from .._tensor import Tensor as _Tensor
+    if isinstance(exponent, _Tensor):
+        return pow_tensor_tensor_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    return pow_tensor_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
 random__autograd = random__from_autograd
 random__autograd_post = random__from_autograd_post
 remainder_autograd = remainder_scalar_autograd
