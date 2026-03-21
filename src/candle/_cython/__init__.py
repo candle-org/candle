@@ -137,6 +137,19 @@ from ._autograd_function import (  # noqa: F401
 )
 _HAS_CYTHON_AUTOGRAD_FUNCTION = True
 
+from ._autograd_ops import (  # noqa: F401
+    _strip_autograd_keys,
+    _grad_context,
+    _backward_dispatch_keyset,
+    _autograd_unary_passthrough,
+    _autograd_binary,
+    _autograd_binary_args,
+    _autograd_unary_args,
+    _norm_extract_weight_bias,
+    _autograd_norm,
+)
+_HAS_CYTHON_AUTOGRAD_OPS = True
+
 try:
     from ._fast_ops import add, mul, matmul  # noqa: F401
     _HAS_CYTHON_FAST_OPS = True

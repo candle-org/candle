@@ -1,161 +1,25 @@
-from contextlib import nullcontext
 import weakref
 
-from ..autograd.grad_mode import GradMode, no_grad
+from ..autograd.grad_mode import GradMode
 from ..autograd.node import Node
 from ..autograd.anomaly_mode import annotate_node_creation
 from ..autograd.utils import reduce_grad
 from .._dispatch.dispatcher import current_dispatch_keyset, redispatch
-from .._dispatch.keys import DispatchKey
 from .._dispatch.registry import registry
 from .._dispatch.registration import register_autograd_kernels
 
-
-def _strip_autograd_keys(keyset):
-    if keyset is None:
-        return None
-    return keyset.without(
-        {
-            DispatchKey.Autograd,
-            DispatchKey.AutogradOther,
-            DispatchKey.AutogradCPU,
-            DispatchKey.AutogradNPU,
-            DispatchKey.AutogradCUDA,
-            DispatchKey.AutogradXPU,
-            DispatchKey.AutogradMeta,
-            DispatchKey.PrivateUse3,
-        }
-    )
-
-
-def _grad_context(_keyset=None):
-    from ..autograd.engine import is_create_graph_enabled
-
-    if is_create_graph_enabled():
-        return nullcontext()
-    return no_grad()
-
-
-def _backward_dispatch_keyset(raw_keyset, autograd_keyset):
-    from ..autograd.engine import is_create_graph_enabled
-
-    if is_create_graph_enabled() and autograd_keyset is not None:
-        return autograd_keyset
-    return raw_keyset
-
-
-def _autograd_unary_passthrough(name):
-    def wrapper(a, *args, **kwargs):
-        active_keyset = current_dispatch_keyset()
-        raw_keyset = _strip_autograd_keys(active_keyset)
-        out = redispatch(name, raw_keyset, a, *args, **kwargs)
-        if GradMode.enabled and getattr(a, "requires_grad", False):
-            node_holder = {}
-
-            def _backward(grad):
-                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
-                return (redispatch("to", backward_keyset, grad, a.device, non_blocking=False),)
-
-            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
-            annotate_node_creation(node)
-            node_holder["node"] = weakref.proxy(node)
-            out.grad_fn = node
-            out.requires_grad = True
-        return out
-
-    return wrapper
-
-
-def _autograd_binary(name, backward_impl, *, save_inputs=True):
-    def wrapper(a, b):
-        active_keyset = current_dispatch_keyset()
-        raw_keyset = _strip_autograd_keys(active_keyset)
-        out = redispatch(name, raw_keyset, a, b)
-        a_requires_grad = getattr(a, "requires_grad", False)
-        b_requires_grad = getattr(b, "requires_grad", False)
-        if GradMode.enabled and (a_requires_grad or b_requires_grad):
-            node_holder = {}
-
-            def _backward(grad):
-                if save_inputs:
-                    saved_a, saved_b = node_holder["node"].saved_tensors()
-                else:
-                    saved_a, saved_b = a, b
-                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
-                return backward_impl(grad, a, b, saved_a, saved_b, backward_keyset)
-
-            node = Node(_backward, (a, b), name=f"{name.capitalize()}Backward0")
-            annotate_node_creation(node)
-            node_holder["node"] = weakref.proxy(node)
-            if save_inputs:
-                node.save_for_backward(a, b)
-                node._saved_fields["self"] = node._saved_tensors_list[0]
-                node._saved_fields["other"] = node._saved_tensors_list[1]
-            out.grad_fn = node
-            out.requires_grad = True
-        return out
-
-    return wrapper
-
-
-def _autograd_binary_args(name, backward_impl, *, save_inputs=True):
-    def wrapper(a, b, *args, **kwargs):
-        active_keyset = current_dispatch_keyset()
-        raw_keyset = _strip_autograd_keys(active_keyset)
-        out = redispatch(name, raw_keyset, a, b, *args, **kwargs)
-        a_requires_grad = getattr(a, "requires_grad", False)
-        b_requires_grad = getattr(b, "requires_grad", False)
-        if GradMode.enabled and (a_requires_grad or b_requires_grad):
-            node_holder = {}
-
-            def _backward(grad):
-                if save_inputs:
-                    saved_a, saved_b = node_holder["node"].saved_tensors()
-                else:
-                    saved_a, saved_b = a, b
-                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
-                return backward_impl(grad, a, b, saved_a, saved_b, backward_keyset, args, kwargs)
-
-            node = Node(_backward, (a, b), name=f"{name.capitalize()}Backward0")
-            annotate_node_creation(node)
-            node_holder["node"] = weakref.proxy(node)
-            if save_inputs:
-                node.save_for_backward(a, b)
-            out.grad_fn = node
-            out.requires_grad = True
-        return out
-
-    return wrapper
-
-
-def _autograd_unary_args(name, backward_impl, *, cpu_only=False, save_input=True):
-    def wrapper(a, *args, **kwargs):
-        active_keyset = current_dispatch_keyset()
-        raw_keyset = _strip_autograd_keys(active_keyset)
-        out = redispatch(name, raw_keyset, a, *args, **kwargs)
-        if cpu_only and a.device.type != "cpu":
-            return out
-        if GradMode.enabled and a.requires_grad:
-            node_holder = {}
-
-            def _backward(grad):
-                if save_input:
-                    saved_a = node_holder["node"].saved_tensors()[0]
-                else:
-                    saved_a = a
-                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
-                return backward_impl(grad, a, saved_a, backward_keyset, args, kwargs)
-
-            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
-            annotate_node_creation(node)
-            node_holder["node"] = weakref.proxy(node)
-            if save_input:
-                node.save_for_backward(a)
-            out.grad_fn = node
-            out.requires_grad = True
-        return out
-
-    return wrapper
+# -- Factory functions migrated to Cython (_cython/_autograd_ops.pyx) ----------
+from .._cython._autograd_ops import (  # pylint: disable=no-name-in-module
+    _strip_autograd_keys,
+    _grad_context,
+    _backward_dispatch_keyset,
+    _autograd_unary_passthrough,
+    _autograd_binary,
+    _autograd_binary_args,
+    _autograd_unary_args,
+    _norm_extract_weight_bias,
+    _autograd_norm,
+)
 
 
 def _autograd_rrelu():
@@ -175,78 +39,6 @@ def _autograd_rrelu():
                 return _rrelu_backward(grad, a, saved_a, backward_keyset, args, kwargs, slope=slope)
 
             node = Node(_backward, (a,), name=f"{op_name.capitalize()}Backward0")
-            annotate_node_creation(node)
-            node_holder["node"] = weakref.proxy(node)
-            node.save_for_backward(a)
-            out.grad_fn = node
-            out.requires_grad = True
-        return out
-
-    return wrapper
-
-
-def _norm_extract_weight_bias(args, kwargs):
-    """Extract weight and bias tensors from norm op args."""
-    from .._tensor import Tensor
-    weight = args[1] if len(args) > 1 else kwargs.get("weight", None)
-    bias = args[2] if len(args) > 2 else kwargs.get("bias", None)
-    if weight is not None and not isinstance(weight, Tensor):
-        weight = None
-    if bias is not None and not isinstance(bias, Tensor):
-        bias = None
-    return weight, bias
-
-
-def _autograd_norm(name, backward_impl):
-    """Autograd wrapper for normalization ops (layer_norm, batch_norm, rms_norm).
-
-    Like ``_autograd_unary_args`` but also captures ``_backward_data`` from the
-    forward output and passes it to *backward_impl* as the 5th positional arg.
-    This allows NPU backward kernels to access saved intermediate data (mean,
-    rstd, etc.) that the NPU forward op attached to its output tensor.
-
-    Also tracks weight and bias as Node inputs so their gradients propagate.
-    """
-    def wrapper(a, *args, **kwargs):
-        active_keyset = current_dispatch_keyset()
-        raw_keyset = _strip_autograd_keys(active_keyset)
-        out = redispatch(name, raw_keyset, a, *args, **kwargs)
-
-        weight, bias = _norm_extract_weight_bias(args, kwargs)
-        any_requires_grad = a.requires_grad
-        if weight is not None and getattr(weight, "requires_grad", False):
-            any_requires_grad = True
-        if bias is not None and getattr(bias, "requires_grad", False):
-            any_requires_grad = True
-
-        if GradMode.enabled and any_requires_grad:
-            backward_data = getattr(out, "_backward_data", None)
-            node_holder = {}
-
-            # Build inputs list: input + optional weight + optional bias
-            inputs = [a]
-            if weight is not None and getattr(weight, "requires_grad", False):
-                inputs.append(weight)
-            if bias is not None and getattr(bias, "requires_grad", False):
-                inputs.append(bias)
-
-            def _backward(grad):
-                saved_a = node_holder["node"].saved_tensors()[0]
-                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
-                all_grads = backward_impl(grad, a, saved_a, backward_keyset, args, kwargs, backward_data)
-                # all_grads = (grad_input, grad_weight, grad_bias)
-                # Map to the inputs list we built
-                result = []
-                result.append(all_grads[0])  # grad_input
-                idx = 1
-                if weight is not None and getattr(weight, "requires_grad", False):
-                    result.append(all_grads[idx] if idx < len(all_grads) else None)
-                    idx += 1
-                if bias is not None and getattr(bias, "requires_grad", False):
-                    result.append(all_grads[idx] if idx < len(all_grads) else None)
-                return tuple(result)
-
-            node = Node(_backward, tuple(inputs), name=f"{name.capitalize()}Backward0")
             annotate_node_creation(node)
             node_holder["node"] = weakref.proxy(node)
             node.save_for_backward(a)
