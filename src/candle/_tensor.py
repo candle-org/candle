@@ -74,7 +74,6 @@ from ._functional import tile as tile_dispatch, flip as flip_dispatch, roll as r
 from ._functional import reciprocal as reciprocal_dispatch, addmm as addmm_dispatch
 from ._functional import log1p as log1p_dispatch, expm1 as expm1_dispatch
 from .autograd.engine import backward as _backward
-from ._printing import format_tensor
 
 # TensorImpl base class: Cython if available, else pure-Python fallback
 try:
@@ -212,54 +211,6 @@ class Tensor(_TensorBase):
         self.offset = new_data.offset
         self._bump_version()
 
-    @property
-    def output_nr(self):
-        return 0
-
-    @property
-    def is_cuda(self):
-        """Returns True if the tensor is stored on a CUDA GPU."""
-        return self.device.type == "cuda"
-
-    @property
-    def is_cpu(self):
-        """Returns True if the tensor is stored on CPU."""
-        return self.device.type == "cpu"
-
-    @property
-    def is_npu(self):
-        """Returns True if the tensor is stored on NPU."""
-        return self.device.type == "npu"
-
-    @property
-    def is_meta(self):
-        """Returns True if the tensor is a meta tensor."""
-        return self.device.type == "meta"
-
-    @property
-    def is_leaf(self):
-        """Returns True if this tensor is a leaf in the autograd graph."""
-        return self.grad_fn is None
-
-    @property
-    def is_sparse(self):
-        """Returns True if the tensor is sparse."""
-        return bool(getattr(self, "_is_sparse", False))
-
-    @property
-    def layout(self):
-        """Returns the tensor layout."""
-        return getattr(self, "_layout", "strided")
-
-    @layout.setter
-    def layout(self, value):
-        self._layout = value
-
-    @property
-    def is_quantized(self):
-        """Returns True if the tensor is quantized."""
-        return False
-
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
         return NotImplemented
@@ -293,16 +244,6 @@ class Tensor(_TensorBase):
         tangents = getattr(self, "_fw_tangents", None)
         return bool(tangents) and level in tangents
 
-    def storage_offset(self):
-        """Returns the offset into the storage."""
-        return self.offset
-
-    def get_device(self):
-        """Returns device index for GPU/NPU tensors, or -1 for CPU."""
-        if self.device.type == "cpu":
-            return -1
-        return self.device.index if self.device.index is not None else 0
-
     def untyped_storage(self):
         """Return the underlying untyped storage.
 
@@ -311,26 +252,9 @@ class Tensor(_TensorBase):
         """
         return self._storage.untyped_storage()
 
-    def ndimension(self):
-        """Return the number of dimensions of the tensor (alias for dim())."""
-        return self._ndim
-
     @property
     def ndim(self):
         return self._ndim
-
-    def size(self, dim=None):
-        if dim is None:
-            return self.shape
-        if dim < 0:
-            dim += len(self.shape)
-        if dim < 0 or dim >= len(self.shape):
-            raise IndexError("Dimension out of range")
-        return self.shape[dim]
-
-    # Alias for numel (PyTorch compatibility)
-    def nelement(self):
-        return self.numel()
 
     def is_floating_point(self):
         return self.dtype.is_floating_point
@@ -516,31 +440,6 @@ class Tensor(_TensorBase):
         if self.device.type != "cpu":
             raise RuntimeError("numpy() is only available for CPU tensors")
         return self._numpy_view()
-
-    def item(self):
-        if self.numel() != 1:
-            raise ValueError("only one element tensors can be converted to Python scalars")
-        if self.device.type != "cpu":
-            return self.to("cpu").item()
-        return self._numpy_view().flat[0].item()
-
-    def tolist(self):
-        if self.device.type != "cpu":
-            return self.to("cpu").tolist()
-        return self._numpy_view().tolist()
-
-    def __int__(self):
-        return int(self.item())
-
-    def __float__(self):
-        return float(self.item())
-
-    def __bool__(self):
-        if self.numel() == 0:
-            raise RuntimeError("Boolean value of Tensor with no values is ambiguous")
-        if self.numel() > 1:
-            raise RuntimeError("Boolean value of Tensor with more than one value is ambiguous")
-        return bool(self.item())
 
     def backward(self, gradient=None, retain_graph=False, create_graph=False, inputs=None):
         if self._pending:
@@ -1058,36 +957,6 @@ class Tensor(_TensorBase):
             raise RuntimeError(
                 f"dtype conversion not yet supported on device {self.device.type}"
             )
-
-    def float(self):
-        return self._to_dtype(float32) if self.dtype != float32 else self
-
-    def half(self):
-        return self._to_dtype(float16) if self.dtype != float16 else self
-
-    def double(self):
-        return self._to_dtype(float64) if self.dtype != float64 else self
-
-    def bfloat16(self):
-        return self._to_dtype(bfloat16) if self.dtype != bfloat16 else self
-
-    def long(self):
-        return self._to_dtype(int64) if self.dtype != int64 else self
-
-    def int(self):
-        return self._to_dtype(int32) if self.dtype != int32 else self
-
-    def short(self):
-        return self._to_dtype(int16) if self.dtype != int16 else self
-
-    def char(self):
-        return self._to_dtype(int8) if self.dtype != int8 else self
-
-    def byte(self):
-        return self._to_dtype(uint8) if self.dtype != uint8 else self
-
-    def bool(self):
-        return self._to_dtype(dtype_bool) if self.dtype != dtype_bool else self
 
     def new_ones(self, size, dtype=None, device=None):
         from ._creation import ones
@@ -1972,57 +1841,6 @@ class Tensor(_TensorBase):
         self._check_inplace()
         dispatch("setitem", self.device.type, self, key, value)
 
-    def __repr__(self):
-        return format_tensor(self)
-
-    def __str__(self):
-        return format_tensor(self)
-
-    def __len__(self):
-        if self.dim() == 0:
-            raise TypeError("len() of a 0-d tensor")
-        return self.shape[0]
-
-    def __iter__(self):
-        if self.dim() == 0:
-            raise TypeError("iteration over a 0-d tensor")
-        for i in range(len(self)):
-            yield self[i]
-
-    @staticmethod
-    def _is_scalar_comparable(other):
-        return isinstance(other, (int, float, bool))
-
-    def __gt__(self, other):
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return gt_dispatch(self, other)
-        return NotImplemented
-
-    def __lt__(self, other):
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return lt_dispatch(self, other)
-        return NotImplemented
-
-    def __ge__(self, other):
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return ge_dispatch(self, other)
-        return NotImplemented
-
-    def __le__(self, other):
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return le_dispatch(self, other)
-        return NotImplemented
-
-    def __eq__(self, other):
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return eq_dispatch(self, other)
-        return False
-
-    def __ne__(self, other):
-        if isinstance(other, Tensor) or self._is_scalar_comparable(other):
-            return ne_dispatch(self, other)
-        return True
-
     def __and__(self, other):
         return mul(self.bool(), other.bool() if isinstance(other, Tensor) else bool(other))
 
@@ -2031,6 +1849,3 @@ class Tensor(_TensorBase):
 
     def __xor__(self, other):
         return ne_dispatch(self.bool(), other.bool() if isinstance(other, Tensor) else bool(other))
-
-    def __hash__(self):
-        return id(self)
