@@ -30,6 +30,7 @@ _HAS_CYTHON_DISPATCHER_CORE = False
 _HAS_CYTHON_DEVICE = False
 _HAS_CYTHON_DTYPE = False
 _HAS_CYTHON_AUTOGRAD_GRAPH = False
+_HAS_CYTHON_AUTOGRAD_ENGINE = False
 
 try:
     from ._dispatch import cy_dispatch, cy_dispatch_with_keyset  # noqa: F401
@@ -110,6 +111,23 @@ from ._autograd_graph import (  # noqa: F401
     saved_tensors_hooks,
 )
 _HAS_CYTHON_AUTOGRAD_GRAPH = True
+
+from ._autograd_engine import (  # noqa: F401
+    _GraphTask,
+    _build_dependencies,
+    _run_backward,
+    backward,
+    current_anomaly_parent,
+    grad,
+    is_anomaly_check_nan_enabled,
+    is_anomaly_enabled,
+    is_create_graph_enabled,
+    pop_anomaly_config,
+    pop_evaluating_node,
+    push_anomaly_config,
+    push_evaluating_node,
+)
+_HAS_CYTHON_AUTOGRAD_ENGINE = True
 
 try:
     from ._fast_ops import add, mul, matmul  # noqa: F401
