@@ -83,5 +83,9 @@ def cy_npu_storage_from_ptr(int64_t device_ptr, int64_t size,
 
     cdef int itemsize = _c_dtype_itemsize(dtype)
     cdef int64_t nbytes = size * itemsize
+    # FastNPUStorage requires a non-None device; provide default NPU device.
+    if device is None:
+        from candle._device import device as _Device
+        device = _Device("npu")
     untyped = _FastNPUStorage_cls(device_ptr, nbytes, device)
     return _FastTypedStorage_cls(untyped, dtype, size)
