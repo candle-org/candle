@@ -36,7 +36,7 @@ cdef int _c_dtype_itemsize(object dtype):
 # Fast storage creation
 # ---------------------------------------------------------------------------
 
-# Cached class references — loaded once on first call
+# Cached Python class references — for non-NPU paths and fallback
 cdef object _NPUUntypedStorage_cls = None
 cdef object _TypedStorage_cls = None
 
@@ -48,18 +48,40 @@ cdef inline void _ensure_storage_classes():
         _TypedStorage_cls = TypedStorage
 
 
+# Fast NPU storage: Cython cdef classes preferred over Python classes
+cdef object _FastNPUStorage_cls = None
+cdef object _FastTypedStorage_cls = None
+
+cdef inline void _ensure_fast_storage():
+    """Load FastNPUStorage/FastTypedStorage cdef classes (with Python fallback)."""
+    global _FastNPUStorage_cls, _FastTypedStorage_cls
+    if _FastNPUStorage_cls is not None:
+        return
+    try:
+        from candle._cython._npu_storage import FastNPUStorage, FastTypedStorage  # pylint: disable=import-error,no-name-in-module
+        _FastNPUStorage_cls = FastNPUStorage
+        _FastTypedStorage_cls = FastTypedStorage
+    except ImportError:
+        _ensure_storage_classes()
+        _FastNPUStorage_cls = _NPUUntypedStorage_cls
+        _FastTypedStorage_cls = _TypedStorage_cls
+
+
 def cy_npu_storage_from_ptr(int64_t device_ptr, int64_t size,
                              object dtype, object device=None):
     """Create TypedStorage from device pointer — fast path.
+
+    Uses FastNPUStorage + FastTypedStorage (Cython cdef classes with __dealloc__)
+    when available, falling back to Python _NPUUntypedStorage + TypedStorage.
 
     Replaces:
     - np.dtype(to_numpy_dtype(dtype)).itemsize  -> C switch
     - _NPUUntypedStorage(ptr, nbytes, device)   -> direct construction
     - TypedStorage(untyped, dtype, size)         -> direct construction
     """
-    _ensure_storage_classes()
+    _ensure_fast_storage()
 
     cdef int itemsize = _c_dtype_itemsize(dtype)
     cdef int64_t nbytes = size * itemsize
-    untyped = _NPUUntypedStorage_cls(device_ptr, nbytes, device=device)
-    return _TypedStorage_cls(untyped, dtype, size)
+    untyped = _FastNPUStorage_cls(device_ptr, nbytes, device)
+    return _FastTypedStorage_cls(untyped, dtype, size)
