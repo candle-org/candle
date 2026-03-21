@@ -1,4 +1,5 @@
 import weakref
+import numpy as np
 
 from ..autograd.grad_mode import GradMode
 from ..autograd.node import Node
@@ -282,13 +283,24 @@ def _as_strided_scatter_backward(grad, a, src, _saved_a, _saved_src, keyset, arg
             f"for storage of size {storage_size * itemsize}"
         )
 
+    itemsize = np.dtype(grad._numpy_view().dtype).itemsize
+    byte_strides = tuple(s * itemsize for s in stride)
     with _grad_context(keyset):
         base_grad = redispatch("zeros", keyset, a.shape, dtype=a.dtype, device=a.device)
-        grad_view = grad.as_strided(size, stride, offset)
-        base_view = base_grad.as_strided(size, stride, offset)
-        base_view._numpy_view()[...] = grad_view._numpy_view()
-        grad_src = redispatch("contiguous", keyset, grad_view)
-    return (base_grad, grad_src)
+        grad_np = grad._numpy_view().ravel()  # contiguous flat view
+        base_np = base_grad._numpy_view().ravel()
+        grad_strided = np.lib.stride_tricks.as_strided(grad_np[offset:], shape=size, strides=byte_strides)
+        base_strided = np.lib.stride_tricks.as_strided(base_np[offset:], shape=size, strides=byte_strides)
+        base_strided[...] = grad_strided
+        grad_src = np.ascontiguousarray(grad_strided)
+        from .._storage import typed_storage_from_numpy
+        from .._tensor import Tensor
+        from .._dtype import from_numpy_dtype
+        dtype_obj = from_numpy_dtype(grad_src.dtype)
+        storage = typed_storage_from_numpy(grad_src, dtype_obj, device=grad.device)
+        stride_tuple = tuple(int(s) // int(grad_src.itemsize) for s in grad_src.strides)
+        grad_src_tensor = Tensor(storage, tuple(grad_src.shape), stride_tuple)
+    return (base_grad, grad_src_tensor)
 
 
 def _inplace_binary_backward(grad, a, _saved_a, args, _keyset):

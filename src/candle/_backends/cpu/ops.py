@@ -315,7 +315,9 @@ def mean_(a, dim=None, keepdim=False):
         raise RuntimeError(
             f"mean(): could not infer output dtype. Input dtype must be either a floating point or complex dtype. Got: {a.dtype.name.capitalize()}"
         )
-    out = np.ascontiguousarray(_to_numpy(a).mean(axis=dim, keepdims=keepdim))
+    out = _to_numpy(a).mean(axis=dim, keepdims=keepdim)
+    if not out.flags['C_CONTIGUOUS']:
+        out = np.ascontiguousarray(out)
     return _from_numpy(out, a.dtype, a.device)
 
 
@@ -2276,7 +2278,10 @@ def var_(a, dim=None, unbiased=True, keepdim=False):
         out = np.var(arr, ddof=ddof)
         if keepdim:
             out = np.full([1] * arr.ndim, out)
-    return _from_numpy(np.ascontiguousarray(np.atleast_1d(out).astype(arr.dtype, copy=False)), a.dtype, a.device)
+    out = out.astype(arr.dtype, copy=False)
+    if not out.flags['C_CONTIGUOUS']:
+        out = np.ascontiguousarray(out)
+    return _from_numpy(out, a.dtype, a.device)
 
 
 def var_mean(a, dim=None, unbiased=True, keepdim=False):

@@ -49,8 +49,15 @@ class DifferentiabilityInfo:
         return self.name
 
     @property
+    def generated_func_stem(self) -> str:
+        """Stable Python-safe stem derived from the full overloaded function name."""
+        return re.sub(r"[^0-9A-Za-z_]+", "_", self.func_name).lower()
+
+    @property
     def backward_name(self) -> str:
-        return f"{self.name.capitalize()}Backward0"
+        parts = [p for p in re.split(r"[^0-9A-Za-z]+", self.func_name) if p]
+        camel = "".join(p[:1].upper() + p[1:] for p in parts)
+        return f"{camel}Backward0"
 
     @property
     def tensor_args(self) -> list[Argument]:
@@ -92,34 +99,105 @@ _TYPE_MAP = {
     "Tensor(a!)": "Tensor",
     "Tensor(a)": "Tensor",
     "Tensor[]": "Tensor[]",
+    "Tensor?[]": "Tensor?[]",
     "int": "int",
     "int[]": "int[]",
     "int?": "int?",
+    "int[1]": "int[]",
+    "int[1]?": "int[]?",
+    "int[2]": "int[]",
+    "int[2]?": "int[]?",
+    "int[3]": "int[]",
+    "int[4]": "int[]",
     "float": "float",
     "float?": "float?",
     "bool": "bool",
     "bool?": "bool?",
+    "bool[3]": "bool[]",
+    "bool[4]": "bool[]",
     "ScalarType": "ScalarType",
     "ScalarType?": "ScalarType?",
     "Scalar": "Scalar",
     "Scalar?": "Scalar?",
+    "Scalar[]": "Scalar[]",
     "str": "str",
     "str?": "str?",
     "SymInt": "int",
+    "SymInt?": "int?",
     "SymInt[]": "int[]",
+    "SymInt[]?": "int[]?",
+    "SymInt[1]": "int[]",
+    "SymInt[2]": "int[]",
+    "SymInt[3]": "int[]",
+    "SymInt[4]": "int[]",
+    "SymInt[5]": "int[]",
+    "SymInt[6]": "int[]",
+    "Generator?": "Generator?",
+    "MemoryFormat?": "MemoryFormat?",
+    "Layout?": "Layout?",
+    "Device?": "Device?",
 }
+
+# Regex for Tensor alias types: Tensor(a), Tensor(a!), Tensor(b!), Tensor(a -> *), etc.
+_TENSOR_ALIAS_RE = re.compile(r"^Tensor\([a-z](?:!| -> \*)*\)(?:\[\])?$")
+
 
 _SCHEMA_RE = re.compile(
     r"^(\w+(?:\.\w+)?)\((.*?)\)\s*->\s*(.+)$"
 )
 
+# Matches: "Type name", "Type name=default", handles Tensor(a!), Tensor(a -> *), etc.
 _ARG_RE = re.compile(
-    r"^\s*([\w\[\]?()!]+)\s+(\w+)\s*(?:=\s*(.+))?\s*$"
+    r"^\s*([\w\[\]?()! >*-]+?)\s+(\w+)\s*(?:=\s*(.+))?\s*$"
 )
 
 _RETURN_RE = re.compile(
     r"^\s*(?:(\w+)\s+)?(\w+)\s*$"
 )
+
+
+_REDUCTION_DEFAULTS = {
+    "None": "0",
+    "Mean": "1",
+    "Sum": "2",
+}
+
+
+def _normalize_default(type_str: str, default: str | None) -> str | None:
+    """Normalize schema defaults into valid Python literals."""
+    if default is None:
+        return None
+    if type_str == "int" and default in _REDUCTION_DEFAULTS:
+        return _REDUCTION_DEFAULTS[default]
+    return default
+
+
+def _resolve_type(type_str: str) -> str:
+    """Resolve a raw type string to its canonical form."""
+    if type_str in _TYPE_MAP:
+        return _TYPE_MAP[type_str]
+    # Handle dynamic Tensor alias types: Tensor(b!), Tensor(c!), Tensor(a -> *), etc.
+    if _TENSOR_ALIAS_RE.match(type_str):
+        if type_str.endswith("[]"):
+            return "Tensor[]"
+        return "Tensor"
+    return type_str
+
+
+def _is_tensor_list_type(type_str: str) -> bool:
+    return type_str in ("Tensor[]", "Tensor?[]") or (
+        type_str.endswith("[]") and _TENSOR_ALIAS_RE.match(type_str) is not None
+    )
+
+
+def _is_tensor_type(type_str: str) -> bool:
+    return type_str == "Tensor" or (
+        _TENSOR_ALIAS_RE.match(type_str) is not None and not type_str.endswith("[]")
+    )
+
+
+def _is_optional_tensor_type(type_str: str) -> bool:
+    return type_str == "Tensor?"
 
 
 def parse_schema(schema: str) -> tuple[str, list[Argument], list[Return]]:
@@ -138,19 +216,22 @@ def parse_schema(schema: str) -> tuple[str, list[Argument], list[Return]]:
             part = part.strip()
             if not part:
                 continue
+            # Skip * keyword-only separator
+            if part == '*':
+                continue
             am = _ARG_RE.match(part)
             if not am:
                 raise ValueError(f"Cannot parse argument: {part!r} in {schema!r}")
             type_str = am.group(1)
             arg_name = am.group(2)
-            default = am.group(3)
-            is_tensor_list = type_str == "Tensor[]"
-            is_tensor = type_str in ("Tensor", "Tensor(a!)", "Tensor(a)") and not is_tensor_list
-            is_optional = type_str == "Tensor?"
+            default = _normalize_default(type_str, am.group(3))
+            is_tensor_list = _is_tensor_list_type(type_str)
+            is_tensor = _is_tensor_type(type_str) and not is_tensor_list
+            is_optional = _is_optional_tensor_type(type_str)
             is_mutating = "!" in type_str
             args.append(Argument(
                 name=arg_name,
-                type=_TYPE_MAP.get(type_str, type_str),
+                type=_resolve_type(type_str),
                 default=default,
                 is_tensor=is_tensor,
                 is_optional_tensor=is_optional,
@@ -164,18 +245,25 @@ def parse_schema(schema: str) -> tuple[str, list[Argument], list[Return]]:
 
 
 def _split_args(s: str) -> list[str]:
-    """Split argument string respecting parentheses."""
+    """Split argument string respecting parentheses and bracketed defaults."""
     parts = []
-    depth = 0
+    paren_depth = 0
+    bracket_depth = 0
     current = []
     for ch in s:
-        if ch == '(' :
-            depth += 1
+        if ch == '(':
+            paren_depth += 1
             current.append(ch)
         elif ch == ')':
-            depth -= 1
+            paren_depth -= 1
             current.append(ch)
-        elif ch == ',' and depth == 0:
+        elif ch == '[':
+            bracket_depth += 1
+            current.append(ch)
+        elif ch == ']':
+            bracket_depth -= 1
+            current.append(ch)
+        elif ch == ',' and paren_depth == 0 and bracket_depth == 0:
             parts.append(''.join(current))
             current = []
         else:

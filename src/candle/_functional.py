@@ -74,7 +74,9 @@ def transpose(*args, **kwargs):
 
 
 def reshape(*args, **kwargs):
-    return dispatch("reshape", None, *args, **kwargs)
+    a = args[0] if args else kwargs.get('input')
+    device = a.device.type if hasattr(a, 'device') else None
+    return dispatch("reshape", device, *args, **kwargs)
 
 
 def view_as_real(a):
@@ -370,7 +372,7 @@ def div(a, b, *, rounding_mode=None):
 
 
 def true_divide(a, b):
-    return dispatch("true_divide", a.device.type, a, b)
+    return dispatch("div", a.device.type, a, b)
 
 
 def mean(a, dim=None, keepdim=False, *, dtype=None, axis=None):

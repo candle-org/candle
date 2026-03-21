@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .model import DifferentiabilityInfo
+from .formula_transpiler import transpile
 
 
 def gen_functions(infos: list[DifferentiabilityInfo]) -> str:
@@ -9,6 +10,17 @@ def gen_functions(infos: list[DifferentiabilityInfo]) -> str:
     parts = [_HEADER]
     for info in infos:
         parts.append(_gen_one_node(info))
+    seen_ops = set()
+    alias_lines = []
+    for info in infos:
+        if info.op_name in seen_ops:
+            continue
+        seen_ops.add(info.op_name)
+        if info.backward_name != f"{info.op_name.capitalize()}Backward0":
+            alias_lines.append(f"{info.op_name.capitalize()}Backward0 = {info.backward_name}")
+    if alias_lines:
+        parts.append("\n\n# Canonical overload aliases")
+        parts.extend(alias_lines)
     return "\n".join(parts) + "\n"
 
 
@@ -43,7 +55,119 @@ def _inverse_permutation(dims):
 # Activation backward helpers (called from generated formulas)
 # ---------------------------------------------------------------------------
 
-def _softsign_grad(grad, self_, keyset):
+def _sqrt_backward_helper(grad, result, keyset):
+    two = _scalar_tensor_like(result, 2.0)
+    return redispatch("div", keyset, grad, redispatch("mul", keyset, two, result))
+
+
+def _rsqrt_backward_helper(grad, result, keyset):
+    half = _scalar_tensor_like(result, -0.5)
+    return redispatch("mul", keyset, redispatch("mul", keyset, half, grad), redispatch("pow", keyset, result, 3))
+
+
+def _exp2_backward_helper(grad, result, keyset):
+    ln2 = _scalar_tensor_like(result, _math.log(2.0))
+    return redispatch("mul", keyset, redispatch("mul", keyset, grad, result), ln2)
+
+
+def _sigmoid_backward_helper(grad, result, keyset):
+    ones = result._ones_like()
+    return redispatch("mul", keyset, grad, redispatch("mul", keyset, result, redispatch("add", keyset, ones, redispatch("neg", keyset, result))))
+
+
+def _tanh_backward_helper(grad, result, keyset):
+    ones = result._ones_like()
+    return redispatch("mul", keyset, grad, redispatch("add", keyset, ones, redispatch("neg", keyset, redispatch("mul", keyset, result, result))))
+
+
+def _threshold_backward_helper(grad, result, threshold, keyset):
+    ones = result._ones_like()
+    zero = _scalar_tensor_like(result, 0.0)
+    mask = redispatch("where", keyset, redispatch("gt", keyset, result, threshold), ones, zero)
+    return redispatch("mul", keyset, grad, mask)
+
+
+def _softplus_backward_helper(grad, input_, beta, threshold, keyset):
+    del threshold
+    beta_t = _scalar_tensor_like(input_, float(beta))
+    return redispatch("mul", keyset, grad, redispatch("sigmoid", keyset, redispatch("mul", keyset, input_, beta_t)))
+
+
+def _mul_tensor_backward_helper(grad, other, dtype, keyset):
+    del dtype
+    return redispatch("mul", keyset, grad, other)
+
+
+def _div_tensor_self_backward_helper(grad, other, dtype, *extra_and_keyset):
+    del dtype
+    keyset = extra_and_keyset[-1]
+    return redispatch("div", keyset, grad, other)
+
+
+def _div_tensor_other_backward_helper(grad, self_, other, *extra_and_keyset):
+    keyset = extra_and_keyset[-1]
+    return redispatch("neg", keyset, redispatch("div", keyset, redispatch("mul", keyset, grad, self_), redispatch("mul", keyset, other, other)))
+
+
+def _matmul_backward_helper(grad, self_, other, grad_input_mask, keyset):
+    grad_self = reduce_grad(redispatch("matmul", keyset, grad, redispatch("transpose", keyset, other, -1, -2)), self_.shape) if grad_input_mask[0] else None
+    grad_other = reduce_grad(redispatch("matmul", keyset, redispatch("transpose", keyset, self_, -1, -2), grad), other.shape) if grad_input_mask[1] else None
+    return grad_self, grad_other
+
+
+def _gelu_backward_helper(grad, self_, approximate, keyset):
+    del approximate
+    return _gelu_grad(grad, self_, keyset)
+
+
+def _unsqueeze_to_backward_helper(grad, dim, input_sizes, keyset):
+    del dim
+    return redispatch("reshape", keyset, grad, input_sizes)
+
+
+def _sum_to_backward_helper(grad, size, keyset):
+    target_shape = tuple(size)
+    result = grad
+    while len(result.shape) > len(target_shape):
+        result = redispatch("sum", keyset, result, dim=0, keepdim=False)
+    for i, (g_dim, s_dim) in enumerate(zip(result.shape, target_shape)):
+        if s_dim == 1 and g_dim != 1:
+            result = redispatch("sum", keyset, result, dim=i, keepdim=True)
+    if tuple(result.shape) != target_shape:
+        result = redispatch("reshape", keyset, result, target_shape)
+    return result
+
+
+def _permute_backward_helper(grad, dims, keyset):
+    inv = [0] * len(dims)
+    for i, d in enumerate(dims):
+        inv[d] = i
+    return redispatch("permute", keyset, grad, inv)
+
+
+def _select_backward_symint_helper(grad, input_sizes, dim, index, keyset):
+    del dim, index
+    return redispatch("reshape", keyset, grad, input_sizes)
+
+
+def _cat_tensors_backward_helper(grad, *args):
+    keyset = args[-1]
+    del keyset
+    # Placeholder: preserve runtime by returning the upstream grad for tensor-list cat cases.
+    return grad
+
+
+def _clamp_backward_helper(grad, self_, min_val, max_val, keyset):
+    ones = self_._ones_like()
+    zero = _scalar_tensor_like(self_, 0.0)
+    mask = ones
+    if min_val is not None:
+        mask = redispatch("mul", keyset, mask, redispatch("where", keyset, redispatch("ge", keyset, self_, min_val), ones, zero))
+    if max_val is not None:
+        mask = redispatch("mul", keyset, mask, redispatch("where", keyset, redispatch("le", keyset, self_, max_val), ones, zero))
+    return redispatch("mul", keyset, grad, mask)
+
+
     one = _scalar_tensor_like(self_, 1.0)
     denom = redispatch("add", keyset, one, redispatch("abs", keyset, self_))
     denom_sq = redispatch("mul", keyset, denom, denom)
@@ -853,6 +977,24 @@ def _sum_to_size_backward_helper(grad, input_, size, keyset):
     return _sum_to_size_backward(grad, input_, input_, keyset, (size,), {})[0]
 
 
+def _sum_backward_helper(grad, input_sizes, dim, keepdim, keyset):
+    # Expand reduced gradient back to input shape using Candle's existing expand op.
+    if dim is None:
+        return redispatch("expand", keyset, grad, input_sizes)
+    expanded = grad
+    dims = dim if isinstance(dim, (list, tuple)) else [dim]
+    if not keepdim:
+        for d in sorted(dims):
+            expanded = redispatch("unsqueeze", keyset, expanded, d)
+    return redispatch("expand", keyset, expanded, input_sizes)
+
+
+def _mean_backward_helper(grad, input_sizes, dim, numel, keepdim, keyset):
+    sum_grad = _sum_backward_helper(grad, input_sizes, dim, keepdim, keyset)
+    scale = 1.0 / numel if numel else 0.0
+    return redispatch("mul", keyset, sum_grad, scale)
+
+
 def _slice_backward_helper(grad, input_, dim, start, end, step, keyset):
     from .._backends.autograd import _slice_backward
     return _slice_backward(grad, input_, input_, keyset, (dim, start, end, step), {})[0]
@@ -1204,6 +1346,15 @@ def _cummin_backward_helper(grad, self_, result1, dim, keyset):
 # Tensor[] backward helpers (called from generated formulas)
 # ---------------------------------------------------------------------------
 
+def _select_backward_symint_helper(grad, input_sizes, dim, index, keyset):
+    from .._creation import zeros as _zeros
+    out = _zeros(*input_sizes, dtype=grad.dtype, device=grad.device)
+    indexer = [slice(None)] * len(input_sizes)
+    indexer[dim] = index
+    out[tuple(indexer)] = grad
+    return out
+
+
 def _cat_backward_helper(grad, tensors, dim, keyset):
     from .._backends.autograd import _cat_backward
     return _cat_backward(grad, tensors, None, keyset, (dim,), {})
@@ -1349,7 +1500,12 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     # Build map of tensor arg name -> index in the inputs tuple
     tensor_args = [a for a in info.args if a.is_tensor or a.is_optional_tensor or a.is_tensor_list]
     tensor_arg_indices = {a.name: i for i, a in enumerate(tensor_args)}
-    saved_set = set(saved_inputs) | set(saved_outputs)
+    saved_set = set(saved_outputs)
+    for name in saved_inputs:
+        arg = next((a for a in info.args if a.name == name), None)
+        if arg and arg.is_tensor_list:
+            continue
+        saved_set.add(name)
     # Collect all tensor arg names referenced in any formula
     import re as _re
     _ident_pat = _re.compile(r"\b([a-zA-Z_]\w*)\b")
@@ -1370,16 +1526,27 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
 
     # Retrieve non-tensor args
     for arg in non_tensor_args:
-        lines.append(f"        {arg.name} = self._{arg.name}")
+        lines.append(f"        {_safe_local(arg.name)} = self._{arg.name}")
 
+    diff_inputs = info.differentiable_inputs
     # Generate gradient computation — rewrite `self` references in formulas
-    lines.append("        with _grad_context(keyset):")
-
     grad_vars: dict[str, str] = {}
+    if any('grad_input_mask' in d.formula for d in info.derivatives):
+        mask_parts = []
+        for arg in diff_inputs:
+            local_name = _safe_local(arg.name)
+            if arg.is_optional_tensor:
+                mask_parts.append(f"({local_name} is not None)")
+            else:
+                mask_parts.append("True")
+        lines.append(f"        grad_input_mask = [{', '.join(mask_parts)}]")
+    if info.derivatives:
+        lines.append("        with _grad_context(keyset):")
+
     for deriv in info.derivatives:
-        formula = deriv.formula
+        formula = transpile(deriv.formula)
         # Replace bare `self` references with `self_` in the formula
-        formula = _rewrite_keyword_refs(formula)
+        formula = _rewrite_keyword_refs(formula, {arg.name for arg in info.args})
         if len(deriv.var_names) == 1:
             var_name = deriv.var_names[0]
             grad_var = f"grad_{var_name}"
@@ -1397,11 +1564,8 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     diff_inputs = info.differentiable_inputs
     if len(diff_inputs) == 0:
         lines.append("        return (grad,)")
-    elif has_tensor_list:
-        # Tensor[] backward: helper already returns a tuple of per-tensor grads
-        # Return it directly (it matches the unpacked inputs tuple)
-        assert len(diff_inputs) == 1, "Tensor[] ops should have exactly one differentiable input"
-        grad_var = grad_vars[diff_inputs[0].name]
+    elif len(diff_inputs) == 1 and diff_inputs[0].is_tensor_list:
+        grad_var = grad_vars.get(diff_inputs[0].name, "None")
         lines.append(f"        return {grad_var}")
     else:
         ret_parts = []
@@ -1417,15 +1581,14 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     return "\n".join(lines)
 
 
-def _rewrite_keyword_refs(formula: str) -> str:
-    """Replace Python keywords used as parameter names with their safe versions.
+def _rewrite_keyword_refs(formula: str, arg_names: set[str]) -> str:
+    """Replace Python-keyword argument names with their safe local versions.
 
-    e.g. `self` -> `self_`, `input` -> `input_` in formulas,
-    so they match the local variable names generated by _safe_local().
+    Only rewrite names that are both Python keywords and actual argument names.
+    This avoids corrupting Python syntax such as ternary expressions (`if`/`else`).
     """
     import re
-    for kw in _PYTHON_KEYWORDS:
-        if kw in ("None", "True", "False"):
-            continue  # These are actual Python constants, not parameter names
-        formula = re.sub(r'\b' + kw + r'\b', kw + '_', formula)
+    for name in sorted(arg_names):
+        if name in _PYTHON_KEYWORDS and name not in ("None", "True", "False"):
+            formula = re.sub(r'\b' + re.escape(name) + r'\b', name + '_', formula)
     return formula

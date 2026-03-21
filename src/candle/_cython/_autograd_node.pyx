@@ -38,6 +38,7 @@ cdef class SavedTensor:
     cdef object _hooks
     cdef object _global_hooks
     cdef object _packed
+    cdef object _materialized
 
     def __init__(self, tensor):
         self._tensor_ref = tensor
@@ -47,6 +48,7 @@ cdef class SavedTensor:
         from candle._cython._hooks_state import get_stack
         stack = get_stack()
         self._global_hooks = stack[len(stack) - 1] if stack else None
+        self._materialized = None
         hooks = self._global_hooks
         if hooks is None:
             self._packed = None
@@ -56,6 +58,7 @@ cdef class SavedTensor:
                 self._packed = None
             else:
                 self._packed = pack(tensor)
+
 
     def register_hooks(self, *args):
         cdef object pack
@@ -109,11 +112,14 @@ cdef class SavedTensor:
         hooks = self._hooks or self._global_hooks
         if hooks is None:
             return self._tensor_ref
+        if self._materialized is not None:
+            return self._materialized
         _, unpack = hooks
         result = unpack(self._packed)
         from candle._tensor import Tensor
         if not isinstance(result, Tensor):
             raise TypeError("Output of saved tensor unpack_hook expected to be a Tensor")
+        self._materialized = result
         return result
 
 
@@ -228,22 +234,35 @@ cdef class Node:
 
     def save_for_backward(self, *tensors):
         cdef list saved = []
+        cdef dict seen = {}
         cdef object t
+        cdef object tid
+        cdef object cached
         for t in tensors:
             if t is None:
                 saved.append(SavedTensor(None))
             elif hasattr(t, "_version_counter"):
-                saved.append(SavedTensor(t))
+                tid = id(t)
+                cached = seen.get(tid)
+                if cached is None:
+                    cached = SavedTensor(t)
+                    seen[tid] = cached
+                saved.append(cached)
             else:
                 saved.append(_SavedValue(t))
         self._saved_tensors_list = saved
 
     def saved_tensors(self):
         cdef object saved
+        cdef object result
         for saved in self._saved_tensors_list:
             if getattr(saved, "_released", False):
                 raise RuntimeError(_RELEASED_SAVED_TENSORS_ERROR)
-        return tuple(saved.materialize() for saved in self._saved_tensors_list)
+        result = tuple(saved.materialize() for saved in self._saved_tensors_list)
+        for saved in self._saved_tensors_list:
+            if hasattr(saved, "_materialized"):
+                saved._materialized = None
+        return result
 
     def release_saved_tensors(self):
         cdef object saved

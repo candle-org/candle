@@ -12,6 +12,23 @@ def gen_variable_type(infos: list[DifferentiabilityInfo]) -> str:
         parts.append(_gen_one_wrapper(info))
     for info in infos:
         parts.append(_gen_one_post_wrapper(info))
+    seen_ops = set()
+    alias_lines = []
+    for info in infos:
+        if info.op_name in seen_ops:
+            continue
+        seen_ops.add(info.op_name)
+        canonical = f"{info.op_name}_autograd"
+        canonical_post = f"{info.op_name}_autograd_post"
+        specific = f"{info.generated_func_stem}_autograd"
+        specific_post = f"{info.generated_func_stem}_autograd_post"
+        if canonical != specific:
+            alias_lines.append(f"{canonical} = {specific}")
+        if canonical_post != specific_post:
+            alias_lines.append(f"{canonical_post} = {specific_post}")
+    if alias_lines:
+        parts.append("\n\n# Canonical overload aliases")
+        parts.extend(alias_lines)
     return "\n".join(parts) + "\n"
 
 
@@ -33,7 +50,7 @@ from . import functions as _F
 def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
     cls_name = info.backward_name
     op_name = info.op_name
-    func_name = f"{op_name}_autograd"
+    func_name = f"{info.generated_func_stem}_autograd"
 
     tensor_args = info.tensor_args
     non_tensor_args = info.non_tensor_args
@@ -46,10 +63,11 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
     # Build function signature
     params = []
     for arg in info.args:
+        param_name = _safe_param(arg.name)
         if arg.default is not None:
-            params.append(f"{arg.name}={arg.default}")
+            params.append(f"{param_name}={arg.default}")
         else:
-            params.append(arg.name)
+            params.append(param_name)
     sig = ", ".join(params)
     lines.append(f"\n\ndef {func_name}({sig}, **_kwargs):")
 
@@ -58,27 +76,29 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
     lines.append("    raw_keyset = _strip_autograd_keys(active_keyset)")
 
     # Forward call
-    fwd_args = ", ".join([f'"{op_name}"', "raw_keyset"] + [a.name for a in info.args])
+    fwd_args = ", ".join([f'"{op_name}"', "raw_keyset"] + [_safe_param(a.name) for a in info.args])
     lines.append(f"    result = redispatch({fwd_args}, **_kwargs)")
 
     # Check requires_grad — Tensor[] needs iteration
     if len(diff_inputs) == 1:
         a = diff_inputs[0]
+        safe_name = _safe_param(a.name)
         if a.is_tensor_list:
-            rg_check = f"any(getattr(t, 'requires_grad', False) for t in {a.name})"
+            rg_check = f"any(getattr(t, 'requires_grad', False) for t in {safe_name})"
         elif a.is_optional_tensor:
-            rg_check = f"({a.name} is not None and {a.name}.requires_grad)"
+            rg_check = f"({safe_name} is not None and {safe_name}.requires_grad)"
         else:
-            rg_check = f"{a.name}.requires_grad"
+            rg_check = f"{safe_name}.requires_grad"
     elif len(diff_inputs) > 1:
         parts = []
         for a in diff_inputs:
+            safe_name = _safe_param(a.name)
             if a.is_tensor_list:
-                parts.append(f"any(getattr(t, 'requires_grad', False) for t in {a.name})")
+                parts.append(f"any(getattr(t, 'requires_grad', False) for t in {safe_name})")
             elif a.is_optional_tensor:
-                parts.append(f"({a.name} is not None and getattr({a.name}, 'requires_grad', False))")
+                parts.append(f"({safe_name} is not None and getattr({safe_name}, 'requires_grad', False))")
             else:
-                parts.append(f"getattr({a.name}, 'requires_grad', False)")
+                parts.append(f"getattr({safe_name}, 'requires_grad', False)")
         rg_check = " or ".join(parts)
     else:
         # No differentiable inputs — skip autograd entirely
@@ -93,17 +113,18 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
         # Unpack tensor lists into the inputs tuple
         unpack_parts = []
         for a in diff_inputs:
+            safe_name = _safe_param(a.name)
             if a.is_tensor_list:
-                unpack_parts.append(f"*{a.name}")
+                unpack_parts.append(f"*{safe_name}")
             else:
-                unpack_parts.append(a.name)
+                unpack_parts.append(safe_name)
         inputs_expr = f"({', '.join(unpack_parts)},)"
     elif any(a.is_optional_tensor for a in diff_inputs):
-        input_names = [a.name for a in diff_inputs]
+        input_names = [_safe_param(a.name) for a in diff_inputs]
         lines.append(f"        _inputs = [x for x in ({', '.join(input_names)},) if x is not None]")
         inputs_expr = "_inputs"
     else:
-        input_names = [a.name for a in diff_inputs]
+        input_names = [_safe_param(a.name) for a in diff_inputs]
         inputs_expr = f"({', '.join(input_names)},)"
 
     lines.append(f"        grad_fn = _F.{cls_name}({inputs_expr}, raw_keyset=raw_keyset, active_keyset=active_keyset)")
@@ -116,7 +137,7 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
             arg = next((a for a in info.args if a.name == name), None)
             if arg and arg.is_tensor_list:
                 continue  # Tensor[] saved via Node.inputs, not _save()
-            save_kw.append(f"{_safe_param(name)}={name}")
+            save_kw.append(f"{_safe_param(name)}={_safe_param(name)}")
         for name in saved_outputs:
             # Multi-output: result0 -> result[0], result1 -> result[1], etc.
             if name == "result":
@@ -131,7 +152,7 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
 
     # Save non-tensor args
     for arg in non_tensor_args:
-        lines.append(f"        grad_fn._{arg.name} = {arg.name}")
+        lines.append(f"        grad_fn._{arg.name} = {_safe_param(arg.name)}")
 
     # Attach grad_fn
     if info.is_multi_output:
@@ -157,7 +178,7 @@ def _gen_one_post_wrapper(info: DifferentiabilityInfo) -> str:
     """
     cls_name = info.backward_name
     op_name = info.op_name
-    func_name = f"{op_name}_autograd_post"
+    func_name = f"{info.generated_func_stem}_autograd_post"
 
     non_tensor_args = info.non_tensor_args
     saved_inputs = info.all_saved_inputs
@@ -169,10 +190,11 @@ def _gen_one_post_wrapper(info: DifferentiabilityInfo) -> str:
     # Build function signature: result, <original params>, *, raw_keyset, active_keyset
     params = []
     for arg in info.args:
+        param_name = _safe_param(arg.name)
         if arg.default is not None:
-            params.append(f"{arg.name}={arg.default}")
+            params.append(f"{param_name}={arg.default}")
         else:
-            params.append(arg.name)
+            params.append(param_name)
     sig = ", ".join(["result"] + params + ["*", "raw_keyset", "active_keyset"])
     lines.append(f"\n\ndef {func_name}({sig}, **_kwargs):")
 
@@ -184,21 +206,23 @@ def _gen_one_post_wrapper(info: DifferentiabilityInfo) -> str:
     # Check requires_grad — same logic as the regular wrapper
     if len(diff_inputs) == 1:
         a = diff_inputs[0]
+        safe_name = _safe_param(a.name)
         if a.is_tensor_list:
-            rg_check = f"any(getattr(t, 'requires_grad', False) for t in {a.name})"
+            rg_check = f"any(getattr(t, 'requires_grad', False) for t in {safe_name})"
         elif a.is_optional_tensor:
-            rg_check = f"({a.name} is not None and {a.name}.requires_grad)"
+            rg_check = f"({safe_name} is not None and {safe_name}.requires_grad)"
         else:
-            rg_check = f"{a.name}.requires_grad"
+            rg_check = f"{safe_name}.requires_grad"
     else:
         parts = []
         for a in diff_inputs:
+            safe_name = _safe_param(a.name)
             if a.is_tensor_list:
-                parts.append(f"any(getattr(t, 'requires_grad', False) for t in {a.name})")
+                parts.append(f"any(getattr(t, 'requires_grad', False) for t in {safe_name})")
             elif a.is_optional_tensor:
-                parts.append(f"({a.name} is not None and getattr({a.name}, 'requires_grad', False))")
+                parts.append(f"({safe_name} is not None and getattr({safe_name}, 'requires_grad', False))")
             else:
-                parts.append(f"getattr({a.name}, 'requires_grad', False)")
+                parts.append(f"getattr({safe_name}, 'requires_grad', False)")
         rg_check = " or ".join(parts)
 
     lines.append(f"    if GradMode.enabled and ({rg_check}):")
@@ -208,17 +232,18 @@ def _gen_one_post_wrapper(info: DifferentiabilityInfo) -> str:
     if has_tensor_list:
         unpack_parts = []
         for a in diff_inputs:
+            safe_name = _safe_param(a.name)
             if a.is_tensor_list:
-                unpack_parts.append(f"*{a.name}")
+                unpack_parts.append(f"*{safe_name}")
             else:
-                unpack_parts.append(a.name)
+                unpack_parts.append(safe_name)
         inputs_expr = f"({', '.join(unpack_parts)},)"
     elif any(a.is_optional_tensor for a in diff_inputs):
-        input_names = [a.name for a in diff_inputs]
+        input_names = [_safe_param(a.name) for a in diff_inputs]
         lines.append(f"        _inputs = [x for x in ({', '.join(input_names)},) if x is not None]")
         inputs_expr = "_inputs"
     else:
-        input_names = [a.name for a in diff_inputs]
+        input_names = [_safe_param(a.name) for a in diff_inputs]
         inputs_expr = f"({', '.join(input_names)},)"
 
     lines.append(f"        grad_fn = _F.{cls_name}({inputs_expr}, raw_keyset=raw_keyset, active_keyset=active_keyset)")
@@ -231,7 +256,7 @@ def _gen_one_post_wrapper(info: DifferentiabilityInfo) -> str:
             arg = next((a for a in info.args if a.name == name), None)
             if arg and arg.is_tensor_list:
                 continue
-            save_kw.append(f"{_safe_param(name)}={name}")
+            save_kw.append(f"{_safe_param(name)}={_safe_param(name)}")
         for name in saved_outputs:
             if name == "result":
                 save_kw.append(f"{_safe_param(name)}=result")
@@ -245,7 +270,7 @@ def _gen_one_post_wrapper(info: DifferentiabilityInfo) -> str:
 
     # Save non-tensor args
     for arg in non_tensor_args:
-        lines.append(f"        grad_fn._{arg.name} = {arg.name}")
+        lines.append(f"        grad_fn._{arg.name} = {_safe_param(arg.name)}")
 
     # Attach grad_fn to result(s)
     if info.is_multi_output:
@@ -254,6 +279,10 @@ def _gen_one_post_wrapper(info: DifferentiabilityInfo) -> str:
             if out_diff is None or (i < len(out_diff) and out_diff[i]):
                 lines.append(f"        result[{i}].grad_fn = grad_fn")
                 lines.append(f"        result[{i}].requires_grad = True")
+    elif info.returns and info.returns[0].type.endswith('[]'):
+        lines.append("        for i in range(len(result)):")
+        lines.append("            result[i].grad_fn = grad_fn")
+        lines.append("            result[i].requires_grad = True")
     else:
         lines.append("        result.grad_fn = grad_fn")
         lines.append("        result.requires_grad = True")

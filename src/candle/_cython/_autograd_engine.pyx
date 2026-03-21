@@ -267,6 +267,10 @@ cdef class _GraphTask:
                 )
                 if not should_visit:
                     continue
+                if not isinstance(t, Tensor):
+                    if next_fn is not None and next_fn in self.dependencies:
+                        self._accumulate_node_grad(next_fn, g)
+                    continue
                 g = self._accumulate_tensor_grad(t, g)
                 if next_fn is not None and next_fn in self.dependencies:
                     self._accumulate_node_grad(next_fn, g)
