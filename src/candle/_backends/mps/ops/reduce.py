@@ -986,3 +986,16 @@ def argwhere(a):
     out = np.argwhere(arr)
     return _from_numpy(out.astype(np.int64), int64_dtype, a.device)
 
+try:
+    from candle._cython._mps_ops import (  # pylint: disable=import-error,no-name-in-module
+        sum_, mean_, std_, var_, var_mean, norm_, prod_,
+        all_, any_, argmax, argmin, count_nonzero,
+        cumsum, cumprod, cummax, cummin,
+        argsort, sort, topk,
+        min_, max_, amin, amax, fmin, fmax, maximum, minimum,
+        logsumexp, renorm, nansum, nanmean,
+        aminmax, quantile, nanquantile, nanmedian, median, kthvalue,
+        unique, unique_consecutive, searchsorted, argwhere,
+    )
+except ImportError:
+    pass

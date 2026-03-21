@@ -109,10 +109,7 @@ def lerp(a, b, weight):
     if _can_use_gpu(a) and _can_use_gpu(b):
         # lerp(a, b, w) = a + w * (b - a)
         diff = sub(b, a)
-        if isinstance(weight, Tensor):
-            return add(a, mul(diff, weight))
-        else:
-            return add(a, mul(diff, weight))
+        return add(a, mul(diff, weight))
     _unsupported_dtype("lerp", a)
 
 def addcmul(a, b, c, value=1.0):
@@ -287,7 +284,18 @@ def isin(elements, test_elements):
         # Iterate over test_elements, accumulate eq() with logical_or()
         te_flat = test_elements.contiguous().reshape((-1,))
         n_test = te_flat.numel()
-        result = eq(elements, _read_scalar(te_flat[0]) if n_test > 0 else 0)
+        if n_test == 0:
+            from candle._tensor import _compute_strides
+            out_buf = _alloc_output_buf(max(elements.numel(), 1), bool_dtype)
+            _get_dispatcher().dispatch_fill("fill_u8", out_buf, 0, max(elements.numel(), 1), scalar_fmt="B")
+            return _from_metal_buffer(
+                out_buf,
+                tuple(elements.shape),
+                tuple(_compute_strides(tuple(elements.shape))),
+                bool_dtype,
+                elements.device,
+            )
+        result = eq(elements, _read_scalar(te_flat[0]))
         for i in range(1, n_test):
             result = logical_or(result, eq(elements, _read_scalar(te_flat[i])))
         return result
@@ -314,3 +322,13 @@ def uniform(a):
 # Upsample ops — CPU numpy implementations
 # ---------------------------------------------------------------------------
 
+try:
+    from candle._cython._mps_ops import (  # pylint: disable=import-error,no-name-in-module
+        where, lerp, addcmul, addcdiv,
+        logaddexp, logaddexp2, hypot,
+        remainder, fmod, heaviside,
+        diff, bincount, histc, histogram, bucketize,
+        isin, uniform,
+    )
+except ImportError:
+    pass
