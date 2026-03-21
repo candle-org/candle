@@ -117,18 +117,20 @@ cdef class SavedTensor:
         return result
 
 
+cdef int _node_hook_handle_counter = 0
+
+
 cdef class _NodeHookHandle:
     cdef object _hooks
     cdef public object id
     cdef object __weakref__
     cdef dict __dict__
 
-    _next_id = 0
-
     def __init__(self, hooks):
+        global _node_hook_handle_counter
         self._hooks = hooks
-        self.id = _NodeHookHandle._next_id
-        _NodeHookHandle._next_id += 1
+        self.id = _node_hook_handle_counter
+        _node_hook_handle_counter += 1
 
     def remove(self):
         if self._hooks is None:

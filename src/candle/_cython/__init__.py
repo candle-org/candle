@@ -17,6 +17,7 @@ Feature flags (set after import):
     _HAS_CYTHON_DTYPE      — True if _dtype.pyx compiled successfully
     _HAS_CYTHON_AUTOGRAD_NODE — True if _autograd_node.pyx compiled
     _HAS_CYTHON_AUTOGRAD_GRAPH — True if _autograd_graph.pyx compiled
+    _HAS_CYTHON_AUTOGRAD_FUNCTION — True if _autograd_function.pyx compiled
     _HAS_CYTHON_FAST_OPS   — True if _fast_ops.pyx compiled successfully
 """
 
@@ -31,6 +32,7 @@ _HAS_CYTHON_DEVICE = False
 _HAS_CYTHON_DTYPE = False
 _HAS_CYTHON_AUTOGRAD_GRAPH = False
 _HAS_CYTHON_AUTOGRAD_ENGINE = False
+_HAS_CYTHON_AUTOGRAD_FUNCTION = False
 
 try:
     from ._dispatch import cy_dispatch, cy_dispatch_with_keyset  # noqa: F401
@@ -128,6 +130,12 @@ from ._autograd_engine import (  # noqa: F401
     push_evaluating_node,
 )
 _HAS_CYTHON_AUTOGRAD_ENGINE = True
+
+from ._autograd_function import (  # noqa: F401
+    FunctionCtx,
+    _function_apply,
+)
+_HAS_CYTHON_AUTOGRAD_FUNCTION = True
 
 try:
     from ._fast_ops import add, mul, matmul  # noqa: F401
