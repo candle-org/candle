@@ -9,6 +9,9 @@ import threading
 
 from .runtime import get_runtime, buffer_contents, _HAS_PYOBJC
 
+_CYTHON_DISPATCHER = False
+_cy_get_dispatcher = None
+
 _MTLSize = None
 if _HAS_PYOBJC:
     from Metal import MTLSizeMake as _MTLSizeMake  # pylint: disable=import-error,no-name-in-module
@@ -28,6 +31,8 @@ _dispatcher_lock = threading.Lock()
 
 def get_dispatcher():
     """Return the singleton MetalKernelDispatcher (lazy init)."""
+    if _CYTHON_DISPATCHER:
+        return _cy_get_dispatcher()
     global _dispatcher
     if _dispatcher is not None:
         return _dispatcher
@@ -2314,3 +2319,16 @@ def _encode_roll_ctypes(enc, pipeline, input_buf, output_buf,
     _ctypes_set_bytes(enc, struct.pack("I", total), 4, 5)
     _ctypes_dispatch_threadgroups(enc, groups, tpg)
     _ctypes_end_encoding(enc)
+
+
+# ---------------------------------------------------------------------------
+# Optional Cython fast-path dispatcher — imported AFTER all ctypes helpers
+# are defined above (they are imported by the Cython module at load time).
+# ---------------------------------------------------------------------------
+try:
+    from candle._cython._mps_compute import (  # pylint: disable=import-error,no-name-in-module
+        get_dispatcher as _cy_get_dispatcher,
+    )
+    _CYTHON_DISPATCHER = True
+except ImportError:
+    pass

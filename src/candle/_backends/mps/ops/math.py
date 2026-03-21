@@ -408,3 +408,15 @@ def reciprocal(a):
         return _empty_like(a)
     _unsupported_dtype("reciprocal", a)
 
+
+try:
+    from candle._cython._mps_ops import (  # pylint: disable=import-error,no-name-in-module
+        add, mul, div, true_divide, sub, abs, neg, sqrt, exp, log,
+        sin, cos, tan, tanh, sigmoid, floor, ceil, round, trunc, frac,
+        pow, log2, log10, exp2, rsqrt, sign, square, signbit,
+        isnan, isinf, isfinite, isneginf, isposinf, isreal,
+        sinh, cosh, asinh, acosh, atanh, erf, erfc, atan, atan2,
+        asin, acos, floor_divide, log1p, expm1, reciprocal,
+    )
+except ImportError:
+    pass  # pure-Python fallback above
