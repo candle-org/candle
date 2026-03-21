@@ -18,7 +18,7 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | `atan2` | `aclnnAtan2` | 561103 | composite: `atan(a/b)` with quadrant correction | CANN 8.x |
 | `lerp` | `aclnnLerps` | 561103 | composite: `a + weight * (b - a)` | CANN 8.x |
 | `dropout` | `aclnnDropoutDoMask` | 561103 | composite: on-device bernoulli mask + `where` + scale | CANN 8.x |
-| `lt` / `gt` (int64 indices) | `aclnnLtTensor` / `aclnnGtTensor` | segmentation fault during 310B index bounds checks | composite: validate bounds via `signbit + add/sub + eq_scalar`; normalize negatives via signbit mask + arithmetic blend | CANN 8.x |
+| `lt` / `gt` (int64 indices) | `aclnnLtTensor` / `aclnnGtTensor` | segmentation fault during 310B index bounds checks | composite: validate bounds via `signbit + relu + sign + add/sub`; normalize negatives via signbit mask + arithmetic blend | CANN 8.x |
 | `softplus` | `aclnnSoftplus` | 561103 | composite: `log(1 + exp(x))` | CANN 8.x |
 | `isclose` | `aclnnIsClose` | 561103 | composite: `abs(a-b) <= atol + rtol*abs(b)` | CANN 8.x |
 | `flip` | `aclnnFlip` | 561000 | composite: slice-and-concat per dim | CANN 8.x |

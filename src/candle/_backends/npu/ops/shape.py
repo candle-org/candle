@@ -211,12 +211,12 @@ def _nonzero_mask_float(a):
 
 
 def _positive_mask_int64(indices, scalar):
-    from .comparison import logical_and, logical_not
-    from .math import signbit, sub
+    from .activation import relu
+    from .math import sign, sub
 
     delta = sub(indices, _scalar_to_npu_tensor(int(scalar), indices))
     delta_f = _cast_tensor_dtype(delta, float_dtype)
-    return logical_and(logical_not(signbit(delta_f)), _nonzero_mask_float(delta_f))
+    return _cast_tensor_dtype(sign(relu(delta_f)), bool_dtype)
 
 
 def _negative_mask_int64(indices):
