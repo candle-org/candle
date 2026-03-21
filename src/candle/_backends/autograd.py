@@ -9,7 +9,7 @@ from .._dispatch.registry import registry
 from .._dispatch.registration import register_autograd_kernels
 
 # -- Factory functions migrated to Cython (_cython/_autograd_ops.pyx) ----------
-from .._cython._autograd_ops import (  # pylint: disable=no-name-in-module
+from .._cython._autograd_ops import (  # pylint: disable=import-error,no-name-in-module
     _strip_autograd_keys,
     _grad_context,
     _backward_dispatch_keyset,

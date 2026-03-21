@@ -100,7 +100,7 @@ try:
 except ImportError:
     pass
 
-from ._autograd_node import (  # pylint: disable=no-name-in-module
+from ._autograd_node import (  # pylint: disable=import-error,no-name-in-module
     AccumulateGrad,  # noqa: F401
     FastNode,  # noqa: F401
     InputMetadata,  # noqa: F401
@@ -111,7 +111,7 @@ from ._autograd_node import (  # pylint: disable=no-name-in-module
 )
 _HAS_CYTHON_AUTOGRAD_NODE = True
 
-from ._autograd_graph import (  # noqa: F401  # pylint: disable=no-name-in-module
+from ._autograd_graph import (  # noqa: F401  # pylint: disable=import-error,no-name-in-module
     GradientEdge,
     current_saved_tensors_hooks,
     get_gradient_edge,
@@ -119,7 +119,7 @@ from ._autograd_graph import (  # noqa: F401  # pylint: disable=no-name-in-modul
 )
 _HAS_CYTHON_AUTOGRAD_GRAPH = True
 
-from ._autograd_engine import (  # noqa: F401  # pylint: disable=no-name-in-module
+from ._autograd_engine import (  # noqa: F401  # pylint: disable=import-error,no-name-in-module
     _GraphTask,
     _build_dependencies,
     _run_backward,
@@ -136,13 +136,13 @@ from ._autograd_engine import (  # noqa: F401  # pylint: disable=no-name-in-modu
 )
 _HAS_CYTHON_AUTOGRAD_ENGINE = True
 
-from ._autograd_function import (  # noqa: F401  # pylint: disable=no-name-in-module
+from ._autograd_function import (  # noqa: F401  # pylint: disable=import-error,no-name-in-module
     FunctionCtx,
     _function_apply,
 )
 _HAS_CYTHON_AUTOGRAD_FUNCTION = True
 
-from ._autograd_ops import (  # noqa: F401  # pylint: disable=no-name-in-module
+from ._autograd_ops import (  # noqa: F401  # pylint: disable=import-error,no-name-in-module
     _strip_autograd_keys,
     _grad_context,
     _backward_dispatch_keyset,

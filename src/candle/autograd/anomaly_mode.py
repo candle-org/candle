@@ -4,7 +4,7 @@ import traceback
 import warnings
 import weakref
 
-from .._cython._autograd_engine import (  # pylint: disable=no-name-in-module
+from .._cython._autograd_engine import (  # pylint: disable=import-error,no-name-in-module
     current_anomaly_parent,
     is_anomaly_check_nan_enabled,
     is_anomaly_enabled,
