@@ -1,3 +1,4 @@
+import pytest
 import candle as torch
 
 
@@ -34,3 +35,15 @@ def test_backward_create_graph_keeps_grad_differentiable():
     q = x.grad * x
     q.backward()
     assert x.grad is not None
+
+
+def test_autograd_grad_allow_unused_returns_none_for_nonparticipating_input_under_create_graph():
+    a = torch.tensor([2.0], requires_grad=True)
+    b = torch.tensor([5.0], requires_grad=True)
+    out = (a * a).sum()
+
+    grad_a, grad_b = torch.autograd.grad(out, (a, b), create_graph=True, allow_unused=True)
+
+    assert grad_a is not None
+    assert grad_a.requires_grad is True
+    assert grad_b is None

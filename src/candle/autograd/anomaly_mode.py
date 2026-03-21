@@ -1,12 +1,20 @@
 import contextlib
 import sys
-import threading
 import traceback
 import warnings
 import weakref
 
+from .._cython._autograd_engine import (  # pylint: disable=import-error,no-name-in-module
+    current_anomaly_parent,
+    is_anomaly_check_nan_enabled,
+    is_anomaly_enabled,
+    pop_anomaly_config,
+    pop_evaluating_node,
+    push_anomaly_config,
+    push_evaluating_node,
+)
 
-_STATE = threading.local()
+
 _ENABLE_WARNING = (
     "Anomaly Detection has been enabled. This mode will increase the runtime "
     "and should only be enabled for debugging."
@@ -21,70 +29,34 @@ class _AnomalyConfig:
         self.check_nan = bool(check_nan)
 
 
-def _config_stack():
-    stack = getattr(_STATE, "config_stack", None)
-    if stack is None:
-        stack = []
-        _STATE.config_stack = stack
-    return stack
-
-
-def _node_stack():
-    stack = getattr(_STATE, "node_stack", None)
-    if stack is None:
-        stack = []
-        _STATE.node_stack = stack
-    return stack
-
-
-def is_anomaly_enabled():
-    stack = _config_stack()
-    return bool(stack and stack[-1].enabled)
-
-
-def is_anomaly_check_nan_enabled():
-    stack = _config_stack()
-    return bool(stack and stack[-1].enabled and stack[-1].check_nan)
-
-
 @contextlib.contextmanager
 def detect_anomaly(check_nan=True):
     warnings.warn(_ENABLE_WARNING, UserWarning)
-    stack = _config_stack()
-    stack.append(_AnomalyConfig(True, check_nan))
+    push_anomaly_config(_AnomalyConfig(True, check_nan))
     try:
         yield
     finally:
-        stack.pop()
+        pop_anomaly_config()
 
 
 @contextlib.contextmanager
 def set_detect_anomaly(mode, check_nan=True):
-    stack = _config_stack()
     if mode:
         warnings.warn(_ENABLE_WARNING, UserWarning)
-    stack.append(_AnomalyConfig(mode, check_nan))
+    push_anomaly_config(_AnomalyConfig(mode, check_nan))
     try:
         yield
     finally:
-        stack.pop()
-
-
-def current_anomaly_parent():
-    stack = _node_stack()
-    if not stack:
-        return None
-    return stack[-1]
+        pop_anomaly_config()
 
 
 @contextlib.contextmanager
 def evaluating_node(node):
-    stack = _node_stack()
-    stack.append(node)
+    push_evaluating_node(node)
     try:
         yield
     finally:
-        stack.pop()
+        pop_evaluating_node()
 
 
 def annotate_node_creation(node):

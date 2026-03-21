@@ -57,3 +57,14 @@ def test_no_grad_decorator_forms():
     assert fn_a() is False
     assert fn_b() is False
     assert torch.is_grad_enabled() is True
+
+
+def test_no_grad_context_does_not_leak_after_backward():
+    x = torch.tensor([2.0], requires_grad=True)
+    with torch.no_grad():
+        assert torch.is_grad_enabled() is False
+        y = x.clone()
+    assert torch.is_grad_enabled() is True
+    (x * x).sum().backward()
+    assert x.grad is not None
+    assert torch.is_grad_enabled() is True

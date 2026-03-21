@@ -39,6 +39,31 @@ def test_old_style_function():
     assert _allclose(x.grad, [2.0])
 
 
+class _CaptureMaterializeFlag(Function):
+    captured = None
+
+    @staticmethod
+    def forward(ctx, x):
+        ctx.set_materialize_grads(False)
+        return x.clone()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        _CaptureMaterializeFlag.captured = ctx._materialize_grads
+        return (grad_output,)
+
+
+class _DuplicateOutput(Function):
+    @staticmethod
+    def forward(ctx, x):
+        return x.clone(), x.clone()
+
+    @staticmethod
+    def backward(ctx, grad_output_a, grad_output_b):
+        return (grad_output_a + grad_output_b,)
+
+
+
 # ---------------------------------------------------------------------------
 # 2. New-style Function (no ctx in forward)
 # ---------------------------------------------------------------------------
@@ -218,6 +243,22 @@ def test_gradient_accumulation_replaces_reference_with_create_graph():
     backward(y.sum(), create_graph=True)
 
     assert id(grad_ref) != id(x.grad)
+
+
+def test_set_materialize_grads_flag_is_preserved_on_ctx():
+    x = torch.tensor([3.0], requires_grad=True)
+    y = _CaptureMaterializeFlag.apply(x)
+    backward(y.sum())
+    assert _CaptureMaterializeFlag.captured is False
+
+
+def test_custom_function_multiple_outputs_accumulate_input_grad():
+    x = torch.tensor([3.0], requires_grad=True)
+    out_a, out_b = _DuplicateOutput.apply(x)
+    assert out_a.grad_fn is not None
+    assert out_b.grad_fn is not None
+    backward((out_a + out_b).sum())
+    assert _allclose(x.grad, [2.0])
 
 
 def test_next_functions_accumulate_grad_hooks_observe_tensor_hook():

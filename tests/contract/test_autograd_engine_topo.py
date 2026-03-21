@@ -1,3 +1,4 @@
+import pytest
 import candle as torch
 
 
@@ -61,3 +62,23 @@ def test_saved_tensors_hooks_unpacked_once_per_node():
     c.sum().backward()
     # mul saves two tensors; add does not save inputs.
     assert counters["unpack"] == 2
+
+
+def test_autograd_grad_allow_unused_false_raises_for_unused_input():
+    a = torch.tensor([1.0], requires_grad=True)
+    b = torch.tensor([2.0], requires_grad=True)
+    out = (a * a).sum()
+
+    with pytest.raises(RuntimeError, match="not have been used in the graph"):
+        torch.autograd.grad(out, (a, b), allow_unused=False)
+
+
+def test_autograd_grad_allow_unused_true_returns_none_for_unused_input():
+    a = torch.tensor([1.0], requires_grad=True)
+    b = torch.tensor([2.0], requires_grad=True)
+    out = (a * a).sum()
+
+    grad_a, grad_b = torch.autograd.grad(out, (a, b), allow_unused=True)
+
+    assert grad_a is not None
+    assert grad_b is None

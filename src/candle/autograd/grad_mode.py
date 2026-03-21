@@ -1,23 +1,10 @@
-import threading
-
-
-_GRAD_MODE_STATE = threading.local()
-
-
-def _get_creation_mode():
-    return getattr(_GRAD_MODE_STATE, "creation_mode", None)
-
-
-def _set_creation_mode(mode):
-    _GRAD_MODE_STATE.creation_mode = mode
-
-
-def _get_enabled():
-    return getattr(_GRAD_MODE_STATE, "enabled", True)
-
-
-def _set_enabled(mode):
-    _GRAD_MODE_STATE.enabled = bool(mode)
+from .._cython._grad_mode_state import (
+    _STATE as _GRAD_MODE_STATE,
+    get_enabled as _get_enabled,
+    set_enabled as _set_enabled,
+    get_creation_mode as _get_creation_mode,
+    set_creation_mode as _set_creation_mode,
+)
 
 
 class GradMode:

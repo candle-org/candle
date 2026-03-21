@@ -68,6 +68,22 @@ if _system in ("Linux", "Darwin"):
             ["src/candle/_cython/_autograd_node.pyx"],
         ),
         Extension(
+            "candle._cython._autograd_graph",
+            ["src/candle/_cython/_autograd_graph.pyx"],
+        ),
+        Extension(
+            "candle._cython._autograd_engine",
+            ["src/candle/_cython/_autograd_engine.pyx"],
+        ),
+        Extension(
+            "candle._cython._autograd_function",
+            ["src/candle/_cython/_autograd_function.pyx"],
+        ),
+        Extension(
+            "candle._cython._autograd_ops",
+            ["src/candle/_cython/_autograd_ops.pyx"],
+        ),
+        Extension(
             "candle._cython._fast_ops",
             ["src/candle/_cython/_fast_ops.pyx"],
         ),
