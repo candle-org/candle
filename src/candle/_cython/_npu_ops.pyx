@@ -116,8 +116,12 @@ cdef object _npu_state = None
 cdef object _npu_typed_storage_from_ptr = None
 cdef object _Tensor = None
 
+cdef object _get_runtime_fast = None
+cdef object _get_stream_fast = None
+
 cdef inline void _ensure_npu_imports():
     global _npu_runtime, _npu_state, _npu_typed_storage_from_ptr, _Tensor
+    global _get_runtime_fast, _get_stream_fast
     if _npu_runtime is not None:
         return
     from candle._backends.npu import runtime as rt
@@ -128,6 +132,8 @@ cdef inline void _ensure_npu_imports():
     _npu_state = st
     _npu_typed_storage_from_ptr = nfp
     _Tensor = T
+    _get_runtime_fast = rt.get_runtime_fast
+    _get_stream_fast = st.current_stream_fast
 
 
 def fast_binary_op(a, b, fn, str name):
@@ -150,10 +156,10 @@ def fast_binary_op(a, b, fn, str name):
     if a_dtype != b.dtype:
         raise ValueError(f"NPU {name} requires matching dtypes")
 
-    # 2. Get runtime + stream
+    # 2. Get runtime + stream (fast path: skip activate() and TLS lock)
     cdef int dev_idx = a_dev.index or 0
-    runtime = _npu_runtime.get_runtime(dev_idx)
-    stream = _npu_state.current_stream(dev_idx)
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
 
     # 3. Extract shapes into C arrays
     py_a_shape = a.shape

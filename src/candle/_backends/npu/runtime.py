@@ -266,6 +266,19 @@ def get_runtime(device_id=0):
     return runtime
 
 
+def get_runtime_fast(device_id=0):
+    """Fast variant for the op hot-path.
+
+    Skips activate() (set_device / set_context ctypes round-trips) when the
+    runtime is already initialized.  Falls back to get_runtime() on first use
+    or when the runtime is not yet in the cache.
+    """
+    runtime = _RUNTIMES.get(device_id)
+    if runtime is None or not runtime.initialized:
+        return get_runtime(device_id)
+    return runtime
+
+
 def is_available(verbose=False):
     try:
         get_runtime(0)

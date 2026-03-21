@@ -87,6 +87,21 @@ def current_stream(device_id=None):
     return stream
 
 
+def current_stream_fast(device_id=0):
+    """Fast variant for the op hot-path.
+
+    Skips _sync_default_streams_from_state() and the default_stream lock when
+    the stream for this device is already cached in TLS.  Falls back to the
+    full current_stream() path on first use or after set_current_stream().
+    """
+    tls_streams = getattr(_tls, "current_streams", None)
+    if tls_streams is not None:
+        stream = tls_streams.get(device_id)
+        if stream is not None:
+            return stream
+    return current_stream(device_id)
+
+
 def set_current_stream(stream):
     state = _state()
     state.current_streams[stream.device.index or 0] = stream
