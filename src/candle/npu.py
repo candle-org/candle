@@ -5,10 +5,7 @@ from ._backends.npu.runtime import device_count
 from ._backends.npu.streams import Event, Stream
 from ._device import device as Device
 
-try:
-    from ._cython._npu_ops import cy_npu_synchronize as _cy_npu_sync  # pylint: disable=import-error,no-name-in-module
-except ImportError:
-    _cy_npu_sync = None
+from ._cython._npu_ops import cy_npu_synchronize as _cy_npu_sync  # pylint: disable=import-error,no-name-in-module
 
 _MEMORY_FRACTION = None
 _NPU_INITIALIZED = False

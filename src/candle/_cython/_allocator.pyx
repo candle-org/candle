@@ -481,6 +481,34 @@ cdef class FastNpuAllocator:
         self._stats_arr[IDX_NUM_SYNC_ALL_STREAMS] += 1
         self._drain_pending()
 
+        # Also drain runtime-level deferred frees so alloc.synchronize()
+        # preserves the historical contract used by tests and internal callers.
+        from candle._backends.npu import runtime as npu_runtime
+        runtime = npu_runtime.get_runtime(self.device_id)
+
+        frees = runtime._deferred_frees
+        if frees:
+            runtime._deferred_frees = []
+            for ptr in frees:
+                self.free(ptr, None)
+
+        raw_frees = runtime._deferred_raw_frees
+        if raw_frees:
+            runtime._deferred_raw_frees = []
+            for ptr in raw_frees:
+                ret = npu_runtime.acl.rt.free(ptr)
+                if ret != 0:
+                    raise RuntimeError(f"acl.rt.free failed: {ret}")
+
+        host_frees = runtime._deferred_host_frees
+        if host_frees:
+            runtime._deferred_host_frees = []
+            for ptr in host_frees:
+                ret = npu_runtime.acl.rt.free_host(ptr)
+                if ret != 0:
+                    raise RuntimeError(f"acl.rt.free_host failed: {ret}")
+
+
     def record_stream(self, ptr, stream):
         block = self._active.get(int(ptr))
         if block is None:
