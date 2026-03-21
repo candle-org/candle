@@ -4,39 +4,84 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      publish_to_pypi:
+        description: Publish wheels to PyPI after build
+        required: true
+        type: boolean
+        default: false
+      create_github_release:
+        description: Upload wheels to GitHub Release assets
+        required: true
+        type: boolean
+        default: false
 
 jobs:
-  build:
+  build-wheels:
     runs-on: ubuntu-latest
-    name: Build and Release
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.x"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install build
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-    - name: Build package
-      run: python -m build --wheel
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: candle-python-whl
-        path: dist/*
+      - name: Build wheels
+        env:
+          CIBW_BUILD: cp311-manylinux_${{ matrix.arch }} cp312-manylinux_${{ matrix.arch }}
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_TEST_COMMAND: >-
+            python -c "import candle; import candle.distributed as dist; x = candle.tensor([1, 2, 3]); y = candle.ones((3,)); assert x.add(y).sum().item() == 9"
+        run: python -m cibuildwheel --output-dir dist
 
-    - name: Release and Upload Assets
-      uses: ncipollo/release-action@v1
-      with:
-        bodyFile: ""
-        allowUpdates: true
-        removeArtifacts: true
-        artifacts: |
-          dist/*.whl
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.arch }}
+          path: dist/*.whl
+
+  publish:
+    needs: build-wheels
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Download wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist/
+
+      - name: List wheels
+        run: ls dist/
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_github_release == 'true')
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          artifacts: dist/*.whl
+
+      - name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_to_pypi == 'true')
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
