@@ -3,8 +3,18 @@ import numpy as np
 import candle as torch
 
 
-def test_training_core_smoke_parity_matches_torch_cpu():
+def test_training_core_smoke_parity_matches_torch_cpu(monkeypatch):
     import torch as real_torch
+
+    # The local torch env auto-imports torch_npu optimizer patches even for CPU
+    # tensors, which makes real torch CPU SGD step() try to lazy-init NPU.
+    import torch.optim.optimizer as real_torch_optimizer
+
+    monkeypatch.setattr(
+        real_torch_optimizer,
+        "_get_foreach_kernels_supported_devices",
+        lambda: ["cuda", "xpu"],
+    )
 
     x_data = [[1.0, 2.0], [3.0, 4.0]]
     target_data = [[0.5], [1.5]]

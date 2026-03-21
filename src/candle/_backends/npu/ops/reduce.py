@@ -328,7 +328,7 @@ def count_nonzero(a, dim=None, keepdim=False):
     )
     count_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(int32_dtype), runtime=runtime)
     dims_payload = {
-        "dims": dims if dim is not None else None,
+        "dims": dims,
         "out_shape": out_shape,
         "out_stride": out_stride,
     }
@@ -404,7 +404,7 @@ def all_(a, dim=None, keepdim=False):
     )
     count_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(int32_dtype), runtime=runtime)
     dims_payload = {
-        "dims": dims if dim is not None else None,
+        "dims": dims,
         "out_shape": out_shape,
         "out_stride": out_stride,
     }
@@ -483,7 +483,7 @@ def any_(a, dim=None, keepdim=False):
     )
     count_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(int32_dtype), runtime=runtime)
     dims_payload = {
-        "dims": dims if dim is not None else None,
+        "dims": dims,
         "out_shape": out_shape,
         "out_stride": out_stride,
     }
@@ -584,7 +584,7 @@ def searchsorted(sorted_sequence, values, out_int32=False, right=False, side=Non
     sorted_storage = _unwrap_storage(sorted_sequence)
     values_storage = _unwrap_storage(values)
 
-    out_dtype = "int32" if out_int32 else "int64"
+    out_dtype = int32_dtype if out_int32 else int64_dtype
     out_shape = tuple(values.shape)
     out_stride = npu_runtime._contiguous_stride(out_shape)
     out_numel = max(_numel(out_shape), 1)
@@ -759,7 +759,7 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
     out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
     dims_payload = {
-        "dims": dims if dim is not None else None,
+        "dims": dims,
         "out_shape": out_shape,
         "out_stride": npu_runtime._contiguous_stride(out_shape),
     }

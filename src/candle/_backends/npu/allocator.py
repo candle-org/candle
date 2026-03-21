@@ -295,6 +295,8 @@ class NpuAllocator:
         return block, remainder
 
     def _drain_pending(self):
+        from . import runtime as npu_runtime
+
         ready = []
         pending = []
         for block in self._pending:

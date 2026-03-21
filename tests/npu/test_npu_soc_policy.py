@@ -25,10 +25,10 @@ def test_soc_capability_table_routes_smallop_arange_for_310b_only():
     assert not ops_soc.use_smallop_arange_1d(profile="310p")
 
 
-def test_soc_capability_table_routes_smallop_linspace_for_310b_only():
+def test_soc_capability_table_routes_smallop_linspace_for_310b_910a_and_910b():
     assert ops_soc.use_smallop_linspace(profile="310b")
-    assert not ops_soc.use_smallop_linspace(profile="910a")
-    assert not ops_soc.use_smallop_linspace(profile="910b")
+    assert ops_soc.use_smallop_linspace(profile="910a")
+    assert ops_soc.use_smallop_linspace(profile="910b")
     assert not ops_soc.use_smallop_linspace(profile="310p")
 
 
@@ -62,6 +62,7 @@ def test_soc_910a_fallback_ops_cover_expected_watchlist_set():
         "matmul",
         "addmm",
         "mv",
+        "repeat_interleave_tensor",
     }
     got = set(ops_soc.fallback_ops("910a"))
     assert got == expected

@@ -185,15 +185,13 @@ def _writeback(target, result, op_name=None):
         else:
             if not npu_ops.aclnn.arange_symbols_ok():
                 raise RuntimeError("aclnnArange symbols not available")
-            if not npu_ops.aclnn.index_put_impl_symbols_ok():
-                raise RuntimeError("aclnnIndexPutImpl symbols not available")
             if target.numel() != result.numel():
                 raise RuntimeError("functionalize writeback shape mismatch")
             base_flat = base.reshape((base.numel(),))
             values = result.reshape((result.numel(),))
             linear = npu_ops._npu_linear_index(target.shape, target.stride, target.offset, target.device)
             linear = linear.reshape((linear.numel(),))
-            npu_ops.npu_index_put_impl(base_flat, linear, values, accumulate=False, unsafe=False)
+            npu_ops.scatter_(base_flat, 0, linear, values)
         if target._view_meta is None:
             target.shape = result.shape
             target.stride = result.stride

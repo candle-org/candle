@@ -47,6 +47,7 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | `adaptive_avg_pool2d` | `aclnnAdaptiveAvgPool2d` | cubeMathType=1 state corruption | composite: interpolate via avg_pool2d | CANN 8.x |
 | `upsample_nearest1d` | `aclnnUpsampleNearest1d` | broken | composite: reshape to 4D + upsample_nearest2d | CANN 8.x |
 | `einsum` | `aclnnEinsum` | 161002 | composite: matmul/permute/sum patterns | CANN 8.x |
+| `linspace` / `logspace` | `aclnnLinspace` | 161002 | composite: on-device `ones + cumsum + mul + add`; `logspace` builds from composite `linspace` | CANN 8.x |
 | `isinf` | `aclnnIsInf` | 161001 (unavailable) | composite: `~isfinite & ~isnan` | CANN 8.x |
 | `im2col` | `aclnnIm2col` | 561103 | composite: unfold | CANN 8.x |
 
@@ -55,3 +56,6 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | Op | ACLNN kernel | Error | Workaround | Verified on |
 |---|---|---|---|---|
 | `allclose` | 6-op composite | ACLNN 561000 under executor pool pressure | composite: `isclose(...).all()` | CANN 8.x |
+| `ones` / `zeros` creation via scalar fill | `aclnnInplaceFillScalar` | native creation path can segfault after prior NPU functionalize traffic | use native `aclnnInplaceOne` / `aclnnInplaceZero` for tensor creation; keep `fill_` on `aclnnInplaceFillScalar` | CANN 8.3 RC1 / 910A |
+| `repeat_interleave` (tensor repeats) | `aclnnRepeatInterleave` / `aclnnRepeatInterleaveWithDim` | cross-op state corruption after native execution | composite: on-device `cumsum + searchsorted + index_select` | CANN 8.3 RC1 / 910A |
+| `linspace` / `logspace` | `aclnnLinspace` | 161002 | composite: on-device `ones + cumsum + mul + add`; `logspace` builds from composite `linspace` | CANN 8.x / 910A |
