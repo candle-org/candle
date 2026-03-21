@@ -18,7 +18,7 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | `atan2` | `aclnnAtan2` | 561103 | composite: `atan(a/b)` with quadrant correction | CANN 8.x |
 | `lerp` | `aclnnLerps` | 561103 | composite: `a + weight * (b - a)` | CANN 8.x |
 | `dropout` | `aclnnDropoutDoMask` | 561103 | composite: on-device bernoulli mask + `where` + scale | CANN 8.x |
-| `lt` / `gt` (int64 indices) | `aclnnLtTensor` / `aclnnGtTensor` | segmentation fault during 310B index bounds checks | composite: validate bounds via `relu + sign + amax + add/sub`; normalize negatives via float mask + arithmetic blend | CANN 8.x |
+| `lt` / `gt` (int64 indices) | `aclnnLtTensor` / `aclnnGtTensor` | segmentation fault during 310B index bounds checks | workaround: host-readback bounds/negative-index normalization, then continue on-device gather/take | CANN 8.x |
 | `softplus` | `aclnnSoftplus` | 561103 | composite: `log(1 + exp(x))` | CANN 8.x |
 | `isclose` | `aclnnIsClose` | 561103 | composite: `abs(a-b) <= atol + rtol*abs(b)` | CANN 8.x |
 | `flip` | `aclnnFlip` | 561000 | composite: slice-and-concat per dim | CANN 8.x |
@@ -26,9 +26,9 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | `sort` | `aclnnTopk` | 561103 | composite: bitonic sort via small ops | CANN 8.x |
 | `topk` | `aclnnTopk` | 561103 | composite: sort + slice | CANN 8.x |
 | `diag` | `aclnnDiag` | 561103 | composite: index select on diagonal | CANN 8.x |
-| `gather` | `aclnnGather` | 561103 | composite: loop over dim slices | CANN 8.x |
-| `take_along_dim` | `aclnnGather` | 561103 | composite: same as gather | CANN 8.x |
-| `layer_norm` (float32) | `aclnnLayerNorm` | 561103 | cast to float16, run, cast back | CANN 8.x |
+| `gather` | `aclnnGather` | 561103 / scatter-one_hot fallback instability | host-guided D2D copy fallback using validated indices | CANN 8.x |
+| `take_along_dim` | `aclnnGather` | 561103 / gather fallback shares same issue | normalize indices on host, then host-guided D2D gather copy | CANN 8.x |
+| `layer_norm` (float32) | `aclnnLayerNorm` | 561103 | composite: float16 mean/var normalize + affine, cast back | CANN 8.x |
 | `mish` | `aclnnMish` | 561103 | composite: `x * tanh(softplus(x))` | CANN 8.x |
 | `batch_norm` | `aclnnBatchNorm` | 161002 | composite: manual mean/var normalize | CANN 8.x |
 | `avg_pool2d` | `aclnnAvgPool2d` | 161002 | composite: unfold + mean | CANN 8.x |

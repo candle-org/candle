@@ -214,30 +214,64 @@ def _positive_mask_int64(indices, scalar):
     from .activation import relu
     from .math import sign, sub
 
-    delta = sub(indices, _scalar_to_npu_tensor(int(scalar), indices))
-    delta_f = _cast_tensor_dtype(delta, float_dtype)
-    return sign(relu(delta_f))
+    delta = sub(indices, int(scalar))
+    return sign(relu(delta))
 
 
 def _negative_mask_int64(indices):
     from .activation import relu
     from .math import sign, neg
 
-    return sign(relu(neg(_cast_tensor_dtype(indices, float_dtype))))
+    return relu(neg(sign(indices)))
 
 
 def _below_negative_lower_bound_mask_int64(indices, dim_size):
     from .activation import relu
     from .math import add, sign, neg
 
-    shifted = add(indices, _scalar_to_npu_tensor(int(dim_size), indices))
-    return sign(relu(neg(_cast_tensor_dtype(shifted, float_dtype))))
+    shifted = add(indices, int(dim_size))
+    return relu(neg(sign(shifted)))
 
 
 def _mask_has_any(mask):
-    from .reduce import amax
+    runtime = npu_runtime.get_runtime((mask.device.index or 0))
+    stream = npu_state.current_stream((mask.device.index or 0))
+    runtime.activate()
+    if hasattr(runtime, "synchronize_stream"):
+        runtime.synchronize_stream(stream.stream)
+    arr = npu_runtime._copy_npu_to_cpu(
+        _npu_data_ptr(mask),
+        max(_numel(mask.shape), 1) * _dtype_itemsize(mask.dtype),
+        mask.shape,
+        mask.dtype,
+        runtime=runtime,
+    )
+    return bool(arr.any())
 
-    return float(amax(mask).to("cpu").item()) != 0.0
+
+def _read_index_tensor_to_cpu(indices):
+    runtime = npu_runtime.get_runtime((indices.device.index or 0))
+    stream = npu_state.current_stream((indices.device.index or 0))
+    runtime.activate()
+    if hasattr(runtime, "synchronize_stream"):
+        runtime.synchronize_stream(stream.stream)
+    return npu_runtime._copy_npu_to_cpu(
+        _npu_data_ptr(indices),
+        max(_numel(indices.shape), 1) * _dtype_itemsize(indices.dtype),
+        indices.shape,
+        indices.dtype,
+        runtime=runtime,
+    )
+
+
+def _index_tensor_from_cpu(arr, ref_tensor):
+    import numpy as np
+
+    host = np.asarray(arr, dtype=np.int64)
+    runtime = npu_runtime.get_runtime((ref_tensor.device.index or 0))
+    ptr, _ = npu_runtime._copy_cpu_to_npu(host, runtime=runtime)
+    storage = npu_typed_storage_from_ptr(ptr, max(host.size, 1), int64_dtype, device=ref_tensor.device)
+    return _wrap_tensor(storage, tuple(host.shape), npu_runtime._contiguous_stride(tuple(host.shape)))
 
 
 def _use_310b_int64_index_compare_workaround(indices):
@@ -250,9 +284,10 @@ def _validate_index_bounds(indices, dim_size, allow_negative, name):
     if indices.numel() == 0:
         return
     if _use_310b_int64_index_compare_workaround(indices):
-        below_min = _below_negative_lower_bound_mask_int64(indices, dim_size) if allow_negative else _negative_mask_int64(indices)
-        above_max = _positive_mask_int64(indices, int(dim_size - 1))
-        if _mask_has_any(below_min) or _mask_has_any(above_max):
+        host_idx = _read_index_tensor_to_cpu(indices)
+        lower = -int(dim_size) if allow_negative else 0
+        upper = int(dim_size - 1)
+        if host_idx.size and ((host_idx < lower).any() or (host_idx > upper).any()):
             raise IndexError(f"{name} indices out of range")
         return
     if allow_negative:
@@ -270,28 +305,31 @@ def _validate_index_bounds(indices, dim_size, allow_negative, name):
 def _blend_negative_indices(indices, neg_mask, dim_size):
     from .math import add, mul
 
-    if not aclnn.cast_symbols_ok():
-        raise RuntimeError("aclnnCast symbols not available")
-    runtime = npu_runtime.get_runtime((indices.device.index or 0))
-    stream = npu_state.current_stream((indices.device.index or 0))
+    if neg_mask.dtype == int64_dtype:
+        mask_i64 = neg_mask
+    else:
+        if not aclnn.cast_symbols_ok():
+            raise RuntimeError("aclnnCast symbols not available")
+        runtime = npu_runtime.get_runtime((indices.device.index or 0))
+        stream = npu_state.current_stream((indices.device.index or 0))
 
-    shape = tuple(indices.shape)
-    stride = tuple(indices.stride)
-    numel = max(_numel(shape), 1)
+        shape = tuple(indices.shape)
+        stride = tuple(indices.stride)
+        numel = max(_numel(shape), 1)
 
-    mask_i64_ptr = npu_runtime._alloc_device(numel * _dtype_itemsize(int64_dtype), runtime=runtime)
-    aclnn.cast(
-        _unwrap_storage(neg_mask).data_ptr(),
-        mask_i64_ptr,
-        shape,
-        stride,
-        bool_dtype,
-        int64_dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    mask_i64_storage = npu_typed_storage_from_ptr(mask_i64_ptr, numel, int64_dtype, device=indices.device)
-    mask_i64 = _wrap_tensor(mask_i64_storage, shape, stride)
+        mask_i64_ptr = npu_runtime._alloc_device(numel * _dtype_itemsize(int64_dtype), runtime=runtime)
+        aclnn.cast(
+            _unwrap_storage(neg_mask).data_ptr(),
+            mask_i64_ptr,
+            shape,
+            stride,
+            bool_dtype,
+            int64_dtype,
+            runtime,
+            stream=stream.stream,
+        )
+        mask_i64_storage = npu_typed_storage_from_ptr(mask_i64_ptr, numel, int64_dtype, device=indices.device)
+        mask_i64 = _wrap_tensor(mask_i64_storage, shape, stride)
 
     offset = _scalar_to_npu_tensor(int(dim_size), indices)
     return add(indices, mul(mask_i64, offset))
@@ -302,15 +340,16 @@ def _normalize_negative_indices(indices, dim_size):
     from .reduce import any_
     from .math import add
     if _use_310b_int64_index_compare_workaround(indices):
-        neg_mask = _negative_mask_int64(indices)
-        if not _mask_has_any(neg_mask):
+        host_idx = _read_index_tensor_to_cpu(indices)
+        if not host_idx.size or not (host_idx < 0).any():
             return indices
-        return _blend_negative_indices(indices, _cast_tensor_dtype(neg_mask, bool_dtype), dim_size)
+        host_idx = host_idx.copy()
+        host_idx[host_idx < 0] += int(dim_size)
+        return _index_tensor_from_cpu(host_idx, indices)
     neg_mask = lt(indices, _scalar_to_npu_tensor(0, indices))
     if not _read_bool_scalar(any_(neg_mask)):
         return indices
 
-    # 310B static path: avoid SWhere by converting mask to int64 and blending arithmetically.
     if _use_soc_fallback("take_along_dim"):
         return _blend_negative_indices(indices, neg_mask, dim_size)
 
@@ -1315,33 +1354,38 @@ def _diag_310b_fallback(a, diagonal=0):
 
 
 def _gather_310b_fallback(a, dim, index):
-    from ..creation import ones_create, zeros_create
-    from .math import mul
-    from .reduce import sum_
+    import numpy as np
 
     dim = _normalize_dim(dim, a.dim())
-    dim_size = int(a.shape[dim])
-    flat_idx = view_backend.reshape(index, (index.numel(),))
-    n = int(flat_idx.shape[0])
+    out_shape = tuple(index.shape)
+    out_stride = npu_runtime._contiguous_stride(out_shape)
+    out_numel = _numel(out_shape)
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    itemsize = _dtype_itemsize(a.dtype)
+    out_ptr = npu_runtime._alloc_device(max(out_numel, 1) * itemsize, runtime=runtime)
 
-    # Build one-hot(index) on NPU via scatter to avoid aclnnGather.
-    base = zeros_create((n, dim_size), dtype=a.dtype, device=a.device)
-    idx2d = view_backend.reshape(flat_idx, (n, 1))
-    src = ones_create((n, 1), dtype=a.dtype, device=a.device)
-    one_hot_2d = scatter(base, 1, idx2d, src)
-    one_hot = view_backend.reshape(one_hot_2d, tuple(index.shape) + (dim_size,))
+    if out_numel == 0:
+        out_storage = npu_typed_storage_from_ptr(out_ptr, 1, a.dtype, device=a.device)
+        return _wrap_tensor(out_storage, out_shape, out_stride)
 
-    # Move gather dim to last and broadcast over index dim.
-    moved = _move_dim_to_last(a, dim)
-    if not moved.is_contiguous():
-        moved = _strided_copy(moved)
-    moved_shape = list(moved.shape)
-    moved_shape.insert(dim, 1)
-    moved = view_backend.reshape(moved, tuple(moved_shape))
-    moved = _npu_broadcast_to(moved, one_hot.shape)
+    host_idx = _read_index_tensor_to_cpu(index)
+    src_base = _npu_data_ptr(a)
+    dst_base = int(out_ptr)
 
-    weighted = mul(one_hot, moved)
-    return sum_(weighted, dim=weighted.dim() - 1, keepdim=False)
+    linear_idx = 0
+    for coord in np.ndindex(out_shape):
+        src_coord = list(coord)
+        src_coord[dim] = int(host_idx[coord])
+        src_offset = 0
+        for axis, pos in enumerate(src_coord):
+            src_offset += int(pos) * int(a.stride[axis])
+        src_ptr = src_base + src_offset * itemsize
+        dst_ptr = dst_base + linear_idx * itemsize
+        npu_runtime.memcpy_d2d(dst_ptr, itemsize, src_ptr, runtime=runtime)
+        linear_idx += 1
+
+    out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), a.dtype, device=a.device)
+    return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
 def flatten_op(a, start_dim=0, end_dim=-1):
