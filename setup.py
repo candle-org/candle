@@ -144,6 +144,10 @@ if _system == "Linux":
             ["src/candle/_cython/_npu_ops.pyx"],
         ),
         Extension(
+            "candle._cython._npu_storage",
+            ["src/candle/_cython/_npu_storage.pyx"],
+        ),
+        Extension(
             "candle.distributed._c10d_hccl",
             ["src/candle/distributed/_c10d_hccl.pyx"],
         ),
