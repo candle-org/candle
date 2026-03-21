@@ -1,5 +1,5 @@
 # cython: language_level=3, boundscheck=False, wraparound=False
-"""Cython-owned autograd node runtime."""
+import weakref
 
 _RELEASED_SAVED_TENSORS_ERROR = (
     "Trying to backward through the graph a second time (or directly access saved tensors after they have already been freed). "
@@ -38,7 +38,6 @@ cdef class SavedTensor:
     cdef object _hooks
     cdef object _global_hooks
     cdef object _packed
-    cdef object _materialized
 
     def __init__(self, tensor):
         self._tensor_ref = tensor
@@ -48,7 +47,6 @@ cdef class SavedTensor:
         from candle._cython._hooks_state import get_stack
         stack = get_stack()
         self._global_hooks = stack[len(stack) - 1] if stack else None
-        self._materialized = None
         hooks = self._global_hooks
         if hooks is None:
             self._packed = None
@@ -112,14 +110,11 @@ cdef class SavedTensor:
         hooks = self._hooks or self._global_hooks
         if hooks is None:
             return self._tensor_ref
-        if self._materialized is not None:
-            return self._materialized
         _, unpack = hooks
         result = unpack(self._packed)
         from candle._tensor import Tensor
         if not isinstance(result, Tensor):
             raise TypeError("Output of saved tensor unpack_hook expected to be a Tensor")
-        self._materialized = result
         return result
 
 
@@ -193,7 +188,7 @@ cdef class AccumulateGrad:
     @property
     def metadata(self):
         if self._metadata is None:
-            self._metadata = {}
+            self._metadata = weakref.WeakValueDictionary()
         return self._metadata
 
     def name(self):
@@ -254,15 +249,24 @@ cdef class Node:
 
     def saved_tensors(self):
         cdef object saved
-        cdef object result
+        cdef dict seen_materialized = {}
+        cdef object key
+        cdef object materialized
         for saved in self._saved_tensors_list:
             if getattr(saved, "_released", False):
                 raise RuntimeError(_RELEASED_SAVED_TENSORS_ERROR)
-        result = tuple(saved.materialize() for saved in self._saved_tensors_list)
+        out = []
         for saved in self._saved_tensors_list:
-            if hasattr(saved, "_materialized"):
-                saved._materialized = None
-        return result
+            if isinstance(saved, SavedTensor):
+                key = id(saved)
+                materialized = seen_materialized.get(key)
+                if materialized is None:
+                    materialized = saved.materialize()
+                    seen_materialized[key] = materialized
+                out.append(materialized)
+            else:
+                out.append(saved.materialize())
+        return tuple(out)
 
     def release_saved_tensors(self):
         cdef object saved
@@ -323,7 +327,19 @@ cdef class Node:
             for saved in saved_tensors:
                 if getattr(saved, "_released", False):
                     raise RuntimeError(_RELEASED_SAVED_TENSORS_ERROR)
-            return tuple(saved.materialize() for saved in saved_tensors)
+            seen_materialized = {}
+            out = []
+            for saved in saved_tensors:
+                if isinstance(saved, SavedTensor):
+                    key = id(saved)
+                    materialized = seen_materialized.get(key)
+                    if materialized is None:
+                        materialized = saved.materialize()
+                        seen_materialized[key] = materialized
+                    out.append(materialized)
+                else:
+                    out.append(saved.materialize())
+            return tuple(out)
         if name.startswith(_RAW_SAVED_FIELD_PREFIX):
             key = name[len(_RAW_SAVED_FIELD_PREFIX):]
             if key in self._saved_fields:
