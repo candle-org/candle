@@ -107,7 +107,8 @@ def _layer_norm_310b_fallback(input, normalized_shape, weight=None, bias=None, e
     lead = input.dim() - n_norm
     stats_shape = (1,) * lead + tuple(normalized_shape)
 
-    x = input if input.dtype == float16_dtype else _cast_tensor_dtype(input, float16_dtype)
+    # Compute in native dtype to preserve precision (float32 on 310B is stable).
+    x = input
     mean_t = mean(x, dim=axis_dims, keepdim=True)
     diff = sub(x, mean_t)
     var = mean(mul(diff, diff), dim=axis_dims, keepdim=True)
@@ -116,16 +117,14 @@ def _layer_norm_310b_fallback(input, normalized_shape, weight=None, bias=None, e
     out = mul(diff, inv_std)
 
     if weight is not None:
-        w = weight if weight.dtype == float16_dtype else _cast_tensor_dtype(weight, float16_dtype)
+        w = weight if weight.dtype == input.dtype else _cast_tensor_dtype(weight, input.dtype)
         w = reshape(w, stats_shape)
         out = mul(out, w)
     if bias is not None:
-        b = bias if bias.dtype == float16_dtype else _cast_tensor_dtype(bias, float16_dtype)
+        b = bias if bias.dtype == input.dtype else _cast_tensor_dtype(bias, input.dtype)
         b = reshape(b, stats_shape)
         out = add(out, b)
 
-    if input.dtype != float16_dtype:
-        out = _cast_tensor_dtype(out, input.dtype)
     return out
 
 
