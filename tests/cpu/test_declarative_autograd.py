@@ -89,6 +89,15 @@ class TestDerivativesYamlParsing:
         assert len(mul_info.differentiable_inputs) == 1
         assert not mul_info.is_inplace
         assert not mul_info.is_multi_output
+    @_skip_no_yaml
+    def test_derivative_info_marks_multi_output_when_schema_returns_tuple(self):
+        from tools.autograd.load_derivatives import load_derivatives
+        from pathlib import Path
+        yaml_path = Path(__file__).resolve().parents[2] / "tools" / "autograd" / "derivatives.yaml"
+        infos = load_derivatives(yaml_path)
+        info = next(i for i in infos if i.name == "var_mean")
+        assert info.func_name.startswith("var_mean")
+        assert info.is_multi_output
 
 
 class TestCodegenOutput:

@@ -369,6 +369,32 @@ class TestBatchNormBackward:
         assert x.grad.shape == x.shape
 
 
+class TestVarMeanBackward:
+    def test_tuple_outputs_backward(self):
+        x = _tensor([1.0, 2.0, 3.0])
+        var, mean = torch.var_mean(x)
+        out = var + mean
+        out.backward()
+        assert x.grad is not None
+        assert x.grad.shape == x.shape
+        _check_grad(x, [-2.0 / 3.0, 1.0 / 3.0, 4.0 / 3.0])
+
+    def test_tuple_outputs_backward_dim(self):
+        x = _tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+        var, mean = torch.var_mean(x, dim=1)
+        out = var.sum() + mean.sum()
+        out.backward()
+        assert x.grad is not None
+        _check_grad(x, [[-5.0 / 6.0, 1.0 / 6.0, 7.0 / 6.0], [-5.0 / 6.0, 1.0 / 6.0, 7.0 / 6.0]])
+
+    def test_outputs_do_not_share_grad_fn(self):
+        x = _tensor([1.0, 2.0, 3.0])
+        var, mean = torch.var_mean(x)
+        assert var.grad_fn is not None
+        assert mean.grad_fn is not None
+        assert var.grad_fn is not mean.grad_fn
+
+
 class TestEmbeddingBackward:
     def test_basic(self):
         w = _tensor([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]])

@@ -5190,17 +5190,31 @@ def var_correction_autograd(self_, dim=None, correction=None, keepdim=False, **_
 def var_mean_correction_autograd(self_, dim=None, correction=None, keepdim=False, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("var_mean", raw_keyset, self_, dim, correction, keepdim, **_kwargs)
+    if "unbiased" in _kwargs:
+        unbiased = _kwargs.pop("unbiased")
+    else:
+        unbiased = correction == 1 if correction is not None else True
+    result = redispatch("var_mean", raw_keyset, self_, dim=dim, unbiased=unbiased, keepdim=keepdim, **_kwargs)
     if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.VarMeanCorrectionBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._dim = dim
-        grad_fn._correction = correction
-        grad_fn._keepdim = keepdim
-        result[0].grad_fn = grad_fn
+        var_grad_fn = _F.VarCorrectionBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(var_grad_fn)
+        var_grad_fn._save(self_=self_)
+        var_grad_fn._dim = dim
+        var_grad_fn._correction = 1 if unbiased else 0
+        var_grad_fn._keepdim = keepdim
+        result[0].grad_fn = var_grad_fn
         result[0].requires_grad = True
-        result[1].grad_fn = grad_fn
+        if dim is None:
+            mean_grad_fn = _F.MeanBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+            annotate_node_creation(mean_grad_fn)
+            mean_grad_fn._save(self_=self_)
+        else:
+            mean_grad_fn = _F.MeanDimBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+            annotate_node_creation(mean_grad_fn)
+            mean_grad_fn._save(self_=self_)
+            mean_grad_fn._dim = dim
+            mean_grad_fn._keepdim = keepdim
+        result[1].grad_fn = mean_grad_fn
         result[1].requires_grad = True
     return result
 
@@ -13285,16 +13299,30 @@ def var_correction_autograd_post(result, self_, dim=None, correction=None, keepd
 
 
 def var_mean_correction_autograd_post(result, self_, dim=None, correction=None, keepdim=False, *, raw_keyset, active_keyset, **_kwargs):
+    if "unbiased" in _kwargs:
+        unbiased = _kwargs["unbiased"]
+    else:
+        unbiased = correction == 1 if correction is not None else True
     if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.VarMeanCorrectionBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._dim = dim
-        grad_fn._correction = correction
-        grad_fn._keepdim = keepdim
-        result[0].grad_fn = grad_fn
+        var_grad_fn = _F.VarCorrectionBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(var_grad_fn)
+        var_grad_fn._save(self_=self_)
+        var_grad_fn._dim = dim
+        var_grad_fn._correction = 1 if unbiased else 0
+        var_grad_fn._keepdim = keepdim
+        result[0].grad_fn = var_grad_fn
         result[0].requires_grad = True
-        result[1].grad_fn = grad_fn
+        if dim is None:
+            mean_grad_fn = _F.MeanBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+            annotate_node_creation(mean_grad_fn)
+            mean_grad_fn._save(self_=self_)
+        else:
+            mean_grad_fn = _F.MeanDimBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+            annotate_node_creation(mean_grad_fn)
+            mean_grad_fn._save(self_=self_)
+            mean_grad_fn._dim = dim
+            mean_grad_fn._keepdim = keepdim
+        result[1].grad_fn = mean_grad_fn
         result[1].requires_grad = True
     return result
 
