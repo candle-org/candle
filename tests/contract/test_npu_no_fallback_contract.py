@@ -2398,7 +2398,8 @@ def test_two_tensor_two_bools_op_defers_tensor_cleanup_until_executor_destroy(tm
     assert state['executor'] == 0xBEEF
     assert state['create'] == 3
     assert state['destroy_before'] == 0
-    assert state['destroy_after'] == 3
+    # Only out_t is in executor cleanup; self_t and other_t are owned by TensorDescCache
+    assert state['destroy_after'] == 1
     assert state['destroy_executor_before'] == 0
     assert state['destroy_executor_after'] == 1
 
@@ -5964,9 +5965,10 @@ def test_binary_op_with_alpha_defers_tensor_cleanup_until_executor_destroy(tmp_p
     assert state['executor'] == 0xBEEF
     assert state['create'] == 3
     assert state['destroy_before'] == 0
-    assert state['destroy_after'] == 3
+    # Only out_t is in executor cleanup; self_t and other_t are owned by TensorDescCache
+    assert state['destroy_after'] == 1
     assert state['destroy_executor_before'] == 0
-    assert state['destroy_executor_after' ] == 1
+    assert state['destroy_executor_after'] == 1
 
 
 def test_binary_two_inputs_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
@@ -6060,8 +6062,9 @@ def test_binary_op_with_alpha_fast_path_releases_cleanup_and_returns_null_execut
     assert state['ws_size'] == 0
     assert state['executor'] == 0
     assert state['create'] == 3
-    assert state['destroy_before'] == 3
-    assert state['destroy_after'] == 3
+    # Only out_t is in executor cleanup; self_t and other_t are owned by TensorDescCache
+    assert state['destroy_before'] == 1
+    assert state['destroy_after'] == 1
     assert state['destroy_executor_before'] == 0
     assert state['destroy_executor_after'] == 0
 
