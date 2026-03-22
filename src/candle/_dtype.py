@@ -1,47 +1,17 @@
 import builtins as _builtins
 import numpy as np
 
+try:
+    from ._cython._dtype import FastDType as DType
+except ImportError as exc:
+    raise ImportError(
+        "Failed to import candle._cython._dtype. Build the required Cython "
+        "runtime core with `python setup.py build_ext --inplace` or install with "
+        "a build that includes the compiled extensions."
+    ) from exc
+
 builtins_int = _builtins.int
 builtins_float = _builtins.float
-
-
-class DType:
-    def __init__(self, name, numpy_dtype, itemsize, is_floating_point=False,
-                 is_complex=False, is_signed=True):
-        self.name = name
-        self._numpy_dtype = numpy_dtype
-        self.itemsize = itemsize
-        self._is_floating_point = is_floating_point
-        self._is_complex = is_complex
-        self._is_signed = is_signed
-        self._is_quantized = False
-
-    @property
-    def is_floating_point(self):
-        return self._is_floating_point
-
-    @property
-    def is_complex(self):
-        return self._is_complex
-
-    @property
-    def is_signed(self):
-        return self._is_signed
-
-    @property
-    def is_quantized(self):
-        return self._is_quantized
-
-    def __repr__(self):
-        return f"torch.{self.name}"
-
-    def __eq__(self, other):
-        if isinstance(other, DType):
-            return self.name == other.name
-        return NotImplemented
-
-    def __hash__(self):
-        return hash(self.name)
 
 
 class _QuantizedDType(DType):
@@ -55,24 +25,24 @@ class _QuantizedDType(DType):
 
 
 # Floating point types
-float8_e4m3fn = DType("float8_e4m3fn", np.uint8, 1, is_floating_point=True)
-float8_e5m2 = DType("float8_e5m2", np.uint8, 1, is_floating_point=True)
-float8_e8m0fnu = DType("float8_e8m0fnu", np.uint8, 1, is_floating_point=True)
-float16 = DType("float16", np.float16, 2, is_floating_point=True)
-float32 = DType("float32", np.float32, 4, is_floating_point=True)
-float64 = DType("float64", np.float64, 8, is_floating_point=True)
+float8_e4m3fn = DType("float8_e4m3fn", np.uint8, 1, is_floating_point=True, code=10)
+float8_e5m2 = DType("float8_e5m2", np.uint8, 1, is_floating_point=True, code=11)
+float8_e8m0fnu = DType("float8_e8m0fnu", np.uint8, 1, is_floating_point=True, code=12)
+float16 = DType("float16", np.float16, 2, is_floating_point=True, code=1)
+float32 = DType("float32", np.float32, 4, is_floating_point=True, code=0)
+float64 = DType("float64", np.float64, 8, is_floating_point=True, code=2)
 # bfloat16: stored as uint16 bit pattern on CPU, computed in float32
-bfloat16 = DType("bfloat16", np.uint16, 2, is_floating_point=True)
+bfloat16 = DType("bfloat16", np.uint16, 2, is_floating_point=True, code=3)
 
 # Integer types
-int8 = DType("int8", np.int8, 1)
-int16 = DType("int16", np.int16, 2)
-int32 = DType("int32", np.int32, 4)
-int64 = DType("int64", np.int64, 8)
-uint8 = DType("uint8", np.uint8, 1, is_signed=False)
-uint16 = DType("uint16", np.uint16, 2, is_signed=False)
-uint32 = DType("uint32", np.uint32, 4, is_signed=False)
-uint64 = DType("uint64", np.uint64, 8, is_signed=False)
+int8 = DType("int8", np.int8, 1, code=7)
+int16 = DType("int16", np.int16, 2, code=6)
+int32 = DType("int32", np.int32, 4, code=4)
+int64 = DType("int64", np.int64, 8, code=5)
+uint8 = DType("uint8", np.uint8, 1, is_signed=False, code=8)
+uint16 = DType("uint16", np.uint16, 2, is_signed=False, code=13)
+uint32 = DType("uint32", np.uint32, 4, is_signed=False, code=14)
+uint64 = DType("uint64", np.uint64, 8, is_signed=False, code=15)
 
 # Quantized (placeholder dtypes for compatibility)
 quint8 = _QuantizedDType("quint8", np.uint8, 1, is_signed=False)
@@ -81,12 +51,12 @@ qint32 = _QuantizedDType("qint32", np.int32, 4, is_signed=True)
 quint4x2 = _QuantizedDType("quint4x2", np.uint8, 1, is_signed=False)
 
 # Boolean
-bool = DType("bool", np.bool_, 1, is_signed=False)
+bool = DType("bool", np.bool_, 1, is_signed=False, code=9)
 
 # Complex types
-complex32 = DType("complex32", np.complex64, 8, is_complex=True)
-complex64 = DType("complex64", np.complex64, 8, is_complex=True)
-complex128 = DType("complex128", np.complex128, 16, is_complex=True)
+complex32 = DType("complex32", np.complex64, 8, is_complex=True, code=16)
+complex64 = DType("complex64", np.complex64, 8, is_complex=True, code=17)
+complex128 = DType("complex128", np.complex128, 16, is_complex=True, code=18)
 
 # Aliases (matching PyTorch)
 half = float16
@@ -124,10 +94,6 @@ _NUMPY_DTYPE_MAP = {
     complex32: np.complex64,
     complex64: np.complex64,
     complex128: np.complex128,
-    float16: np.float16,
-    float32: np.float32,
-    float64: np.float64,
-    bfloat16: np.uint16,
 }
 
 # Reverse map: numpy dtype -> DType

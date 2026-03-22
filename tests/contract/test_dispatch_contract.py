@@ -1,4 +1,8 @@
+import importlib
+import sys
 import uuid
+
+import pytest
 
 from .helpers import assert_torch_error
 
@@ -357,3 +361,68 @@ def test_pipeline_dependency_edges_capture_tensor_rw():
             edge["from"] == 0 and edge["to"] == 1 and "write->read" in edge["reason"]
             for edge in deps
         )
+
+
+def test_dispatcher_module_exports_cython_dispatch_entrypoints():
+    """Contract: candle._dispatch.dispatcher must expose the Cython entrypoints
+    (cy_dispatch_full, cy_dispatch_with_keyset_fast) as public module-level
+    attributes so callers can introspect whether the accelerated path is
+    active.  Currently the dispatcher only tries the import inside a
+    try/except and never re-exports the names, so this test is expected RED
+    until the export surface is made explicit.
+    """
+    from candle._dispatch import dispatcher
+
+    assert hasattr(dispatcher, "cy_dispatch_full"), (
+        "candle._dispatch.dispatcher must export cy_dispatch_full at module "
+        "level so consumers can detect whether the Cython hot-path is active."
+    )
+    assert hasattr(dispatcher, "cy_dispatch_with_keyset_fast"), (
+        "candle._dispatch.dispatcher must export cy_dispatch_with_keyset_fast "
+        "at module level."
+    )
+    assert callable(dispatcher.cy_dispatch_full), (
+        "candle._dispatch.dispatcher.cy_dispatch_full must be callable."
+    )
+    assert callable(dispatcher.cy_dispatch_with_keyset_fast), (
+        "candle._dispatch.dispatcher.cy_dispatch_with_keyset_fast must be callable."
+    )
+
+
+def test_runtime_core_import_failure_is_actionable(monkeypatch):
+    """Contract: when candle._cython._dispatcher_core is absent the dispatcher
+    must raise an ImportError whose message explicitly names the missing
+    extension and tells the user how to build it (e.g. 'pip install -e .[cython]'
+    or 'python setup.py build_ext --inplace').  A silent fallback or a raw
+    low-level ImportError with no guidance is not acceptable once runtime-core
+    policy is codified.
+
+    This test is expected RED until the dispatcher wraps the hard-import with
+    an actionable error message.
+    """
+    monkeypatch.setitem(sys.modules, "candle._cython._dispatcher_core", None)
+    monkeypatch.delitem(sys.modules, "candle._dispatch.dispatcher", raising=False)
+
+    try:
+        importlib.import_module("candle._dispatch.dispatcher")
+    except ImportError as exc:
+        msg = str(exc)
+        assert "_dispatcher_core" in msg, (
+            "ImportError must name the missing extension '_dispatcher_core', "
+            f"got: {msg!r}"
+        )
+        assert any(
+            hint in msg
+            for hint in ("build_ext", "pip install", "setup.py", "[cython]")
+        ), (
+            "ImportError must include a build hint so the user knows how to "
+            f"recover, got: {msg!r}"
+        )
+        return
+
+    pytest.fail(
+        "When _dispatcher_core is absent the dispatcher must raise an "
+        "actionable ImportError, but import_module() completed without "
+        "raising. The dispatcher must not silently fall back to the "
+        "pure-Python path."
+    )

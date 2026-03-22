@@ -1,12 +1,22 @@
-"""Pure-Python fallback for _dispatcher_core.pyx.
+"""Failure stubs for dispatcher_core when the compiled extension is missing.
 
-When Cython is not available, dispatch_with_keyset remains the original
-Python implementation in dispatcher.py — this module is only imported
-to satisfy the conditional import pattern.
+The runtime-critical dispatcher path requires the compiled Cython core.
+This module exists only to provide actionable errors if something imports the
+fallback shim directly.
 """
 
 
 def cy_dispatch_with_keyset_fast(name, keyset, dispatch_device, *args, **kwargs):
-    """Fallback: delegate to the original Python dispatch_with_keyset."""
-    from candle._dispatch.dispatcher import _py_dispatch_with_keyset
-    return _py_dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs)
+    raise ImportError(
+        "Failed to import candle._cython._dispatcher_core. Build the required Cython "
+        "runtime core with `python setup.py build_ext --inplace` or install with "
+        "a build that includes the compiled extensions."
+    )
+
+
+def cy_dispatch_full(name, dispatch_device, *args, **kwargs):
+    raise ImportError(
+        "Failed to import candle._cython._dispatcher_core. Build the required Cython "
+        "runtime core with `python setup.py build_ext --inplace` or install with "
+        "a build that includes the compiled extensions."
+    )

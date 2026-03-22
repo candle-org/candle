@@ -47,11 +47,14 @@ def set_default_device(dev):
 
 
 # ---------------------------------------------------------------------------
-# Cython fast-path: replace device class if Cython extension is available.
-# FastDevice is a drop-in replacement with int-based comparison.
+# Runtime-core requires the compiled Cython FastDevice implementation.
 # ---------------------------------------------------------------------------
 try:
     from ._cython._device import FastDevice as device  # noqa: F811
     _default_device = device("cpu")
-except ImportError:
-    pass
+except ImportError as exc:
+    raise ImportError(
+        "Failed to import candle._cython._device. Build the required Cython "
+        "runtime core with `python setup.py build_ext --inplace` or install with "
+        "a build that includes the compiled extensions."
+    ) from exc
