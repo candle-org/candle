@@ -79,6 +79,121 @@ _op_cache = {}
 cdef dict _executor_cleanup = {}
 
 # ---------------------------------------------------------------------------
+# Tensor descriptor cache — reuse aclTensor handles for input tensors
+# ---------------------------------------------------------------------------
+
+cdef class TensorDescCache:
+    """LRU cache mapping (data_ptr, shape, stride, dtype_code, fmt) -> aclTensor handle.
+
+    Only input tensors should be cached.  Output tensors get a new device ptr
+    each op and must NOT be placed in this cache.
+
+    Thread safety: relies on the Python GIL (get_or_create is called with GIL).
+    """
+
+    cdef dict _cache      # key -> handle (uintptr_t as Python int)
+    cdef list _order      # insertion-order keys for LRU eviction
+    cdef int _max_size
+
+    def __cinit__(self, int max_size=64):
+        self._cache = {}
+        self._order = []
+        self._max_size = max_size
+
+    def get_or_create(self, int64_t data_ptr, shape, stride,
+                      int32_t dtype_code, int32_t fmt):
+        """Return a cached aclTensor handle, creating one if necessary.
+
+        *shape* and *stride* are Python sequences (tuple or torch.Size).
+        Returns the handle as an integer (uintptr_t).
+        """
+        cdef object key = (data_ptr, tuple(shape), tuple(stride), dtype_code, fmt)
+        cdef object existing = self._cache.get(key)
+        if existing is not None:
+            return existing
+
+        # Cache miss: create a new descriptor
+        cdef int ndim = len(shape)
+        if ndim > MAX_NDIM:
+            raise ValueError(f"ndim {ndim} exceeds MAX_NDIM {MAX_NDIM}")
+
+        cdef int64_t[MAX_NDIM] shape_buf
+        cdef int64_t[MAX_NDIM] stride_buf
+        cdef int i
+        for i in range(ndim):
+            shape_buf[i] = shape[i]
+            stride_buf[i] = stride[i]
+
+        cdef void* handle
+        with nogil:
+            handle = _fast_create_tensor(
+                shape_buf, stride_buf, <uint64_t>ndim,
+                dtype_code, fmt, <void*>data_ptr)
+        if handle == NULL:
+            raise RuntimeError("aclCreateTensor returned null in TensorDescCache")
+
+        cdef object handle_int = <uintptr_t>handle
+        cdef object old_key
+        cdef object old_handle
+
+        # LRU eviction: if at capacity, remove the oldest entry
+        cdef uintptr_t evict_h
+        if len(self._cache) >= self._max_size:
+            old_key = self._order[0]
+            del self._order[0]
+            old_handle = self._cache.pop(old_key, None)
+            if old_handle is not None:
+                evict_h = <uintptr_t>old_handle
+                with nogil:
+                    _fast_destroy_tensor(<void*>evict_h)
+
+        self._cache[key] = handle_int
+        self._order.append(key)
+        return handle_int
+
+    def invalidate_range(self, int64_t base_ptr, int64_t size):
+        """Remove all entries whose data_ptr falls within [base_ptr, base_ptr+size)."""
+        cdef object key
+        cdef int64_t dp
+        cdef list to_remove = []
+        for key in self._cache:
+            dp = <int64_t>key[0]
+            if base_ptr <= dp < base_ptr + size:
+                to_remove.append(key)
+        cdef uintptr_t remove_h
+        for key in to_remove:
+            handle = self._cache.pop(key, None)
+            self._order.remove(key)
+            if handle is not None:
+                remove_h = <uintptr_t>handle
+                with nogil:
+                    _fast_destroy_tensor(<void*>remove_h)
+
+    def clear(self):
+        """Destroy all cached descriptor handles."""
+        cdef object handle
+        cdef uintptr_t clear_h
+        for handle in self._cache.values():
+            clear_h = <uintptr_t>handle
+            with nogil:
+                _fast_destroy_tensor(<void*>clear_h)
+        self._cache.clear()
+        self._order.clear()
+
+    def size(self):
+        """Return the number of cached entries."""
+        return len(self._cache)
+
+
+# Module-level singleton
+cdef TensorDescCache _tensor_desc_cache = TensorDescCache()
+
+
+def get_tensor_desc_cache():
+    """Return the module-level TensorDescCache singleton."""
+    return _tensor_desc_cache
+
+# ---------------------------------------------------------------------------
 # dlsym helpers
 # ---------------------------------------------------------------------------
 
@@ -457,20 +572,22 @@ def binary_op_with_alpha(
     cdef void* executor = NULL
     cdef int32_t ret
 
+    # Input tensors: use descriptor cache (skips aclCreateTensor on cache hit)
+    self_t = <void*><uintptr_t>_tensor_desc_cache.get_or_create(
+        <int64_t>self_ptr,
+        tuple(self_shape[:self_ndim]), tuple(self_stride[:self_ndim]),
+        dtype_code, fmt)
+    other_t = <void*><uintptr_t>_tensor_desc_cache.get_or_create(
+        <int64_t>other_ptr,
+        tuple(other_shape[:other_ndim]), tuple(other_stride[:other_ndim]),
+        dtype_code, fmt)
+    # Output tensor: always create fresh (new device ptr each op)
     with nogil:
-        self_t = _fast_create_tensor(
-            s_shape, s_stride, <uint64_t>self_ndim,
-            dtype_code, fmt, <void*>self_ptr)
-        other_t = _fast_create_tensor(
-            o_shape, o_stride, <uint64_t>other_ndim,
-            dtype_code, fmt, <void*>other_ptr)
         out_t = _fast_create_tensor(
             r_shape, r_stride, <uint64_t>out_ndim,
             dtype_code, fmt, <void*>out_ptr)
 
     if self_t == NULL or other_t == NULL or out_t == NULL:
-        if self_t != NULL: _fast_destroy_tensor(self_t)
-        if other_t != NULL: _fast_destroy_tensor(other_t)
         if out_t != NULL: _fast_destroy_tensor(out_t)
         raise RuntimeError("aclCreateTensor returned null")
 
@@ -482,14 +599,11 @@ def binary_op_with_alpha(
                 &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        # Only out_t goes into executor cleanup — self_t and other_t are owned by cache
         _register_executor_cleanup(
             <uintptr_t>executor,
-            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
-            + ([('t', <uintptr_t>other_t)] if other_t != NULL else [])
-            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+            ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
         )
-        self_t = NULL
-        other_t = NULL
         out_t = NULL
 
         # Fast path: no workspace needed, execute immediately
@@ -510,10 +624,6 @@ def binary_op_with_alpha(
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            if self_t != NULL:
-                _fast_destroy_tensor(self_t)
-            if other_t != NULL:
-                _fast_destroy_tensor(other_t)
             if out_t != NULL:
                 _fast_destroy_tensor(out_t)
 
@@ -558,20 +668,22 @@ def binary_op_no_alpha(
     cdef void* executor = NULL
     cdef int32_t ret
 
+    # Input tensors: use descriptor cache (skips aclCreateTensor on cache hit)
+    self_t = <void*><uintptr_t>_tensor_desc_cache.get_or_create(
+        <int64_t>self_ptr,
+        tuple(self_shape[:self_ndim]), tuple(self_stride[:self_ndim]),
+        dtype_code, fmt)
+    other_t = <void*><uintptr_t>_tensor_desc_cache.get_or_create(
+        <int64_t>other_ptr,
+        tuple(other_shape[:other_ndim]), tuple(other_stride[:other_ndim]),
+        dtype_code, fmt)
+    # Output tensor: always create fresh (new device ptr each op)
     with nogil:
-        self_t = _fast_create_tensor(
-            s_shape, s_stride, <uint64_t>self_ndim,
-            dtype_code, fmt, <void*>self_ptr)
-        other_t = _fast_create_tensor(
-            o_shape, o_stride, <uint64_t>other_ndim,
-            dtype_code, fmt, <void*>other_ptr)
         out_t = _fast_create_tensor(
             r_shape, r_stride, <uint64_t>out_ndim,
             dtype_code, fmt, <void*>out_ptr)
 
     if self_t == NULL or other_t == NULL or out_t == NULL:
-        if self_t != NULL: _fast_destroy_tensor(self_t)
-        if other_t != NULL: _fast_destroy_tensor(other_t)
         if out_t != NULL: _fast_destroy_tensor(out_t)
         raise RuntimeError("aclCreateTensor returned null")
 
@@ -583,14 +695,11 @@ def binary_op_no_alpha(
                 &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        # Only out_t goes into executor cleanup — self_t and other_t are owned by cache
         _register_executor_cleanup(
             <uintptr_t>executor,
-            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
-            + ([('t', <uintptr_t>other_t)] if other_t != NULL else [])
-            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+            ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
         )
-        self_t = NULL
-        other_t = NULL
         out_t = NULL
 
         if ws_size == 0:
@@ -610,10 +719,6 @@ def binary_op_no_alpha(
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            if self_t != NULL:
-                _fast_destroy_tensor(self_t)
-            if other_t != NULL:
-                _fast_destroy_tensor(other_t)
             if out_t != NULL:
                 _fast_destroy_tensor(out_t)
 
