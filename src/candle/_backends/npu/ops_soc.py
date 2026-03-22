@@ -54,6 +54,7 @@ _FALLBACK_OPS = {
         "remainder",    # aclnnRemainderTensorTensor returns 161002; composite uses where
         "where",        # aclnnSWhere returns 561000 on 310B
         "atan2",        # aclnnAtan2 returns 561103
+        "lerp",         # aclnnLerps returns 561103
         "dropout",      # aclnnDropoutDoMask returns 561103
         "softplus",     # aclnnSoftplus returns 561103; mish composite depends on this
         "isclose",      # aclnnIsClose returns 561103 on 310B
