@@ -77,6 +77,7 @@ def test_soc_910a_fallback_ops_cover_expected_watchlist_set():
 
 def test_soc_310b_fallback_ops_cover_expected_watchlist_set():
     expected = {
+        "allclose",
         "isinf",
         "dot",
         "matmul",
