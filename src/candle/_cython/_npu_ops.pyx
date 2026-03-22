@@ -113,8 +113,7 @@ cdef inline tuple _to_tuple(const int64_t* arr, int n):
 # Cached module references (loaded once)
 cdef object _npu_runtime = None
 cdef object _npu_state = None
-cdef object _npu_typed_storage_from_ptr = None
-cdef object _Tensor = None
+cdef object _cy_make_npu_tensor = None
 
 cdef object _get_runtime_fast = None
 cdef object _get_stream_fast = None
@@ -123,7 +122,7 @@ cdef object _flush_executors_fn = None     # aclnn.flush_deferred_executors
 cdef object _get_allocator_fn_ref = None   # allocator.get_allocator (for sync path)
 
 cdef inline void _ensure_npu_imports():
-    global _npu_runtime, _npu_state, _npu_typed_storage_from_ptr, _Tensor
+    global _npu_runtime, _npu_state, _cy_make_npu_tensor
     global _get_runtime_fast, _get_stream_fast
     global _aclrt_sync_stream_fn, _flush_executors_fn, _get_allocator_fn_ref
     if _npu_runtime is not None:
@@ -131,14 +130,12 @@ cdef inline void _ensure_npu_imports():
     from candle._backends.npu import runtime as rt
     from candle._backends.npu import state as st
     from candle._backends.npu import allocator as _alloc_mod
-    from candle._storage import npu_typed_storage_from_ptr as nfp
-    from candle._tensor import Tensor as T
+    from candle._cython._storage import cy_make_npu_tensor as _cymt  # pylint: disable=import-error,no-name-in-module
     from candle._cython._aclrt_ffi import synchronize_stream as _ssf  # pylint: disable=import-error,no-name-in-module
     from candle._backends.npu.aclnn import flush_deferred_executors as _fef
     _npu_runtime = rt
     _npu_state = st
-    _npu_typed_storage_from_ptr = nfp
-    _Tensor = T
+    _cy_make_npu_tensor = _cymt
     _get_runtime_fast = rt.get_runtime_fast
     _get_stream_fast = st.current_stream_fast
     _aclrt_sync_stream_fn = _ssf
@@ -223,10 +220,8 @@ def fast_binary_op(a, b, fn, str name):
         stream=stream.stream,
     )
 
-    # 9. Wrap output
-    out_storage = _npu_typed_storage_from_ptr(
-        out_ptr, n, a_dtype, device=a_dev)
-    return _Tensor(out_storage, out_shape, out_stride)
+    # 9. Wrap output — construct Tensor entirely in Cython (skips Python __init__)
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
 # ---------------------------------------------------------------------------
