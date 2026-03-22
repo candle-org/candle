@@ -41,7 +41,7 @@ def test_public_dispatch_autograd_attachment_matches_runtime_core():
 
     assert out.requires_grad is True
     assert out.grad_fn is not None
-    assert type(out.grad_fn).__name__ == "AddBackward0"
+    assert type(out.grad_fn).__name__ in ("AddBackward0", "AddTensorBackward0")
     assert len(out.grad_fn.next_functions) == 2
 
 

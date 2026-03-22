@@ -1822,3 +1822,13 @@ def blackman_window(window_length, periodic=True, *, dtype=None, device=None):
                    mul(_tensor(a2, dtype=dtype, device=device), cos(t2))),
                mul(_tensor(a1, dtype=dtype, device=device), cos(t1)))
 
+# Bind hot-path functions directly to _fast_ops Cython implementations when available,
+# so that F.add.__module__ == "candle._cython._fast_ops" (required by fast-ops binding tests).
+try:
+    from ._cython._fast_ops import (  # pylint: disable=import-error,no-name-in-module
+        add as add,  # noqa: F811
+        mul as mul,  # noqa: F811
+        matmul as matmul,  # noqa: F811
+    )
+except ImportError:
+    pass

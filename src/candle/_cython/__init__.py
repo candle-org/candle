@@ -43,7 +43,7 @@ _HAS_CYTHON_FAST_OPS = False
 _HAS_CYTHON_TENSOR_API = False
 
 try:
-    from ._dispatch import cy_dispatch, cy_dispatch_with_keyset  # noqa: F401
+    from ._dispatch import FastDispatchKeySet  # noqa: F401
     _HAS_CYTHON_DISPATCH = True
 except ImportError:
     pass
@@ -92,8 +92,12 @@ except ImportError as exc:
 try:
     from ._dispatcher_core import cy_dispatch_with_keyset_fast  # noqa: F401
     _HAS_CYTHON_DISPATCHER_CORE = True
-except ImportError:
-    pass
+except ImportError as exc:
+    raise ImportError(
+        "Failed to import candle._cython._dispatcher_core. Build the required Cython "
+        "runtime core with `python setup.py build_ext --inplace` or install with "
+        "a build that includes the compiled extensions."
+    ) from exc
 
 try:
     from ._device import FastDevice  # noqa: F401
@@ -121,48 +125,16 @@ try:
 except ImportError:
     _HAS_CYTHON_AUTOGRAD_NODE = False
 
-from ._autograd_graph import (  # noqa: F401  # pylint: disable=import-error,no-name-in-module
-    GradientEdge,
-    current_saved_tensors_hooks,
-    get_gradient_edge,
-    saved_tensors_hooks,
-)
+# _autograd_graph is imported directly by autograd/graph.py (avoids circular import)
 _HAS_CYTHON_AUTOGRAD_GRAPH = True
 
-from ._autograd_engine import (  # noqa: F401  # pylint: disable=import-error,no-name-in-module
-    _GraphTask,
-    _build_dependencies,
-    _run_backward,
-    backward,
-    current_anomaly_parent,
-    grad,
-    is_anomaly_check_nan_enabled,
-    is_anomaly_enabled,
-    is_create_graph_enabled,
-    pop_anomaly_config,
-    pop_evaluating_node,
-    push_anomaly_config,
-    push_evaluating_node,
-)
+# _autograd_engine is imported directly by autograd/engine.py (avoids circular import)
 _HAS_CYTHON_AUTOGRAD_ENGINE = True
 
-from ._autograd_function import (  # noqa: F401  # pylint: disable=import-error,no-name-in-module
-    FunctionCtx,
-    _function_apply,
-)
+# _autograd_function is imported directly by autograd/function.py (avoids circular import)
 _HAS_CYTHON_AUTOGRAD_FUNCTION = True
 
-from ._autograd_ops import (  # noqa: F401  # pylint: disable=import-error,no-name-in-module
-    _strip_autograd_keys,
-    _grad_context,
-    _backward_dispatch_keyset,
-    _autograd_unary_passthrough,
-    _autograd_binary,
-    _autograd_binary_args,
-    _autograd_unary_args,
-    _norm_extract_weight_bias,
-    _autograd_norm,
-)
+# _autograd_ops is imported directly by _backends/autograd.py (avoids circular import)
 _HAS_CYTHON_AUTOGRAD_OPS = True
 
 try:
