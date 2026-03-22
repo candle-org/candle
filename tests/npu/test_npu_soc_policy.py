@@ -102,6 +102,7 @@ def test_soc_310b_fallback_ops_cover_expected_watchlist_set():
         "avg_pool2d",
         "adaptive_avg_pool2d",
         "einsum",
+        "allclose",
     }
     got = set(ops_soc.fallback_ops("310b"))
     assert got == expected

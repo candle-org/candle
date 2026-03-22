@@ -241,6 +241,20 @@ def test_npu_op_uses_current_stream(monkeypatch):
     monkeypatch.setattr(npu_ops, "_wrap_tensor", fake_wrap)
     monkeypatch.setattr(npu_ops, "npu_typed_storage_from_ptr", fake_storage_from_ptr)
 
+    # fast_add bypasses aclnn.add; patch the module-level reference in math.py
+    import candle._backends.npu.ops.math as _math_mod
+    if getattr(_math_mod, "_HAS_FAST_ADD", False):
+        import candle._backends.npu.state as npu_state
+
+        def fake_fast_add(a, b):  # pylint: disable=unused-argument
+            # Record the stream that would have been used
+            dev_idx = a.device.index or 0
+            stream_obj = npu_state.current_stream_fast(dev_idx)
+            seen["stream"] = stream_obj.stream
+            return None
+
+        monkeypatch.setattr(_math_mod, "_fast_add_impl", fake_fast_add)
+
     s = torch.npu.Stream()
     with torch.npu.stream(s):
         a = DummyTensor(s.device)
