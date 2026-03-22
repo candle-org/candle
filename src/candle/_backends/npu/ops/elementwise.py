@@ -82,7 +82,9 @@ def where(cond, x, y):
 
 
 def lerp(a, b, weight):
-    if _use_soc_fallback("lerp"):
+    # 310B native aclnnLerps is still broken for float16, but works for float32.
+    use_fallback = _use_soc_fallback("lerp") and a.dtype.name != "float32"
+    if use_fallback:
         # Static small-op fallback on 310B to avoid aclnnLerp 561103.
         delta = sub(b, a)
         scaled = mul(delta, weight)
