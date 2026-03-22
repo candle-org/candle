@@ -127,6 +127,11 @@ jobs:
         pkill -9 -f 'pytest|python.*candle' || true
         sleep 2
         sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
+    - name: Repair numpy after 310B segfault
+      run: |
+        # Segfaults from the 310B test suite can corrupt numpy .so files on the
+        # persistent runner. Reinstall to ensure common tests can import numpy.
+        "$JOB_CONDA_ENV/bin/python" -m pip install --force-reinstall numpy --quiet
     - name: Run NPU common tests
       run: |
         source "$ASCEND_ENV_SCRIPT"
