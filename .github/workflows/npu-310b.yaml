@@ -37,6 +37,25 @@ jobs:
       JOB_CONDA_ENV: /tmp/candle-npu-ci-310b
     steps:
     - uses: actions/checkout@v4
+    # ── Cython build artifacts cache ──────────────────────────────
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-310b-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
     - name: Resolve Ascend env script
       shell: bash
       run: |
@@ -150,3 +169,4 @@ jobs:
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
         clean_env pytest tests/npu/common/ -v --tb=short
+

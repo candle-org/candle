@@ -37,6 +37,25 @@ jobs:
       JOB_CONDA_ENV: /tmp/candle-npu-ci-6-7
     steps:
     - uses: actions/checkout@v4
+    # ── Cython build artifacts cache ──────────────────────────────
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-910a-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
     - name: Prepare conda environment
       run: |
         "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
@@ -142,6 +161,25 @@ jobs:
       JOB_CONDA_ENV: /tmp/candle-npu-ci-4-5
     steps:
     - uses: actions/checkout@v4
+    # ── Cython build artifacts cache ──────────────────────────────
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-910a-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
     - name: Prepare conda environment
       run: |
         "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
@@ -277,6 +315,25 @@ jobs:
       JOB_CONDA_ENV: /tmp/candle-npu-ci-0-3
     steps:
     - uses: actions/checkout@v4
+    # ── Cython build artifacts cache ──────────────────────────────
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-910a-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
     - name: Prepare conda environment
       run: |
         "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
