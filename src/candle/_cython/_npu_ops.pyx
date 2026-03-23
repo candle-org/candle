@@ -40,7 +40,7 @@ cdef int c_broadcast_shape(
             out[out_ndim - 1 - i] = a_dim
         else:
             with gil:
-                raise ValueError("matmul shape mismatch")
+                raise ValueError("broadcast shape mismatch")
             return -1  # unreachable, keeps compiler happy
     return out_ndim
 
@@ -89,6 +89,38 @@ cdef int c_dtype_itemsize(object dtype):
     if name == "int8" or name == "uint8" or name == "bool":
         return 1
     return 4  # fallback
+
+
+cdef inline int _dtype_to_acl_code(object dtype):
+    """Map a candle dtype object to its ACL dtype code integer.
+
+    Returns 0 (float32) as fallback for unknown dtypes.
+    """
+    cdef str name = getattr(dtype, 'name', None)
+    if name is None:
+        name = str(dtype)
+    if name == 'float32':
+        return 0
+    elif name == 'float16':
+        return 1
+    elif name == 'bfloat16':
+        return 27
+    elif name == 'int32':
+        return 3
+    elif name == 'int64':
+        return 9
+    elif name == 'float64':
+        return 11
+    elif name == 'int8':
+        return 2
+    elif name == 'uint8':
+        return 4
+    elif name == 'int16':
+        return 6
+    elif name == 'bool':
+        return 12
+    else:
+        return 0  # fallback to float32
 
 
 # ---------------------------------------------------------------------------
@@ -416,30 +448,7 @@ def fast_add(a, b):
         out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fa, stream=stream.stream)
 
     # 7. Get dtype code and cached alpha=1 handle
-    cdef str dtype_name = getattr(a_dtype, 'name', str(a_dtype))
-    cdef int dtype_code
-    if dtype_name == 'float32':
-        dtype_code = 0
-    elif dtype_name == 'float16':
-        dtype_code = 1
-    elif dtype_name == 'bfloat16':
-        dtype_code = 27
-    elif dtype_name == 'int32':
-        dtype_code = 3
-    elif dtype_name == 'int64':
-        dtype_code = 9
-    elif dtype_name == 'float64':
-        dtype_code = 11
-    elif dtype_name == 'int8':
-        dtype_code = 2
-    elif dtype_name == 'uint8':
-        dtype_code = 4
-    elif dtype_name == 'int16':
-        dtype_code = 6
-    elif dtype_name == 'bool':
-        dtype_code = 12
-    else:
-        dtype_code = 0  # fallback to float32
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
 
     # 8. Get data pointers — direct C attribute access (no Python method calls)
     cdef uintptr_t a_ptr, b_ptr, o_ptr
