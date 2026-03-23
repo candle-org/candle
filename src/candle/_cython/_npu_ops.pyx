@@ -122,6 +122,18 @@ cdef object _aclrt_sync_stream_fn = None   # _aclrt_ffi.synchronize_stream
 cdef object _flush_executors_fn = None     # aclnn.flush_deferred_executors
 cdef object _get_allocator_fn_ref = None   # allocator.get_allocator (for sync path)
 
+# Per-device allocator cache: avoids get_allocator() dict lookup on hot path.
+# Index 0 covers the overwhelmingly common single-device case.
+cdef object _fast_allocator_dev0 = None    # FastNpuAllocator for device 0
+
+cdef inline void _ensure_allocator_dev0():
+    """Populate _fast_allocator_dev0 on first call (device 0 only)."""
+    global _fast_allocator_dev0
+    if _fast_allocator_dev0 is not None:
+        return
+    _ensure_npu_imports()
+    _fast_allocator_dev0 = _get_allocator_fn_ref(0)
+
 cdef inline void _ensure_npu_imports():
     global _npu_runtime, _npu_state, _cy_make_npu_tensor
     global _get_runtime_fast, _get_stream_fast
@@ -197,9 +209,18 @@ def fast_binary_op(a, b, fn, str name):
     out_shape = _to_tuple(out_shape_buf, out_ndim)
     out_stride = _to_tuple(out_stride_buf, out_ndim)
 
-    # 6. Allocate output
+    # 6. Allocate output — bypass _alloc_device (avoids 2 lazy imports +
+    #    current_stream() Python call per op). stream.stream is the raw ACL
+    #    stream pointer (int) that FastNpuAllocator.malloc expects.
     cdef int isize = c_dtype_itemsize(a_dtype)
-    out_ptr = _npu_runtime._alloc_device(n * isize, runtime=runtime)
+    cdef int64_t alloc_size = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size, stream=stream.stream)
+    else:
+        # Multi-device fallback: still avoids the two lazy imports inside
+        # _alloc_device by going directly to get_allocator().
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream.stream)
 
     # 7. Get data pointers via storage
     a_storage = a.storage()
