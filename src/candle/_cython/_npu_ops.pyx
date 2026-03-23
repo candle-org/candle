@@ -318,6 +318,7 @@ def fast_add(a, b):
     - No _scalar_bytes creation each call (cached per dtype)
     - No resolve_op each call (cached on first use)
     - No ctypes.c_void_p wrapping of executor
+    - No a.storage().data_ptr() Python method calls (direct C attribute access)
     """
     _ensure_npu_imports()
     _ensure_ffi_add()
@@ -364,9 +365,14 @@ def fast_add(a, b):
     out_shape = _to_tuple(out_shape_buf, out_ndim)
     out_stride = _to_tuple(out_stride_buf, out_ndim)
 
-    # 6. Allocate output
+    # 6. Allocate output via cached allocator (bypasses _alloc_device Python overhead)
     cdef int isize = c_dtype_itemsize(a_dtype)
-    out_ptr = _npu_runtime._alloc_device(n * isize, runtime=runtime)
+    cdef int64_t alloc_size_fa = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fa, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fa, stream=stream.stream)
 
     # 7. Get dtype code and cached alpha=1 handle
     cdef str dtype_name = getattr(a_dtype, 'name', str(a_dtype))
@@ -396,12 +402,10 @@ def fast_add(a, b):
 
     cdef uintptr_t alpha_handle = _get_alpha_one(dtype_code)
 
-    # 8. Get data pointers
-    a_storage = a.storage()
-    b_storage = b.storage()
+    # 8. Get data pointers — direct C attribute access (no Python method calls)
     cdef uintptr_t a_ptr, b_ptr, o_ptr
-    a_ptr = a_storage.data_ptr()
-    b_ptr = b_storage.data_ptr()
+    a_ptr = a._storage._untyped._device_ptr
+    b_ptr = b._storage._untyped._device_ptr
     o_ptr = out_ptr
 
     # 9. Call binary_op_with_alpha directly (skips all aclnn.add wrapper overhead)
@@ -429,15 +433,13 @@ def fast_add(a, b):
         finally:
             runtime.defer_raw_free(workspace_ptr)
 
-    # 11. Defer executor cleanup (mirrors aclnn.add behaviour)
-    import ctypes
-    _defer_executor_fn(ctypes.c_void_p(executor))
+    # 11. Defer executor cleanup — pass raw int handle directly
+    #     (skips ctypes.c_void_p wrapping; _defer_executor extracts int via
+    #     _executor_handle which handles both c_void_p and plain int)
+    _defer_executor_fn(executor)
 
-    # 12. Wrap output
-    from candle._storage import npu_typed_storage_from_ptr as _nfp  # pylint: disable=import-error,no-name-in-module
-    from candle._tensor import Tensor as _T  # pylint: disable=import-error,no-name-in-module
-    out_storage = _nfp(out_ptr, n, a_dtype, device=a_dev)
-    return _T(out_storage, out_shape, out_stride)
+    # 12. Wrap output — construct Tensor entirely in Cython (same as fast_binary_op)
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
 # ---------------------------------------------------------------------------
