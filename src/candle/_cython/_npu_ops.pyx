@@ -285,6 +285,12 @@ def fast_binary_op(a, b, fn, str name):
 cdef object _ffi_ref = None              # _aclnn_ffi module
 cdef object _add_getws_ptr = None        # cached Add getws pointer
 cdef object _add_exec_ptr = None         # cached Add exec pointer
+cdef object _mul_getws_ptr = None        # cached Mul getws pointer
+cdef object _mul_exec_ptr = None         # cached Mul exec pointer
+cdef object _sub_getws_ptr = None        # cached Sub getws pointer
+cdef object _sub_exec_ptr = None         # cached Sub exec pointer
+cdef object _div_getws_ptr = None        # cached Div getws pointer
+cdef object _div_exec_ptr = None         # cached Div exec pointer
 cdef object _defer_executor_fn = None    # aclnn._defer_executor
 cdef object _acl_rt_malloc_fn = None     # acl.rt.malloc
 cdef object _acl_rt_free_fn = None       # acl.rt.free (for workspace)
@@ -294,8 +300,11 @@ cdef object _pta_cache_begin_fn = None   # _aclnn_ffi.pta_begin_add_cache_lookup
 cdef object _pta_cache_end_fn = None     # _aclnn_ffi.pta_end_cache_lookup
 
 
-cdef inline void _ensure_ffi_add() except *:
+cdef inline void _ensure_ffi_binary() except *:
     global _ffi_ref, _add_getws_ptr, _add_exec_ptr
+    global _mul_getws_ptr, _mul_exec_ptr
+    global _sub_getws_ptr, _sub_exec_ptr
+    global _div_getws_ptr, _div_exec_ptr
     global _defer_executor_fn, _acl_rt_malloc_fn, _acl_rt_free_fn
     global _pta_cache_begin_fn, _pta_cache_end_fn
     if _ffi_ref is not None:
@@ -304,6 +313,9 @@ cdef inline void _ensure_ffi_add() except *:
     from candle._backends.npu.aclnn import _defer_executor as _def_ex, ensure_acl as _eacl
     _ffi_ref = _f
     _add_getws_ptr, _add_exec_ptr = _f.resolve_op("Add")
+    _mul_getws_ptr, _mul_exec_ptr = _f.resolve_op("Mul")
+    _sub_getws_ptr, _sub_exec_ptr = _f.resolve_op("Sub")
+    _div_getws_ptr, _div_exec_ptr = _f.resolve_op("Div")
     _defer_executor_fn = _def_ex
     _acl = _eacl()
     _acl_rt_malloc_fn = _acl.rt.malloc
@@ -394,7 +406,7 @@ def fast_add(a, b):
     - No a.storage().data_ptr() Python method calls (direct C attribute access)
     """
     _ensure_npu_imports()
-    _ensure_ffi_add()
+    _ensure_ffi_binary()
 
     # 1. Validate device/dtype
     a_dev = a.device

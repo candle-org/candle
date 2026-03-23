@@ -64,14 +64,34 @@ cdef inline void _ensure_originals():
 
 
 cdef inline void _ensure_npu_refs():
-    """Load NPU op refs and guard state once."""
+    """Load NPU op refs and guard state once.
+
+    Prefer direct imports from the compiled _npu_ops Cython module when the
+    per-op fast path exists. Fall back per op to candle._backends.npu.ops so
+    already-landed fast paths (like fast_add) do not regress while later ones
+    are still being added.
+    """
     global _npu_add_fn, _npu_mul_fn, _npu_sub_fn, _npu_div_fn
     global _grad_mode_state, _is_functionalize_fn, _current_pipeline_fn
     global _npu_refs_loaded
     if _npu_refs_loaded:
         return
-    from candle._backends.npu.ops import add as _nadd, mul as _nmul
-    from candle._backends.npu.ops import sub as _nsub, div as _ndiv
+    try:
+        from candle._cython._npu_ops import fast_add as _nadd  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        from candle._backends.npu.ops import add as _nadd
+    try:
+        from candle._cython._npu_ops import fast_mul as _nmul  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        from candle._backends.npu.ops import mul as _nmul
+    try:
+        from candle._cython._npu_ops import fast_sub as _nsub  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        from candle._backends.npu.ops import sub as _nsub
+    try:
+        from candle._cython._npu_ops import fast_div as _ndiv  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        from candle._backends.npu.ops import div as _ndiv
     from candle.autograd.grad_mode import _GRAD_MODE_STATE as _gms
     from candle._dispatch.functionalize import is_functionalize_enabled as _ife
     from candle._dispatch.pipeline import current_pipeline as _cp
@@ -83,6 +103,7 @@ cdef inline void _ensure_npu_refs():
     _is_functionalize_fn = _ife
     _current_pipeline_fn = _cp
     _npu_refs_loaded = True
+
 
 
 cdef inline bint _npu_fast_ok(object a, object b):
