@@ -26,6 +26,8 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.11"
+        cache: 'pip'
+        cache-dependency-paths: requirements/requirements-lint.txt
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -40,19 +42,67 @@ jobs:
     strategy:
       matrix:
         python-version: ["3.11"]
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+        cache-dependency-paths: |
+          requirements/requirements-test.txt
+          requirements/requirements.txt
+
+    # ── ccache (content-hash based C compilation cache) ───────────
+    - name: Set up ccache
+      run: |
+        sudo apt-get install -y ccache
+        echo "/usr/lib/ccache" >> $GITHUB_PATH
+    - name: Cache ccache data
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/.ccache
+        key: ccache-linux-py${{ matrix.python-version }}-${{ hashFiles('src/**/*.pyx', 'setup.py') }}
+        restore-keys: |
+          ccache-linux-py${{ matrix.python-version }}-
+
+    # ── Cython build artifacts (.c, .so, build/) ─────────────────
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-linux-py${{ matrix.python-version }}-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        # Touch cached files so they appear newer than checkout'd .pyx sources.
+        # distutils uses strict > comparison, so equal timestamps = up-to-date.
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install 'cython>=3.0' 'setuptools>=68.0' wheel
         pip install -r requirements/requirements-test.txt
     - name: Install candle
       run: |
-        pip install -e .
+        pip install -e . --no-build-isolation -v
+    - name: ccache statistics
+      if: always()
+      run: ccache -s
     - name: Run CPU tests
       run: |
         pytest tests/cpu/ tests/contract/ -v --tb=short
@@ -60,19 +110,65 @@ jobs:
   test-mps:
     needs: pylint-check
     runs-on: macos-14
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: "3.11"
+        cache: 'pip'
+        cache-dependency-paths: |
+          requirements/requirements-test-mps.txt
+          requirements/requirements.txt
+
+    # ── ccache ────────────────────────────────────────────────────
+    - name: Set up ccache
+      run: |
+        brew install ccache
+        echo "$(brew --prefix ccache)/libexec" >> $GITHUB_PATH
+    - name: Cache ccache data
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.workspace }}/.ccache
+        key: ccache-macos-py3.11-${{ hashFiles('src/**/*.pyx', 'setup.py') }}
+        restore-keys: |
+          ccache-macos-py3.11-
+
+    # ── Cython build artifacts ────────────────────────────────────
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-macos-py3.11-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install 'cython>=3.0' 'setuptools>=68.0' wheel
         pip install -r requirements/requirements-test-mps.txt
     - name: Install candle
       run: |
-        pip install -e .
+        pip install -e . --no-build-isolation -v
+    - name: ccache statistics
+      if: always()
+      run: ccache -s
     - name: Verify MPS availability
       run: |
         python -c "from candle._backends.mps.runtime import is_available; print('MPS available:', is_available())"
@@ -80,7 +176,7 @@ jobs:
       run: |
         pytest tests/mps/ -v --tb=short
 
-  # ── NPU 910B runners (ascendnode3, 8× Ascend 910B3) ──────────────
+  # ── NPU 910B runners (ascendnode3, 8x Ascend 910B3) ──────────────
   # Card allocation: unit [0,1] | integ [2,3] | dist [4,5,6,7]
 
   test-npu-910b-unit:
@@ -89,6 +185,25 @@ jobs:
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
+    # ── Cython build artifacts ────────────────────────────────────
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
     - name: Install candle
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
@@ -106,6 +221,24 @@ jobs:
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
     - name: Install candle
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
@@ -128,6 +261,24 @@ jobs:
     timeout-minutes: 45
     steps:
     - uses: actions/checkout@v4
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
     - name: Install candle
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh

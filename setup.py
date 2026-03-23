@@ -12,6 +12,7 @@ import shutil
 
 from setuptools import setup, find_packages, Extension
 from setuptools.command.build_py import build_py
+from setuptools.command.build_ext import build_ext
 from Cython.Build import cythonize
 
 # ---------------------------------------------------------------------------
@@ -176,7 +177,17 @@ ext_modules = cythonize(
         "boundscheck": False,
         "wraparound": False,
     },
+    nthreads=os.cpu_count() or 1,
 )
+
+
+class _BuildExt(build_ext):
+    """Enable parallel C compilation by default."""
+
+    def finalize_options(self):
+        super().finalize_options()
+        if self.parallel is None:
+            self.parallel = os.cpu_count() or 1
 
 
 class _BuildPy(build_py):
@@ -195,5 +206,5 @@ setup(
     package_data={"candle": ["*.py", "*/*.py", "*/*/*.py", "*/*/*/*.py"]},
     py_modules=["_candle_torch_compat"],
     ext_modules=ext_modules,
-    cmdclass={"build_py": _BuildPy},
+    cmdclass={"build_py": _BuildPy, "build_ext": _BuildExt},
 )
