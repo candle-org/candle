@@ -418,10 +418,10 @@ def fast_add(a, b):
     _defer_executor_fn(ctypes.c_void_p(executor))
 
     # 12. Wrap output
-    nfp = _npu_typed_storage_from_ptr
-    T = _Tensor
-    out_storage = nfp(out_ptr, n, a_dtype, device=a_dev)
-    return T(out_storage, out_shape, out_stride)
+    from candle._storage import npu_typed_storage_from_ptr as _nfp  # pylint: disable=import-error,no-name-in-module
+    from candle._tensor import Tensor as _T  # pylint: disable=import-error,no-name-in-module
+    out_storage = _nfp(out_ptr, n, a_dtype, device=a_dev)
+    return _T(out_storage, out_shape, out_stride)
 
 
 # ---------------------------------------------------------------------------
