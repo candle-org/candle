@@ -1,6 +1,17 @@
 """FSDPParamGroup -- batched communication for parameter groups."""
 from .... import distributed as dist
 
+try:
+    from ....distributed._fsdp_fastpath import (
+        build_flat_shard_offsets as _cy_flat_offsets,
+        pack_shards_to_flat as _cy_pack_shards,
+        unpack_flat_to_shards as _cy_unpack_shards,
+        build_param_owner_map as _cy_owner_map,
+    )
+    _HAVE_FASTPATH = True
+except ImportError:  # pragma: no cover
+    _HAVE_FASTPATH = False
+
 
 class FSDPParamGroup:
     """Manages a group of FSDPParam instances with batched lifecycle.
@@ -20,6 +31,14 @@ class FSDPParamGroup:
         world_size = mesh_info.shard_mesh_size
         self._use_flat_buffer = world_size > 1 and len(fsdp_params) > 1
 
+        # Build owner map: param_name -> group_index (0 for all params in this
+        # single group).  Uses Cython fastpath when available.
+        param_names = [fp._param_name for fp in fsdp_params]
+        if _HAVE_FASTPATH:
+            self.param_owner_map = _cy_owner_map([param_names])
+        else:
+            self.param_owner_map = {name: 0 for name in param_names}
+
         if self._use_flat_buffer:
             self._init_flat_buffer()
 
@@ -31,15 +50,25 @@ class FSDPParamGroup:
         """Pack all local shards into one flat buffer and record offsets."""
         from ...._creation import zeros
 
-        self._shard_offsets = []
         self._shard_shapes = []
-        total_numel = 0
         for fp in self.fsdp_params:
             local = fp._sharded_param.to_local()
-            n = local.numel()
-            self._shard_offsets.append((total_numel, total_numel + n))
             self._shard_shapes.append(local.shape)
-            total_numel += n
+
+        if _HAVE_FASTPATH:
+            # Use Cython fastpath for offset arithmetic
+            self._shard_offsets = _cy_flat_offsets(
+                [list(s) for s in self._shard_shapes]
+            )
+            total_numel = self._shard_offsets[-1][1] if self._shard_offsets else 0
+        else:
+            self._shard_offsets = []
+            total_numel = 0
+            for fp in self.fsdp_params:
+                local = fp._sharded_param.to_local()
+                n = local.numel()
+                self._shard_offsets.append((total_numel, total_numel + n))
+                total_numel += n
 
         first_local = self.fsdp_params[0]._sharded_param.to_local()
         dtype = first_local.dtype
@@ -57,10 +86,67 @@ class FSDPParamGroup:
         )
 
     def _copy_shards_to_flat(self):
-        """Copy each param's local shard into the flat buffer."""
-        for fp, (start, end) in zip(self.fsdp_params, self._shard_offsets):
-            local = fp._sharded_param.to_local()
-            self._flat_shard[start:end] = local.reshape(-1)
+        """Copy each param's local shard into the flat buffer.
+
+        When the Cython fastpath is available, the inner copy loop is
+        executed in ``pack_shards_to_flat`` (no Python per-element overhead).
+        The Cython helper operates on Python lists; we convert the flat tensor
+        to a list, invoke the helper, then write back -- bridging the tensor
+        world to the Cython typed-list interface.
+        The fallback slice-assignment path is preserved for environments
+        where the extension has not been compiled.
+        """
+        if _HAVE_FASTPATH:
+            shards = [
+                list(fp._sharded_param.to_local().reshape(-1))
+                for fp in self.fsdp_params
+            ]
+            flat_list = list(self._flat_shard)
+            _cy_pack_shards(shards, flat_list, self._shard_offsets)
+            # Write the updated list back into the tensor
+            for i, val in enumerate(flat_list):
+                self._flat_shard[i] = val
+        else:
+            for fp, (start, end) in zip(self.fsdp_params, self._shard_offsets):
+                local = fp._sharded_param.to_local()
+                self._flat_shard[start:end] = local.reshape(-1)
+
+    def _copy_flat_to_shard_grads(self, flat_src):
+        """Write gradient data from *flat_src* back to each param shard's grad.
+
+        When the Cython fastpath is available, the inner copy loop is
+        executed in ``unpack_flat_to_shards`` (no Python per-element overhead).
+        The Cython helper operates on Python lists; we convert flat_src to a
+        list and pre-allocate shard lists, invoke the helper, then convert each
+        shard list back to a tensor and reshape -- bridging the tensor world to
+        the Cython typed-list interface.
+        The fallback slice-reshape path is preserved for environments where
+        the extension has not been compiled.
+        """
+        if _HAVE_FASTPATH:
+            from ...._creation import zeros
+            # Convert flat_src tensor to list for the Cython helper
+            flat_list = list(flat_src)
+            # Pre-allocate mutable shard lists
+            shard_lists = [
+                [0.0] * (end - start)
+                for start, end in self._shard_offsets
+            ]
+            _cy_unpack_shards(flat_list, shard_lists, self._shard_offsets)
+            for fp, shard_list, shape in zip(
+                self.fsdp_params, shard_lists, self._shard_shapes
+            ):
+                from ...._tensor import Tensor
+                flat_g = zeros(len(shard_list), dtype=flat_src.dtype,
+                               device=flat_src.device)
+                for i, val in enumerate(shard_list):
+                    flat_g[i] = val
+                fp._sharded_param.to_local().grad = flat_g.reshape(*shape)
+        else:
+            for i, fp in enumerate(self.fsdp_params):
+                start, end = self._shard_offsets[i]
+                shape = self._shard_shapes[i]
+                fp._sharded_param.to_local().grad = flat_src[start:end].reshape(*shape)
 
     # ------------------------------------------------------------------
     # Batched shard lifecycle
@@ -165,11 +251,8 @@ class FSDPParamGroup:
         )
         dist.reduce_scatter_tensor(reduced_flat, self._flat_full, group=pg)
 
-        # Scatter reduced shards back to params
-        for i, fp in enumerate(self.fsdp_params):
-            start, end = self._shard_offsets[i]
-            shape = self._shard_shapes[i]
-            fp._sharded_param.to_local().grad = reduced_flat[start:end].reshape(*shape)
+        # Scatter reduced shards back to params via Cython unpack or fallback
+        self._copy_flat_to_shard_grads(reduced_flat)
 
     # ------------------------------------------------------------------
     # Module hook helpers

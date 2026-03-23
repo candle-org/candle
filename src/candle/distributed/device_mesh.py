@@ -98,6 +98,62 @@ class DeviceMesh:
         """Number of mesh dimensions."""
         return len(self._mesh_shape)
 
+    def get_coordinate(self):
+        """Return this rank's coordinate as a list of ints, one per mesh dim.
+
+        For each mesh dimension d, the coordinate is the rank's position
+        within the process group for that dimension.
+        """
+        from . import is_initialized, get_rank
+        if is_initialized() and self._dim_groups:
+            return [get_rank(pg) for pg in self._dim_groups]
+        # Fallback for unit tests where no PG is initialised: infer from
+        # the global rank modulo each mesh dimension size.
+        try:
+            from . import get_rank as _gr
+            global_rank = _gr()
+        except Exception:  # pylint: disable=broad-except
+            global_rank = 0
+        coord = []
+        remainder = global_rank
+        for dim_size in reversed(self._mesh_shape):
+            coord.append(remainder % dim_size)
+            remainder //= dim_size
+        return list(reversed(coord))
+
+    def __getitem__(self, dim):
+        """Return a sub-mesh for a single dimension.
+
+        Args:
+            dim: either an int (dimension index) or a str (mesh_dim_name).
+        """
+        if isinstance(dim, str):
+            if self.mesh_dim_names is None:
+                raise KeyError(
+                    f"DeviceMesh has no dim names; cannot slice by name {dim!r}"
+                )
+            if dim not in self.mesh_dim_names:
+                raise KeyError(
+                    f"DeviceMesh has no dimension named {dim!r}. "
+                    f"Available: {self.mesh_dim_names}"
+                )
+            dim_idx = list(self.mesh_dim_names).index(dim)
+        elif isinstance(dim, int):
+            dim_idx = dim
+        else:
+            raise TypeError(f"DeviceMesh index must be int or str, got {type(dim).__name__}")
+
+        sub = object.__new__(DeviceMesh)
+        sub.device_type = self.device_type
+        sub._mesh_shape = (self._mesh_shape[dim_idx],)
+        sub.mesh_dim_names = (
+            (self.mesh_dim_names[dim_idx],) if self.mesh_dim_names else None
+        )
+        sub._dim_groups = (
+            [self._dim_groups[dim_idx]] if self._dim_groups else []
+        )
+        return sub
+
     def __repr__(self):
         return (
             f"DeviceMesh(device_type={self.device_type!r}, "

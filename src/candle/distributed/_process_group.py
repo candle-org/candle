@@ -156,8 +156,24 @@ class ProcessGroupHCCL(ProcessGroup):
         return npu_state.current_stream(self._device_id).stream
 
     def _make_work(self, stream, source_rank=-1):
-        return Work(stream=stream, device_id=self._device_id,
-                    source_rank=source_rank)
+        w = Work(stream=stream, device_id=self._device_id,
+                 source_rank=source_rank)
+        # Record an ACL event immediately after the HCCL kernel was enqueued
+        # on `stream`.  This allows Work.wait() to synchronize only the event
+        # (not the entire stream) and Work.is_completed() to poll cheaply.
+        if stream is not None:
+            try:
+                from .._backends.npu import runtime as npu_runtime
+                dev = self._device_id if self._device_id is not None else 0
+                rt = npu_runtime.get_runtime(dev)
+                event = rt.create_event(False, False, False)
+                rt.record_event(event, stream)
+                w._aclrt_event = event
+            except Exception:  # pylint: disable=broad-except
+                # If event recording fails (e.g. hardware unavailable),
+                # fall back to stream synchronization in wait().
+                pass
+        return w
 
     def _tensor_args(self, tensor):
         _, _, _, _, _, _, _, dtype_to_hccl, _ = self._load_bindings()
