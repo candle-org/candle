@@ -123,3 +123,75 @@ def test_fast_mul_skips_python_aclnn_wrapper(npu_device, monkeypatch):
     assert ref_torch.allclose(actual, expected, rtol=1e-4, atol=1e-4), (
         f"fast_mul result mismatch: max_diff={(actual - expected).abs().max()}"
     )
+
+
+def test_fast_sub_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    """fast_sub should bypass candle._backends.npu.aclnn.sub on the hot path."""
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+    import numpy as np
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.randn(4, 4, device=npu_device)
+    torch.npu.synchronize()
+
+    expected = torch.sub(a, b)
+    torch.npu.synchronize()
+
+    _ = torch.sub(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_sub = aclnn_mod.sub
+
+    def wrapped_sub(*args, **kwargs):
+        calls["count"] += 1
+        return original_sub(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "sub", wrapped_sub)
+
+    out = torch.sub(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0, (
+        f"fast_sub called aclnn.sub {calls['count']} time(s); expected 0"
+    )
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4), (
+        "fast_sub output differs from expected"
+    )
+
+
+def test_fast_div_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    """fast_div should bypass candle._backends.npu.aclnn.div on the hot path."""
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+    import numpy as np
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.rand(4, 4, device=npu_device) + 1.0
+    torch.npu.synchronize()
+
+    expected = torch.div(a, b)
+    torch.npu.synchronize()
+
+    _ = torch.div(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_div = aclnn_mod.div
+
+    def wrapped_div(*args, **kwargs):
+        calls["count"] += 1
+        return original_div(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "div", wrapped_div)
+
+    out = torch.div(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0, (
+        f"fast_div called aclnn.div {calls['count']} time(s); expected 0"
+    )
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4), (
+        "fast_div output differs from expected"
+    )

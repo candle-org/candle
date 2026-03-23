@@ -20,6 +20,8 @@ cdef object _py_neg_fn = None
 # NPU fast-path: cached references for direct kernel calls
 cdef object _npu_add_fn = None
 cdef object _npu_mul_fn = None
+cdef object _npu_sub_fn = None
+cdef object _npu_div_fn = None
 cdef object _grad_mode_state = None
 cdef object _is_functionalize_fn = None
 cdef object _current_pipeline_fn = None
@@ -105,12 +107,22 @@ cdef inline void _ensure_npu_refs():
         from candle._cython._npu_ops import fast_mul as _nmul  # pylint: disable=import-error,no-name-in-module
     except ImportError:
         from candle._backends.npu.ops import mul as _nmul
+    try:
+        from candle._cython._npu_ops import fast_sub as _nsub  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        from candle._backends.npu.ops import sub as _nsub
+    try:
+        from candle._cython._npu_ops import fast_div as _ndiv  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        from candle._backends.npu.ops import div as _ndiv
     from candle.autograd.grad_mode import _GRAD_MODE_STATE as _gms
     from candle._dispatch.functionalize import is_functionalize_enabled as _ife
     from candle._dispatch.pipeline import current_pipeline as _cp
 
     _npu_add_fn = _nadd
     _npu_mul_fn = _nmul
+    _npu_sub_fn = _nsub
+    _npu_div_fn = _ndiv
     _grad_mode_state = _gms
     _is_functionalize_fn = _ife
     _current_pipeline_fn = _cp

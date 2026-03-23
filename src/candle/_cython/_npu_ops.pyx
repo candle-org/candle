@@ -661,6 +661,182 @@ def fast_mul(a, b):
 
 
 # ---------------------------------------------------------------------------
+# fast_sub — hardwired sub(a, b, alpha=1) that skips aclnn.py wrapper
+# ---------------------------------------------------------------------------
+
+def fast_sub(a, b):
+    """Optimized sub(a, b, alpha=1) that calls _ffi.binary_op_with_alpha directly."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    a_dev = a.device
+    b_dev = b.device
+    if a_dev.type != "npu" or b_dev.type != "npu":
+        raise ValueError("fast_sub expects NPU tensors")
+    a_dtype = a.dtype
+    if a_dtype != b.dtype:
+        raise ValueError("fast_sub requires matching dtypes")
+
+    cdef int dev_idx = a_dev.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = a.shape
+    py_b_shape = b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+
+    cdef int out_ndim
+    cdef int64_t n
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+        c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+        n = c_numel(out_shape_buf, out_ndim)
+
+    out_shape = _to_tuple(out_shape_buf, out_ndim)
+    out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size_fs = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fs, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fs, stream=stream.stream)
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t alpha_handle = _get_alpha_one(dtype_code)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr
+    cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
+    cdef uintptr_t o_ptr = out_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.binary_op_with_alpha(
+        _sub_getws_ptr, _sub_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        out_shape, out_stride,
+        dtype_code, 2,
+        a_ptr, b_ptr, o_ptr,
+        alpha_handle,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _sub_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnSub execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+# ---------------------------------------------------------------------------
+# fast_div — hardwired div(a, b) that skips aclnn.py wrapper
+# ---------------------------------------------------------------------------
+
+def fast_div(a, b):
+    """Optimized div(a, b) that calls _ffi.binary_op_no_alpha directly."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    a_dev = a.device
+    b_dev = b.device
+    if a_dev.type != "npu" or b_dev.type != "npu":
+        raise ValueError("fast_div expects NPU tensors")
+    a_dtype = a.dtype
+    if a_dtype != b.dtype:
+        raise ValueError("fast_div requires matching dtypes")
+
+    cdef int dev_idx = a_dev.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = a.shape
+    py_b_shape = b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+
+    cdef int out_ndim
+    cdef int64_t n
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+        c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+        n = c_numel(out_shape_buf, out_ndim)
+
+    out_shape = _to_tuple(out_shape_buf, out_ndim)
+    out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size_fd = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fd, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fd, stream=stream.stream)
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr
+    cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
+    cdef uintptr_t o_ptr = out_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.binary_op_no_alpha(
+        _div_getws_ptr, _div_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        out_shape, out_stride,
+        dtype_code, 2,
+        a_ptr, b_ptr, o_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _div_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnDiv execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+# ---------------------------------------------------------------------------
 # cy_npu_synchronize — fast synchronize bypassing Python dispatch overhead
 # ---------------------------------------------------------------------------
 
