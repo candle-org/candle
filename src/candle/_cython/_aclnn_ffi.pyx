@@ -43,6 +43,18 @@ ctypedef int32_t (*aclDestroyTensorList_t)(void*) noexcept nogil
 ctypedef int32_t (*aclnnExec_t)(void*, uint64_t, void*, void*) noexcept nogil
 
 # ---------------------------------------------------------------------------
+# PTA executor cache function pointer typedefs (from libnnopbase.so)
+# These mirror torch_npu's op_api_common.h typedefs exactly.
+# ---------------------------------------------------------------------------
+
+ctypedef void (*InitPTACacheThreadLocal_t)() noexcept nogil
+ctypedef void (*UnInitPTACacheThreadLocal_t)() noexcept nogil
+ctypedef void (*SetPTACacheHashKey_t)(uint8_t*, size_t) noexcept nogil
+ctypedef void* (*PTAFindExecCache_t)(uint8_t*, size_t, uint64_t*) noexcept nogil
+ctypedef int (*CanUsePTACache_t)(const char*) noexcept nogil
+ctypedef void (*AddTensorAddrToCachedList_t)(void*) noexcept nogil
+
+# ---------------------------------------------------------------------------
 # Module-level cached function pointers
 # ---------------------------------------------------------------------------
 
@@ -61,6 +73,18 @@ cdef aclDestroyTensorList_t _fn_destroy_tensor_list = NULL
 cdef bint _initialized = 0
 
 DEF MAX_NDIM = 16
+
+# ---------------------------------------------------------------------------
+# PTA executor cache function pointers (resolved from libnnopbase.so)
+# ---------------------------------------------------------------------------
+
+cdef InitPTACacheThreadLocal_t   _fn_init_pta_cache    = NULL
+cdef UnInitPTACacheThreadLocal_t _fn_uninit_pta_cache  = NULL
+cdef SetPTACacheHashKey_t        _fn_set_pta_hash_key  = NULL
+cdef PTAFindExecCache_t          _fn_pta_find_cache    = NULL
+cdef CanUsePTACache_t            _fn_can_use_pta_cache = NULL
+cdef AddTensorAddrToCachedList_t _fn_add_tensor_addr   = NULL
+cdef bint _pta_cache_available = 0
 
 # Stored dlopen handles (as uintptr_t) for op symbol resolution
 _lib_handles = []
@@ -277,9 +301,217 @@ def init(list lib_paths):
 
     _initialized = 1
 
+    # Try to resolve PTA executor cache symbols from libnnopbase.so.
+    # These are optional — cache is simply disabled if symbols are missing.
+    _init_pta_cache_symbols(handles, lib_paths)
+
 
 def is_initialized():
     return _initialized != 0
+
+
+def is_pta_cache_available():
+    return _pta_cache_available != 0
+
+
+cdef void _init_pta_cache_symbols(list handles, list lib_paths):
+    global _fn_init_pta_cache, _fn_uninit_pta_cache
+    global _fn_set_pta_hash_key, _fn_pta_find_cache
+    global _fn_can_use_pta_cache, _fn_add_tensor_addr
+    global _pta_cache_available
+
+    cdef void* nnopbase_handle = NULL
+    cdef void* sym
+    cdef int idx
+    cdef object p
+
+    for idx, p in enumerate(lib_paths):
+        if isinstance(p, bytes):
+            p = p.decode("utf-8")
+        if "libnnopbase.so" in p:
+            nnopbase_handle = <void*><uintptr_t>handles[idx]
+            break
+
+    if nnopbase_handle == NULL:
+        return
+
+    dlerror()
+    sym = dlsym(nnopbase_handle, b"InitPTACacheThreadLocal")
+    if sym == NULL:
+        return
+    _fn_init_pta_cache = <InitPTACacheThreadLocal_t>sym
+
+    sym = dlsym(nnopbase_handle, b"UnInitPTACacheThreadLocal")
+    if sym == NULL:
+        return
+    _fn_uninit_pta_cache = <UnInitPTACacheThreadLocal_t>sym
+
+    sym = dlsym(nnopbase_handle, b"SetPTACacheHashKey")
+    if sym == NULL:
+        return
+    _fn_set_pta_hash_key = <SetPTACacheHashKey_t>sym
+
+    sym = dlsym(nnopbase_handle, b"PTAFindExecCache")
+    if sym == NULL:
+        return
+    _fn_pta_find_cache = <PTAFindExecCache_t>sym
+
+    sym = dlsym(nnopbase_handle, b"CanUsePTACache")
+    if sym == NULL:
+        return
+    _fn_can_use_pta_cache = <CanUsePTACache_t>sym
+
+    sym = dlsym(nnopbase_handle, b"AddTensorAddrToCachedList")
+    if sym == NULL:
+        return
+    _fn_add_tensor_addr = <AddTensorAddrToCachedList_t>sym
+
+    _pta_cache_available = 1
+
+
+DEF PTA_HASH_BUF_SIZE = 8192
+DEF PTA_HASH_BUF_MAX_SIZE = 9216
+
+
+cdef inline void _pta_buf_append(
+    uint8_t* buf, int* offset,
+    const void* data, size_t nbytes) noexcept nogil:
+    cdef size_t i
+    cdef const uint8_t* src
+    cdef int cur = offset[0]
+    if cur + <int>nbytes > PTA_HASH_BUF_SIZE:
+        offset[0] = PTA_HASH_BUF_MAX_SIZE
+        return
+    src = <const uint8_t*>data
+    for i in range(nbytes):
+        buf[cur + i] = src[i]
+    offset[0] = cur + <int>nbytes
+
+
+cdef inline void _pta_buf_append_cstr(
+    uint8_t* buf, int* offset,
+    const char* s) noexcept nogil:
+    cdef size_t n = 0
+    while s[n] != 0:
+        n += 1
+    _pta_buf_append(buf, offset, s, n)
+    _pta_buf_append(buf, offset, &n, sizeof(size_t))
+
+
+cdef inline int64_t _pta_numel(const int64_t* shape, int ndim) noexcept nogil:
+    cdef int i
+    cdef int64_t n = 1
+    for i in range(ndim):
+        n *= shape[i]
+    return n
+
+
+cdef inline void _pta_buf_append_tensor(
+    uint8_t* buf, int* offset,
+    const int64_t* shape, const int64_t* stride, int ndim,
+    int32_t dtype_code, int64_t storage_offset,
+    void* data_ptr) noexcept nogil:
+    cdef char sep = ','
+    cdef int64_t storage_dim
+
+    _pta_buf_append(buf, offset, shape, ndim * sizeof(int64_t))
+    _pta_buf_append(buf, offset, &dtype_code, sizeof(int32_t))
+    _pta_buf_append(buf, offset, &sep, 1)
+    _pta_buf_append(buf, offset, stride, ndim * sizeof(int64_t))
+    _pta_buf_append(buf, offset, &storage_offset, sizeof(int64_t))
+    storage_dim = _pta_numel(shape, ndim)
+    _pta_buf_append(buf, offset, &storage_dim, sizeof(int64_t))
+    _fn_add_tensor_addr(data_ptr)
+
+
+cdef inline void _pta_buf_append_scalar(
+    uint8_t* buf, int* offset,
+    const void* scalar_data, int scalar_nbytes, int32_t scalar_dtype_code) noexcept nogil:
+    _pta_buf_append(buf, offset, scalar_data, scalar_nbytes)
+    _pta_buf_append(buf, offset, &scalar_dtype_code, sizeof(int32_t))
+
+
+def pta_begin_add_cache_lookup(
+        self_shape, self_stride,
+        other_shape, other_stride,
+        out_shape, out_stride,
+        int32_t dtype_code,
+        uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,
+        bytes alpha_scalar_bytes, int32_t alpha_dtype_code,
+        uintptr_t stream):
+    """Begin torch_npu-style PTA cache context for aclnnAdd.
+
+    Returns (pta_active: bool, workspace_size: int, executor_ptr: int).
+    If executor_ptr is nonzero, the cache lookup hit and caller can execute directly.
+    If executor_ptr is zero, the cache lookup missed, but PTA context remains active
+    and caller must keep it alive through GetWorkspaceSize/Execute, then call
+    pta_end_cache_lookup().
+    """
+    if not _pta_cache_available:
+        return None
+
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(b"aclnnAdd")
+    if not can_use:
+        return None
+
+    cdef int self_ndim = len(self_shape)
+    cdef int other_ndim = len(other_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int i
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int64_t[MAX_NDIM] o_shape, o_stride
+    cdef int64_t[MAX_NDIM] r_shape, r_stride
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef const uint8_t* alpha_data = <const uint8_t*>alpha_scalar_bytes
+    cdef int alpha_nbytes = len(alpha_scalar_bytes)
+
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(other_ndim):
+        o_shape[i] = other_shape[i]
+        o_stride[i] = other_stride[i]
+    for i in range(out_ndim):
+        r_shape[i] = out_shape[i]
+        r_stride[i] = out_stride[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+
+        # Match torch_npu hit_cache_v2 order exactly:
+        # deterministic_status, op_name, args..., stream
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"aclnnAdd")
+        _pta_buf_append_tensor(hash_buf, &hash_offset, s_shape, s_stride, self_ndim, dtype_code, 0, <void*>self_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, o_shape, o_stride, other_ndim, dtype_code, 0, <void*>other_ptr)
+        _pta_buf_append_scalar(hash_buf, &hash_offset, alpha_data, alpha_nbytes, alpha_dtype_code)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, r_shape, r_stride, out_ndim, dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    return (True, ws_size, <uintptr_t>executor)
+
+
+def pta_end_cache_lookup():
+    """End an active PTA cache context started by pta_begin_add_cache_lookup()."""
+    if not _pta_cache_available:
+        return
+    with nogil:
+        _fn_uninit_pta_cache()
+
+
 
 # ---------------------------------------------------------------------------
 # Tensor creation / destruction

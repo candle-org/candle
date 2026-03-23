@@ -51,3 +51,34 @@ def test_fast_add_skips_ctypes_void_p_wrapper(npu_device, monkeypatch):
     _ = torch.add(a, b)
 
     assert calls["count"] == 0
+
+
+def test_fast_add_reuses_cached_executor_for_same_signature(npu_device, monkeypatch):
+    """fast_add should miss once, then hit the PTA executor cache for the same signature."""
+    import pytest
+    import candle as torch
+    import candle._cython._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+
+    if not ffi_mod.is_pta_cache_available():
+        pytest.skip("PTA executor cache not available on this CANN build")
+
+    a = torch.randn(7, 5, 3, device=npu_device)
+    b = torch.randn(7, 5, 3, device=npu_device)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_binary_op_with_alpha = ffi_mod.binary_op_with_alpha
+
+    def wrapped_binary_op_with_alpha(*args, **kwargs):
+        calls["count"] += 1
+        return original_binary_op_with_alpha(*args, **kwargs)
+
+    monkeypatch.setattr(ffi_mod, "binary_op_with_alpha", wrapped_binary_op_with_alpha)
+
+    _ = torch.add(a, b)
+    torch.npu.synchronize()
+    assert calls["count"] == 1
+
+    _ = torch.add(a, b)
+    torch.npu.synchronize()
+    assert calls["count"] == 1

@@ -257,11 +257,15 @@ cdef object _defer_executor_fn = None    # aclnn._defer_executor
 cdef object _acl_rt_malloc_fn = None     # acl.rt.malloc
 cdef object _acl_rt_free_fn = None       # acl.rt.free (for workspace)
 cdef dict _alpha_one_handles = {}        # dtype_code -> alpha=1 scalar handle (int)
+cdef dict _alpha_one_bytes_cache = {}    # dtype_code -> (bytes, alpha_dtype_code) for PTA hash
+cdef object _pta_cache_begin_fn = None   # _aclnn_ffi.pta_begin_add_cache_lookup
+cdef object _pta_cache_end_fn = None     # _aclnn_ffi.pta_end_cache_lookup
 
 
 cdef inline void _ensure_ffi_add() except *:
     global _ffi_ref, _add_getws_ptr, _add_exec_ptr
     global _defer_executor_fn, _acl_rt_malloc_fn, _acl_rt_free_fn
+    global _pta_cache_begin_fn, _pta_cache_end_fn
     if _ffi_ref is not None:
         return
     from candle._cython import _aclnn_ffi as _f  # pylint: disable=import-error,no-name-in-module
@@ -272,6 +276,9 @@ cdef inline void _ensure_ffi_add() except *:
     _acl = _eacl()
     _acl_rt_malloc_fn = _acl.rt.malloc
     _acl_rt_free_fn = _acl.rt.free
+    if _f.is_pta_cache_available():
+        _pta_cache_begin_fn = _f.pta_begin_add_cache_lookup
+        _pta_cache_end_fn = _f.pta_end_cache_lookup
 
 
 cdef uintptr_t _get_alpha_one(int dtype_code) except? 0:
@@ -280,7 +287,6 @@ cdef uintptr_t _get_alpha_one(int dtype_code) except? 0:
     cdef object existing = _alpha_one_handles.get(dtype_code)
     if existing is not None:
         return <uintptr_t>existing
-    # Build alpha=1 scalar bytes matching aclnn._scalar_bytes(1, dtype)
     import struct
     if dtype_code == 0:    # float32
         scalar_bytes = struct.pack('<f', 1.0)
@@ -307,6 +313,41 @@ cdef uintptr_t _get_alpha_one(int dtype_code) except? 0:
     cdef uintptr_t handle = <uintptr_t>_ffi_ref.create_scalar(scalar_bytes, dtype_code)
     _alpha_one_handles[dtype_code] = handle
     return handle
+
+
+cdef object _get_alpha_one_bytes(int dtype_code):
+    """Return cached (scalar_bytes, scalar_dtype_code) for alpha=1."""
+    global _alpha_one_bytes_cache
+    cdef object existing = _alpha_one_bytes_cache.get(dtype_code)
+    if existing is not None:
+        return existing
+    import struct
+    if dtype_code == 0:    # float32
+        scalar_bytes = struct.pack('<f', 1.0)
+    elif dtype_code == 1:  # float16
+        scalar_bytes = b'\x00\x3c'
+    elif dtype_code == 27: # bfloat16
+        scalar_bytes = b'\x80\x3f'
+    elif dtype_code == 3:  # int32
+        scalar_bytes = struct.pack('<i', 1)
+    elif dtype_code == 9:  # int64
+        scalar_bytes = struct.pack('<q', 1)
+    elif dtype_code == 11: # float64
+        scalar_bytes = struct.pack('<d', 1.0)
+    elif dtype_code == 2:  # int8
+        scalar_bytes = b'\x01'
+    elif dtype_code == 4:  # uint8
+        scalar_bytes = b'\x01'
+    elif dtype_code == 6:  # int16
+        scalar_bytes = b'\x01\x00'
+    elif dtype_code == 12: # bool
+        scalar_bytes = b'\x01'
+    else:
+        scalar_bytes = struct.pack('<f', 1.0)
+        dtype_code = 0
+    existing = (scalar_bytes, dtype_code)
+    _alpha_one_bytes_cache[dtype_code] = existing
+    return existing
 
 
 def fast_add(a, b):
@@ -400,45 +441,91 @@ def fast_add(a, b):
     else:
         dtype_code = 0  # fallback to float32
 
-    cdef uintptr_t alpha_handle = _get_alpha_one(dtype_code)
-
     # 8. Get data pointers — direct C attribute access (no Python method calls)
     cdef uintptr_t a_ptr, b_ptr, o_ptr
     a_ptr = a._storage._untyped._device_ptr
     b_ptr = b._storage._untyped._device_ptr
     o_ptr = out_ptr
 
-    # 9. Call binary_op_with_alpha directly (skips all aclnn.add wrapper overhead)
-    ws_size, executor = _ffi_ref.binary_op_with_alpha(
-        _add_getws_ptr, _add_exec_ptr,
-        py_a_shape, a.stride,
-        py_b_shape, b.stride,
-        out_shape, out_stride,
-        dtype_code, 2,  # ACL_FORMAT_ND = 2
-        a_ptr, b_ptr, o_ptr,
-        alpha_handle,
-        int(stream.stream))
+    cdef uintptr_t stream_raw = int(stream.stream)
+    cdef bint pta_active = False
+    cdef uintptr_t alpha_handle
 
-    # 10. Handle workspace (rare: ws_size > 0 means execute not yet called)
-    if ws_size:
-        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
-        if ret != 0:
-            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
-        try:
-            ret = _ffi_ref.execute(
-                _add_exec_ptr, int(workspace_ptr), ws_size,
-                executor, int(stream.stream))
+    # 9. Try PTA executor cache (torch_npu-aligned hit_cache_v2 path)
+    if _pta_cache_begin_fn is not None:
+        alpha_bytes_pair = _get_alpha_one_bytes(dtype_code)
+        state = _pta_cache_begin_fn(
+            py_a_shape, a.stride,
+            py_b_shape, b.stride,
+            out_shape, out_stride,
+            dtype_code,
+            a_ptr, b_ptr, o_ptr,
+            alpha_bytes_pair[0], alpha_bytes_pair[1],
+            stream_raw)
+        if state is not None:
+            pta_active = bool(state[0])
+            ws_size = state[1]
+            executor = state[2]
+            if executor:
+                try:
+                    if ws_size:
+                        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+                        if ret != 0:
+                            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                        try:
+                            ret = _ffi_ref.execute(
+                                _add_exec_ptr, int(workspace_ptr), ws_size,
+                                executor, stream_raw)
+                            if ret != 0:
+                                raise RuntimeError(f"aclnnAdd execute failed: {ret}")
+                        finally:
+                            runtime.defer_raw_free(workspace_ptr)
+                    else:
+                        ret = _ffi_ref.execute(_add_exec_ptr, 0, 0, executor, stream_raw)
+                        if ret != 0:
+                            raise RuntimeError(f"aclnnAdd execute failed: {ret}")
+                    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+                finally:
+                    if pta_active:
+                        _pta_cache_end_fn()
+                        pta_active = False
+
+    try:
+        # 10. Cache miss: full GetWorkspaceSize + Execute path
+        alpha_handle = _get_alpha_one(dtype_code)
+        ws_size, executor = _ffi_ref.binary_op_with_alpha(
+            _add_getws_ptr, _add_exec_ptr,
+            py_a_shape, a.stride,
+            py_b_shape, b.stride,
+            out_shape, out_stride,
+            dtype_code, 2,  # ACL_FORMAT_ND = 2
+            a_ptr, b_ptr, o_ptr,
+            alpha_handle,
+            stream_raw)
+
+        # 11. Handle workspace (rare: ws_size > 0 means execute not yet called)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
             if ret != 0:
-                raise RuntimeError(f"aclnnAdd execute failed: {ret}")
-        finally:
-            runtime.defer_raw_free(workspace_ptr)
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_ref.execute(
+                    _add_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnAdd execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
 
-    # 11. Defer executor cleanup — pass raw int handle directly
-    #     (skips ctypes.c_void_p wrapping; _defer_executor extracts int via
-    #     _executor_handle which handles both c_void_p and plain int)
-    _defer_executor_fn(executor)
+        # 12. Defer executor cleanup — pass raw int handle directly
+        #     (skips ctypes.c_void_p wrapping; _defer_executor extracts int via
+        #     _executor_handle which handles both c_void_p and plain int)
+        _defer_executor_fn(executor)
+    finally:
+        if pta_active:
+            _pta_cache_end_fn()
 
-    # 12. Wrap output — construct Tensor entirely in Cython (same as fast_binary_op)
+    # 13. Wrap output — construct Tensor entirely in Cython (same as fast_binary_op)
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
