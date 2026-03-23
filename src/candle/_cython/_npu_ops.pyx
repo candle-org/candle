@@ -8,7 +8,8 @@ The heavy operations (device malloc, aclnn kernel, output wrapping) remain
 in Python — this module only accelerates the metadata computation.
 """
 
-from libc.stdint cimport int64_t
+from libc.stdint cimport int64_t, int32_t, uint64_t
+from libc.stdint cimport uintptr_t
 
 DEF MAX_NDIM = 16
 
@@ -222,6 +223,200 @@ def fast_binary_op(a, b, fn, str name):
 
     # 9. Wrap output — construct Tensor entirely in Cython (skips Python __init__)
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+# ---------------------------------------------------------------------------
+# fast_add — hardwired add(a, b, alpha=1) that skips aclnn.py wrapper
+# ---------------------------------------------------------------------------
+
+cdef object _ffi_ref = None              # _aclnn_ffi module
+cdef object _add_getws_ptr = None        # cached Add getws pointer
+cdef object _add_exec_ptr = None         # cached Add exec pointer
+cdef object _defer_executor_fn = None    # aclnn._defer_executor
+cdef object _acl_rt_malloc_fn = None     # acl.rt.malloc
+cdef object _acl_rt_free_fn = None       # acl.rt.free (for workspace)
+cdef dict _alpha_one_handles = {}        # dtype_code -> alpha=1 scalar handle (int)
+
+
+cdef inline void _ensure_ffi_add() except *:
+    global _ffi_ref, _add_getws_ptr, _add_exec_ptr
+    global _defer_executor_fn, _acl_rt_malloc_fn, _acl_rt_free_fn
+    if _ffi_ref is not None:
+        return
+    from candle._cython import _aclnn_ffi as _f  # pylint: disable=import-error,no-name-in-module
+    from candle._backends.npu.aclnn import _defer_executor as _def_ex, ensure_acl as _eacl
+    _ffi_ref = _f
+    _add_getws_ptr, _add_exec_ptr = _f.resolve_op("Add")
+    _defer_executor_fn = _def_ex
+    _acl = _eacl()
+    _acl_rt_malloc_fn = _acl.rt.malloc
+    _acl_rt_free_fn = _acl.rt.free
+
+
+cdef uintptr_t _get_alpha_one(int dtype_code) except? 0:
+    """Return a cached alpha=1 scalar handle for the given dtype_code."""
+    global _alpha_one_handles
+    cdef object existing = _alpha_one_handles.get(dtype_code)
+    if existing is not None:
+        return <uintptr_t>existing
+    # Build alpha=1 scalar bytes matching aclnn._scalar_bytes(1, dtype)
+    import struct
+    if dtype_code == 0:    # float32
+        scalar_bytes = struct.pack('<f', 1.0)
+    elif dtype_code == 1:  # float16 — bits = 0x3C00, little-endian
+        scalar_bytes = b'\x00\x3c'
+    elif dtype_code == 27: # bfloat16 — bits = 0x3F80, little-endian
+        scalar_bytes = b'\x80\x3f'
+    elif dtype_code == 3:  # int32
+        scalar_bytes = struct.pack('<i', 1)
+    elif dtype_code == 9:  # int64
+        scalar_bytes = struct.pack('<q', 1)
+    elif dtype_code == 11: # float64
+        scalar_bytes = struct.pack('<d', 1.0)
+    elif dtype_code == 2:  # int8
+        scalar_bytes = b'\x01'
+    elif dtype_code == 4:  # uint8
+        scalar_bytes = b'\x01'
+    elif dtype_code == 6:  # int16
+        scalar_bytes = b'\x01\x00'
+    elif dtype_code == 12: # bool
+        scalar_bytes = b'\x01'
+    else:
+        scalar_bytes = struct.pack('<f', 1.0)  # fallback
+    cdef uintptr_t handle = <uintptr_t>_ffi_ref.create_scalar(scalar_bytes, dtype_code)
+    _alpha_one_handles[dtype_code] = handle
+    return handle
+
+
+def fast_add(a, b):
+    """Optimized add(a, b, alpha=1) that calls _ffi.binary_op_with_alpha directly.
+
+    Skips aclnn.add wrapper overhead:
+    - No get_bindings() dict lookup
+    - No _require_native_npu_ffi check
+    - No _scalar_bytes creation each call (cached per dtype)
+    - No resolve_op each call (cached on first use)
+    - No ctypes.c_void_p wrapping of executor
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_add()
+
+    # 1. Validate device/dtype
+    a_dev = a.device
+    b_dev = b.device
+    if a_dev.type != "npu" or b_dev.type != "npu":
+        raise ValueError("fast_add expects NPU tensors")
+    a_dtype = a.dtype
+    if a_dtype != b.dtype:
+        raise ValueError("fast_add requires matching dtypes")
+
+    # 2. Get runtime + stream
+    cdef int dev_idx = a_dev.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    # 3. Extract shapes into C arrays
+    py_a_shape = a.shape
+    py_b_shape = b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+
+    # 4. C-level shape computation
+    cdef int out_ndim
+    cdef int64_t n
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+        c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+        n = c_numel(out_shape_buf, out_ndim)
+
+    # 5. Convert to Python tuples
+    out_shape = _to_tuple(out_shape_buf, out_ndim)
+    out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    # 6. Allocate output
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    out_ptr = _npu_runtime._alloc_device(n * isize, runtime=runtime)
+
+    # 7. Get dtype code and cached alpha=1 handle
+    cdef str dtype_name = getattr(a_dtype, 'name', str(a_dtype))
+    cdef int dtype_code
+    if dtype_name == 'float32':
+        dtype_code = 0
+    elif dtype_name == 'float16':
+        dtype_code = 1
+    elif dtype_name == 'bfloat16':
+        dtype_code = 27
+    elif dtype_name == 'int32':
+        dtype_code = 3
+    elif dtype_name == 'int64':
+        dtype_code = 9
+    elif dtype_name == 'float64':
+        dtype_code = 11
+    elif dtype_name == 'int8':
+        dtype_code = 2
+    elif dtype_name == 'uint8':
+        dtype_code = 4
+    elif dtype_name == 'int16':
+        dtype_code = 6
+    elif dtype_name == 'bool':
+        dtype_code = 12
+    else:
+        dtype_code = 0  # fallback to float32
+
+    cdef uintptr_t alpha_handle = _get_alpha_one(dtype_code)
+
+    # 8. Get data pointers
+    a_storage = a.storage()
+    b_storage = b.storage()
+    cdef uintptr_t a_ptr, b_ptr, o_ptr
+    a_ptr = a_storage.data_ptr()
+    b_ptr = b_storage.data_ptr()
+    o_ptr = out_ptr
+
+    # 9. Call binary_op_with_alpha directly (skips all aclnn.add wrapper overhead)
+    ws_size, executor = _ffi_ref.binary_op_with_alpha(
+        _add_getws_ptr, _add_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        out_shape, out_stride,
+        dtype_code, 2,  # ACL_FORMAT_ND = 2
+        a_ptr, b_ptr, o_ptr,
+        alpha_handle,
+        int(stream.stream))
+
+    # 10. Handle workspace (rare: ws_size > 0 means execute not yet called)
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _add_exec_ptr, int(workspace_ptr), ws_size,
+                executor, int(stream.stream))
+            if ret != 0:
+                raise RuntimeError(f"aclnnAdd execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    # 11. Defer executor cleanup (mirrors aclnn.add behaviour)
+    import ctypes
+    _defer_executor_fn(ctypes.c_void_p(executor))
+
+    # 12. Wrap output
+    from candle._storage import npu_typed_storage_from_ptr as _nfp  # pylint: disable=import-error,no-name-in-module
+    from candle._tensor import Tensor as _T  # pylint: disable=import-error,no-name-in-module
+    out_storage = _nfp(out_ptr, n, a_dtype, device=a_dev)
+    return _T(out_storage, out_shape, out_stride)
 
 
 # ---------------------------------------------------------------------------

@@ -17,9 +17,19 @@ from ._helpers import (
 # Arithmetic (binary)
 # ---------------------------------------------------------------------------
 
+try:
+    from candle._cython._npu_ops import fast_add as _fast_add_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_ADD = True
+except ImportError:
+    _fast_add_impl = None  # type: ignore[assignment]
+    _HAS_FAST_ADD = False
+
+
 def add(a, b):
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
+    if _HAS_FAST_ADD:
+        return _fast_add_impl(a, b)
     return _binary_op(a, b, aclnn.add, "add")
 
 
