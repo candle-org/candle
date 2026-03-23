@@ -62,9 +62,22 @@ _NPU_DIRS = (os.sep + "npu" + os.sep, os.sep + "distributed" + os.sep)
 _MPS_DIR = os.sep + "mps" + os.sep
 
 
+# Filename patterns for distributed tests that run on CPU (no NPU needed).
+# Add a pattern here for any CPU-only distributed test file whose name does
+# not already contain "gloo".
+_CPU_DISTRIBUTED_PATTERNS = (
+    "gloo",                    # explicit Gloo-backend tests
+    "work_async",              # Work/Future isolation (no backend)
+    "ddp_async_overlap",       # DDP overlap contracts via single-rank Gloo
+    "fsdp_public_api",         # public FSDP namespace tests (single-process)
+    "distributed_mvp_baseline",  # baseline integration tests (uses Gloo)
+)
+
+
 def _is_gloo_test(item: pytest.Item) -> bool:
-    """Test uses Gloo backend (CPU-only, does NOT require NPU hardware)."""
-    return "gloo" in os.path.basename(str(item.fspath)).lower()
+    """Test file uses Gloo or CPU-only isolation (does NOT require NPU hardware)."""
+    name = os.path.basename(str(item.fspath)).lower()
+    return any(pat in name for pat in _CPU_DISTRIBUTED_PATTERNS)
 
 
 def _in_npu_dir(item: pytest.Item) -> bool:

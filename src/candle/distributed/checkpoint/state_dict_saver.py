@@ -5,6 +5,32 @@ Mirrors ``torch.distributed.checkpoint.state_dict_saver``.
 
 from .filesystem import FileSystemWriter
 from .planner import DefaultSavePlanner
+from .stateful import Stateful
+
+
+def _flatten_stateful(state_dict):
+    """Expand Stateful values by calling their state_dict() method.
+
+    Returns a new flat dict where every Stateful value is replaced by the
+    tensors / scalars returned by its ``state_dict()``.  Non-Stateful values
+    pass through unchanged.
+
+    The Stateful object is stored under its own key so that the loader knows
+    where to call ``load_state_dict`` on reload.
+    """
+    result = {}
+    for key, value in state_dict.items():
+        if isinstance(value, Stateful):
+            inner = value.state_dict()
+            if isinstance(inner, dict):
+                for sub_key, sub_val in inner.items():
+                    result[f"{key}/{sub_key}"] = sub_val
+            else:
+                # Scalar or tensor
+                result[key] = inner
+        else:
+            result[key] = value
+    return result
 
 
 def _dist_available():
@@ -80,6 +106,9 @@ def save(
 
     if planner is None:
         planner = DefaultSavePlanner()
+
+    # Expand Stateful values before passing to planner
+    state_dict = _flatten_stateful(state_dict)
 
     # Reset & set up
     storage_writer.reset(checkpoint_id)

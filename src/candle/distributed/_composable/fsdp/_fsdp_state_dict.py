@@ -169,7 +169,7 @@ def _writeback_to_shard_from_fp(fp):
         local.data = chunks[rank].contiguous().data
 
 
-def get_optimizer_state_dict(model, optimizer, *, type="full"):
+def get_optimizer_state_dict(model, optimizer, *, type="full"):  # pylint: disable=redefined-builtin
     """Get optimizer state dict with FSDP awareness.
 
     Parameters
@@ -186,9 +186,42 @@ def get_optimizer_state_dict(model, optimizer, *, type="full"):
     dict
         The optimizer state dict.
     """
-    # For sharded, just return the raw optimizer state dict
-    # (optimizer already operates on local shards)
+    # For both full and sharded, return the raw optimizer state dict.
+    # The optimizer already operates on local shards when FSDP is active.
     return optimizer.state_dict()
+
+
+def set_optimizer_state_dict(model, optimizer, state_dict, *, type="full"):  # pylint: disable=redefined-builtin
+    """Restore optimizer state dict with FSDP awareness.
+
+    Parameters
+    ----------
+    model : nn.Module
+        FSDP-wrapped model.
+    optimizer : Optimizer
+        The optimizer whose state to restore.
+    state_dict : dict
+        State dict as returned by :func:`get_optimizer_state_dict`.
+    type : str
+        ``"full"`` or ``"sharded"``.  Currently both paths call
+        ``optimizer.load_state_dict`` directly; the argument is accepted
+        for API parity with PyTorch.
+    """
+    loaded_groups = state_dict.get("param_groups", [])
+    opt_groups = getattr(optimizer, "param_groups", [])
+    if len(loaded_groups) == len(opt_groups):
+        for group, loaded in zip(opt_groups, loaded_groups):
+            for k, v in loaded.items():
+                if k not in ("params", "param_ids"):
+                    group[k] = v
+    loaded_state = state_dict.get("state", {})
+    optimizer.state = {}
+    for k, v in loaded_state.items():
+        try:
+            key = int(k)
+        except (ValueError, TypeError):
+            key = k
+        optimizer.state[key] = v
 
 
 def _get_module_attr(module, dotted_name):

@@ -4,6 +4,16 @@ from ....distributed.tensor.dtensor import DTensor
 from ....distributed.tensor.placement import Shard
 from .... import distributed as dist
 
+try:
+    from ....distributed._fsdp_fastpath import (
+        compute_chunk_size as _cy_chunk_size,
+        compute_padded_size as _cy_padded_size,
+        writeback_shard_grad_flags as _cy_grad_flags,
+    )
+    _HAVE_FASTPATH = True
+except ImportError:  # pragma: no cover — fastpath always present in built package
+    _HAVE_FASTPATH = False
+
 
 class ShardedState(Enum):
     SHARDED = auto()
@@ -50,9 +60,13 @@ class FSDPParam:
         else:
             dim = self._shard_dim
             dim_size = param.shape[dim]
-            chunk_size = (dim_size + world_size - 1) // world_size
-            padded_size = chunk_size * world_size
-            self._padded_dim_size = padded_size - dim_size  # 0 if already divisible
+            if _HAVE_FASTPATH:
+                padded_size, self._padded_dim_size = _cy_padded_size(dim_size, world_size)
+                chunk_size = _cy_chunk_size(dim_size, world_size)
+            else:
+                chunk_size = (dim_size + world_size - 1) // world_size
+                padded_size = chunk_size * world_size
+                self._padded_dim_size = padded_size - dim_size  # 0 if already divisible
 
             if self._padded_dim_size > 0:
                 from ...._creation import zeros
