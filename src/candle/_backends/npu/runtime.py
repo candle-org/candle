@@ -14,6 +14,7 @@ def _get_aclrt_ffi():
     global _aclrt_ffi_mod
     if _aclrt_ffi_mod is None:
         ensure_acl()
+        from . import ops_soc
         from ..._cython import _aclrt_ffi as mod  # pylint: disable=import-error,no-name-in-module
         if not mod.is_initialized():
             lib_path = None
@@ -23,7 +24,7 @@ def _get_aclrt_ffi():
                     lib_path = candidate
                     break
             version = cann_discovery.get_cann_version() or (0,)
-            enable_aclgraph = tuple(version) >= (8, 5)
+            enable_aclgraph = tuple(version) >= (8, 5) and ops_soc.aclgraph_supported()
             mod.init(lib_path, enable_aclgraph=enable_aclgraph)
         _aclrt_ffi_mod = mod
     return _aclrt_ffi_mod

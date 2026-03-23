@@ -83,6 +83,7 @@ def test_fast_synchronize_skips_fast_path_during_capture(monkeypatch):
 
     monkeypatch.setattr(npu, "_NPU_INITIALIZED", True)
     monkeypatch.setattr(npu_runtime.cann_discovery, "get_cann_version", lambda: (8, 5, 0))
+    monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: True)
     monkeypatch.setattr(npu, "_cy_npu_sync", lambda dev_idx: seen.__setitem__("fast", seen["fast"] + 1))
     monkeypatch.setattr(npu, "is_current_stream_capturing", lambda: True)
     monkeypatch.setattr(npu_runtime, "get_runtime", lambda idx: FakeRuntime())
@@ -90,6 +91,28 @@ def test_fast_synchronize_skips_fast_path_during_capture(monkeypatch):
     npu.synchronize(None)
     assert seen["runtime"] == 1
     assert seen["fast"] == 0
+
+
+def test_fast_synchronize_skips_aclgraph_probe_on_unsupported_soc(monkeypatch):
+    """Fast synchronize should not query aclgraph capture state on unsupported SoCs."""
+    import candle.npu as npu
+    from candle._backends.npu import runtime as npu_runtime
+
+    seen = {"fast": 0}
+
+    monkeypatch.setattr(npu, "_NPU_INITIALIZED", True)
+    monkeypatch.setattr(npu_runtime.cann_discovery, "get_cann_version", lambda: (8, 5, 0))
+    monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: False)
+    monkeypatch.setattr(npu, "_cy_npu_sync", lambda dev_idx: seen.__setitem__("fast", seen["fast"] + 1))
+
+    def fail_probe():
+        raise AssertionError("should not query aclgraph capture state on unsupported SoC")
+
+    monkeypatch.setattr(npu, "is_current_stream_capturing", fail_probe)
+
+    npu.synchronize()
+
+    assert seen["fast"] == 1
 
 
 def test_fast_synchronize_skips_aclgraph_probe_on_old_cann(monkeypatch):

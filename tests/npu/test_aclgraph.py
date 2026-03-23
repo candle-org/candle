@@ -196,6 +196,7 @@ def test_npu_graph_reset_and_debug_dump(fake_graph_env):
 def test_npu_is_current_stream_capturing(fake_graph_env, monkeypatch):
     import candle._cython._aclrt_ffi as aclrt_ffi
 
+    monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: True)
     monkeypatch.setattr(
         aclrt_ffi,
         "capture_get_info",
@@ -208,11 +209,25 @@ def test_npu_is_current_stream_capturing(fake_graph_env, monkeypatch):
 def test_npu_is_current_stream_not_capturing(fake_graph_env, monkeypatch):
     import candle._cython._aclrt_ffi as aclrt_ffi
 
+    monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: True)
     monkeypatch.setattr(
         aclrt_ffi,
         "capture_get_info",
         lambda handle: (aclrt_ffi.ACL_MODEL_RI_CAPTURE_STATUS_NONE, 0),
     )
+
+    assert torch.npu.is_current_stream_capturing() is False
+
+
+def test_npu_is_current_stream_capturing_returns_false_when_aclgraph_unsupported(fake_graph_env, monkeypatch):
+    import candle._cython._aclrt_ffi as aclrt_ffi
+
+    monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: False)
+
+    def fail_probe(handle):
+        raise AssertionError("capture_get_info should not run when aclgraph is unsupported")
+
+    monkeypatch.setattr(aclrt_ffi, "capture_get_info", fail_probe)
 
     assert torch.npu.is_current_stream_capturing() is False
 

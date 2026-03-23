@@ -117,12 +117,19 @@ def synchronize(device=None):
         _cy_npu_sync = _sync
 
     from ._backends.npu import runtime as npu_runtime
+    from ._backends.npu import ops_soc
 
     version = npu_runtime.cann_discovery.get_cann_version() or (0,)
 
     # Capture state is defined for the current stream only, so guard the no-arg
-    # synchronize path and avoid probing aclgraph state on old CANN.
-    if device is None and is_initialized() and tuple(version) >= (8, 5) and is_current_stream_capturing():
+    # synchronize path and avoid probing aclgraph state on unsupported chips or old CANN.
+    if (
+        device is None
+        and is_initialized()
+        and tuple(version) >= (8, 5)
+        and ops_soc.aclgraph_supported()
+        and is_current_stream_capturing()
+    ):
         runtime = npu_runtime.get_runtime(npu_state.current_device())
         _set_initialized()
         runtime.synchronize()
@@ -608,6 +615,12 @@ class graph:
 
 
 def is_current_stream_capturing():
+    # TODO: re-enable native capture_get_info on 310B/310P/910A when CANN adds
+    # aclmdlRI support for those SoCs.
+    from ._backends.npu import ops_soc
+    if not ops_soc.aclgraph_supported():
+        return False
+
     from ._cython import _aclrt_ffi  # pylint: disable=import-error,no-name-in-module
 
     _ensure_initialized()

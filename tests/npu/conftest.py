@@ -25,15 +25,16 @@ def _current_soc_profile():
 
 def _aclgraph_supported():
     from candle._backends.npu import runtime as npu_runtime
+    from candle._backends.npu import ops_soc
 
     version = npu_runtime.cann_discovery.get_cann_version() or (0,)
-    return tuple(version) >= (8, 5)
+    return tuple(version) >= (8, 5) and ops_soc.aclgraph_supported()
 
 
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "requires_aclgraph: test requires live aclgraph support (CANN >= 8.5)",
+        "requires_aclgraph: test requires live aclgraph support (CANN >= 8.5 on a supported SoC)",
     )
 
 
@@ -54,5 +55,5 @@ def pytest_collection_modifyitems(config, items):
         else:
             if not aclgraph_supported and item.get_closest_marker("requires_aclgraph"):
                 item.add_marker(
-                    pytest.mark.skip(reason="aclgraph requires CANN >= 8.5")
+                    pytest.mark.skip(reason="aclgraph requires CANN >= 8.5 and SoC support")
                 )
