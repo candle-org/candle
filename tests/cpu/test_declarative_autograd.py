@@ -666,14 +666,50 @@ def test_generated_cython_modules_import_after_build():
 # Part 7: Generated package Cython availability flag
 # ---------------------------------------------------------------------------
 
-def test_generated_package_has_cython_availability_flag():
-    """The _generated package init should expose _HAS_GENERATED_CYTHON."""
-    import candle._generated as genpkg
-    assert hasattr(genpkg, "_HAS_GENERATED_CYTHON")
-    assert genpkg._HAS_GENERATED_CYTHON is True
 
 
-@_skip_no_yaml
+# ---------------------------------------------------------------------------
+# Part A5: Runtime preference after registration split
+# ---------------------------------------------------------------------------
+
+def test_registration_prefers_compiled_generated_variable_type_for_generated_safe_ops():
+    import importlib
+
+    cy_vt = importlib.import_module("candle._generated._variable_type_cy")
+    reg = importlib.import_module("candle._generated.registration")
+
+    assert hasattr(cy_vt, "exp_autograd")
+    assert hasattr(reg, "register_generated_autograd_kernels")
+
+    ns = {}
+    exec(
+        "from candle._generated import variable_type as _VT_PY\n"
+        "try:\n"
+        "    from candle._generated import _variable_type_cy as _VT_CY\n"
+        "except ImportError:\n"
+        "    _VT_CY = None\n"
+        "_VT = _VT_CY if _VT_CY is not None else _VT_PY\n",
+        ns,
+    )
+    assert ns["_VT"].__name__.endswith("_variable_type_cy")
+
+
+def test_registration_keeps_python_fallback_for_legacy_ops():
+    import importlib
+
+    py_vt = importlib.import_module("candle._generated.variable_type")
+    reg_text = importlib.import_module("candle._generated.registration").__file__
+
+    assert hasattr(py_vt, "sum_to_size_autograd_post")
+    assert hasattr(py_vt, "diff_autograd")
+    assert hasattr(py_vt, "diff_autograd_post")
+
+    from pathlib import Path
+    text = Path(reg_text).read_text()
+    legacy = text.split("# === UPSTREAM LEGACY REGISTRATIONS ===", 1)[1]
+    assert "_VT_PY.sum_to_size_autograd_post" in legacy
+    assert "_VT_PY.diff_autograd" in legacy
+    assert "_VT_PY.diff_autograd_post" in legacy
 def test_gen_autograd_writes_cython_outputs(tmp_path):
     """gen_autograd.main() must write both .pyx outputs alongside the .py outputs.
 

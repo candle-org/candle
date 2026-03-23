@@ -12,7 +12,12 @@ def gen_registration(infos: list[DifferentiabilityInfo]) -> str:
     parts = [_HEADER]
     parts.append("\n\ndef register_generated_autograd_kernels():")
     parts.append("    from .._dispatch.registration import register_autograd_kernels, register_autograd_post_kernels")
-    parts.append("    from . import variable_type as _VT\n")
+    parts.append("    from . import variable_type as _VT_PY")
+    parts.append("    try:")
+    parts.append("        from . import _variable_type_cy as _VT_CY")
+    parts.append("    except ImportError:")
+    parts.append("        _VT_CY = None")
+    parts.append("    _VT = _VT_CY if _VT_CY is not None else _VT_PY\n")
     seen_ops = set()
     for info in infos:
         op = info.op_name
