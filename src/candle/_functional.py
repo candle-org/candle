@@ -162,6 +162,14 @@ try:
     _transpose_impl = _cy_transpose
     _reshape_impl = _cy_reshape
     _neg_impl = _cy_neg
+    # Replace Python wrapper functions with Cython directly
+    add = _cy_add
+    mul = _cy_mul
+    matmul = _cy_matmul
+    relu = _cy_relu
+    transpose = _cy_transpose
+    reshape = _cy_reshape
+    neg = _cy_neg
 except ImportError:
     pass
 
@@ -174,32 +182,43 @@ def _handle_torch_function(func, args, kwargs):
     return _handle_torch_function_impl(func, args, kwargs)
 
 
-def add(*args, **kwargs):
+def _py_add_wrapper(*args, **kwargs):
     return _add_impl(*args, **kwargs)
 
 
-def transpose(*args, **kwargs):
+def _py_transpose_wrapper(*args, **kwargs):
     return _transpose_impl(*args, **kwargs)
 
 
-def reshape(*args, **kwargs):
+def _py_reshape_wrapper(*args, **kwargs):
     return _reshape_impl(*args, **kwargs)
 
 
-def mul(*args, **kwargs):
+def _py_mul_wrapper(*args, **kwargs):
     return _mul_impl(*args, **kwargs)
 
 
-def matmul(*args, **kwargs):
+def _py_matmul_wrapper(*args, **kwargs):
     return _matmul_impl(*args, **kwargs)
 
 
-def relu(*args, **kwargs):
+add = _add_impl
+transpose = _transpose_impl
+reshape = _reshape_impl
+mul = _mul_impl
+matmul = _matmul_impl
+
+
+def _py_relu_wrapper(*args, **kwargs):
     return _relu_impl(*args, **kwargs)
 
 
-def neg(a):
+def _py_neg_wrapper(a):
     return _neg_impl(a)
+
+
+relu = _relu_impl
+neg = _neg_impl
 
 
 def exp(a):
