@@ -108,19 +108,23 @@ _CHIP_FLAGS = {
     "910a": {
         "use_smallop_arange_1d": False,
         "use_smallop_linspace": True,
+        "aclgraph_supported": False,
     },
     "910b": {
         "use_smallop_arange_1d": False,
         "use_smallop_linspace": True,
+        "aclgraph_supported": True,
     },
     "310b": {
         "use_smallop_arange_1d": True,
         "use_smallop_linspace": True,
         "use_safe_int64_index_compare": True,
+        "aclgraph_supported": False,
     },
     "310p": {
         "use_smallop_arange_1d": False,
         "use_smallop_linspace": False,
+        "aclgraph_supported": False,
     },
 }
 
@@ -201,3 +205,7 @@ def use_smallop_arange_1d(profile=None):
 
 def use_smallop_linspace(profile=None):
     return chip_flag("use_smallop_linspace", profile=profile, default=False)
+
+
+def aclgraph_supported(profile=None):
+    return chip_flag("aclgraph_supported", profile=profile, default=False)

@@ -39,6 +39,13 @@ def test_soc_capability_table_routes_safe_int64_index_compare_for_310b_only():
     assert not ops_soc.capability("use_safe_int64_index_compare", profile="310p")
 
 
+def test_soc_capability_table_routes_aclgraph_support_for_910b_only():
+    assert not ops_soc.aclgraph_supported(profile="910a")
+    assert ops_soc.aclgraph_supported(profile="910b")
+    assert not ops_soc.aclgraph_supported(profile="310b")
+    assert not ops_soc.aclgraph_supported(profile="310p")
+
+
 def test_soc_capability_unknown_profile_uses_default_value():
     assert not ops_soc.capability("use_smallop_arange_1d", profile="unknown")
     assert ops_soc.capability("missing_key", profile="unknown", default=True)

@@ -57,7 +57,7 @@ def test_aclgraph_supported_returns_false_for_old_cann(monkeypatch):
     assert npu_conftest._aclgraph_supported() is False
 
 
-def test_aclgraph_supported_returns_true_for_cann_8_5(monkeypatch):
+def test_aclgraph_supported_returns_false_for_unsupported_soc(monkeypatch):
     from candle._backends.npu import runtime as npu_runtime
 
     monkeypatch.setattr(
@@ -65,6 +65,20 @@ def test_aclgraph_supported_returns_true_for_cann_8_5(monkeypatch):
         "cann_discovery",
         _FakeCannDiscovery(version=(8, 5, 0)),
     )
+    monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: False)
+
+    assert npu_conftest._aclgraph_supported() is False
+
+
+def test_aclgraph_supported_returns_true_for_supported_soc_on_cann_8_5(monkeypatch):
+    from candle._backends.npu import runtime as npu_runtime
+
+    monkeypatch.setattr(
+        npu_runtime,
+        "cann_discovery",
+        _FakeCannDiscovery(version=(8, 5, 0)),
+    )
+    monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: True)
 
     assert npu_conftest._aclgraph_supported() is True
 
@@ -102,7 +116,7 @@ def test_pytest_configure_registers_requires_aclgraph_marker():
     assert config.lines == [
         (
             "markers",
-            "requires_aclgraph: test requires live aclgraph support (CANN >= 8.5)",
+            "requires_aclgraph: test requires live aclgraph support (CANN >= 8.5 on a supported SoC)",
         )
     ]
 
@@ -132,7 +146,7 @@ def test_collection_hook_skips_only_marked_items_when_aclgraph_unsupported(monke
 
     npu_conftest.pytest_collection_modifyitems(_FakeConfig(), [marked, unmarked])
 
-    assert _skip_reasons(marked) == ["aclgraph requires CANN >= 8.5"]
+    assert _skip_reasons(marked) == ["aclgraph requires CANN >= 8.5 and SoC support"]
     assert _skip_reasons(unmarked) == []
 
 

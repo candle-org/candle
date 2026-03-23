@@ -181,18 +181,36 @@ def test_runtime_get_aclrt_ffi_disables_aclgraph_on_old_cann(monkeypatch):
     assert calls["init"] == ("/tmp/cann/libascendcl.so", False)
 
 
-def test_npu_runtime_primitives_exist():
+def test_runtime_get_aclrt_ffi_disables_aclgraph_for_unsupported_soc(monkeypatch):
+    import sys
     import candle._backends.npu.runtime as npu_runtime
+    import candle._cython as cython_pkg
 
-    runtime = npu_runtime._Runtime()
-    assert hasattr(runtime, "create_stream")
-    assert hasattr(runtime, "synchronize_stream")
-    assert hasattr(runtime, "create_event")
-    assert hasattr(runtime, "record_event")
-    assert hasattr(runtime, "query_event")
-    assert hasattr(runtime, "event_elapsed_time")
-    assert hasattr(runtime, "stream_wait_event")
-    assert hasattr(runtime, "synchronize_device")
+    calls = {}
+
+    class FakeAclrtFfi:
+        def is_initialized(self):
+            return False
+
+        def init(self, lib_path=None, enable_aclgraph=True):
+            calls["init"] = (lib_path, enable_aclgraph)
+
+    fake_mod = FakeAclrtFfi()
+    monkeypatch.setattr(npu_runtime, "_aclrt_ffi_mod", None)
+    monkeypatch.setattr(npu_runtime, "ensure_acl", lambda: None)
+    monkeypatch.setattr(npu_runtime.cann_discovery, "get_cann_version", lambda: (8, 5, 0))
+    monkeypatch.setattr(npu_runtime.cann_discovery, "get_lib_dirs", lambda: ["/tmp/cann"])
+    monkeypatch.setattr(npu_runtime.os.path, "exists", lambda p: p == "/tmp/cann/libascendcl.so")
+    monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: False)
+    monkeypatch.setattr(cython_pkg, "_aclrt_ffi", fake_mod, raising=False)
+    monkeypatch.setitem(sys.modules, "candle._cython._aclrt_ffi", fake_mod)
+
+    mod = npu_runtime._get_aclrt_ffi()
+
+    assert mod is fake_mod
+    assert calls["init"] == ("/tmp/cann/libascendcl.so", False)
+
+
 
 
 def test_npu_op_uses_current_stream(monkeypatch):
