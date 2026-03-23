@@ -551,6 +551,116 @@ def fast_add(a, b):
 
 
 # ---------------------------------------------------------------------------
+# fast_mul — hardwired mul(a, b) that skips aclnn.py wrapper
+# ---------------------------------------------------------------------------
+
+def fast_mul(a, b):
+    """Optimized mul(a, b) that calls _ffi.binary_op_no_alpha directly.
+
+    Skips aclnn.mul wrapper overhead:
+    - No get_bindings() dict lookup
+    - No _require_native_npu_ffi check
+    - No resolve_op each call (cached in _ensure_ffi_binary)
+    - No ctypes.c_void_p wrapping of executor
+    - Direct C attribute access for device pointers
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    # 1. Validate device/dtype
+    a_dev = a.device
+    b_dev = b.device
+    if a_dev.type != "npu" or b_dev.type != "npu":
+        raise ValueError("fast_mul expects NPU tensors")
+    a_dtype = a.dtype
+    if a_dtype != b.dtype:
+        raise ValueError("fast_mul requires matching dtypes")
+
+    # 2. Get runtime + stream
+    cdef int dev_idx = a_dev.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    # 3. Extract shapes into C arrays
+    py_a_shape = a.shape
+    py_b_shape = b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+
+    # 4. C-level shape computation
+    cdef int out_ndim
+    cdef int64_t n
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+        c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+        n = c_numel(out_shape_buf, out_ndim)
+
+    # 5. Convert to Python tuples
+    out_shape = _to_tuple(out_shape_buf, out_ndim)
+    out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    # 6. Allocate output via cached allocator
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size_fm = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fm, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fm, stream=stream.stream)
+
+    # 7. Get dtype code
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+
+    # 8. Get data pointers — direct C attribute access (no Python method calls)
+    cdef uintptr_t a_ptr, b_ptr, o_ptr
+    a_ptr = a._storage._untyped._device_ptr
+    b_ptr = b._storage._untyped._device_ptr
+    o_ptr = out_ptr
+
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    # 9. Full GetWorkspaceSize + Execute path (no PTA cache for mul)
+    ws_size, executor = _ffi_ref.binary_op_no_alpha(
+        _mul_getws_ptr, _mul_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        out_shape, out_stride,
+        dtype_code, 2,  # ACL_FORMAT_ND = 2
+        a_ptr, b_ptr, o_ptr,
+        stream_raw)
+
+    # 10. Handle workspace (rare: ws_size > 0 means execute not yet called)
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _mul_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnMul execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    # 11. Defer executor cleanup
+    _defer_executor_fn(executor)
+
+    # 12. Wrap output
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+# ---------------------------------------------------------------------------
 # cy_npu_synchronize — fast synchronize bypassing Python dispatch overhead
 # ---------------------------------------------------------------------------
 
