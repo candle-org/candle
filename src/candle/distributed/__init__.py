@@ -47,6 +47,7 @@ from ._backend import (
     get_default_backend_for_device,
 )
 from ._p2p import P2POp, batch_isend_irecv
+from .pipelining import PipelineStage, ScheduleGPipe, TensorChunkSpec, split_microbatches
 from ._object_collectives import (
     broadcast_object_list, all_gather_object,
     gather_object, scatter_object_list,
@@ -1182,6 +1183,8 @@ __all__ = [
     # P2P
     "send", "recv", "isend", "irecv",
     "batch_isend_irecv",
+    # Pipelining (minimal manual frontend)
+    "PipelineStage", "ScheduleGPipe", "TensorChunkSpec", "split_microbatches",
     # Object collectives
     "broadcast_object_list", "all_gather_object",
     "gather_object", "scatter_object_list",

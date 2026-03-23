@@ -167,6 +167,18 @@ if _system == "Linux":
             "candle.distributed._c10d_hccl",
             ["src/candle/distributed/_c10d_hccl.pyx"],
         ),
+        Extension(
+            "candle.distributed._ddp_fastpath",
+            ["src/candle/distributed/_ddp_fastpath.pyx"],
+        ),
+        Extension(
+            "candle.distributed._fsdp_fastpath",
+            ["src/candle/distributed/_fsdp_fastpath.pyx"],
+        ),
+        Extension(
+            "candle.distributed._dtensor_fastpath",
+            ["src/candle/distributed/_dtensor_fastpath.pyx"],
+        ),
     ]
 
 ext_modules = cythonize(
