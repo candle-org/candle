@@ -1601,11 +1601,14 @@ _PYX_HEADER = '''\
 
 import math as _math
 
+# _Node must be imported eagerly because generated classes inherit from it
+# at module-load time (class Foo(_Node):).  All other refs stay lazy.
+from candle.autograd.node import Node as _Node
+
 # ---------------------------------------------------------------------------
 # Module-level cached references to avoid repeated attribute lookup.
 # Populated lazily on first call to _ensure_refs().
 # ---------------------------------------------------------------------------
-cdef object _Node
 cdef object _grad_context
 cdef object _strip_autograd_keys
 cdef object _backward_dispatch_keyset
@@ -1614,7 +1617,6 @@ cdef object _redispatch
 cdef object _reduce_grad
 cdef object _current_dispatch_keyset
 
-_Node = None
 _grad_context = None
 _strip_autograd_keys = None
 _backward_dispatch_keyset = None
@@ -1624,13 +1626,15 @@ _reduce_grad = None
 _current_dispatch_keyset = None
 
 
+def _cy_not_implemented(name):
+    raise NotImplementedError(name)
+
+
 cdef inline void _ensure_refs():
-    global _Node, _grad_context, _strip_autograd_keys, _backward_dispatch_keyset
+    global _grad_context, _strip_autograd_keys, _backward_dispatch_keyset
     global _scalar_tensor_like, _redispatch, _reduce_grad, _current_dispatch_keyset
-    if _Node is not None:
+    if _grad_context is not None:
         return
-    from candle.autograd.node import Node as _n
-    _Node = _n
     from candle._backends.autograd import _grad_context as _gc
     _grad_context = _gc
     from candle._backends.autograd import _strip_autograd_keys as _sak
@@ -1712,16 +1716,115 @@ def _get_pyx_helpers_block() -> str:
     return block
 
 
+
+
+_COMPILE_BLOCKER_TOKENS = (
+    '_raise_not_implemented(',
+    '_as_strided_backward_helper(',
+    '_as_strided_scatter_backward_helper(',
+    '_erf_backward_helper(',
+    '_hardsigmoid_backward_helper(',
+    '_hardswish_backward_helper(',
+    '_slice_backward_wrapper_helper(',
+    '_native_group_norm_helper(',
+    '_prelu_kernel_backward_grad_output_helper(',
+    '_to_padded_tensor_backward_helper(',
+    'M_PI',
+    'M_LN2',
+    'grads[0]',
+    'grads[1]',
+    'grads[2]',
+    'grad_sign',
+    'grad_logabsdet',
+    'grad_L',
+    'grad_U',
+    ' sign,',
+    '(sign',
+    ' inverse',
+    '(inverse',
+    ' solution',
+    '(solution',
+    ' mask)',
+    ' exponent',
+    '(exponent',
+    ' buffer)',
+    '(buffer',
+    ' output,',
+    '(output',
+    ' log_sumexp',
+    '(log_sumexp',
+    ' total_weight',
+    '(total_weight',
+    ' retain_variables',
+    '(retain_variables',
+    ' is_target',
+    '(is_target',
+    ', L)',
+    ', P,',
+    ', U,',
+    ' bias)',
+    '(bias',
+)
+
+
+def _get_pyx_helper_names() -> set[str]:
+    import re
+    return set(re.findall(r'^def\s+([A-Za-z_]\w*)\(', _get_pyx_helpers_block(), flags=re.M)) | {"_inverse_permutation", "_cy_not_implemented"}
+
+
+def _collect_formula_name_ids(formula: str) -> set[str]:
+    import ast
+    try:
+        tree = ast.parse(formula, mode='eval')
+    except SyntaxError:
+        try:
+            tree = ast.parse(formula, mode='exec')
+        except SyntaxError:
+            return {"__syntax_error__"}
+    return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+
+
+_SAFE_FORMULA_GLOBAL_NAMES = {
+    "grad",
+    "keyset",
+    "grad_input_mask",
+    "_redispatch",
+    "_reduce_grad",
+    "_current_dispatch_keyset",
+    "_grad_context",
+    "_backward_dispatch_keyset",
+    "_strip_autograd_keys",
+    "_scalar_tensor_like",
+    "_cy_not_implemented",
+    "_math",
+    "True",
+    "False",
+    "None",
+    "len",
+    "list",
+    "tuple",
+    "float",
+    "int",
+    "bool",
+    "range",
+}
+
+
+def _is_cython_safe_formula(formula: str, available_names: set[str]) -> bool:
+    if any(token in formula for token in _COMPILE_BLOCKER_TOKENS):
+        return False
+    names = _collect_formula_name_ids(formula)
+    allowed = available_names | _SAFE_FORMULA_GLOBAL_NAMES | _get_pyx_helper_names()
+    unknown = {name for name in names if name not in allowed}
+    return not unknown
+
 def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
     """Generate _functions_cy.pyx — Cython compiled backward Node classes."""
     import re as _re
     parts = [_PYX_HEADER]
-    # Append all helper functions from the Python _HEADER (skipping imports
-    # and the _inverse_permutation def which is already in _PYX_HEADER).
     parts.append(_get_pyx_helpers_block())
     for info in infos:
         parts.append(_gen_one_node_pyx(info))
-    # Emit canonical overload aliases
     seen_ops: set = set()
     alias_lines = []
     for info in infos:
@@ -1734,16 +1837,10 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
         parts.append("\n\n# Canonical overload aliases")
         parts.extend(alias_lines)
     content = "\n".join(parts) + "\n"
-    # Rewrite bare function names in Node apply() bodies to cached module-level
-    # refs.  The helper block already has these names rewritten by
-    # _get_pyx_helpers_block(); this pass covers the transpiled formula code
-    # emitted by _gen_one_node_pyx().  Use negative lookbehind (?<!_) so
-    # already-prefixed names (e.g. _redispatch) are not double-prefixed.
     content = _re.sub(r'(?<!_)\bredispatch\(', '_redispatch(', content)
     content = _re.sub(r'(?<!_)\breduce_grad\(', '_reduce_grad(', content)
     content = _re.sub(r'(?<!_)\bcurrent_dispatch_keyset\(', '_current_dispatch_keyset(', content)
     return content
-
 
 def _gen_one_node_pyx(info: DifferentiabilityInfo) -> str:
     """Generate a single backward Node class for the .pyx module.
@@ -1801,14 +1898,17 @@ def _gen_one_node_pyx(info: DifferentiabilityInfo) -> str:
     lines.append("        keyset = _backward_dispatch_keyset(self._raw_keyset)")
 
     # Retrieve saved tensors
+    local_names: set[str] = {"grad", "keyset"}
     for name in saved_inputs:
         arg = next((a for a in info.args if a.name == name), None)
         if arg and arg.is_tensor_list:
             continue
         local = _safe_local(name)
+        local_names.add(local)
         lines.append(f"        {local} = self.saved_tensors[self._saved_{name}_idx] if self._saved_{name}_idx is not None else None")
     for name in saved_outputs:
         local = _safe_local(name)
+        local_names.add(local)
         lines.append(f"        {local} = self.saved_tensors[self._saved_{name}_idx] if self._saved_{name}_idx is not None else None")
 
     # Retrieve unsaved tensor args referenced in formulas
@@ -1830,6 +1930,7 @@ def _gen_one_node_pyx(info: DifferentiabilityInfo) -> str:
     for name in sorted(unsaved_referenced):
         arg = next((a for a in info.args if a.name == name), None)
         local = _safe_local(name)
+        local_names.add(local)
         if arg and arg.is_tensor_list:
             lines.append(f"        {local} = list(self.inputs)")
         else:
@@ -1838,7 +1939,9 @@ def _gen_one_node_pyx(info: DifferentiabilityInfo) -> str:
 
     # Retrieve non-tensor args
     for arg in non_tensor_args:
-        lines.append(f"        {_safe_local(arg.name)} = self._{arg.name}")
+        local = _safe_local(arg.name)
+        local_names.add(local)
+        lines.append(f"        {local} = self._{arg.name}")
 
     diff_inputs = info.differentiable_inputs
     grad_vars: dict = {}
@@ -1850,24 +1953,37 @@ def _gen_one_node_pyx(info: DifferentiabilityInfo) -> str:
                 mask_parts.append(f"({local_name} is not None)")
             else:
                 mask_parts.append("True")
-        lines.append(f"        grad_input_mask = [{', '.join(mask_parts)}]")
+        mask_expr = f"[{', '.join(mask_parts)}]"
+        if _is_cython_safe_formula(mask_expr, local_names):
+            lines.append(f"        grad_input_mask = {mask_expr}")
+            local_names.add("grad_input_mask")
     if info.derivatives:
         lines.append("        with _grad_context(keyset):")
 
     for deriv in info.derivatives:
         formula = transpile(deriv.formula)
         formula = _rewrite_keyword_refs(formula, {arg.name for arg in info.args})
+        safe_formula = _is_cython_safe_formula(formula, local_names)
         if len(deriv.var_names) == 1:
             var_name = deriv.var_names[0]
             grad_var = f"grad_{var_name}"
             grad_vars[var_name] = grad_var
-            lines.append(f"            {grad_var} = {formula}")
+            local_names.add(grad_var)
+            if safe_formula:
+                lines.append(f"            {grad_var} = {formula}")
+            else:
+                lines.append(f"            {grad_var} = _cy_not_implemented(\"{cls_name}: {var_name}\")")
         else:
             grad_var_names = [f"grad_{v}" for v in deriv.var_names]
             for v, gv in zip(deriv.var_names, grad_var_names):
                 grad_vars[v] = gv
-            lhs = ", ".join(grad_var_names)
-            lines.append(f"            {lhs} = {formula}")
+                local_names.add(gv)
+            if safe_formula:
+                lhs = ", ".join(grad_var_names)
+                lines.append(f"            {lhs} = {formula}")
+            else:
+                for v, gv in zip(deriv.var_names, grad_var_names):
+                    lines.append(f"            {gv} = _cy_not_implemented(\"{cls_name}: {v}\")")
 
     diff_inputs = info.differentiable_inputs
     if len(diff_inputs) == 0:

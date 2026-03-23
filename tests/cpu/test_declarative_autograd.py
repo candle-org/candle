@@ -619,6 +619,26 @@ def test_generated_functions_cython_header_contains_cached_refs(tmp_path):
         f"{neg_index_matches[:3]}"
     )
 
+    # Cython-safe generator contract: avoid known compile-blocker free names.
+    blocker_patterns = [
+        r'\b_raise_not_implemented\(',
+        r'\b_as_strided_backward_helper\(',
+        r'\b_erf_backward_helper\(',
+        r'\b_hardsigmoid_backward_helper\(',
+        r'\b_hardswish_backward_helper\(',
+        r'\bM_PI\b',
+        r'\bM_LN2\b',
+        r'\bgrad_sign\b',
+        r'\bgrad_logabsdet\b',
+        r'\bgrad_L\b',
+        r'\bgrad_U\b',
+        r'\bgrads\[0\]',
+        r'\bgrads\[1\]',
+        r'\bgrads\[2\]',
+    ]
+    unexpected = [pattern for pattern in blocker_patterns if re.search(pattern, content)]
+    assert not unexpected, f"known Cython compile blockers still present: {unexpected[:8]}"
+
     # Also verify gen_autograd writes the content to disk
     from tools.autograd.gen_autograd import main
     main(yaml_path, tmp_path)
@@ -627,6 +647,18 @@ def test_generated_functions_cython_header_contains_cached_refs(tmp_path):
     disk_content = pyx_path.read_text()
     assert "cdef object _Node" in disk_content, \
         "written _functions_cy.pyx missing cached refs"
+
+
+def test_generated_cython_modules_import_after_build():
+    """Smoke test: both generated Cython modules must be importable after build.
+
+    This test drives Task 5: it fails before the generated .pyx files are
+    compiled and installed.  It passes once setup.py includes them and the
+    editable package is reinstalled.
+    """
+    import importlib
+    importlib.import_module("candle._generated._variable_type_cy")
+    importlib.import_module("candle._generated._functions_cy")
 
 
 @_skip_no_yaml

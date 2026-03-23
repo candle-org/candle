@@ -124,6 +124,14 @@ if _system in ("Linux", "Darwin"):
             "candle._cython._dataloader_ops",
             ["src/candle/_cython/_dataloader_ops.pyx"],
         ),
+        Extension(
+            "candle._generated._functions_cy",
+            ["src/candle/_generated/_functions_cy.pyx"],
+        ),
+        Extension(
+            "candle._generated._variable_type_cy",
+            ["src/candle/_generated/_variable_type_cy.pyx"],
+        ),
     ]
 
 # ---------------------------------------------------------------------------
