@@ -5,27 +5,34 @@ Parameters are grouped into ~25MB buckets. When all grads in a bucket
 are ready, the bucket is allreduced (or passed to a custom comm hook).
 """
 
+import importlib
 from contextlib import contextmanager
 from ..module import Module
 
 # Try to use the compiled Cython fastpath for bucket bookkeeping.
 # Falls back to pure-Python equivalents when the extension is absent
 # (e.g. during editable installs before `python setup.py build_ext`).
+# Import the extension module as a module object so static tooling does not
+# need to resolve individual symbols from a generated Cython extension.
 try:
-    from ...distributed._ddp_fastpath import (
-        build_bucket_mapping as _cy_build_bucket_mapping,
-        make_bucket_pending_counts as _cy_make_bucket_pending_counts,
-        decrement_pending as _cy_decrement_pending,
-        dtype_itemsize as _cy_dtype_itemsize,
-    )
+    _cy_ddp_fastpath = importlib.import_module("candle.distributed._ddp_fastpath")
+    _cy_build_bucket_mapping = _cy_ddp_fastpath.build_bucket_mapping
+    _cy_make_bucket_pending_counts = _cy_ddp_fastpath.make_bucket_pending_counts
+    _cy_decrement_pending = _cy_ddp_fastpath.decrement_pending
+    _cy_dtype_itemsize = _cy_ddp_fastpath.dtype_itemsize
     _HAVE_FASTPATH = True
 except ImportError:
+    _cy_ddp_fastpath = None
+    _cy_build_bucket_mapping = None
+    _cy_make_bucket_pending_counts = None
+    _cy_decrement_pending = None
+    _cy_dtype_itemsize = None
     _HAVE_FASTPATH = False
 
 
 def _dtype_itemsize(dtype_obj) -> int:
     """Return byte width of a candle dtype object (Python fallback)."""
-    if _HAVE_FASTPATH:
+    if _HAVE_FASTPATH and _cy_dtype_itemsize is not None:
         return _cy_dtype_itemsize(dtype_obj)
     name = str(dtype_obj)
     if '.' in name:
@@ -114,9 +121,8 @@ class _Reducer:
         self._reset_state()
 
     def _build_buckets(self, bucket_cap_bytes):
-        if _HAVE_FASTPATH:
-            from ...distributed._ddp_fastpath import build_bucket_mapping
-            self.buckets, self._param_to_bucket = build_bucket_mapping(
+        if _HAVE_FASTPATH and _cy_build_bucket_mapping is not None:
+            self.buckets, self._param_to_bucket = _cy_build_bucket_mapping(
                 self.grad_params, bucket_cap_bytes
             )
             return
