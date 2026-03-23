@@ -100,7 +100,8 @@ cdef inline void _ensure_npu_refs():
     if _npu_refs_loaded:
         return
 
-    from candle._backends.npu.ops import add as _nadd, mul as _nmul
+    from candle._cython._npu_ops import fast_add as _nadd  # pylint: disable=import-error,no-name-in-module
+    from candle._backends.npu.ops import mul as _nmul
     from candle.autograd.grad_mode import _GRAD_MODE_STATE as _gms
     from candle._dispatch.functionalize import is_functionalize_enabled as _ife
     from candle._dispatch.pipeline import current_pipeline as _cp
