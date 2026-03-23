@@ -253,6 +253,10 @@ pylint src/candle --rcfile=.github/pylint.conf
 
 We welcome contributions! Whether it's new ops, backend support, bug fixes, or docs — open an issue or submit a PR.
 
+## Friends
+
+- [LINUX DO](https://linux.do/)
+
 ## License
 
 [MIT](LICENSE)

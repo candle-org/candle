@@ -221,6 +221,10 @@ pylint src/candle --rcfile=.github/pylint.conf
 
 欢迎任何形式的贡献！无论是新算子、后端支持、bug 修复还是文档改进 — 提 issue 或者发 PR 都行。
 
+## 友情链接
+
+- [LINUX DO](https://linux.do/)
+
 ## 许可证
 
 [MIT](LICENSE)
