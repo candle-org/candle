@@ -237,27 +237,52 @@ cdef class Work:
         self._source_rank = source_rank
         self._on_wait = None
         self._result = None
+        self._future = None  # lazily created by get_future()
+
+    cdef void _resolve_future(self, object exc):
+        """Resolve the stored future (if any) with result or exception."""
+        cdef object fut
+        if self._future is None:
+            return
+        fut = self._future
+        if exc is not None:
+            try:
+                fut.set_exception(exc)
+            except RuntimeError:
+                pass  # already resolved
+        else:
+            try:
+                fut.set_result(self.result())
+            except RuntimeError:
+                pass  # already resolved
 
     cpdef bint wait(self, timeout=None):
+        if self._completed:
+            return True
         if timeout is not None:
             _to_seconds(timeout)  # validate timedelta accepted
-        if not self._completed and self._stream is not None:
+        if self._stream is not None:
             try:
                 from .._backends.npu import runtime as npu_runtime
                 dev = self._device_id if self._device_id is not None else 0
                 npu_runtime.get_runtime(dev).synchronize_stream(self._stream)
             except Exception as e:
                 self._exception = e
+                self._resolve_future(e)
                 raise
         if self._on_wait is not None:
             try:
                 self._on_wait()
             except Exception as e:
                 self._exception = e
+                self._on_wait = None
+                self._completed = True
+                self._resolve_future(e)
                 raise
             finally:
                 self._on_wait = None
         self._completed = True
+        self._resolve_future(None)
         return True
 
     cpdef bint is_completed(self):
@@ -296,14 +321,25 @@ cdef class Work:
     def get_future(self):
         from ..futures import Future
 
-        fut = Future()
-        try:
-            self.wait()
-        except Exception as exc:
-            fut.set_exception(exc)
-            return fut
+        if self._future is not None:
+            return self._future
 
-        fut.set_result(self.result())
+        fut = Future()
+        self._future = fut
+
+        # If already completed, resolve immediately
+        if self._completed:
+            if self._exception is not None:
+                try:
+                    fut.set_exception(self._exception)
+                except RuntimeError:
+                    pass
+            else:
+                try:
+                    fut.set_result(self.result())
+                except RuntimeError:
+                    pass
+
         return fut
 
 

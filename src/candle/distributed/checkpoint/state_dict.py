@@ -5,13 +5,21 @@ This MVP intentionally provides a narrow surface:
 - restores model and optimizer state dictionaries
 
 It is designed for single-node DDP training recovery flows.
+FSDP-awareness is added via the fsdp_type keyword argument.
 """
 
 import candle as torch
 
+
 def _unwrap_model(model):
     # DDP/DataParallel expose the wrapped module at `.module`.
     return getattr(model, "module", model)
+
+
+def _is_fsdp_model(model):
+    """Return True if *model* (or its inner module) carries FSDP state."""
+    base = _unwrap_model(model)
+    return hasattr(base, '_fsdp_state')
 
 
 def get_state_dict(
@@ -21,6 +29,7 @@ def get_state_dict(
     rank0_only=False,
     rank=None,
     as_payload=False,
+    fsdp_type=None,
 ):
     """Return model and optimizer state dicts.
 
@@ -42,7 +51,16 @@ def get_state_dict(
         current_rank = 0 if rank is None else int(rank)
 
     base_model = _unwrap_model(model)
-    model_state = base_model.state_dict()
+
+    # FSDP-aware model state dict
+    if fsdp_type is not None and _is_fsdp_model(model):
+        from candle.distributed._composable.fsdp._fsdp_state_dict import (  # pylint: disable=import-outside-toplevel
+            get_model_state_dict as _get_model_sd,
+        )
+        model_state = _get_model_sd(base_model, type=fsdp_type)
+    else:
+        model_state = base_model.state_dict()
+
     optim_state = optimizer.state_dict() if optimizer is not None else None
     if as_payload:
         return {
@@ -65,6 +83,7 @@ def set_state_dict(
     optim_state_dict=None,
     strict=True,
     allow_partial_optimizer=False,
+    fsdp_type=None,
 ):
     """Restore model and optimizer state dicts.
 
@@ -74,6 +93,8 @@ def set_state_dict(
         model_state_dict: state dict for model.
         optim_state_dict: optional state dict for optimizer.
         strict: forwarded to ``model.load_state_dict``.
+        fsdp_type: if set, delegate model restore to FSDP-aware helper.
+            ``"full"`` or ``"sharded"``.
     """
     if payload is not None:
         meta = payload.get("meta")
@@ -85,21 +106,35 @@ def set_state_dict(
         if optim_state_dict is None:
             optim_state_dict = payload.get("optim")
 
-    if model_state_dict is None:
-        if payload is None and not strict:
-            return {
-                "missing_keys": [],
-                "unexpected_keys": [],
-                "loaded_keys_count": 0,
-                "restored_optimizer_state_keys_count": 0,
-            }
+    base_model = _unwrap_model(model)
+    restored_optimizer_state_keys_count = 0
+    missing_keys = []
+    unexpected_keys = []
+    loaded_keys_count = 0
+
+    if model_state_dict is not None:
+        # FSDP-aware restore
+        if fsdp_type is not None and _is_fsdp_model(model):
+            from candle.distributed._composable.fsdp._fsdp_state_dict import (  # pylint: disable=import-outside-toplevel
+                set_model_state_dict as _set_model_sd,
+            )
+            _set_model_sd(base_model, model_state_dict, type=fsdp_type)
+            loaded_keys_count = len(model_state_dict)
+        else:
+            expected_keys = set(base_model.state_dict().keys())
+            provided_keys = set(model_state_dict.keys())
+            incompatible = base_model.load_state_dict(model_state_dict, strict=strict)
+            missing_keys = list(getattr(incompatible, "missing_keys", []))
+            unexpected_keys = list(getattr(incompatible, "unexpected_keys", []))
+            if not strict:
+                missing_keys = sorted(expected_keys - provided_keys)
+                unexpected_keys = sorted(provided_keys - expected_keys)
+            loaded_keys_count = len(expected_keys & provided_keys)
+    elif payload is None and not strict:
+        pass  # optimizer-only restore is fine
+    elif payload is None and model_state_dict is None and optim_state_dict is None:
         raise ValueError("model_state_dict must not be None")
 
-    base_model = _unwrap_model(model)
-    expected_keys = set(base_model.state_dict().keys())
-    provided_keys = set(model_state_dict.keys())
-    incompatible = base_model.load_state_dict(model_state_dict, strict=strict)
-    restored_optimizer_state_keys_count = 0
     if optimizer is not None and optim_state_dict is not None:
         # Safe optimizer restore: preserve runtime-owned parameter objects and
         # copy only serializable group options/state.
@@ -121,14 +156,6 @@ def set_state_dict(
             optimizer.state[key] = v
         restored_optimizer_state_keys_count = len(loaded_state)
 
-    missing_keys = list(getattr(incompatible, "missing_keys", []))
-    unexpected_keys = list(getattr(incompatible, "unexpected_keys", []))
-    # Current module.load_state_dict only populates these in strict mode;
-    # for checkpoint reporting we expose them in both modes.
-    if not strict:
-        missing_keys = sorted(expected_keys - provided_keys)
-        unexpected_keys = sorted(provided_keys - expected_keys)
-    loaded_keys_count = len(expected_keys & provided_keys)
     return {
         "missing_keys": missing_keys,
         "unexpected_keys": unexpected_keys,

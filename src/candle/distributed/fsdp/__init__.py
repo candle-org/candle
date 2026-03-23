@@ -1,4 +1,10 @@
-"""torch.distributed.fsdp stub - not available in candle."""
+"""torch.distributed.fsdp public API for candle.
+
+Current public surface exposes composable FSDP2's fully_shard path while the
+legacy FullyShardedDataParallel wrapper remains unavailable.
+"""
+
+from .._composable.fsdp import fully_shard
 
 
 class FullyShardedDataParallel:
@@ -22,10 +28,6 @@ class ShardingStrategy:
     FULL_SHARD = 0
     SHARD_GRAD_OP = 1
     NO_SHARD = 2
-
-
-def fully_shard(*args, **kwargs):
-    raise NotImplementedError("fully_shard is not available in candle.")
 
 
 def __getattr__(name):

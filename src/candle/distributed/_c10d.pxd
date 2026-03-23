@@ -93,10 +93,12 @@ cdef class Work:
     cdef public int _source_rank
     cdef public object _on_wait
     cdef public object _result
+    cdef public object _future
 
     cpdef bint wait(self, timeout=*)
     cpdef bint is_completed(self)
     cpdef bint is_success(self)
+    cdef void _resolve_future(self, object exc)
 
 
 # ---------------------------------------------------------------------------
