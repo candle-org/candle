@@ -2557,8 +2557,9 @@ class ClampTensorBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         grad_input_mask = [True, (min is not None), (max is not None)]
         with _grad_context(keyset):
+            grad_input_mask = [True, (min is not None), (max is not None)]
             grad_self = _clamp_backward_helper(grad, self_, min, max, keyset)
-            grad_min, grad_max = redispatch("clamp_backward_min_max", keyset, grad, self_, min, max, grad_input_mask)
+            grad_min, grad_max = None, None
         return (grad_self, grad_min, grad_max,)
 
 class ClampBackward0(Node):
@@ -13106,7 +13107,7 @@ class EluBackward0(Node):
         scale = self._scale
         input_scale = self._input_scale
         with _grad_context(keyset):
-            grad_self = _celu_grad(grad, self_, alpha, keyset)
+            grad_self = _elu_grad(grad, self_, alpha, keyset)
         return (grad_self,)
 
 class CeluBackward0(Node):
@@ -13134,7 +13135,7 @@ class CeluBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         alpha = self._alpha
         with _grad_context(keyset):
-            grad_self = redispatch("elu_backward", keyset, grad, alpha, 1, redispatch("div", keyset, 1.0, float(alpha)), False, self_)
+            grad_self = _celu_grad(grad, self_, alpha, keyset)
         return (grad_self,)
 
 class GeluBackward0(Node):

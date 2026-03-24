@@ -1589,7 +1589,24 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
         return "\n".join(lines)
 
     if info.backward_name == "EluBackward0":
+        lines.append("            grad_self = _elu_grad(grad, self_, alpha, keyset)")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "CeluBackward0":
         lines.append("            grad_self = _celu_grad(grad, self_, alpha, keyset)")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampTensorBackward0":
+        lines.append("            grad_input_mask = [True, (min is not None), (max is not None)]")
+        lines.append("            grad_self = _clamp_backward_helper(grad, self_, min, max, keyset)")
+        lines.append("            grad_min, grad_max = None, None")
+        lines.append("        return (grad_self, grad_min, grad_max,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampBackward0":
+        lines.append("            grad_self = _clamp_backward_helper(grad, self_, min, max, keyset)")
         lines.append("        return (grad_self,)")
         return "\n".join(lines)
 
