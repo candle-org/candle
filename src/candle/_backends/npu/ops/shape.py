@@ -2587,6 +2587,28 @@ def gather(a, dim, index):
     return _gather_unchecked(a, dim, index)
 
 
+
+
+def _index_select_known_nonnegative(a, dim, index):
+    dim = _normalize_dim(dim, a.dim())
+    _require_int64_indices(index, "index_select")
+    if index.dim() != 1:
+        raise ValueError("index must be 1D")
+    index_shape = list(a.shape)
+    index_shape[dim] = index.shape[0]
+    index_shape = tuple(index_shape)
+    expand_shape = [1] * a.dim()
+    expand_shape[dim] = index.shape[0]
+    expanded = view_backend.reshape(index, tuple(expand_shape))
+    repeats = []
+    for axis, size in enumerate(index_shape):
+        repeats.append(1 if axis == dim else int(size))
+    expanded = repeat(expanded, tuple(repeats))
+    return gather(a, dim, expanded)
+
+
+
+
 def index_select(a, dim, index):
     dim = _normalize_dim(dim, a.dim())
     _require_int64_indices(index, "index_select")
@@ -2612,8 +2634,6 @@ def take(a, index):
         gather_index = gather_index.reshape((gather_index.numel(),))
     out = gather(flat, 0, gather_index)
     return out.reshape(index_shape)
-
-
 def take_along_dim(a, indices, dim):
     dim = _normalize_dim(dim, a.dim())
     _require_int64_indices(indices, "take_along_dim")
