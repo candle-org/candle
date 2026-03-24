@@ -446,6 +446,9 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -471,6 +474,9 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -560,6 +566,9 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -585,6 +594,9 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -612,6 +624,9 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -705,6 +720,9 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -731,6 +749,9 @@ jobs:
             ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -848,6 +869,9 @@ jobs:
             ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -871,6 +895,9 @@ jobs:
             ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
@@ -900,6 +927,9 @@ jobs:
             ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
             PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            GH_TOKEN="$GH_TOKEN" \
+            GITHUB_REPOSITORY="$GITHUB_REPOSITORY" \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
