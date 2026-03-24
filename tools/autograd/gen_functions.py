@@ -1572,7 +1572,7 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
         lines.append("            _self_dtype = self_.dtype if hasattr(self_, 'dtype') else grad.dtype")
         lines.append("            _other_dtype = other.dtype if hasattr(other, 'dtype') else grad.dtype")
         lines.append("            grad_self = _sum_to_backward_helper(_mul_tensor_backward_helper(grad, other, _self_dtype, keyset), self_.shape if hasattr(self_, 'shape') else (), keyset)")
-        lines.append("            grad_other = _sum_to_backward_helper(_mul_tensor_backward_helper(grad, self_, _other_dtype, keyset), other.shape if hasattr(other, 'shape') else (), keyset)")
+        lines.append("            grad_other = _sum_to_backward_helper(_mul_tensor_backward_helper(grad, self_, _other_dtype, keyset), other.shape, keyset) if hasattr(other, 'shape') else None")
         lines.append("        return (grad_self, grad_other,)")
         return "\n".join(lines)
 
