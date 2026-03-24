@@ -9,6 +9,7 @@ body:
       label: Agent tool
       options:
         - Claude Code
+        - Codex
         - Cursor
         - GitHub Copilot
         - Other
@@ -19,6 +20,7 @@ body:
     id: linked
     attributes:
       label: Linked roadmap issue
+      description: Every AI feature request must tie to a roadmap item.
       placeholder: "#204"
     validations:
       required: true
@@ -27,7 +29,9 @@ body:
     id: motivation
     attributes:
       label: Motivation
-      placeholder: Explain the problem this proposal solves
+      description: What user-facing problem does this solve? Reference the PyTorch API gap if applicable.
+      placeholder: |
+        `torch.nn.utils.parametrize` is used by HuggingFace transformers but not yet implemented in candle ...
     validations:
       required: true
 
@@ -35,7 +39,11 @@ body:
     id: proposal
     attributes:
       label: Proposed implementation direction
-      placeholder: Summarize the intended approach without pasting full code
+      description: Summarize the approach. Mention which dispatch layer, backend, or schema changes are involved — do not paste full code.
+      placeholder: |
+        Add a `parametrize` module under `candle.nn.utils` that ...
+        Dispatch: register via the existing schema system ...
+        Backend: CPU-only initially, NPU follow-up ...
     validations:
       required: true
 
@@ -44,9 +52,9 @@ body:
     attributes:
       label: Affected files or subsystems
       placeholder: |
-        - src/candle/...
-        - tests/...
-        - compat/...
+        - src/candle/nn/utils/
+        - src/candle/_dispatch/schemas.py
+        - tests/cpu/test_parametrize.py
     validations:
       required: true
 
@@ -54,8 +62,9 @@ body:
     id: success
     attributes:
       label: Success criteria
+      description: Concrete, testable conditions.
       placeholder: |
-        - [ ] ...
-        - [ ] ...
+        - [ ] `parametrize.register_parametrization()` works identically to PyTorch
+        - [ ] Downstream code that calls this API runs without error
     validations:
       required: true
