@@ -14,12 +14,16 @@ cdef object _dispatch_fn = None
 cdef object _py_add_fn = None
 cdef object _py_mul_fn = None
 cdef object _py_matmul_fn = None
+cdef object _py_sub_fn = None
+cdef object _py_div_fn = None
 cdef object _py_relu_fn = None
 cdef object _py_neg_fn = None
 
 # NPU fast-path: cached references for direct kernel calls
 cdef object _npu_add_fn = None
 cdef object _npu_mul_fn = None
+cdef object _npu_sub_fn = None
+cdef object _npu_div_fn = None
 cdef object _grad_mode_state = None
 cdef object _is_functionalize_fn = None
 cdef object _current_pipeline_fn = None
@@ -78,22 +82,25 @@ cdef void _collect_types(object val, object types):
 
 
 cdef inline void _ensure_originals():
-    global _py_add_fn, _py_mul_fn, _py_matmul_fn, _py_relu_fn, _py_neg_fn
+    global _py_add_fn, _py_mul_fn, _py_matmul_fn, _py_sub_fn, _py_div_fn
+    global _py_relu_fn, _py_neg_fn
 
     _ensure_dispatch()
 
     if _py_add_fn is None:
-        from candle._functional import _py_add, _py_mul, _py_matmul, _py_relu, _py_neg
+        from candle._functional import _py_add, _py_mul, _py_matmul, _py_sub, _py_div, _py_relu, _py_neg
         _py_add_fn = _py_add
         _py_mul_fn = _py_mul
         _py_matmul_fn = _py_matmul
+        _py_sub_fn = _py_sub
+        _py_div_fn = _py_div
         _py_relu_fn = _py_relu
         _py_neg_fn = _py_neg
 
 
 cdef inline void _ensure_npu_refs():
     """Load NPU op refs and guard state once."""
-    global _npu_add_fn, _npu_mul_fn
+    global _npu_add_fn, _npu_mul_fn, _npu_sub_fn, _npu_div_fn
     global _grad_mode_state, _is_functionalize_fn, _current_pipeline_fn
     global _npu_refs_loaded
 
@@ -101,13 +108,26 @@ cdef inline void _ensure_npu_refs():
         return
 
     from candle._cython._npu_ops import fast_add as _nadd  # pylint: disable=import-error,no-name-in-module
-    from candle._backends.npu.ops import mul as _nmul
+    try:
+        from candle._cython._npu_ops import fast_mul as _nmul  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        from candle._backends.npu.ops import mul as _nmul
+    try:
+        from candle._cython._npu_ops import fast_sub as _nsub  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        from candle._backends.npu.ops import sub as _nsub
+    try:
+        from candle._cython._npu_ops import fast_div as _ndiv  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        from candle._backends.npu.ops import div as _ndiv
     from candle.autograd.grad_mode import _GRAD_MODE_STATE as _gms
     from candle._dispatch.functionalize import is_functionalize_enabled as _ife
     from candle._dispatch.pipeline import current_pipeline as _cp
 
     _npu_add_fn = _nadd
     _npu_mul_fn = _nmul
+    _npu_sub_fn = _nsub
+    _npu_div_fn = _ndiv
     _grad_mode_state = _gms
     _is_functionalize_fn = _ife
     _current_pipeline_fn = _cp
@@ -237,6 +257,58 @@ def mul(a, b):
         return r
 
     return _dispatch_fn("mul", None, a, b)
+
+
+def sub(a, b, *, alpha=1):
+    """Fast sub: skip __torch_function__ when both args are base Tensor."""
+    cdef object r
+
+    _ensure_originals()
+
+    if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
+        if alpha != 1:
+            b = _dispatch_fn("mul", None, b, alpha)
+        elif _is_npu_tensor_pair(a, b):
+            _ensure_npu_refs()
+            if _npu_fast_ok(a, b):
+                return _npu_sub_fn(a, b)
+        return _dispatch_fn("sub", None, a, b)
+
+    r = _handle_torch_function(_py_sub_fn, (a, b), {"alpha": alpha})
+    if r is not NotImplemented:
+        return r
+
+    if alpha != 1:
+        b = _dispatch_fn("mul", None, b, alpha)
+    return _dispatch_fn("sub", None, a, b)
+
+
+def div(a, b, *, rounding_mode=None):
+    """Fast div: skip __torch_function__ when both args are base Tensor."""
+    cdef object r
+
+    _ensure_originals()
+
+    if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
+        if rounding_mode == "trunc":
+            return _dispatch_fn("trunc_divide", None, a, b)
+        if rounding_mode == "floor":
+            return _dispatch_fn("floor_divide", None, a, b)
+        if _is_npu_tensor_pair(a, b):
+            _ensure_npu_refs()
+            if _npu_fast_ok(a, b):
+                return _npu_div_fn(a, b)
+        return _dispatch_fn("true_divide", None, a, b)
+
+    r = _handle_torch_function(_py_div_fn, (a, b), {"rounding_mode": rounding_mode})
+    if r is not NotImplemented:
+        return r
+
+    if rounding_mode == "trunc":
+        return _dispatch_fn("trunc_divide", None, a, b)
+    if rounding_mode == "floor":
+        return _dispatch_fn("floor_divide", None, a, b)
+    return _dispatch_fn("true_divide", None, a, b)
 
 
 def matmul(a, b):

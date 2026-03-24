@@ -130,6 +130,10 @@ _py_matmul.__name__ = "matmul"
 _py_relu.__name__ = "relu"
 _py_neg.__name__ = "neg"
 
+# _py_sub and _py_div are defined later in the file (after their dependencies).
+_py_sub = None
+_py_div = None
+
 _has_torch_function_impl = _py_has_torch_function
 _handle_torch_function_impl = _py_handle_torch_function
 _add_impl = _py_add
@@ -146,6 +150,8 @@ try:
         _handle_torch_function as _cy_handle_torch_function,
         add as _cy_add,
         mul as _cy_mul,
+        sub as _cy_sub,
+        div as _cy_div,
         matmul as _cy_matmul,
         relu as _cy_relu,
         transpose as _cy_transpose,
@@ -165,6 +171,8 @@ try:
     # Replace Python wrapper functions with Cython directly
     add = _cy_add
     mul = _cy_mul
+    sub = _cy_sub
+    div = _cy_div
     matmul = _cy_matmul
     relu = _cy_relu
     transpose = _cy_transpose
@@ -478,6 +486,12 @@ def div(a, b, *, rounding_mode=None):
 
 _py_div = div
 _py_div.__name__ = "div"
+
+# Restore Cython fast-path if it was loaded earlier
+try:
+    div = _cy_div  # noqa: F811
+except NameError:
+    pass
 
 
 def true_divide(a, b):
@@ -1284,6 +1298,12 @@ def sub(*args, **kwargs):
 
 _py_sub = sub
 _py_sub.__name__ = "sub"
+
+# Restore Cython fast-path if it was loaded earlier
+try:
+    sub = _cy_sub  # noqa: F811
+except NameError:
+    pass
 
 
 def log1p(a):

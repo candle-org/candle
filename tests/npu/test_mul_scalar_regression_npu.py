@@ -56,7 +56,15 @@ def test_mul_propagates_kernel_error_instead_of_falling_back(monkeypatch):
     def fail_div(*args, **kwargs):
         raise AssertionError("mul should not fall back to div")
 
-    monkeypatch.setattr(aclnn, "mul", fail_mul)
+    # When the Cython fast_mul path is active, aclnn.mul is bypassed entirely.
+    # Patch the FFI-level binary_op_no_alpha to verify error propagation from
+    # the actual execution path.
+    try:
+        import candle._cython._aclnn_ffi as ffi_mod  # pylint: disable=import-error
+        monkeypatch.setattr(ffi_mod, "binary_op_no_alpha", fail_mul)
+    except (ImportError, AttributeError):
+        # Fall back to patching the Python aclnn wrapper if Cython FFI unavailable
+        monkeypatch.setattr(aclnn, "mul", fail_mul)
     monkeypatch.setattr(npu_ops, "div", fail_div)
 
     with pytest.raises(RuntimeError, match="sentinel mul failure"):

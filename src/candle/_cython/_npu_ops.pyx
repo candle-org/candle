@@ -40,7 +40,7 @@ cdef int c_broadcast_shape(
             out[out_ndim - 1 - i] = a_dim
         else:
             with gil:
-                raise ValueError("matmul shape mismatch")
+                raise ValueError("broadcast shape mismatch")
             return -1  # unreachable, keeps compiler happy
     return out_ndim
 
@@ -89,6 +89,38 @@ cdef int c_dtype_itemsize(object dtype):
     if name == "int8" or name == "uint8" or name == "bool":
         return 1
     return 4  # fallback
+
+
+cdef inline int _dtype_to_acl_code(object dtype):
+    """Map a candle dtype object to its ACL dtype code integer.
+
+    Returns 0 (float32) as fallback for unknown dtypes.
+    """
+    cdef str name = getattr(dtype, 'name', None)
+    if name is None:
+        name = str(dtype)
+    if name == 'float32':
+        return 0
+    elif name == 'float16':
+        return 1
+    elif name == 'bfloat16':
+        return 27
+    elif name == 'int32':
+        return 3
+    elif name == 'int64':
+        return 9
+    elif name == 'float64':
+        return 11
+    elif name == 'int8':
+        return 2
+    elif name == 'uint8':
+        return 4
+    elif name == 'int16':
+        return 6
+    elif name == 'bool':
+        return 12
+    else:
+        return 0  # fallback to float32
 
 
 # ---------------------------------------------------------------------------
@@ -253,6 +285,12 @@ def fast_binary_op(a, b, fn, str name):
 cdef object _ffi_ref = None              # _aclnn_ffi module
 cdef object _add_getws_ptr = None        # cached Add getws pointer
 cdef object _add_exec_ptr = None         # cached Add exec pointer
+cdef object _mul_getws_ptr = None        # cached Mul getws pointer
+cdef object _mul_exec_ptr = None         # cached Mul exec pointer
+cdef object _sub_getws_ptr = None        # cached Sub getws pointer
+cdef object _sub_exec_ptr = None         # cached Sub exec pointer
+cdef object _div_getws_ptr = None        # cached Div getws pointer
+cdef object _div_exec_ptr = None         # cached Div exec pointer
 cdef object _defer_executor_fn = None    # aclnn._defer_executor
 cdef object _acl_rt_malloc_fn = None     # acl.rt.malloc
 cdef object _acl_rt_free_fn = None       # acl.rt.free (for workspace)
@@ -262,8 +300,11 @@ cdef object _pta_cache_begin_fn = None   # _aclnn_ffi.pta_begin_add_cache_lookup
 cdef object _pta_cache_end_fn = None     # _aclnn_ffi.pta_end_cache_lookup
 
 
-cdef inline void _ensure_ffi_add() except *:
+cdef inline void _ensure_ffi_binary() except *:
     global _ffi_ref, _add_getws_ptr, _add_exec_ptr
+    global _mul_getws_ptr, _mul_exec_ptr
+    global _sub_getws_ptr, _sub_exec_ptr
+    global _div_getws_ptr, _div_exec_ptr
     global _defer_executor_fn, _acl_rt_malloc_fn, _acl_rt_free_fn
     global _pta_cache_begin_fn, _pta_cache_end_fn
     if _ffi_ref is not None:
@@ -272,6 +313,9 @@ cdef inline void _ensure_ffi_add() except *:
     from candle._backends.npu.aclnn import _defer_executor as _def_ex, ensure_acl as _eacl
     _ffi_ref = _f
     _add_getws_ptr, _add_exec_ptr = _f.resolve_op("Add")
+    _mul_getws_ptr, _mul_exec_ptr = _f.resolve_op("Mul")
+    _sub_getws_ptr, _sub_exec_ptr = _f.resolve_op("Sub")
+    _div_getws_ptr, _div_exec_ptr = _f.resolve_op("Div")
     _defer_executor_fn = _def_ex
     _acl = _eacl()
     _acl_rt_malloc_fn = _acl.rt.malloc
@@ -362,7 +406,7 @@ def fast_add(a, b):
     - No a.storage().data_ptr() Python method calls (direct C attribute access)
     """
     _ensure_npu_imports()
-    _ensure_ffi_add()
+    _ensure_ffi_binary()
 
     # 1. Validate device/dtype
     a_dev = a.device
@@ -416,30 +460,7 @@ def fast_add(a, b):
         out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fa, stream=stream.stream)
 
     # 7. Get dtype code and cached alpha=1 handle
-    cdef str dtype_name = getattr(a_dtype, 'name', str(a_dtype))
-    cdef int dtype_code
-    if dtype_name == 'float32':
-        dtype_code = 0
-    elif dtype_name == 'float16':
-        dtype_code = 1
-    elif dtype_name == 'bfloat16':
-        dtype_code = 27
-    elif dtype_name == 'int32':
-        dtype_code = 3
-    elif dtype_name == 'int64':
-        dtype_code = 9
-    elif dtype_name == 'float64':
-        dtype_code = 11
-    elif dtype_name == 'int8':
-        dtype_code = 2
-    elif dtype_name == 'uint8':
-        dtype_code = 4
-    elif dtype_name == 'int16':
-        dtype_code = 6
-    elif dtype_name == 'bool':
-        dtype_code = 12
-    else:
-        dtype_code = 0  # fallback to float32
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
 
     # 8. Get data pointers — direct C attribute access (no Python method calls)
     cdef uintptr_t a_ptr, b_ptr, o_ptr
@@ -526,6 +547,292 @@ def fast_add(a, b):
             _pta_cache_end_fn()
 
     # 13. Wrap output — construct Tensor entirely in Cython (same as fast_binary_op)
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+# ---------------------------------------------------------------------------
+# fast_mul — hardwired mul(a, b) that skips aclnn.py wrapper
+# ---------------------------------------------------------------------------
+
+def fast_mul(a, b):
+    """Optimized mul(a, b) that calls _ffi.binary_op_no_alpha directly.
+
+    Skips aclnn.mul wrapper overhead:
+    - No get_bindings() dict lookup
+    - No _require_native_npu_ffi check
+    - No resolve_op each call (cached in _ensure_ffi_binary)
+    - No ctypes.c_void_p wrapping of executor
+    - Direct C attribute access for device pointers
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    # 1. Validate device/dtype
+    a_dev = a.device
+    b_dev = b.device
+    if a_dev.type != "npu" or b_dev.type != "npu":
+        raise ValueError("fast_mul expects NPU tensors")
+    a_dtype = a.dtype
+    if a_dtype != b.dtype:
+        raise ValueError("fast_mul requires matching dtypes")
+
+    # 2. Get runtime + stream
+    cdef int dev_idx = a_dev.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    # 3. Extract shapes into C arrays
+    py_a_shape = a.shape
+    py_b_shape = b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+
+    # 4. C-level shape computation
+    cdef int out_ndim
+    cdef int64_t n
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+        c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+        n = c_numel(out_shape_buf, out_ndim)
+
+    # 5. Convert to Python tuples
+    out_shape = _to_tuple(out_shape_buf, out_ndim)
+    out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    # 6. Allocate output via cached allocator
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size_fm = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fm, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fm, stream=stream.stream)
+
+    # 7. Get dtype code
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+
+    # 8. Get data pointers — direct C attribute access (no Python method calls)
+    cdef uintptr_t a_ptr, b_ptr, o_ptr
+    a_ptr = a._storage._untyped._device_ptr
+    b_ptr = b._storage._untyped._device_ptr
+    o_ptr = out_ptr
+
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    # 9. Full GetWorkspaceSize + Execute path (no PTA cache for mul)
+    ws_size, executor = _ffi_ref.binary_op_no_alpha(
+        _mul_getws_ptr, _mul_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        out_shape, out_stride,
+        dtype_code, 2,  # ACL_FORMAT_ND = 2
+        a_ptr, b_ptr, o_ptr,
+        stream_raw)
+
+    # 10. Handle workspace (rare: ws_size > 0 means execute not yet called)
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _mul_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnMul execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    # 11. Defer executor cleanup
+    _defer_executor_fn(executor)
+
+    # 12. Wrap output
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+# ---------------------------------------------------------------------------
+# fast_sub — hardwired sub(a, b, alpha=1) that skips aclnn.py wrapper
+# ---------------------------------------------------------------------------
+
+def fast_sub(a, b):
+    """Optimized sub(a, b, alpha=1) that calls _ffi.binary_op_with_alpha directly."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    a_dev = a.device
+    b_dev = b.device
+    if a_dev.type != "npu" or b_dev.type != "npu":
+        raise ValueError("fast_sub expects NPU tensors")
+    a_dtype = a.dtype
+    if a_dtype != b.dtype:
+        raise ValueError("fast_sub requires matching dtypes")
+
+    cdef int dev_idx = a_dev.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = a.shape
+    py_b_shape = b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+
+    cdef int out_ndim
+    cdef int64_t n
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+        c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+        n = c_numel(out_shape_buf, out_ndim)
+
+    out_shape = _to_tuple(out_shape_buf, out_ndim)
+    out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size_fs = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fs, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fs, stream=stream.stream)
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t alpha_handle = _get_alpha_one(dtype_code)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr
+    cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
+    cdef uintptr_t o_ptr = out_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.binary_op_with_alpha(
+        _sub_getws_ptr, _sub_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        out_shape, out_stride,
+        dtype_code, 2,
+        a_ptr, b_ptr, o_ptr,
+        alpha_handle,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _sub_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnSub execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+# ---------------------------------------------------------------------------
+# fast_div — hardwired div(a, b) that skips aclnn.py wrapper
+# ---------------------------------------------------------------------------
+
+def fast_div(a, b):
+    """Optimized div(a, b) that calls _ffi.binary_op_no_alpha directly."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    a_dev = a.device
+    b_dev = b.device
+    if a_dev.type != "npu" or b_dev.type != "npu":
+        raise ValueError("fast_div expects NPU tensors")
+    a_dtype = a.dtype
+    if a_dtype != b.dtype:
+        raise ValueError("fast_div requires matching dtypes")
+
+    cdef int dev_idx = a_dev.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = a.shape
+    py_b_shape = b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+
+    cdef int out_ndim
+    cdef int64_t n
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+        c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+        n = c_numel(out_shape_buf, out_ndim)
+
+    out_shape = _to_tuple(out_shape_buf, out_ndim)
+    out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size_fd = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fd, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fd, stream=stream.stream)
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr
+    cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
+    cdef uintptr_t o_ptr = out_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.binary_op_no_alpha(
+        _div_getws_ptr, _div_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        out_shape, out_stride,
+        dtype_code, 2,
+        a_ptr, b_ptr, o_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _div_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnDiv execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 

@@ -82,3 +82,116 @@ def test_fast_add_reuses_cached_executor_for_same_signature(npu_device, monkeypa
     _ = torch.add(a, b)
     torch.npu.synchronize()
     assert calls["count"] == 1
+
+
+def test_fast_mul_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    """fast_mul should bypass candle._backends.npu.aclnn.mul on the hot path."""
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.randn(4, 4, device=npu_device)
+    torch.npu.synchronize()
+
+    # Warm up so first-use imports/caches do not affect assertion
+    _ = torch.mul(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_mul = aclnn_mod.mul
+
+    def wrapped_mul(*args, **kwargs):
+        calls["count"] += 1
+        return original_mul(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "mul", wrapped_mul)
+
+    result = torch.mul(a, b)
+    torch.npu.synchronize()
+
+    # Assertion (a): hot path must not call Python aclnn.mul
+    assert calls["count"] == 0, (
+        f"fast_mul called aclnn.mul {calls['count']} time(s); expected 0"
+    )
+
+    # Assertion (b): numerical correctness
+    import torch as ref_torch
+    a_cpu = ref_torch.tensor(a.cpu().numpy())
+    b_cpu = ref_torch.tensor(b.cpu().numpy())
+    expected = a_cpu * b_cpu
+    actual = ref_torch.tensor(result.cpu().numpy())
+    assert ref_torch.allclose(actual, expected, rtol=1e-4, atol=1e-4), (
+        f"fast_mul result mismatch: max_diff={(actual - expected).abs().max()}"
+    )
+
+
+def test_fast_sub_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    """fast_sub should bypass candle._backends.npu.aclnn.sub on the hot path."""
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+    import numpy as np
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.randn(4, 4, device=npu_device)
+    torch.npu.synchronize()
+
+    expected = torch.sub(a, b)
+    torch.npu.synchronize()
+
+    _ = torch.sub(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_sub = aclnn_mod.sub
+
+    def wrapped_sub(*args, **kwargs):
+        calls["count"] += 1
+        return original_sub(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "sub", wrapped_sub)
+
+    out = torch.sub(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0, (
+        f"fast_sub called aclnn.sub {calls['count']} time(s); expected 0"
+    )
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4), (
+        "fast_sub output differs from expected"
+    )
+
+
+def test_fast_div_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    """fast_div should bypass candle._backends.npu.aclnn.div on the hot path."""
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+    import numpy as np
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.rand(4, 4, device=npu_device) + 1.0
+    torch.npu.synchronize()
+
+    expected = torch.div(a, b)
+    torch.npu.synchronize()
+
+    _ = torch.div(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_div = aclnn_mod.div
+
+    def wrapped_div(*args, **kwargs):
+        calls["count"] += 1
+        return original_div(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "div", wrapped_div)
+
+    out = torch.div(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0, (
+        f"fast_div called aclnn.div {calls['count']} time(s); expected 0"
+    )
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4), (
+        "fast_div output differs from expected"
+    )
