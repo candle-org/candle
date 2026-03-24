@@ -436,14 +436,27 @@ class Tensor(_TensorBase):
             raise RuntimeError("numpy() is only available for CPU tensors")
         return self._numpy_view()
 
+    def _scalar_host_array(self):
+        if self._pending:
+            from ._dispatch.pipeline import current_pipeline
+
+            pipe = current_pipeline()
+            if pipe is not None:
+                pipe.flush()
+        if self.device.type == "meta":
+            raise RuntimeError("meta tensor has no data")
+        if self.device.type == "cpu":
+            return self._numpy_view()
+        return self.detach().cpu().numpy()
+
     def item(self):
-        arr = self.numpy()
+        arr = self._scalar_host_array()
         if arr.size != 1:
             raise RuntimeError("a Tensor with more than one value cannot be converted to a Python scalar")
         return arr.reshape(-1)[0].item()
 
     def tolist(self):
-        return self.numpy().tolist()
+        return self._scalar_host_array().tolist()
 
     def __float__(self):
         return float(self.item())
@@ -452,7 +465,7 @@ class Tensor(_TensorBase):
         return int(self.item())
 
     def __bool__(self):
-        arr = self.numpy()
+        arr = self._scalar_host_array()
         if arr.size == 0:
             raise RuntimeError("bool value of Tensor with no values is ambiguous")
         if arr.size > 1:
