@@ -64,12 +64,16 @@ jobs:
         id: review
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_BASE: ${{ secrets.ANTHROPIC_API_BASE }}
         run: |
           # Skip if no API key configured
           if [ -z "$ANTHROPIC_API_KEY" ]; then
             echo "⚠️ AI review skipped — \`ANTHROPIC_API_KEY\` not configured." > review_body.txt
             exit 0
           fi
+
+          # Custom base URL (default: official Anthropic API)
+          API_BASE="${ANTHROPIC_API_BASE:-https://api.anthropic.com}"
 
           SYSTEM_PROMPT=$(cat .github/scripts/ai-review-prompt.md)
           PR_META=$(cat pr_meta.json)
@@ -86,7 +90,7 @@ jobs:
 
           # Call Claude API
           RESPONSE=$(curl -s -w "\n%{http_code}" \
-            https://api.anthropic.com/v1/messages \
+            "${API_BASE}/v1/messages" \
             -H "content-type: application/json" \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
