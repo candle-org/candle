@@ -1,0 +1,81 @@
+name: CI Auto Retry
+
+# Automatically retries CI runs that failed due to infrastructure issues
+# (network timeouts on 910A/910B, OOM on 310B) rather than real test failures.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  retry-infra-failures:
+    runs-on: ubuntu-latest
+    if: >
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt < 3
+    steps:
+      - name: Analyze failures and retry if infrastructure-related
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          RUN_ID="${{ github.event.workflow_run.id }}"
+          REPO="${{ github.repository }}"
+          ATTEMPT="${{ github.event.workflow_run.run_attempt }}"
+
+          echo "::group::Analyzing CI run #$RUN_ID (attempt $ATTEMPT)"
+
+          # Get all jobs for this run
+          ALL_JOBS=$(gh api "repos/$REPO/actions/runs/$RUN_ID/jobs" --paginate \
+            --jq '.jobs')
+
+          # Extract failed jobs with their first failed step
+          FAILED_JOBS=$(echo "$ALL_JOBS" | jq '[.[] | select(.conclusion == "failure") | {
+            name: .name,
+            failed_steps: [.steps[] | select(.conclusion == "failure") | .name]
+          }]')
+
+          NUM_FAILED=$(echo "$FAILED_JOBS" | jq 'length')
+          echo "Failed jobs: $NUM_FAILED"
+          echo "$FAILED_JOBS" | jq -r '.[] | "  \(.name): [\(.failed_steps | join(", "))]"'
+
+          if [ "$NUM_FAILED" -eq 0 ]; then
+            echo "No failed jobs found — nothing to retry."
+            echo "::endgroup::"
+            exit 0
+          fi
+
+          # Check for cancelled sibling jobs (from cancel-on-failure step)
+          HAS_CANCELLED=$(echo "$ALL_JOBS" | jq '[.[] | select(.conclusion == "cancelled")] | length > 0')
+
+          # Real test/lint steps — if failure is here, it's a genuine failure
+          # Pattern covers all test execution and validation steps in ci.yaml
+          TEST_PATTERN="Run .* tests|Run .* coverage|Run .* suite|Lint with pylint|Assert NPU|Verify MPS"
+
+          HAS_TEST_FAILURE=$(echo "$FAILED_JOBS" | jq --arg pat "$TEST_PATTERN" \
+            '[.[].failed_steps[] | test($pat; "i")] | any')
+
+          echo "::endgroup::"
+
+          if [ "$HAS_TEST_FAILURE" = "true" ]; then
+            echo "::notice::Real test/lint failure detected — not retrying."
+            exit 0
+          fi
+
+          # All failures are infrastructure-related (setup, checkout, install, OOM, network)
+          echo "::notice::Only infrastructure failures detected — retrying (attempt $ATTEMPT → $((ATTEMPT + 1)))"
+
+          if [ "$HAS_CANCELLED" = "true" ]; then
+            # Sibling jobs were cancelled by cancel-on-failure step — must re-run entire workflow
+            echo "Cancelled sibling jobs detected — re-running entire workflow."
+            gh run rerun "$RUN_ID" --repo "$REPO"
+          else
+            # Only specific jobs failed, others completed — re-run just the failed ones
+            echo "Re-running only failed jobs."
+            gh run rerun "$RUN_ID" --failed --repo "$REPO"
+          fi
