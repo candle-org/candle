@@ -795,6 +795,12 @@ jobs:
     - uses: actions/checkout@v4
     - name: Set up ccache
       run: ccache --version
+    - name: Compute Cython cache key
+      id: cython-key
+      run: |
+        hash=$(find src -name '*.pyx' -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+        setup_hash=$(sha256sum setup.py pyproject.toml | sha256sum | cut -d' ' -f1)
+        echo "key=cython-npu-310b-${hash}-${setup_hash}" >> "$GITHUB_OUTPUT"
     - name: Cache Cython build artifacts
       id: cython-cache
       uses: actions/cache@v4
@@ -807,7 +813,7 @@ jobs:
           src/candle/_generated/*.so
           src/candle/distributed/*.c
           src/candle/distributed/*.so
-        key: cython-npu-310b-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+        key: ${{ steps.cython-key.outputs.key }}
     - name: Freshen cached build artifacts
       if: steps.cython-cache.outputs.cache-hit == 'true'
       run: |
@@ -818,6 +824,7 @@ jobs:
       run: |
         candidates=(
           "/home/HwHiAiUser/.conda/envs/cann85/Ascend/cann-8.5.0/set_env.sh"
+          "/usr/local/Ascend/cann-8.5.0/set_env.sh"
           "/usr/local/Ascend/ascend-toolkit/set_env.sh"
           "/usr/local/Ascend/ascend-toolkit/latest/set_env.sh"
           "/usr/local/Ascend/latest/set_env.sh"

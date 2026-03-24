@@ -37,6 +37,7 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | `matmul` (float32) | `aclnnMatmul` | float32 unsupported | cast inputs to float16 | CANN 8.x |
 | `addmm` (float32) | `aclnnAddmm` | float32 unsupported | cast inputs to float16 | CANN 8.x |
 | `mv` (float32) | `aclnnMv` | float32 unsupported | cast inputs to float16 | CANN 8.x |
+| `synchronize` / `is_current_stream_capturing` | `aclmdlRICaptureGetInfo` | 207000 on 310B when probing capture state | disable aclgraph probe via SoC capability guard; return `False` for capture state on unsupported chips | CANN 8.x |
 
 ## 910B
 
