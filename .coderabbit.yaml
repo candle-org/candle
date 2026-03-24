@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: zh-CN
+tone_instructions: >
+  Review in English. Focus on correctness and PyTorch compatibility.
+  candle is a PyTorch-compatible ML framework (import candle as torch).
+  Flag any CPU fallback used in GPU/NPU backends, schema validation bypass,
+  or PyTorch API incompatibility.
+early_access: false
+enable_free_tier: true
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  high_level_summary_placeholder: "@coderabbitai summary"
+  auto_title_placeholder: "@coderabbitai"
+  review_status: true
+  path_instructions:
+    - path: "src/candle/_backends/npu/**"
+      instructions: >
+        NPU backend must use ACLNN kernels via ctypes. Never fall back to
+        numpy/CPU. Prefer single ACLNN large kernels over compositing
+        multiple small ops.
+    - path: "src/candle/_backends/mps/**"
+      instructions: >
+        MPS backend must stay on Metal GPU path. Never fall back to
+        numpy/CPU. Check _can_use_gpu() guard for float32/16, contiguous,
+        numel > 0, has metal_buffer.
+    - path: "src/candle/_backends/cuda/**"
+      instructions: >
+        CUDA backend must use CUDA kernels. Never fall back to numpy/CPU.
+    - path: "src/candle/_dispatch/**"
+      instructions: >
+        Schema validation is intentional — never bypass or weaken schemas
+        to make tests pass. Fix at the functional layer before dispatch.
+    - path: "src/candle/_tensor.py"
+      instructions: >
+        Tensor class must maintain PyTorch API compatibility.
+        Never import torch in source code.
+    - path: "tests/**"
+      instructions: >
+        Tests should validate against PyTorch reference output.
+        Do not modify tests to work around source bugs — fix the source.
+  auto_review:
+    enabled: true
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+    drafts: false
+chat:
+  auto_reply: true
