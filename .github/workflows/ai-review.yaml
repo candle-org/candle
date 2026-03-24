@@ -25,22 +25,32 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.base.sha }}
-          sparse-checkout: .github/scripts/ai-review-prompt.md
+          sparse-checkout: |
+            .github/scripts/ai-review-prompt.md
+            .github/scripts/ai-review-incremental-prompt.md
 
       - name: Fetch PR diff
         id: diff
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Get diff via API (safe for fork PRs)
+          EVENT_ACTION="${{ github.event.action }}"
+          echo "event_action=$EVENT_ACTION" >> "$GITHUB_OUTPUT"
+
+          PR_NUM="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          echo "head_sha=${HEAD_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+          # Get full PR diff via API (safe for fork PRs)
           gh api \
-            repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} \
+            "repos/$REPO/pulls/$PR_NUM" \
             -H "Accept: application/vnd.github.diff" \
             > pr.diff
 
           # Get PR metadata
           gh api \
-            repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} \
+            "repos/$REPO/pulls/$PR_NUM" \
             --jq '{
               title: .title,
               body: (.body // "" | .[0:2000]),
@@ -51,13 +61,49 @@ jobs:
 
           # Get file list
           gh api \
-            repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
+            "repos/$REPO/pulls/$PR_NUM/files" \
             --jq '.[].filename' > pr_files.txt
 
           # Truncate diff to avoid token limits (keep first 8000 lines)
           head -n 8000 pr.diff > pr_diff_truncated.txt
           if [ "$(wc -l < pr.diff)" -gt 8000 ]; then
             echo -e "\n\n... (diff truncated — $(wc -l < pr.diff) total lines)" >> pr_diff_truncated.txt
+          fi
+
+          # For synchronize events: fetch incremental diff and previous review
+          if [ "$EVENT_ACTION" = "synchronize" ]; then
+            BEFORE="${{ github.event.before }}"
+            AFTER="${{ github.event.after }}"
+
+            # Get incremental diff between the old and new head commits
+            if gh api \
+              "repos/$REPO/compare/${BEFORE}...${AFTER}" \
+              -H "Accept: application/vnd.github.diff" \
+              > incremental.diff 2>/dev/null; then
+
+              head -n 4000 incremental.diff > incremental_truncated.txt
+              if [ "$(wc -l < incremental.diff)" -gt 4000 ]; then
+                echo -e "\n\n... (incremental diff truncated — $(wc -l < incremental.diff) total lines)" >> incremental_truncated.txt
+              fi
+              echo "has_incremental=true" >> "$GITHUB_OUTPUT"
+            else
+              # Force push or compare failed — fall back to full review
+              echo "has_incremental=false" >> "$GITHUB_OUTPUT"
+            fi
+
+            # Fetch previous review comment for context
+            MARKER="<!-- candle-ai-review-marker -->"
+            gh api \
+              "repos/$REPO/issues/$PR_NUM/comments" --paginate \
+              --jq ".[] | select(.body | contains(\"$MARKER\")) | .body" \
+              2>/dev/null | tail -1 > previous_review.txt
+
+            # If previous review is empty, mark no incremental
+            if [ ! -s previous_review.txt ]; then
+              echo "has_incremental=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "has_incremental=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run AI review
@@ -76,17 +122,40 @@ jobs:
           RAW_API_BASE="${ANTHROPIC_API_BASE:-https://api.anthropic.com}"
           API_BASE="${RAW_API_BASE%/}"
 
-          # Build the user message via jq --rawfile to avoid ARG_MAX limits
-          jq -n \
-            --rawfile meta pr_meta.json \
-            --rawfile files pr_files.txt \
-            --rawfile diff pr_diff_truncated.txt \
-            '"PR metadata:\n" + $meta + "\n\nFiles changed:\n" + $files + "\n\nDiff:\n```diff\n" + $diff + "\n```"' \
-            -r > user_msg.txt
+          EVENT_ACTION="${{ steps.diff.outputs.event_action }}"
+          HAS_INCREMENTAL="${{ steps.diff.outputs.has_incremental }}"
+
+          if [ "$HAS_INCREMENTAL" = "true" ]; then
+            # --- Incremental review ---
+            PROMPT_FILE=".github/scripts/ai-review-incremental-prompt.md"
+            if [ ! -f "$PROMPT_FILE" ]; then
+              # Fallback if incremental prompt not yet checked in
+              PROMPT_FILE=".github/scripts/ai-review-prompt.md"
+            fi
+
+            jq -n \
+              --rawfile meta pr_meta.json \
+              --rawfile files pr_files.txt \
+              --rawfile prev previous_review.txt \
+              --rawfile incr incremental_truncated.txt \
+              --rawfile full pr_diff_truncated.txt \
+              '"PR metadata:\n" + $meta + "\n\nFiles changed:\n" + $files + "\n\n## Previous review:\n" + $prev + "\n\n## Incremental diff (new commits):\n```diff\n" + $incr + "\n```\n\n## Full PR diff (for context):\n```diff\n" + $full + "\n```"' \
+              -r > user_msg.txt
+          else
+            # --- Full review (opened / reopened / fallback) ---
+            PROMPT_FILE=".github/scripts/ai-review-prompt.md"
+
+            jq -n \
+              --rawfile meta pr_meta.json \
+              --rawfile files pr_files.txt \
+              --rawfile diff pr_diff_truncated.txt \
+              '"PR metadata:\n" + $meta + "\n\nFiles changed:\n" + $files + "\n\nDiff:\n```diff\n" + $diff + "\n```"' \
+              -r > user_msg.txt
+          fi
 
           # Build API request body from files to avoid ARG_MAX limits
           jq -n \
-            --rawfile system .github/scripts/ai-review-prompt.md \
+            --rawfile system "$PROMPT_FILE" \
             --rawfile user user_msg.txt \
             '{
               model: "claude-sonnet-4-6",
@@ -121,6 +190,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           MARKER="<!-- candle-ai-review-marker -->"
+          HEAD_SHA="${{ steps.diff.outputs.head_sha }}"
+          EVENT_ACTION="${{ steps.diff.outputs.event_action }}"
 
           if [ -f review_body.txt ]; then
             REVIEW_BODY=$(cat review_body.txt)
@@ -128,27 +199,42 @@ jobs:
             REVIEW_BODY="⚠️ AI review encountered an unexpected error. PR is not blocked."
           fi
 
+          # Add metadata footer
+          if [ "$EVENT_ACTION" = "synchronize" ]; then
+            REVIEW_TYPE="Incremental review"
+          else
+            REVIEW_TYPE="Full review"
+          fi
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+          FOOTER="---
+          *${REVIEW_TYPE} at commit ${HEAD_SHA} (${TIMESTAMP})*"
+
           COMMENT_BODY="${REVIEW_BODY}
+
+          ${FOOTER}
 
           ${MARKER}"
 
+          PR_NUM="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+
           # Find existing comment by marker
           EXISTING_COMMENT_ID=$(gh api \
-            repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            "repos/$REPO/issues/$PR_NUM/comments" --paginate \
             --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" \
             2>/dev/null | head -1)
 
           if [ -n "$EXISTING_COMMENT_ID" ]; then
             # Update existing comment
             gh api \
-              repos/${{ github.repository }}/issues/comments/$EXISTING_COMMENT_ID \
+              "repos/$REPO/issues/comments/$EXISTING_COMMENT_ID" \
               -X PATCH \
               -f body="$COMMENT_BODY"
-            echo "Updated existing review comment #$EXISTING_COMMENT_ID"
+            echo "Updated existing review comment #$EXISTING_COMMENT_ID ($REVIEW_TYPE)"
           else
             # Create new comment
             gh api \
-              repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+              "repos/$REPO/issues/$PR_NUM/comments" \
               -f body="$COMMENT_BODY"
-            echo "Created new review comment"
+            echo "Created new review comment ($REVIEW_TYPE)"
           fi
