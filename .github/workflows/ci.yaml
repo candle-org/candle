@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
     branches: ["main"]
     paths:
@@ -16,6 +17,11 @@ on:
 
 permissions:
   contents: read
+  actions: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pylint-check:
@@ -35,6 +41,12 @@ jobs:
     - name: Lint with pylint
       run: |
         pylint --jobs=1 src/candle --rcfile=.github/pylint.conf
+
+  # ════════════════════════════════════════════════════════════════
+  # All test jobs run in parallel after pylint passes.
+  # On failure any job calls gh api to cancel the entire workflow run
+  # so remaining siblings stop immediately (cross-job fail-fast).
+  # ════════════════════════════════════════════════════════════════
 
   test-cpu:
     needs: pylint-check
@@ -59,7 +71,7 @@ jobs:
           requirements/requirements-test.txt
           requirements/requirements.txt
 
-    # ── ccache (content-hash based C compilation cache) ───────────
+    # ── ccache ────────────────────────────────────────────────────
     - name: Set up ccache
       run: |
         sudo apt-get install -y ccache
@@ -72,7 +84,7 @@ jobs:
         restore-keys: |
           ccache-linux-py${{ matrix.python-version }}-
 
-    # ── Cython build artifacts (.c, .so, build/) ─────────────────
+    # ── Cython build artifacts ────────────────────────────────────
     - name: Cache Cython build artifacts
       id: cython-cache
       uses: actions/cache@v4
@@ -89,8 +101,6 @@ jobs:
     - name: Freshen cached build artifacts
       if: steps.cython-cache.outputs.cache-hit == 'true'
       run: |
-        # Touch cached files so they appear newer than checkout'd .pyx sources.
-        # distutils uses strict > comparison, so equal timestamps = up-to-date.
         find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
           -exec touch {} + 2>/dev/null || true
 
@@ -108,6 +118,12 @@ jobs:
     - name: Run CPU tests
       run: |
         pytest tests/cpu/ tests/contract/ -v --tb=short
+    - name: Cancel workflow on failure
+      if: failure()
+      run: |
+        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
+      env:
+        GH_TOKEN: ${{ github.token }}
 
   test-mps:
     needs: pylint-check
@@ -179,9 +195,14 @@ jobs:
     - name: Run MPS tests
       run: |
         pytest tests/mps/ -v --tb=short
+    - name: Cancel workflow on failure
+      if: failure()
+      run: |
+        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
+      env:
+        GH_TOKEN: ${{ github.token }}
 
-  # ── NPU 910B runners (ascendnode3, 8x Ascend 910B3) ──────────────
-  # Card allocation: unit [0,1] | integ [2,3] | dist [4,5,6,7]
+  # ── NPU 910B runners ───────────────────────────────────────────
 
   test-npu-910b-unit:
     needs: pylint-check
@@ -197,7 +218,6 @@ jobs:
     - uses: actions/checkout@v4
     - name: Set up ccache
       run: ccache --version
-    # ── Cython build artifacts ────────────────────────────────────
     - name: Cache Cython build artifacts
       id: cython-cache
       uses: actions/cache@v4
@@ -229,6 +249,12 @@ jobs:
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
         pytest tests/npu/common/ tests/npu/910b/ -v --tb=short
+    - name: Cancel workflow on failure
+      if: failure()
+      run: |
+        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
+      env:
+        GH_TOKEN: ${{ github.token }}
 
   test-npu-910b-integ:
     needs: pylint-check
@@ -280,6 +306,12 @@ jobs:
           --ignore=tests/npu/910b \
           --ignore=tests/npu/310b \
           --ignore=tests/npu/310p
+    - name: Cancel workflow on failure
+      if: failure()
+      run: |
+        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
+      env:
+        GH_TOKEN: ${{ github.token }}
 
   test-npu-910b-dist:
     needs: [test-npu-910b-unit, test-npu-910b-integ]
@@ -326,18 +358,542 @@ jobs:
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
         pytest tests/distributed/ -v --tb=short -k "hccl"
+    - name: Cancel workflow on failure
+      if: failure()
+      run: |
+        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
+      env:
+        GH_TOKEN: ${{ github.token }}
 
-  # Future runners:
-  #
-  # test-cuda:
-  #   needs: pylint-check
-  #   runs-on: [self-hosted, cuda]
-  #   steps:
-  #   - uses: actions/checkout@v4
-  #   - name: Install dependencies
-  #     run: |
-  #       pip install -r requirements/requirements-test.txt
-  #   - name: Install candle
-  #     run: pip install -e .
-  #   - name: Run CUDA tests
-  #     run: pytest tests/cuda/ -v --tb=short
+  # ── NPU 910A runners ───────────────────────────────────────────
+
+  test-npu-910a:
+    name: NPU 910A Suite (6-7)
+    needs: pylint-check
+    runs-on: [self-hosted, linux, ascend, 910a, npu-6-7]
+    timeout-minutes: 90
+    env:
+      CONDA_EXE: /home/lvyufeng/miniconda3/bin/conda
+      ASCEND_ENV_SCRIPT: /usr/local/Ascend/ascend-toolkit/set_env.sh
+      ASCEND_REQUIRED_GROUP: HwHiAiUser
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      PYTHONNOUSERSITE: '1'
+      ASCEND_RT_VISIBLE_DEVICES: 6,7
+      ASCEND_VISIBLE_DEVICES: 6,7
+      JOB_CONDA_ENV: /tmp/candle-npu-ci-6-7
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up ccache
+      run: ccache --version
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-910a-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
+    - name: Prepare conda environment
+      run: |
+        "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
+    - name: Install dependencies
+      run: |
+        "$JOB_CONDA_ENV/bin/python" -m pip install --upgrade pip
+        "$JOB_CONDA_ENV/bin/python" -m pip install -r requirements/requirements-test.txt
+    - name: Install candle
+      run: |
+        "$JOB_CONDA_ENV/bin/python" -m pip install -e .
+    - name: Assert NPU availability
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            ASCEND_RT_VISIBLE_DEVICES="$ASCEND_RT_VISIBLE_DEVICES" \
+            ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in NPU Suite (6-7)'; assert count >= 2, f'expected >=2 visible NPUs, found {count}'"
+    - name: Run NPU tests
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            ASCEND_RT_VISIBLE_DEVICES="$ASCEND_RT_VISIBLE_DEVICES" \
+            ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env pytest tests/npu/ -v --tb=short \
+          --ignore=tests/npu/test_pipeline_npu_bench_smoke.py \
+          --ignore=tests/npu/910b/ \
+          --ignore=tests/npu/310b/ \
+          --ignore=tests/npu/310p/
+    - name: Cancel workflow on failure
+      if: failure()
+      run: |
+        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+  test-npu-910a-dist-2card:
+    name: 910A Distributed (4-5)
+    needs: pylint-check
+    runs-on: [self-hosted, linux, ascend, 910a, npu-4-5]
+    timeout-minutes: 120
+    env:
+      CONDA_EXE: /home/lvyufeng/miniconda3/bin/conda
+      ASCEND_ENV_SCRIPT: /usr/local/Ascend/ascend-toolkit/set_env.sh
+      ASCEND_REQUIRED_GROUP: HwHiAiUser
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      PYTHONNOUSERSITE: '1'
+      ASCEND_RT_VISIBLE_DEVICES: 4,5
+      ASCEND_VISIBLE_DEVICES: 4,5
+      JOB_CONDA_ENV: /tmp/candle-npu-ci-4-5
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up ccache
+      run: ccache --version
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-910a-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
+    - name: Prepare conda environment
+      run: |
+        "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
+    - name: Install dependencies
+      run: |
+        "$JOB_CONDA_ENV/bin/python" -m pip install --upgrade pip
+        "$JOB_CONDA_ENV/bin/python" -m pip install -r requirements/requirements-test.txt
+    - name: Install candle
+      run: |
+        "$JOB_CONDA_ENV/bin/python" -m pip install -e .
+    - name: Assert NPU availability
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            ASCEND_RT_VISIBLE_DEVICES="$ASCEND_RT_VISIBLE_DEVICES" \
+            ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in Distributed Suite (4-5)'; assert count >= 2, f'expected >=2 visible NPUs, found {count}'"
+    - name: Run distributed baseline suite
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            ASCEND_RT_VISIBLE_DEVICES="$ASCEND_RT_VISIBLE_DEVICES" \
+            ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard and not test_ddp"
+    - name: Run 2-card HCCL all_to_all coverage
+      run: |
+        set -o pipefail
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            ASCEND_RT_VISIBLE_DEVICES="$ASCEND_RT_VISIBLE_DEVICES" \
+            ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env pytest \
+          'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[2-29714]' \
+          'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py::test_hccl_all_to_all_single_invalid_split_pairing_multicard[2-29715]' \
+          'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-2-29716]' \
+          'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-2-29716]' \
+          -v -rs --tb=short | tee /tmp/candle-hccl-2card.log
+        if grep -nE "SKIPPED|skipped" /tmp/candle-hccl-2card.log; then
+          echo "2-card HCCL coverage unexpectedly skipped tests" >&2
+          exit 1
+        fi
+    - name: Cancel workflow on failure
+      if: failure()
+      run: |
+        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+  test-npu-910a-dist-4card:
+    name: 910A HCCL 4-Card (0-3)
+    needs: pylint-check
+    runs-on: [self-hosted, linux, ascend, 910a, npu-0-3]
+    timeout-minutes: 120
+    env:
+      CONDA_EXE: /home/lvyufeng/miniconda3/bin/conda
+      ASCEND_ENV_SCRIPT: /usr/local/Ascend/ascend-toolkit/set_env.sh
+      ASCEND_REQUIRED_GROUP: HwHiAiUser
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      PYTHONNOUSERSITE: '1'
+      ASCEND_RT_VISIBLE_DEVICES: 0,1,2,3
+      ASCEND_VISIBLE_DEVICES: 0,1,2,3
+      JOB_CONDA_ENV: /tmp/candle-npu-ci-0-3
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up ccache
+      run: ccache --version
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-910a-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
+    - name: Prepare conda environment
+      run: |
+        "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
+    - name: Install dependencies
+      run: |
+        "$JOB_CONDA_ENV/bin/python" -m pip install --upgrade pip
+        "$JOB_CONDA_ENV/bin/python" -m pip install -r requirements/requirements-test.txt
+    - name: Install candle
+      run: |
+        "$JOB_CONDA_ENV/bin/python" -m pip install -e .
+    - name: Assert NPU availability
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            ASCEND_RT_VISIBLE_DEVICES="$ASCEND_RT_VISIBLE_DEVICES" \
+            ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in HCCL 4-Card Suite (0-3)'; assert count >= 4, f'expected >=4 visible NPUs, found {count}'"
+    - name: Run 4-card HCCL all_to_all coverage
+      run: |
+        set -o pipefail
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            ASCEND_RT_VISIBLE_DEVICES="$ASCEND_RT_VISIBLE_DEVICES" \
+            ASCEND_VISIBLE_DEVICES="$ASCEND_VISIBLE_DEVICES" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env pytest \
+          'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[4-29724]' \
+          'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py::test_hccl_all_to_all_single_invalid_split_pairing_multicard[4-29725]' \
+          'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-4-29726]' \
+          'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-4-29726]' \
+          -v -rs --tb=short | tee /tmp/candle-hccl-4card.log
+        if grep -nE "SKIPPED|skipped" /tmp/candle-hccl-4card.log; then
+          echo "4-card HCCL coverage unexpectedly skipped tests" >&2
+          exit 1
+        fi
+    - name: Cancel workflow on failure
+      if: failure()
+      run: |
+        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
+      env:
+        GH_TOKEN: ${{ github.token }}
+
+  # ── NPU 310B runner ────────────────────────────────────────────
+
+  test-npu-310b:
+    name: 310B Ops + Common
+    needs: pylint-check
+    runs-on: [self-hosted, linux, ascend, 310b]
+    timeout-minutes: 60
+    env:
+      CONDA_EXE: /usr/local/miniconda3/bin/conda
+      ASCEND_REQUIRED_GROUP: HwHiAiUser
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      PYTHONNOUSERSITE: '1'
+      JOB_CONDA_ENV: /tmp/candle-npu-ci-310b
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up ccache
+      run: ccache --version
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-310b-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
+      run: |
+        find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
+          -exec touch {} + 2>/dev/null || true
+    - name: Resolve Ascend env script
+      shell: bash
+      run: |
+        candidates=(
+          "/home/HwHiAiUser/.conda/envs/cann85/Ascend/cann-8.5.0/set_env.sh"
+          "/usr/local/Ascend/ascend-toolkit/set_env.sh"
+          "/usr/local/Ascend/ascend-toolkit/latest/set_env.sh"
+          "/usr/local/Ascend/latest/set_env.sh"
+          "/opt/Ascend/ascend-toolkit/set_env.sh"
+          "/opt/Ascend/ascend-toolkit/latest/set_env.sh"
+          "/opt/Ascend/latest/set_env.sh"
+          "/home/HwHiAiUser/Ascend/ascend-toolkit/set_env.sh"
+          "/home/HwHiAiUser/Ascend/ascend-toolkit/latest/set_env.sh"
+        )
+        for path in "${candidates[@]}"; do
+          if [ -f "$path" ]; then
+            echo "ASCEND_ENV_SCRIPT=$path" >> "$GITHUB_ENV"
+            exit 0
+          fi
+        done
+        echo "Could not find Ascend set_env.sh in known locations" >&2
+        exit 1
+    - name: Prepare conda environment
+      run: |
+        "$CONDA_EXE" create -y -p "$JOB_CONDA_ENV" python=3.11 pip
+    - name: Install dependencies
+      run: |
+        "$JOB_CONDA_ENV/bin/python" -m pip install --upgrade pip
+        "$JOB_CONDA_ENV/bin/python" -m pip install -r requirements/requirements-test.txt
+    - name: Install candle
+      run: |
+        "$JOB_CONDA_ENV/bin/python" -m pip install -e .
+    - name: Free memory before tests
+      run: |
+        pkill -9 -f 'pytest|python.*candle' || true
+        sleep 2
+        sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
+    - name: Assert NPU availability
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env python -c "import candle as torch; assert torch.npu.is_available(), 'NPU not available on 310B runner'; print('NPU available:', torch.npu.is_available()); print('Device count:', torch.npu.device_count())"
+    - name: Run 310B-specific tests
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env pytest tests/npu/310b/ -v --tb=short
+    - name: Free memory between test suites
+      run: |
+        pkill -9 -f 'pytest|python.*candle' || true
+        sleep 2
+        sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
+    - name: Run NPU common tests
+      run: |
+        source "$ASCEND_ENV_SCRIPT"
+        clean_env() {
+          local cmd
+          printf -v cmd '%q ' \
+          env -i \
+            HOME="$HOME" \
+            PATH="$JOB_CONDA_ENV/bin:${ASCEND_TOOLKIT_HOME}/bin:${ASCEND_TOOLKIT_HOME}/compiler/ccec_compiler/bin:${ASCEND_TOOLKIT_HOME}/tools/ccec_compiler/bin:/usr/bin:/bin" \
+            LANG="${LANG:-C.UTF-8}" \
+            LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+            PYTHONPATH="${PYTHONPATH:-}" \
+            ASCEND_TOOLKIT_HOME="$ASCEND_TOOLKIT_HOME" \
+            ASCEND_AICPU_PATH="$ASCEND_AICPU_PATH" \
+            ASCEND_OPP_PATH="$ASCEND_OPP_PATH" \
+            TOOLCHAIN_HOME="$TOOLCHAIN_HOME" \
+            ASCEND_HOME_PATH="$ASCEND_HOME_PATH" \
+            PYTEST_DISABLE_PLUGIN_AUTOLOAD="$PYTEST_DISABLE_PLUGIN_AUTOLOAD" \
+            PYTHONNOUSERSITE="$PYTHONNOUSERSITE" \
+            "$@"
+          /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
+        }
+        clean_env pytest tests/npu/common/ -v --tb=short
+    - name: Cancel workflow on failure
+      if: failure()
+      run: |
+        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
+      env:
+        GH_TOKEN: ${{ github.token }}
