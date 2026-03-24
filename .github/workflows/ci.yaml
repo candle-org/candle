@@ -824,6 +824,7 @@ jobs:
       run: |
         candidates=(
           "/home/HwHiAiUser/.conda/envs/cann85/Ascend/cann-8.5.0/set_env.sh"
+          "/usr/local/Ascend/cann-8.5.0/set_env.sh"
           "/usr/local/Ascend/ascend-toolkit/set_env.sh"
           "/usr/local/Ascend/ascend-toolkit/latest/set_env.sh"
           "/usr/local/Ascend/latest/set_env.sh"
