@@ -6,13 +6,15 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please focus on the user problem first and implementation details second.
+        candle aims for PyTorch API compatibility. If you need an op, module, or behavior that's missing or broken, tell us here.
 
   - type: textarea
     id: problem
     attributes:
-      label: What problem are you trying to solve?
-      placeholder: I need candle to support ... because ...
+      label: What's missing or broken for your workflow?
+      description: Focus on the problem first, implementation second.
+      placeholder: |
+        I'm trying to use `torch.nn.TransformerEncoder` but candle doesn't support ...
     validations:
       required: true
 
@@ -20,15 +22,17 @@ body:
     id: proposal
     attributes:
       label: What would you like to see?
-      placeholder: Describe the API, workflow, or behavior you want
+      description: Describe the API, behavior, or workflow you want. PyTorch code examples are welcome.
+      placeholder: |
+        I'd like `candle.nn.TransformerEncoder` to accept the same args as PyTorch ...
     validations:
       required: true
 
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives considered
-      description: Optional. Share workarounds or other ideas you considered.
+      label: Alternatives you've considered
+      description: Optional — share workarounds or other approaches you tried.
     validations:
       required: false
 
@@ -36,6 +40,6 @@ body:
     id: context
     attributes:
       label: Additional context
-      description: Links to prior issues, benchmarks, docs, or model compatibility needs.
+      description: Links to PyTorch docs, related issues, model compatibility needs, or benchmarks.
     validations:
       required: false

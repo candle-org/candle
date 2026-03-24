@@ -5,13 +5,13 @@ body:
   - type: markdown
     attributes:
       value: |
-        Use this template for concrete work items that hang off a larger roadmap issue or parent task.
+        Use this for concrete work items that contribute to a roadmap issue (e.g. #204, #205, #206) or any larger parent task.
 
   - type: input
     id: parent
     attributes:
       label: Parent issue or roadmap item
-      description: Enter an issue number or full GitHub URL.
+      description: Link the issue this task contributes to.
       placeholder: "#204"
     validations:
       required: true
@@ -20,7 +20,8 @@ body:
     id: objective
     attributes:
       label: Task objective
-      placeholder: Implement ... so that ...
+      description: One or two sentences describing the deliverable.
+      placeholder: Implement `torch.nn.functional.gelu` on the NPU backend so that ...
     validations:
       required: true
 
@@ -28,13 +29,14 @@ body:
     id: scope
     attributes:
       label: Scope boundaries
-      description: Describe what is in scope and what should explicitly stay out of scope.
+      description: Be explicit about what is and isn't included, to keep the task focused.
       placeholder: |
         In scope:
-        - ...
+        - NPU kernel for gelu via ACLNN
+        - Tests in tests/npu/
 
         Out of scope:
-        - ...
+        - CPU / MPS implementations (separate tasks)
     validations:
       required: true
 
@@ -42,8 +44,9 @@ body:
     id: acceptance
     attributes:
       label: Acceptance criteria
+      description: How will we know this task is done?
       placeholder: |
-        - [ ] ...
-        - [ ] ...
+        - [ ] `pytest tests/npu/test_gelu.py` passes
+        - [ ] Matches PyTorch output within atol=1e-5
     validations:
       required: true
