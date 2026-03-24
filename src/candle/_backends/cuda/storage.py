@@ -96,7 +96,8 @@ def untyped_from_numpy(arr, device=None, stream=None):
             cuda_runtime.CUDA_MEMCPY_HOST_TO_DEVICE,
             stream=stream,
         )
-        cuda_runtime.synchronize_stream(stream) if stream is not None else None
+        if stream is not None:
+            cuda_runtime.synchronize_stream(stream)
     return CudaUntypedStorage(raw.size, device=device, device_ptr=ptr, host_shadow=raw)
 
 
