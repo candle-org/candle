@@ -2687,7 +2687,7 @@ class ClampMinBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         min = self._min
         with _grad_context(keyset):
-            grad_self = redispatch("where", keyset, redispatch("ge", keyset, self_, min), grad, redispatch("scalar_tensor", keyset, 0., grad.options))
+            grad_self = redispatch("where", keyset, redispatch("ge", keyset, self_, min), grad, _scalar_tensor_like(grad, 0.))
         return (grad_self,)
 
 class ClampMinTensorBackward0(Node):
@@ -2720,8 +2720,8 @@ class ClampMinTensorBackward0(Node):
         min = _saved[self._saved_min_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("where", keyset, redispatch("ge", keyset, self_, min), grad, redispatch("scalar_tensor", keyset, 0., grad.options))
-            grad_min = redispatch("where", keyset, redispatch("lt", keyset, self_, min), grad, redispatch("scalar_tensor", keyset, 0., grad.options))
+            grad_self = redispatch("where", keyset, redispatch("ge", keyset, self_, min), grad, _scalar_tensor_like(grad, 0.))
+            grad_min = redispatch("where", keyset, redispatch("lt", keyset, self_, min), grad, _scalar_tensor_like(grad, 0.))
         return (grad_self, grad_min,)
 
 class ClampMaxBackward0(Node):
@@ -2749,7 +2749,7 @@ class ClampMaxBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         max = self._max
         with _grad_context(keyset):
-            grad_self = redispatch("where", keyset, redispatch("le", keyset, self_, max), grad, redispatch("scalar_tensor", keyset, 0., grad.options))
+            grad_self = redispatch("where", keyset, redispatch("le", keyset, self_, max), grad, _scalar_tensor_like(grad, 0.))
         return (grad_self,)
 
 class ClampMaxTensorBackward0(Node):
@@ -2782,8 +2782,8 @@ class ClampMaxTensorBackward0(Node):
         max = _saved[self._saved_max_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = redispatch("where", keyset, redispatch("le", keyset, self_, max), grad, redispatch("scalar_tensor", keyset, 0., grad.options))
-            grad_max = redispatch("where", keyset, redispatch("gt", keyset, self_, max), grad, redispatch("scalar_tensor", keyset, 0., grad.options))
+            grad_self = redispatch("where", keyset, redispatch("le", keyset, self_, max), grad, _scalar_tensor_like(grad, 0.))
+            grad_max = redispatch("where", keyset, redispatch("gt", keyset, self_, max), grad, _scalar_tensor_like(grad, 0.))
         return (grad_self, grad_max,)
 
 class CloneBackward0(Node):

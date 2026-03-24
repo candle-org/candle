@@ -778,18 +778,10 @@ def register_generated_autograd_kernels():
     if registry.has('sort'):
         register_autograd_kernels('sort', default=_VT.sort_autograd, cpu=_VT.sort_autograd, cuda=_VT.sort_autograd, npu=_VT.sort_autograd, meta=_VT.sort_autograd)
         register_autograd_post_kernels('sort', _VT.sort_autograd_post)
-    if registry.has('split'):
-        register_autograd_kernels('split', default=_VT.split_autograd, cpu=_VT.split_autograd, cuda=_VT.split_autograd, npu=_VT.split_autograd, meta=_VT.split_autograd)
-        register_autograd_post_kernels('split', _VT.split_autograd_post)
-    if registry.has('unsafe_split'):
-        register_autograd_kernels('unsafe_split', default=_VT.unsafe_split_autograd, cpu=_VT.unsafe_split_autograd, cuda=_VT.unsafe_split_autograd, npu=_VT.unsafe_split_autograd, meta=_VT.unsafe_split_autograd)
-        register_autograd_post_kernels('unsafe_split', _VT.unsafe_split_autograd_post)
-    if registry.has('split_with_sizes'):
-        register_autograd_kernels('split_with_sizes', default=_VT.split_with_sizes_autograd, cpu=_VT.split_with_sizes_autograd, cuda=_VT.split_with_sizes_autograd, npu=_VT.split_with_sizes_autograd, meta=_VT.split_with_sizes_autograd)
-        register_autograd_post_kernels('split_with_sizes', _VT.split_with_sizes_autograd_post)
-    if registry.has('unsafe_split_with_sizes'):
-        register_autograd_kernels('unsafe_split_with_sizes', default=_VT.unsafe_split_with_sizes_autograd, cpu=_VT.unsafe_split_with_sizes_autograd, cuda=_VT.unsafe_split_with_sizes_autograd, npu=_VT.unsafe_split_with_sizes_autograd, meta=_VT.unsafe_split_with_sizes_autograd)
-        register_autograd_post_kernels('unsafe_split_with_sizes', _VT.unsafe_split_with_sizes_autograd_post)
+    # split: handled by _autograd_multi_output in autograd.py
+    # unsafe_split: handled by _autograd_multi_output in autograd.py
+    # split_with_sizes: handled by _autograd_multi_output in autograd.py
+    # unsafe_split_with_sizes: handled by _autograd_multi_output in autograd.py
     if registry.has('sqrt'):
         register_autograd_kernels('sqrt', default=_VT.sqrt_autograd, cpu=_VT.sqrt_autograd, cuda=_VT.sqrt_autograd, npu=_VT.sqrt_autograd, meta=_VT.sqrt_autograd)
         register_autograd_post_kernels('sqrt', _VT.sqrt_autograd_post)
@@ -1558,9 +1550,7 @@ def register_generated_autograd_kernels():
     if registry.has('_fft_c2c'):
         register_autograd_kernels('_fft_c2c', default=_VT._fft_c2c_autograd, cpu=_VT._fft_c2c_autograd, cuda=_VT._fft_c2c_autograd, npu=_VT._fft_c2c_autograd, meta=_VT._fft_c2c_autograd)
         register_autograd_post_kernels('_fft_c2c', _VT._fft_c2c_autograd_post)
-    if registry.has('unbind'):
-        register_autograd_kernels('unbind', default=_VT.unbind_autograd, cpu=_VT.unbind_autograd, cuda=_VT.unbind_autograd, npu=_VT.unbind_autograd, meta=_VT.unbind_autograd)
-        register_autograd_post_kernels('unbind', _VT.unbind_autograd_post)
+    # unbind: handled by _autograd_multi_output in autograd.py
     if registry.has('stack'):
         register_autograd_kernels('stack', default=_VT.stack_autograd, cpu=_VT.stack_autograd, cuda=_VT.stack_autograd, npu=_VT.stack_autograd, meta=_VT.stack_autograd)
         register_autograd_post_kernels('stack', _VT.stack_autograd_post)

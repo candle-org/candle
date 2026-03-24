@@ -4,6 +4,14 @@ from __future__ import annotations
 from .model import DifferentiabilityInfo
 
 
+_MULTI_OUTPUT_RUNTIME_OPS = {
+    "split",
+    "unsafe_split",
+    "split_with_sizes",
+    "unsafe_split_with_sizes",
+    "unbind",
+}
+
 
 def gen_registration(infos: list[DifferentiabilityInfo]) -> str:
     """Generate registration.py source."""
@@ -23,6 +31,9 @@ def gen_registration(infos: list[DifferentiabilityInfo]) -> str:
         if op in seen_ops:
             continue
         seen_ops.add(op)
+        if op in _MULTI_OUTPUT_RUNTIME_OPS:
+            parts.append(f"    # {op}: handled by _autograd_multi_output in autograd.py")
+            continue
         func_name = f"{op}_autograd"
         post_func_name = f"{op}_autograd_post"
         parts.append(f"    if registry.has({op!r}):")

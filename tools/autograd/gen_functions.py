@@ -1572,6 +1572,28 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
         lines.append("        return (grad_self, grad_other,)")
         return "\n".join(lines)
 
+    if info.backward_name == "ClampMinBackward0":
+        lines.append("            grad_self = redispatch(\"where\", keyset, redispatch(\"ge\", keyset, self_, min), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampMinTensorBackward0":
+        lines.append("            grad_self = redispatch(\"where\", keyset, redispatch(\"ge\", keyset, self_, min), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("            grad_min = redispatch(\"where\", keyset, redispatch(\"lt\", keyset, self_, min), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("        return (grad_self, grad_min,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampMaxBackward0":
+        lines.append("            grad_self = redispatch(\"where\", keyset, redispatch(\"le\", keyset, self_, max), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampMaxTensorBackward0":
+        lines.append("            grad_self = redispatch(\"where\", keyset, redispatch(\"le\", keyset, self_, max), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("            grad_max = redispatch(\"where\", keyset, redispatch(\"gt\", keyset, self_, max), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("        return (grad_self, grad_max,)")
+        return "\n".join(lines)
+
     for deriv in info.derivatives:
         formula = transpile(deriv.formula)
         # Replace bare `self` references with `self_` in the formula
