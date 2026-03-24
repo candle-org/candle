@@ -1,0 +1,164 @@
+name: AI PR Review
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  candle-review:
+    runs-on: ubuntu-latest
+    # Skip draft PRs and PRs with WIP in title
+    if: >
+      !github.event.pull_request.draft &&
+      !contains(github.event.pull_request.title, 'WIP') &&
+      !contains(github.event.pull_request.title, 'DO NOT MERGE')
+    steps:
+      - name: Checkout base (safe — never checks out PR code)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: .github/scripts/ai-review-prompt.md
+
+      - name: Fetch PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get diff via API (safe for fork PRs)
+          gh api \
+            repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} \
+            -H "Accept: application/vnd.github.diff" \
+            > pr.diff
+
+          # Get PR metadata
+          gh api \
+            repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }} \
+            --jq '{
+              title: .title,
+              body: (.body // "" | .[0:2000]),
+              changed_files: .changed_files,
+              additions: .additions,
+              deletions: .deletions
+            }' > pr_meta.json
+
+          # Get file list
+          gh api \
+            repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
+            --jq '.[].filename' > pr_files.txt
+
+          # Truncate diff to avoid token limits (keep first 8000 lines)
+          head -n 8000 pr.diff > pr_diff_truncated.txt
+          if [ "$(wc -l < pr.diff)" -gt 8000 ]; then
+            echo -e "\n\n... (diff truncated — $(wc -l < pr.diff) total lines)" >> pr_diff_truncated.txt
+          fi
+
+      - name: Run AI review
+        id: review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Skip if no API key configured
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "review_body=⚠️ AI review skipped — \`ANTHROPIC_API_KEY\` not configured." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SYSTEM_PROMPT=$(cat .github/scripts/ai-review-prompt.md)
+          PR_META=$(cat pr_meta.json)
+          PR_FILES=$(cat pr_files.txt)
+          PR_DIFF=$(cat pr_diff_truncated.txt)
+
+          # Build the user message
+          USER_MSG=$(cat <<'ENDMSG'
+          PR metadata:
+          ENDMSG
+          )
+          USER_MSG="${USER_MSG}
+          ${PR_META}
+
+          Files changed:
+          ${PR_FILES}
+
+          Diff:
+          \`\`\`diff
+          ${PR_DIFF}
+          \`\`\`"
+
+          # Call Claude API
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            https://api.anthropic.com/v1/messages \
+            -H "content-type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d "$(jq -n \
+              --arg system "$SYSTEM_PROMPT" \
+              --arg user "$USER_MSG" \
+              '{
+                model: "claude-sonnet-4-20250514",
+                max_tokens: 1024,
+                system: $system,
+                messages: [{role: "user", content: $user}]
+              }')")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "review_body=⚠️ AI review failed (HTTP $HTTP_CODE). PR is not blocked." >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Extract text content
+          REVIEW=$(echo "$BODY" | jq -r '.content[0].text // "AI review returned empty response."')
+
+          # Write to file to preserve newlines
+          echo "$REVIEW" > review_body.txt
+          echo "has_review=true" >> "$GITHUB_OUTPUT"
+
+      - name: Post or update comment
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MARKER="<!-- candle-ai-review-marker -->"
+
+          if [ -f review_body.txt ]; then
+            REVIEW_BODY=$(cat review_body.txt)
+          elif [ -n "${{ steps.review.outputs.review_body }}" ]; then
+            REVIEW_BODY="${{ steps.review.outputs.review_body }}"
+          else
+            REVIEW_BODY="⚠️ AI review encountered an unexpected error. PR is not blocked."
+          fi
+
+          COMMENT_BODY="${REVIEW_BODY}
+
+          ${MARKER}"
+
+          # Find existing comment by marker
+          EXISTING_COMMENT_ID=$(gh api \
+            repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" \
+            2>/dev/null | head -1)
+
+          if [ -n "$EXISTING_COMMENT_ID" ]; then
+            # Update existing comment
+            gh api \
+              repos/${{ github.repository }}/issues/comments/$EXISTING_COMMENT_ID \
+              -X PATCH \
+              -f body="$COMMENT_BODY"
+            echo "Updated existing review comment #$EXISTING_COMMENT_ID"
+          else
+            # Create new comment
+            gh api \
+              repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments \
+              -f body="$COMMENT_BODY"
+            echo "Created new review comment"
+          fi
