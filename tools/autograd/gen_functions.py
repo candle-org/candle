@@ -84,6 +84,18 @@ def _sigmoid_backward_helper(grad, result, keyset):
     return redispatch("mul", keyset, grad, redispatch("mul", keyset, result, redispatch("add", keyset, ones, redispatch("neg", keyset, result))))
 
 
+def _erf_backward_helper(grad, self_, keyset):
+    coeff = _scalar_tensor_like(self_, 2.0 / _math.sqrt(_math.pi))
+    x_sq = redispatch("mul", keyset, self_, self_)
+    neg_x_sq = redispatch("neg", keyset, x_sq)
+    exp_term = redispatch("exp", keyset, neg_x_sq)
+    return redispatch("mul", keyset, grad, redispatch("mul", keyset, coeff, exp_term))
+
+
+def _hardtanh_backward_helper(grad, self_, min_val, max_val, keyset):
+    return _hardtanh_grad(grad, self_, min_val, max_val, keyset)
+
+
 def _tanh_backward_helper(grad, result, keyset):
     ones = result._ones_like()
     return redispatch("mul", keyset, grad, redispatch("add", keyset, ones, redispatch("neg", keyset, redispatch("mul", keyset, result, result))))
