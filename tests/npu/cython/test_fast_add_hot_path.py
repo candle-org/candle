@@ -192,9 +192,161 @@ def test_fast_div_skips_python_aclnn_wrapper(npu_device, monkeypatch):
     assert calls["count"] == 0, (
         f"fast_div called aclnn.div {calls['count']} time(s); expected 0"
     )
-    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4), (
-        "fast_div output differs from expected"
-    )
+
+
+def test_fast_pow_tensor_tensor_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+    import numpy as np
+
+    a = torch.rand(4, 4, device=npu_device) + 1.0
+    b = torch.rand(4, 4, device=npu_device) + 0.5
+    torch.npu.synchronize()
+
+    expected = torch.pow(a, b)
+    torch.npu.synchronize()
+
+    _ = torch.pow(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original = aclnn_mod.pow_tensor_tensor
+
+    def wrapped(*args, **kwargs):
+        calls["count"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "pow_tensor_tensor", wrapped)
+
+    out = torch.pow(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4)
+
+
+def test_fast_remainder_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+    import numpy as np
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.rand(4, 4, device=npu_device) + 1.0
+    torch.npu.synchronize()
+
+    expected = torch.remainder(a, b)
+    torch.npu.synchronize()
+
+    _ = torch.remainder(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original = aclnn_mod.sremainder
+
+    def wrapped(*args, **kwargs):
+        calls["count"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "sremainder", wrapped)
+
+    out = torch.remainder(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4)
+
+
+def test_fast_fmod_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+    import numpy as np
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.rand(4, 4, device=npu_device) + 1.0
+    torch.npu.synchronize()
+
+    expected = torch.fmod(a, b)
+    torch.npu.synchronize()
+
+    _ = torch.fmod(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original = aclnn_mod.sfmod
+
+    def wrapped(*args, **kwargs):
+        calls["count"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "sfmod", wrapped)
+
+    out = torch.fmod(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4)
+
+
+def test_fast_logaddexp_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+    import numpy as np
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.randn(4, 4, device=npu_device)
+    torch.npu.synchronize()
+
+    expected = torch.logaddexp(a, b)
+    torch.npu.synchronize()
+
+    _ = torch.logaddexp(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original = aclnn_mod.slogaddexp
+
+    def wrapped(*args, **kwargs):
+        calls["count"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "slogaddexp", wrapped)
+
+    out = torch.logaddexp(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4)
+
+
+def test_fast_logaddexp2_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+    import numpy as np
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.randn(4, 4, device=npu_device)
+    torch.npu.synchronize()
+
+    expected = torch.logaddexp2(a, b)
+    torch.npu.synchronize()
+
+    _ = torch.logaddexp2(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original = aclnn_mod.slogaddexp2
+
+    def wrapped(*args, **kwargs):
+        calls["count"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "slogaddexp2", wrapped)
+
+    out = torch.logaddexp2(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4)
 
 
 def test_fast_pow_tensor_tensor_skips_python_aclnn_wrapper(npu_device, monkeypatch):

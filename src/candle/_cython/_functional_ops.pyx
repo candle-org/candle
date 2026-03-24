@@ -416,13 +416,18 @@ def pow(a, b):
 
 
 def remainder(a, b):
-    """Fast remainder: skip __torch_function__ when both args are base Tensor."""
+    """Fast remainder: skip __torch_function__ when both args are base Tensor.
+
+    Falls back to dispatch for SoC-specific fallback or scalar inputs.
+    """
     cdef object r
 
     _ensure_originals()
 
     if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
-        if _is_npu_tensor_pair(a, b):
+        # remainder has SoC fallback and scalar normalization in the backend;
+        # only take the Cython fast path for tensor-tensor on non-fallback SoCs.
+        if hasattr(b, "shape") and _is_npu_tensor_pair(a, b):
             _ensure_npu_refs()
             if _npu_fast_ok(a, b) and _npu_remainder_fn is not None:
                 return _npu_remainder_fn(a, b)
@@ -436,13 +441,16 @@ def remainder(a, b):
 
 
 def fmod(a, b):
-    """Fast fmod: skip __torch_function__ when both args are base Tensor."""
+    """Fast fmod: skip __torch_function__ when both args are base Tensor.
+
+    Falls back to dispatch for scalar inputs.
+    """
     cdef object r
 
     _ensure_originals()
 
     if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
-        if _is_npu_tensor_pair(a, b):
+        if hasattr(b, "shape") and _is_npu_tensor_pair(a, b):
             _ensure_npu_refs()
             if _npu_fast_ok(a, b) and _npu_fmod_fn is not None:
                 return _npu_fmod_fn(a, b)
