@@ -1,8 +1,6 @@
 """Generate registration code that wires generated wrappers into the dispatcher."""
 from __future__ import annotations
 
-from candle._dispatch.registry import registry
-
 from .model import DifferentiabilityInfo
 
 
@@ -12,6 +10,7 @@ def gen_registration(infos: list[DifferentiabilityInfo]) -> str:
     parts = [_HEADER]
     parts.append("\n\ndef register_generated_autograd_kernels():")
     parts.append("    from .._dispatch.registration import register_autograd_kernels, register_autograd_post_kernels")
+    parts.append("    from .._dispatch.registry import registry")
     parts.append("    from . import variable_type as _VT_PY")
     parts.append("    try:")
     parts.append("        from . import _variable_type_cy as _VT_CY")
@@ -24,14 +23,13 @@ def gen_registration(infos: list[DifferentiabilityInfo]) -> str:
         if op in seen_ops:
             continue
         seen_ops.add(op)
-        if not registry.has(op):
-            continue
         func_name = f"{op}_autograd"
         post_func_name = f"{op}_autograd_post"
+        parts.append(f"    if registry.has({op!r}):")
         parts.append(
-            f"    register_autograd_kernels({op!r}, default=_VT.{func_name}, cpu=_VT.{func_name}, cuda=_VT.{func_name}, npu=_VT.{func_name}, meta=_VT.{func_name})"
+            f"        register_autograd_kernels({op!r}, default=_VT.{func_name}, cpu=_VT.{func_name}, cuda=_VT.{func_name}, npu=_VT.{func_name}, meta=_VT.{func_name})"
         )
-        parts.append(f"    register_autograd_post_kernels({op!r}, _VT.{post_func_name})")
+        parts.append(f"        register_autograd_post_kernels({op!r}, _VT.{post_func_name})")
     parts.append("")
     parts.append("    # Legacy ops (not in derivatives.yaml)")
     parts.append("    from .variable_type_legacy import register_legacy_autograd_kernels")

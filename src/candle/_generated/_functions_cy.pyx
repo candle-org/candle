@@ -3149,27 +3149,27 @@ class CumsumBackward0(_Node):
         super().__init__(None, inputs, name='CumsumBackward0')
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
-        self._saved_self_idx = None
+        self._saved_input_idx = None
         self._dim = None
         self._dtype = None
 
-    def _save(self, *, self_=None):
+    def _save(self, *, input_=None):
         tensors = []
-        if self_ is not None:
-            self._saved_self_idx = len(tensors)
-            tensors.append(self_)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
         if tensors:
             super().save_for_backward(*tensors)
 
     def apply(self, grad):
         _ensure_refs()
         keyset = _backward_dispatch_keyset(self._raw_keyset)
-        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
         dim = self._dim
         dtype = self._dtype
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("CumsumBackward0: self")
-        return (grad_self,)
+            grad_input = _cy_not_implemented("CumsumBackward0: input")
+        return (grad_input,)
 
 class CummaxBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
@@ -4446,18 +4446,18 @@ class GatherBackward0(_Node):
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
         self._saved_index_idx = None
-        self._saved_self_idx = None
+        self._saved_input_idx = None
         self._dim = None
         self._sparse_grad = None
 
-    def _save(self, *, index=None, self_=None):
+    def _save(self, *, index=None, input_=None):
         tensors = []
         if index is not None:
             self._saved_index_idx = len(tensors)
             tensors.append(index)
-        if self_ is not None:
-            self._saved_self_idx = len(tensors)
-            tensors.append(self_)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
         if tensors:
             super().save_for_backward(*tensors)
 
@@ -4465,12 +4465,12 @@ class GatherBackward0(_Node):
         _ensure_refs()
         keyset = _backward_dispatch_keyset(self._raw_keyset)
         index = self.saved_tensors[self._saved_index_idx] if self._saved_index_idx is not None else None
-        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
         dim = self._dim
         sparse_grad = self._sparse_grad
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("GatherBackward0: self")
-        return (grad_self,)
+            grad_input = _cy_not_implemented("GatherBackward0: input")
+        return (grad_input,)
 
 class GeScalarBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
@@ -8736,15 +8736,15 @@ class ProdBackward0(_Node):
         super().__init__(None, inputs, name='ProdBackward0')
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
-        self._saved_self_idx = None
+        self._saved_input_idx = None
         self._saved_result_idx = None
         self._dtype = None
 
-    def _save(self, *, self_=None, result=None):
+    def _save(self, *, input_=None, result=None):
         tensors = []
-        if self_ is not None:
-            self._saved_self_idx = len(tensors)
-            tensors.append(self_)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
         if result is not None:
             self._saved_result_idx = len(tensors)
             tensors.append(result)
@@ -8754,12 +8754,12 @@ class ProdBackward0(_Node):
     def apply(self, grad):
         _ensure_refs()
         keyset = _backward_dispatch_keyset(self._raw_keyset)
-        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
         result = self.saved_tensors[self._saved_result_idx] if self._saved_result_idx is not None else None
         dtype = self._dtype
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("ProdBackward0: self")
-        return (grad_self,)
+            grad_input = _cy_not_implemented("ProdBackward0: input")
+        return (grad_input,)
 
 class ProdDimIntBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
@@ -9033,25 +9033,25 @@ class RepeatBackward0(_Node):
         super().__init__(None, inputs, name='RepeatBackward0')
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
-        self._saved_self_idx = None
+        self._saved_input_idx = None
         self._repeats = None
 
-    def _save(self, *, self_=None):
+    def _save(self, *, input_=None):
         tensors = []
-        if self_ is not None:
-            self._saved_self_idx = len(tensors)
-            tensors.append(self_)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
         if tensors:
             super().save_for_backward(*tensors)
 
     def apply(self, grad):
         _ensure_refs()
         keyset = _backward_dispatch_keyset(self._raw_keyset)
-        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
         repeats = self._repeats
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("RepeatBackward0: self")
-        return (grad_self,)
+            grad_input = _cy_not_implemented("RepeatBackward0: input")
+        return (grad_input,)
 
 class SpecialEntrBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
@@ -9803,18 +9803,18 @@ class SortBackward0(_Node):
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
         self._saved_self_idx = None
-        self._saved_indices_idx = None
+        self._saved_result1_idx = None
         self._dim = None
         self._descending = None
 
-    def _save(self, *, self_=None, indices=None):
+    def _save(self, *, self_=None, result1=None):
         tensors = []
         if self_ is not None:
             self._saved_self_idx = len(tensors)
             tensors.append(self_)
-        if indices is not None:
-            self._saved_indices_idx = len(tensors)
-            tensors.append(indices)
+        if result1 is not None:
+            self._saved_result1_idx = len(tensors)
+            tensors.append(result1)
         if tensors:
             super().save_for_backward(*tensors)
 
@@ -9822,7 +9822,7 @@ class SortBackward0(_Node):
         _ensure_refs()
         keyset = _backward_dispatch_keyset(self._raw_keyset)
         self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
-        indices = self.saved_tensors[self._saved_indices_idx] if self._saved_indices_idx is not None else None
+        result1 = self.saved_tensors[self._saved_result1_idx] if self._saved_result1_idx is not None else None
         dim = self._dim
         descending = self._descending
         with _grad_context(keyset):
@@ -10668,20 +10668,20 @@ class TopkBackward0(_Node):
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
         self._saved_self_idx = None
-        self._saved_indices_idx = None
+        self._saved_result1_idx = None
         self._k = None
         self._dim = None
         self._largest = None
         self._sorted = None
 
-    def _save(self, *, self_=None, indices=None):
+    def _save(self, *, self_=None, result1=None):
         tensors = []
         if self_ is not None:
             self._saved_self_idx = len(tensors)
             tensors.append(self_)
-        if indices is not None:
-            self._saved_indices_idx = len(tensors)
-            tensors.append(indices)
+        if result1 is not None:
+            self._saved_result1_idx = len(tensors)
+            tensors.append(result1)
         if tensors:
             super().save_for_backward(*tensors)
 
@@ -10689,7 +10689,7 @@ class TopkBackward0(_Node):
         _ensure_refs()
         keyset = _backward_dispatch_keyset(self._raw_keyset)
         self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
-        indices = self.saved_tensors[self._saved_indices_idx] if self._saved_indices_idx is not None else None
+        result1 = self.saved_tensors[self._saved_result1_idx] if self._saved_result1_idx is not None else None
         k = self._k
         dim = self._dim
         largest = self._largest
