@@ -211,7 +211,9 @@ class DispatchKeySet:
                     # Lazy import to avoid circular imports
                     from .._tensor import Tensor as _BaseTensor
                     base_td = getattr(_BaseTensor, "__torch_dispatch__", None)
-                    if td is not base_td:
+                    td_func = getattr(td, "__func__", td)
+                    base_td_func = getattr(base_td, "__func__", base_td)
+                    if td_func is not base_td_func:
                         has_dispatch_subclass = True
         if (not saw_device) and device is not None:
             dev_type = device.type if hasattr(device, "type") else device

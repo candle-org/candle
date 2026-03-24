@@ -76,8 +76,15 @@ from ._functional import log1p as log1p_dispatch, expm1 as expm1_dispatch
 from .autograd.engine import backward as _backward
 
 # TensorImpl base class: compiled Cython extension required.
-from ._cython._tensor_impl import TensorImpl as _TensorBase  # pylint: disable=import-error,no-name-in-module
-from ._cython._tensor_impl import _VersionCounterProxy  # noqa: F401  # pylint: disable=import-error,no-name-in-module
+try:
+    from ._cython._tensor_impl import TensorImpl as _TensorBase  # pylint: disable=import-error,no-name-in-module
+    from ._cython._tensor_impl import _VersionCounterProxy  # noqa: F401  # pylint: disable=import-error,no-name-in-module
+except ImportError as exc:
+    raise ImportError(
+        "Failed to import candle._cython._tensor_impl. Build the required Cython "
+        "runtime core with `python setup.py build_ext --inplace` or install with "
+        "a build that includes the compiled extensions."
+    ) from exc
 
 
 class _StrideTuple(tuple):

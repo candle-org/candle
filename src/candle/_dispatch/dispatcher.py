@@ -1,3 +1,11 @@
+"""Dispatcher policy veneer over the canonical Cython runtime core.
+
+This module keeps the readable Python reference implementation and the
+control-plane helpers, but when the compiled dispatcher core is available the
+public `dispatch()` / `dispatch_with_keyset()` entrypoints are rebound to the
+Cython implementation.
+"""
+
 import inspect
 import numpy as np
 
@@ -548,9 +556,6 @@ def dispatch(name, dispatch_device, *args, **kwargs):
     return dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs)
 
 
-# Save original Python implementation for fallback reference
-_py_dispatch_with_keyset = dispatch_with_keyset
-
 
 def redispatch(name, keyset, *args, **kwargs):
     return dispatch_with_keyset(name, keyset, None, *args, **kwargs)
@@ -569,7 +574,16 @@ except ImportError:
 # Full dispatcher core: single-function dispatch (replaces both dispatch and
 # dispatch_with_keyset) — aligned with PyTorch Dispatcher::call architecture.
 try:
-    from .._cython._dispatcher_core import cy_dispatch_full as dispatch  # noqa: F811
-    from .._cython._dispatcher_core import cy_dispatch_with_keyset_fast as dispatch_with_keyset  # noqa: F811
-except ImportError:
-    pass  # keep existing Python versions
+    from .._cython._dispatcher_core import (
+        cy_dispatch_full,
+        cy_dispatch_with_keyset_fast,
+    )
+except ImportError as exc:
+    raise ImportError(
+        "Failed to import candle._cython._dispatcher_core. "
+        "Build the required Cython runtime core with `python setup.py build_ext --inplace` "
+        "or install with a build that includes the compiled extensions."
+    ) from exc
+else:
+    dispatch = cy_dispatch_full  # noqa: F811
+    dispatch_with_keyset = cy_dispatch_with_keyset_fast  # noqa: F811
