@@ -43,11 +43,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Set up ccache
-      run: |
-        if ! command -v ccache >/dev/null 2>&1; then
-          "$CONDA_EXE" install -y -c conda-forge ccache
-        fi
-        ccache --version
+      run: ccache --version
     # ── Cython build artifacts cache ──────────────────────────────
     - name: Cache Cython build artifacts
       id: cython-cache
