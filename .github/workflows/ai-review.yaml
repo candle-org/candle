@@ -76,18 +76,24 @@ jobs:
           RAW_API_BASE="${ANTHROPIC_API_BASE:-https://api.anthropic.com}"
           API_BASE="${RAW_API_BASE%/}"
 
-          SYSTEM_PROMPT=$(cat .github/scripts/ai-review-prompt.md)
-          PR_META=$(cat pr_meta.json)
-          PR_FILES=$(cat pr_files.txt)
-          PR_DIFF=$(cat pr_diff_truncated.txt)
-
-          # Build the user message via jq to avoid shell escaping issues
-          USER_MSG=$(jq -n \
-            --arg meta "$PR_META" \
-            --arg files "$PR_FILES" \
-            --arg diff "$PR_DIFF" \
+          # Build the user message via jq --rawfile to avoid ARG_MAX limits
+          jq -n \
+            --rawfile meta pr_meta.json \
+            --rawfile files pr_files.txt \
+            --rawfile diff pr_diff_truncated.txt \
             '"PR metadata:\n" + $meta + "\n\nFiles changed:\n" + $files + "\n\nDiff:\n```diff\n" + $diff + "\n```"' \
-            -r)
+            -r > user_msg.txt
+
+          # Build API request body from files to avoid ARG_MAX limits
+          jq -n \
+            --rawfile system .github/scripts/ai-review-prompt.md \
+            --rawfile user user_msg.txt \
+            '{
+              model: "claude-sonnet-4-6",
+              max_tokens: 1024,
+              system: $system,
+              messages: [{role: "user", content: $user}]
+            }' > request_body.json
 
           # Call Claude API
           RESPONSE=$(curl -s -w "\n%{http_code}" \
@@ -95,15 +101,7 @@ jobs:
             -H "content-type: application/json" \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
-            -d "$(jq -n \
-              --arg system "$SYSTEM_PROMPT" \
-              --arg user "$USER_MSG" \
-              '{
-                model: "claude-sonnet-4-6",
-                max_tokens: 1024,
-                system: $system,
-                messages: [{role: "user", content: $user}]
-              }')")
+            -d @request_body.json)
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
