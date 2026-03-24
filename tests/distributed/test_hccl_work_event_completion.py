@@ -540,7 +540,7 @@ class TestGetFutureWithEvent:
 
         assert fut.done(), "Future must be done after a failed wait()"
         with pytest.raises(RuntimeError, match="HCCL event sync failed"):
-            fut.result()
+            fut.wait()
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +573,7 @@ class TestIsCompletedResolvesFutureOnEventFire:
         assert fut.done(), (
             "Future must be resolved when is_completed() observes event completion"
         )
-        assert fut.result() == [], "Future result must be the Work result ([])"
+        assert fut.wait() == [], "Future result must be the Work result ([])"
 
     def test_future_not_resolved_when_is_completed_polls_false(self):
         """is_completed() sees event not done → future stays pending."""
@@ -722,7 +722,7 @@ class TestMakeWorkFallbackOnEventFailure:
         mock_rt.synchronize_stream.assert_called_once_with(fake_stream)
         mock_rt.synchronize_event.assert_not_called()
         assert fut.done(), "Future must be resolved after stream-sync wait()"
-        assert fut.result() == []
+        assert fut.wait() == []
 
     def test_make_work_fallback_record_event_raises(self):
         """If record_event raises after create_event succeeds, still fallback."""
