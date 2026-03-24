@@ -4,16 +4,38 @@ on:
   workflow_dispatch:
   pull_request:
     branches: ["main"]
-    paths:
-      - 'src/candle/**'
-      - 'tests/**'
-      - '.github/workflows/**'
+    paths-ignore:
+      - 'docs/**'
+      - 'examples/**'
+      - 'assets/**'
+      - 'benchmarks/**'
+      - 'results/**'
+      - 'compat/**'
+      - 'scripts/**'
+      - 'tools/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'bench_torch_npu.py'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE/**'
+      - '.github/pull_request_template.md'
   push:
     branches: ["main"]
-    paths:
-      - 'src/candle/**'
-      - 'tests/**'
-      - '.github/workflows/**'
+    paths-ignore:
+      - 'docs/**'
+      - 'examples/**'
+      - 'assets/**'
+      - 'benchmarks/**'
+      - 'results/**'
+      - 'compat/**'
+      - 'scripts/**'
+      - 'tools/**'
+      - '*.md'
+      - 'LICENSE'
+      - 'bench_torch_npu.py'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/PULL_REQUEST_TEMPLATE/**'
+      - '.github/pull_request_template.md'
 
 permissions:
   contents: read
@@ -24,7 +46,75 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ════════════════════════════════════════════════════════════════
+  # Detect which areas changed to skip unrelated jobs.
+  # ════════════════════════════════════════════════════════════════
+
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      full-ci: ${{ steps.eval.outputs.full-ci }}
+      run-cpu-tests: ${{ steps.eval.outputs.run-cpu-tests }}
+      run-mps-tests: ${{ steps.eval.outputs.run-mps-tests }}
+      run-npu-tests: ${{ steps.eval.outputs.run-npu-tests }}
+      run-dist-tests: ${{ steps.eval.outputs.run-dist-tests }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'push'
+        with:
+          fetch-depth: 2
+      - uses: dorny/paths-filter@v3
+        if: github.event_name != 'workflow_dispatch'
+        id: filter
+        with:
+          filters: |
+            src:
+              - 'src/candle/**'
+            build:
+              - 'setup.py'
+              - 'pyproject.toml'
+              - 'MANIFEST.in'
+              - 'requirements/**'
+            ci:
+              - '.github/workflows/ci.yaml'
+              - '.github/scripts/**'
+              - '.github/pylint.conf'
+            tests-cpu:
+              - 'tests/cpu/**'
+              - 'tests/contract/**'
+            tests-mps:
+              - 'tests/mps/**'
+            tests-npu:
+              - 'tests/npu/**'
+            tests-dist:
+              - 'tests/distributed/**'
+            tests-infra:
+              - 'tests/conftest.py'
+      - id: eval
+        run: |
+          # Source, build config, CI config, or manual dispatch → full CI
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || \
+             [[ "${{ steps.filter.outputs.src }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.build }}" == "true" ]] || \
+             [[ "${{ steps.filter.outputs.ci }}" == "true" ]]; then
+            FULL_CI=true
+          else
+            FULL_CI=false
+          fi
+          echo "full-ci=$FULL_CI" >> "$GITHUB_OUTPUT"
+
+          INFRA="${{ steps.filter.outputs.tests-infra }}"
+
+          run_if() { [[ "$FULL_CI" == "true" ]] || [[ "$1" == "true" ]] || [[ "$INFRA" == "true" ]]; }
+
+          run_if "${{ steps.filter.outputs.tests-cpu }}" && echo "run-cpu-tests=true" >> "$GITHUB_OUTPUT" || echo "run-cpu-tests=false" >> "$GITHUB_OUTPUT"
+          run_if "${{ steps.filter.outputs.tests-mps }}" && echo "run-mps-tests=true" >> "$GITHUB_OUTPUT" || echo "run-mps-tests=false" >> "$GITHUB_OUTPUT"
+          run_if "${{ steps.filter.outputs.tests-npu }}" && echo "run-npu-tests=true" >> "$GITHUB_OUTPUT" || echo "run-npu-tests=false" >> "$GITHUB_OUTPUT"
+          run_if "${{ steps.filter.outputs.tests-dist }}" && echo "run-dist-tests=true" >> "$GITHUB_OUTPUT" || echo "run-dist-tests=false" >> "$GITHUB_OUTPUT"
+
   pylint-check:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.full-ci == 'true'
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -49,7 +139,11 @@ jobs:
   # ════════════════════════════════════════════════════════════════
 
   test-cpu:
-    needs: pylint-check
+    needs: [detect-changes, pylint-check]
+    if: >
+      !cancelled() &&
+      needs.detect-changes.outputs.run-cpu-tests == 'true' &&
+      (needs.pylint-check.result == 'success' || needs.pylint-check.result == 'skipped')
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -126,7 +220,11 @@ jobs:
         GH_TOKEN: ${{ github.token }}
 
   test-mps:
-    needs: pylint-check
+    needs: [detect-changes, pylint-check]
+    if: >
+      !cancelled() &&
+      needs.detect-changes.outputs.run-mps-tests == 'true' &&
+      (needs.pylint-check.result == 'success' || needs.pylint-check.result == 'skipped')
     runs-on: macos-14
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -205,7 +303,11 @@ jobs:
   # ── NPU 910B runners ───────────────────────────────────────────
 
   test-npu-910b-unit:
-    needs: pylint-check
+    needs: [detect-changes, pylint-check]
+    if: >
+      !cancelled() &&
+      needs.detect-changes.outputs.run-npu-tests == 'true' &&
+      (needs.pylint-check.result == 'success' || needs.pylint-check.result == 'skipped')
     runs-on: [self-hosted, npu-unit]
     timeout-minutes: 30
     env:
@@ -259,7 +361,11 @@ jobs:
         GH_TOKEN: ${{ github.token }}
 
   test-npu-910b-integ:
-    needs: pylint-check
+    needs: [detect-changes, pylint-check]
+    if: >
+      !cancelled() &&
+      needs.detect-changes.outputs.run-npu-tests == 'true' &&
+      (needs.pylint-check.result == 'success' || needs.pylint-check.result == 'skipped')
     runs-on: [self-hosted, npu-integ]
     timeout-minutes: 30
     env:
@@ -318,7 +424,12 @@ jobs:
         GH_TOKEN: ${{ github.token }}
 
   test-npu-910b-dist:
-    needs: [test-npu-910b-unit, test-npu-910b-integ]
+    needs: [detect-changes, test-npu-910b-unit, test-npu-910b-integ]
+    if: >
+      !cancelled() &&
+      (needs.detect-changes.outputs.run-npu-tests == 'true' || needs.detect-changes.outputs.run-dist-tests == 'true') &&
+      (needs.test-npu-910b-unit.result == 'success' || needs.test-npu-910b-unit.result == 'skipped') &&
+      (needs.test-npu-910b-integ.result == 'success' || needs.test-npu-910b-integ.result == 'skipped')
     runs-on: [self-hosted, npu-dist]
     timeout-minutes: 45
     env:
@@ -375,7 +486,11 @@ jobs:
 
   test-npu-910a:
     name: NPU 910A Suite (6-7)
-    needs: pylint-check
+    needs: [detect-changes, pylint-check]
+    if: >
+      !cancelled() &&
+      needs.detect-changes.outputs.run-npu-tests == 'true' &&
+      (needs.pylint-check.result == 'success' || needs.pylint-check.result == 'skipped')
     runs-on: [self-hosted, linux, ascend, 910a, npu-6-7]
     timeout-minutes: 90
     env:
@@ -495,7 +610,11 @@ jobs:
 
   test-npu-910a-dist-2card:
     name: 910A Distributed (4-5)
-    needs: pylint-check
+    needs: [detect-changes, pylint-check]
+    if: >
+      !cancelled() &&
+      (needs.detect-changes.outputs.run-npu-tests == 'true' || needs.detect-changes.outputs.run-dist-tests == 'true') &&
+      (needs.pylint-check.result == 'success' || needs.pylint-check.result == 'skipped')
     runs-on: [self-hosted, linux, ascend, 910a, npu-4-5]
     timeout-minutes: 120
     env:
@@ -649,7 +768,11 @@ jobs:
 
   test-npu-910a-dist-4card:
     name: 910A HCCL 4-Card (0-3)
-    needs: pylint-check
+    needs: [detect-changes, pylint-check]
+    if: >
+      !cancelled() &&
+      (needs.detect-changes.outputs.run-npu-tests == 'true' || needs.detect-changes.outputs.run-dist-tests == 'true') &&
+      (needs.pylint-check.result == 'success' || needs.pylint-check.result == 'skipped')
     runs-on: [self-hosted, linux, ascend, 910a, npu-0-3]
     timeout-minutes: 120
     env:
@@ -776,7 +899,11 @@ jobs:
 
   test-npu-310b:
     name: 310B Ops + Common
-    needs: pylint-check
+    needs: [detect-changes, pylint-check]
+    if: >
+      !cancelled() &&
+      needs.detect-changes.outputs.run-npu-tests == 'true' &&
+      (needs.pylint-check.result == 'success' || needs.pylint-check.result == 'skipped')
     runs-on: [self-hosted, linux, ascend, 310b]
     timeout-minutes: 60
     env:
