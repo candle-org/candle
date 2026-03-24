@@ -8,7 +8,7 @@ It is designed for single-node DDP training recovery flows.
 FSDP-awareness is added via the fsdp_type keyword argument.
 """
 
-import candle as torch
+import candle
 
 
 def _unwrap_model(model):
@@ -190,7 +190,7 @@ def save(
     if payload is None:
         return None
 
-    torch.save(payload, path)
+    candle.save(payload, path)
     return payload
 
 
@@ -206,7 +206,7 @@ def load(
 ):
     """Load a distributed checkpoint payload from ``path`` and restore state."""
     if payload is None:
-        payload = torch.load(path, map_location=map_location)
+        payload = candle.load(path, map_location=map_location)
 
     return set_state_dict(
         model,

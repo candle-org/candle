@@ -96,7 +96,7 @@ class FSDPParamGroup:
         The fallback slice-assignment path is preserved for environments
         where the extension has not been compiled.
         """
-        if _HAVE_FASTPATH:
+        if _HAVE_FASTPATH and getattr(self._flat_shard.device, "type", None) == "cpu":
             shards = [
                 list(fp._sharded_param.to_local().reshape(-1))
                 for fp in self.fsdp_params
@@ -123,7 +123,7 @@ class FSDPParamGroup:
         The fallback slice-reshape path is preserved for environments where
         the extension has not been compiled.
         """
-        if _HAVE_FASTPATH:
+        if _HAVE_FASTPATH and getattr(flat_src.device, "type", None) == "cpu":
             from ...._creation import zeros
             # Convert flat_src tensor to list for the Cython helper
             flat_list = list(flat_src)
@@ -136,7 +136,6 @@ class FSDPParamGroup:
             for fp, shard_list, shape in zip(
                 self.fsdp_params, shard_lists, self._shard_shapes
             ):
-                from ...._tensor import Tensor
                 flat_g = zeros(len(shard_list), dtype=flat_src.dtype,
                                device=flat_src.device)
                 for i, val in enumerate(shard_list):

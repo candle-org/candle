@@ -15,8 +15,6 @@ Explicitly deferred:
 
 from dataclasses import dataclass
 
-import candle.distributed as dist
-
 
 @dataclass(frozen=True)
 class TensorChunkSpec:
@@ -86,6 +84,8 @@ class PipelineStage:
         output_args=None,
         group=None,
     ):
+        import candle.distributed as dist
+
         self.submodule = submodule
         self.stage_index = stage_index
         self.num_stages = num_stages
@@ -100,6 +100,8 @@ class PipelineStage:
         self.next_stage = None if self.is_last else stage_index + 1
 
     def get_fwd_recv_ops(self, chunk_id):
+        import candle.distributed as dist
+
         if self.is_first:
             return []
         recv_bufs = []
@@ -110,6 +112,8 @@ class PipelineStage:
         return recv_bufs
 
     def get_fwd_send_ops(self, chunk_id, outputs):
+        import candle.distributed as dist
+
         if self.is_last:
             return []
         outputs = _normalize_args(outputs)
@@ -140,6 +144,8 @@ class ScheduleGPipe:
         self.input_chunk_spec = input_chunk_spec or TensorChunkSpec(0)
 
     def step(self, *args, **kwargs):
+        import candle.distributed as dist
+
         args = _normalize_args(args)
         if not args or not hasattr(args[0], "shape"):
             raise TypeError("ScheduleGPipe.step expects tensor batch inputs")

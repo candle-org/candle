@@ -66,6 +66,16 @@ def _candle_tensor(data):
     return candle.tensor(np.array(data, dtype="float32"))
 
 
+class _FakeLocalTensor:
+    def __init__(self, shape, dtype, device_type):
+        self.shape = shape
+        self.dtype = dtype
+        self.device = types.SimpleNamespace(type=device_type)
+
+    def numpy(self):
+        raise AssertionError("numpy fallback should not be used for non-CPU tensors")
+
+
 # ---------------------------------------------------------------------------
 # DeviceMesh coordinate + slicing tests
 # ---------------------------------------------------------------------------
@@ -141,13 +151,37 @@ class TestDTensorRedistribute:
         result = dt.redistribute(mesh, [Replicate()])
         assert isinstance(result, DTensor)
 
-    def test_redistribute_preserves_global_shape(self):
-        """Redistributed DTensor must preserve the global (unsharded) shape."""
-        from candle.distributed.tensor.placement import Shard, Replicate
+
+    def test_redistribute_shard_to_replicate_raises_for_non_cpu_without_pg(self):
+        """No-PG fallback must refuse non-CPU tensors instead of using numpy."""
+        from candle.distributed.tensor.placement import Replicate
+
         dt = self._shard_dtensor()
-        global_shape_before = dt._spec.tensor_meta.shape
-        result = dt.redistribute(dt.device_mesh, [Replicate()])
-        assert result._spec.tensor_meta.shape == global_shape_before
+        dt._local_tensor = _FakeLocalTensor(
+            dt._local_tensor.shape,
+            dt._local_tensor.dtype,
+            "npu",
+        )
+
+        with pytest.raises(RuntimeError, match="CPU-only fallback"):
+            dt.redistribute(dt.device_mesh, [Replicate()])
+
+    def test_redistribute_replicate_to_shard_raises_for_non_cpu_without_pg(self):
+        """No-PG fallback must refuse non-CPU tensors instead of using numpy."""
+        from candle.distributed.tensor.dtensor import DTensor
+        from candle.distributed.tensor.placement import Replicate, Shard
+
+        mesh = _make_mesh(size=1)
+        local = _candle_tensor([[1.0, 2.0], [3.0, 4.0]])
+        dt = DTensor.from_local(local, mesh, [Replicate()])
+        dt._local_tensor = _FakeLocalTensor(
+            dt._local_tensor.shape,
+            dt._local_tensor.dtype,
+            "npu",
+        )
+
+        with pytest.raises(RuntimeError, match="CPU-only fallback"):
+            dt.redistribute(mesh, [Shard(0)])
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,9 @@ class _BatchWork(Work):
     handle whose lifecycle covers all constituent P2P ops.  This wrapper keeps
     the existing per-op ``Work`` objects but exposes a single ``Work``-like
     interface for the whole batch.
+
+    Future resolution intentionally stays lazy: ``wait()`` / ``is_completed()``
+    resolve a future only if the caller first requested one via ``get_future()``.
     """
 
     def __init__(self, works):

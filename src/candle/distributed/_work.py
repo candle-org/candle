@@ -30,7 +30,7 @@ class Work:
             # entire stream.  This is the correct async completion semantic for
             # HCCL collectives — the stream may have work enqueued after ours.
             try:
-                from candle._backends.npu import runtime as npu_runtime
+                from .._backends.npu import runtime as npu_runtime
                 dev = self._device_id if self._device_id is not None else 0
                 npu_runtime.get_runtime(dev).synchronize_event(self._aclrt_event)
             except Exception as e:
@@ -40,7 +40,7 @@ class Work:
         elif self._stream is not None:
             # Legacy stream-sync fallback (no event recorded).
             try:
-                from candle._backends.npu import runtime as npu_runtime
+                from .._backends.npu import runtime as npu_runtime
                 dev = self._device_id if self._device_id is not None else 0
                 npu_runtime.get_runtime(dev).synchronize_stream(self._stream)
             except Exception as e:
@@ -84,7 +84,7 @@ class Work:
         if self._aclrt_event is not None:
             # Non-blocking poll: query the event without synchronizing.
             try:
-                from candle._backends.npu import runtime as npu_runtime
+                from .._backends.npu import runtime as npu_runtime
                 dev = self._device_id if self._device_id is not None else 0
                 done = npu_runtime.get_runtime(dev).query_event(self._aclrt_event)
                 if done:

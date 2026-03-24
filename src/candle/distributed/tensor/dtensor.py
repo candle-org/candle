@@ -188,7 +188,14 @@ class DTensor(Tensor):
                     full, self._local_tensor, group=device_mesh.get_group(0)
                 )
             else:
-                # Single-rank / no-PG path (unit tests)
+                # CPU-only fallback for single-rank / no-PG unit tests.
+                local_device_type = getattr(self._local_tensor.device, "type", "cpu")
+                if local_device_type != "cpu":
+                    raise RuntimeError(
+                        "DTensor.redistribute CPU-only fallback is not available "
+                        f"for device type {local_device_type!r}. Initialize a "
+                        "distributed process group to redistribute non-CPU tensors."
+                    )
                 import numpy as np
                 import candle as _candle
                 local_np = self._local_tensor.numpy()
@@ -223,6 +230,13 @@ class DTensor(Tensor):
                     out, self._local_tensor, group=device_mesh.get_group(0)
                 )
             else:
+                local_device_type = getattr(self._local_tensor.device, "type", "cpu")
+                if local_device_type != "cpu":
+                    raise RuntimeError(
+                        "DTensor.redistribute CPU-only fallback is not available "
+                        f"for device type {local_device_type!r}. Initialize a "
+                        "distributed process group to redistribute non-CPU tensors."
+                    )
                 import numpy as np
                 import candle as _candle
                 local_np = self._local_tensor.numpy()
