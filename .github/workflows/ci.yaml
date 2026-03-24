@@ -46,6 +46,8 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESS: 'true'
       CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
@@ -114,6 +116,8 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_COMPRESS: 'true'
       CCACHE_MAXSIZE: '200M'
+      CC: ccache clang
+      CXX: ccache clang++
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python
@@ -183,6 +187,12 @@ jobs:
     needs: pylint-check
     runs-on: [self-hosted, npu-unit]
     timeout-minutes: 30
+    env:
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
     # ── Cython build artifacts ────────────────────────────────────
@@ -209,6 +219,9 @@ jobs:
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
         pip install -e .
+    - name: ccache statistics
+      if: always()
+      run: ccache -s 2>/dev/null || true
     - name: Run NPU common + 910B op tests
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
@@ -219,6 +232,12 @@ jobs:
     needs: pylint-check
     runs-on: [self-hosted, npu-integ]
     timeout-minutes: 30
+    env:
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
     - name: Cache Cython build artifacts
@@ -244,6 +263,9 @@ jobs:
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
         pip install -e .
+    - name: ccache statistics
+      if: always()
+      run: ccache -s 2>/dev/null || true
     - name: Run NPU integration tests
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
@@ -259,6 +281,12 @@ jobs:
     needs: [test-npu-910b-unit, test-npu-910b-integ]
     runs-on: [self-hosted, npu-dist]
     timeout-minutes: 45
+    env:
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
     - name: Cache Cython build artifacts
@@ -284,6 +312,9 @@ jobs:
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
         pip install -e .
+    - name: ccache statistics
+      if: always()
+      run: ccache -s 2>/dev/null || true
     - name: Run HCCL distributed tests
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh

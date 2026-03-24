@@ -35,6 +35,11 @@ jobs:
       ASCEND_RT_VISIBLE_DEVICES: 6,7
       ASCEND_VISIBLE_DEVICES: 6,7
       JOB_CONDA_ENV: /tmp/candle-npu-ci-6-7
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
     # ── Cython build artifacts cache ──────────────────────────────
@@ -159,6 +164,11 @@ jobs:
       ASCEND_RT_VISIBLE_DEVICES: 4,5
       ASCEND_VISIBLE_DEVICES: 4,5
       JOB_CONDA_ENV: /tmp/candle-npu-ci-4-5
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
     # ── Cython build artifacts cache ──────────────────────────────
@@ -313,6 +323,11 @@ jobs:
       ASCEND_RT_VISIBLE_DEVICES: 0,1,2,3
       ASCEND_VISIBLE_DEVICES: 0,1,2,3
       JOB_CONDA_ENV: /tmp/candle-npu-ci-0-3
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
     # ── Cython build artifacts cache ──────────────────────────────

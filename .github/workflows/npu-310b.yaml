@@ -35,6 +35,11 @@ jobs:
     timeout-minutes: 60
     env:
       JOB_CONDA_ENV: /tmp/candle-npu-ci-310b
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
     # ── Cython build artifacts cache ──────────────────────────────

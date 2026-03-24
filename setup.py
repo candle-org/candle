@@ -178,6 +178,7 @@ ext_modules = cythonize(
         "wraparound": False,
     },
     nthreads=os.cpu_count() or 1,
+    cache=True,
 )
 
 
