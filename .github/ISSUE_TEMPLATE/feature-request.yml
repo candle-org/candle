@@ -1,0 +1,41 @@
+name: "Human: Feature Request"
+description: Propose a new feature or API improvement
+labels: ["enhancement"]
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please focus on the user problem first and implementation details second.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      placeholder: I need candle to support ... because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to see?
+      placeholder: Describe the API, workflow, or behavior you want
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Share workarounds or other ideas you considered.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links to prior issues, benchmarks, docs, or model compatibility needs.
+    validations:
+      required: false

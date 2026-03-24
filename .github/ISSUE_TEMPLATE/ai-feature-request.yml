@@ -1,0 +1,61 @@
+name: "AI: Feature Request"
+description: Structured feature proposal generated or filed by an AI agent
+labels: ["enhancement"]
+title: "[AI Feature]: "
+body:
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Agent tool
+      options:
+        - Claude Code
+        - Cursor
+        - GitHub Copilot
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: linked
+    attributes:
+      label: Linked roadmap issue
+      placeholder: "#204"
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      placeholder: Explain the problem this proposal solves
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed implementation direction
+      placeholder: Summarize the intended approach without pasting full code
+    validations:
+      required: true
+
+  - type: textarea
+    id: areas
+    attributes:
+      label: Affected files or subsystems
+      placeholder: |
+        - src/candle/...
+        - tests/...
+        - compat/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: success
+    attributes:
+      label: Success criteria
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true

@@ -1,0 +1,33 @@
+name: "Human: Question"
+description: Ask a usage or project question
+labels: ["question"]
+title: "[Question]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please share enough context for someone else to answer without guessing.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: What is your question?
+      placeholder: I'm trying to understand ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant context
+      description: Share the API, backend, model, or workflow involved.
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you already tried?
+      description: Optional. Mention docs, code, or experiments you checked first.
+    validations:
+      required: false

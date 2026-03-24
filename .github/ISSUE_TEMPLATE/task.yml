@@ -1,0 +1,49 @@
+name: "Human: Task (Sub-issue)"
+description: Break a roadmap item or larger issue into a concrete task
+title: "[Task]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for concrete work items that hang off a larger roadmap issue or parent task.
+
+  - type: input
+    id: parent
+    attributes:
+      label: Parent issue or roadmap item
+      description: Enter an issue number or full GitHub URL.
+      placeholder: "#204"
+    validations:
+      required: true
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Task objective
+      placeholder: Implement ... so that ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope boundaries
+      description: Describe what is in scope and what should explicitly stay out of scope.
+      placeholder: |
+        In scope:
+        - ...
+
+        Out of scope:
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
