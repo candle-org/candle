@@ -162,17 +162,37 @@ git rebase upstream/main
 
 Resolve any conflicts before proceeding.
 
-#### 4. Pylint gate before PR
+#### 4. Pre-PR validation gate
 
-Run pylint locally and confirm zero errors before pushing or creating a PR:
+**Determine validation scope based on what changed.** Do NOT blindly run pylint and the full test suite on every PR — only run what the change actually requires.
+
+| Change scope | Pylint | CPU + contract tests | Local backend tests (MPS/NPU) |
+|---|---|---|---|
+| Only docs, markdown, scripts, CI yaml | Skip | Skip | Skip |
+| Only `tests/` (no `src/candle/` changes) | Skip | Run affected test files | Run if touching backend tests |
+| `src/candle/` code changes | **Required** | **Required** | **Required** if local hardware available |
+
+**When pylint is required:**
 
 ```bash
 pylint src/candle/ --rcfile=.github/pylint.conf
 ```
 
-Use `.github/pylint.conf` as the canonical pylint config path.
-
 Do NOT open a PR if pylint fails. Fix all issues first.
+
+**When tests are required:**
+
+```bash
+# CPU + contract tests (always required for src/candle/ changes)
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+  python -m pytest tests/cpu/ tests/contract/ -v --tb=short
+
+# MPS tests (required on macOS Apple Silicon when src/candle/ changes)
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+  python -m pytest tests/mps/ -v --tb=short
+```
+
+Do NOT open a PR if tests fail. Do NOT rely on CI as your test runner — CI is a safety net, not a substitute for local validation.
 
 #### 5. Clean up after merge
 
@@ -209,6 +229,14 @@ git checkout main && git pull upstream main && git push origin main
 ---
 
 ## Test Execution
+
+### When to run tests
+
+- **`src/candle/` changes**: Always run CPU + contract tests, plus local backend tests (MPS or NPU) if hardware is available.
+- **`tests/` only changes**: Run the affected test files.
+- **Docs, scripts, CI yaml only**: No tests needed.
+
+CI is a safety net, NOT a substitute for local testing. Do NOT push untested code and rely on CI to catch failures.
 
 ### Run Tests Locally
 
