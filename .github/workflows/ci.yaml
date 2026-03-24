@@ -216,22 +216,24 @@ jobs:
       CXX: ccache g++
       GH_TOKEN: ${{ github.token }}
     steps:
-    - name: Checkout repository
-      run: |
-        if [ ! -d "$GITHUB_WORKSPACE/.git" ]; then
-          rm -rf "$GITHUB_WORKSPACE"
-          mkdir -p "$GITHUB_WORKSPACE"
-          git init "$GITHUB_WORKSPACE"
-          git -C "$GITHUB_WORKSPACE" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        else
-          git -C "$GITHUB_WORKSPACE" remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        fi
-        git -C "$GITHUB_WORKSPACE" fetch --no-tags --prune origin "$GITHUB_SHA"
-        git -C "$GITHUB_WORKSPACE" checkout --force FETCH_HEAD
-        git -C "$GITHUB_WORKSPACE" reset --hard FETCH_HEAD
+    - uses: actions/checkout@v4
     - name: Set up ccache
       run: ccache --version
-    - name: Restore local Cython build artifacts
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
       run: |
         find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
           -exec touch {} + 2>/dev/null || true
@@ -268,22 +270,24 @@ jobs:
       CXX: ccache g++
       GH_TOKEN: ${{ github.token }}
     steps:
-    - name: Checkout repository
-      run: |
-        if [ ! -d "$GITHUB_WORKSPACE/.git" ]; then
-          rm -rf "$GITHUB_WORKSPACE"
-          mkdir -p "$GITHUB_WORKSPACE"
-          git init "$GITHUB_WORKSPACE"
-          git -C "$GITHUB_WORKSPACE" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        else
-          git -C "$GITHUB_WORKSPACE" remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        fi
-        git -C "$GITHUB_WORKSPACE" fetch --no-tags --prune origin "$GITHUB_SHA"
-        git -C "$GITHUB_WORKSPACE" checkout --force FETCH_HEAD
-        git -C "$GITHUB_WORKSPACE" reset --hard FETCH_HEAD
+    - uses: actions/checkout@v4
     - name: Set up ccache
       run: ccache --version
-    - name: Restore local Cython build artifacts
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
       run: |
         find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
           -exec touch {} + 2>/dev/null || true
@@ -325,22 +329,24 @@ jobs:
       CXX: ccache g++
       GH_TOKEN: ${{ github.token }}
     steps:
-    - name: Checkout repository
-      run: |
-        if [ ! -d "$GITHUB_WORKSPACE/.git" ]; then
-          rm -rf "$GITHUB_WORKSPACE"
-          mkdir -p "$GITHUB_WORKSPACE"
-          git init "$GITHUB_WORKSPACE"
-          git -C "$GITHUB_WORKSPACE" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        else
-          git -C "$GITHUB_WORKSPACE" remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        fi
-        git -C "$GITHUB_WORKSPACE" fetch --no-tags --prune origin "$GITHUB_SHA"
-        git -C "$GITHUB_WORKSPACE" checkout --force FETCH_HEAD
-        git -C "$GITHUB_WORKSPACE" reset --hard FETCH_HEAD
+    - uses: actions/checkout@v4
     - name: Set up ccache
       run: ccache --version
-    - name: Restore local Cython build artifacts
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
       run: |
         find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
           -exec touch {} + 2>/dev/null || true
@@ -388,22 +394,24 @@ jobs:
       CXX: ccache g++
       GH_TOKEN: ${{ github.token }}
     steps:
-    - name: Checkout repository
-      run: |
-        if [ ! -d "$GITHUB_WORKSPACE/.git" ]; then
-          rm -rf "$GITHUB_WORKSPACE"
-          mkdir -p "$GITHUB_WORKSPACE"
-          git init "$GITHUB_WORKSPACE"
-          git -C "$GITHUB_WORKSPACE" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        else
-          git -C "$GITHUB_WORKSPACE" remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        fi
-        git -C "$GITHUB_WORKSPACE" fetch --no-tags --prune origin "$GITHUB_SHA"
-        git -C "$GITHUB_WORKSPACE" checkout --force FETCH_HEAD
-        git -C "$GITHUB_WORKSPACE" reset --hard FETCH_HEAD
+    - uses: actions/checkout@v4
     - name: Set up ccache
       run: ccache --version
-    - name: Restore local Cython build artifacts
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-910a-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
       run: |
         find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
           -exec touch {} + 2>/dev/null || true
@@ -506,22 +514,24 @@ jobs:
       CXX: ccache g++
       GH_TOKEN: ${{ github.token }}
     steps:
-    - name: Checkout repository
-      run: |
-        if [ ! -d "$GITHUB_WORKSPACE/.git" ]; then
-          rm -rf "$GITHUB_WORKSPACE"
-          mkdir -p "$GITHUB_WORKSPACE"
-          git init "$GITHUB_WORKSPACE"
-          git -C "$GITHUB_WORKSPACE" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        else
-          git -C "$GITHUB_WORKSPACE" remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        fi
-        git -C "$GITHUB_WORKSPACE" fetch --no-tags --prune origin "$GITHUB_SHA"
-        git -C "$GITHUB_WORKSPACE" checkout --force FETCH_HEAD
-        git -C "$GITHUB_WORKSPACE" reset --hard FETCH_HEAD
+    - uses: actions/checkout@v4
     - name: Set up ccache
       run: ccache --version
-    - name: Restore local Cython build artifacts
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-910a-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
       run: |
         find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
           -exec touch {} + 2>/dev/null || true
@@ -658,22 +668,24 @@ jobs:
       CXX: ccache g++
       GH_TOKEN: ${{ github.token }}
     steps:
-    - name: Checkout repository
-      run: |
-        if [ ! -d "$GITHUB_WORKSPACE/.git" ]; then
-          rm -rf "$GITHUB_WORKSPACE"
-          mkdir -p "$GITHUB_WORKSPACE"
-          git init "$GITHUB_WORKSPACE"
-          git -C "$GITHUB_WORKSPACE" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        else
-          git -C "$GITHUB_WORKSPACE" remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        fi
-        git -C "$GITHUB_WORKSPACE" fetch --no-tags --prune origin "$GITHUB_SHA"
-        git -C "$GITHUB_WORKSPACE" checkout --force FETCH_HEAD
-        git -C "$GITHUB_WORKSPACE" reset --hard FETCH_HEAD
+    - uses: actions/checkout@v4
     - name: Set up ccache
       run: ccache --version
-    - name: Restore local Cython build artifacts
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-910a-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
       run: |
         find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
           -exec touch {} + 2>/dev/null || true
@@ -780,22 +792,24 @@ jobs:
       CXX: ccache g++
       GH_TOKEN: ${{ github.token }}
     steps:
-    - name: Checkout repository
-      run: |
-        if [ ! -d "$GITHUB_WORKSPACE/.git" ]; then
-          rm -rf "$GITHUB_WORKSPACE"
-          mkdir -p "$GITHUB_WORKSPACE"
-          git init "$GITHUB_WORKSPACE"
-          git -C "$GITHUB_WORKSPACE" remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        else
-          git -C "$GITHUB_WORKSPACE" remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-        fi
-        git -C "$GITHUB_WORKSPACE" fetch --no-tags --prune origin "$GITHUB_SHA"
-        git -C "$GITHUB_WORKSPACE" checkout --force FETCH_HEAD
-        git -C "$GITHUB_WORKSPACE" reset --hard FETCH_HEAD
+    - uses: actions/checkout@v4
     - name: Set up ccache
       run: ccache --version
-    - name: Restore local Cython build artifacts
+    - name: Cache Cython build artifacts
+      id: cython-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/
+          src/candle/_cython/*.c
+          src/candle/_cython/*.so
+          src/candle/_generated/*.c
+          src/candle/_generated/*.so
+          src/candle/distributed/*.c
+          src/candle/distributed/*.so
+        key: cython-npu-310b-${{ hashFiles('src/**/*.pyx', 'setup.py', 'pyproject.toml') }}
+    - name: Freshen cached build artifacts
+      if: steps.cython-cache.outputs.cache-hit == 'true'
       run: |
         find src/ build/ \( -name '*.c' -o -name '*.o' -o -name '*.so' \) \
           -exec touch {} + 2>/dev/null || true
