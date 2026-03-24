@@ -308,7 +308,7 @@ cdef class Node:
                 if acc is None:
                     acc = AccumulateGrad(inp)
                     inp._accumulate_grad_node = acc
-                next_functions.append((acc, output_nr))
+                next_functions.append((acc, 0))
             else:
                 next_functions.append((None, output_nr))
         return tuple(next_functions)

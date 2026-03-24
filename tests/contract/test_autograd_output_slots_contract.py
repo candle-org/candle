@@ -61,6 +61,17 @@ class _MarkDirtyKeyword(Function):
         return grad_output, None
 
 
+class _MarkDirtyAliasedArgument(Function):
+    @staticmethod
+    def forward(ctx, x, *, alias):
+        ctx.mark_dirty(x)
+        return x.clone()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output, None
+
+
 def test_mark_dirty_bumps_saved_tensor_version():
     x = torch.tensor([1.0], requires_grad=True)
     y = _SaveThenRead.apply(x)
@@ -94,6 +105,16 @@ def test_mark_dirty_keyword_tensor_bumps_saved_version():
 
     with pytest.raises(RuntimeError, match="modified by an inplace operation"):
         backward(sy.sum())
+
+
+
+def test_mark_dirty_same_tensor_in_args_and_kwargs_bumps_once():
+    x = torch.tensor([1.0], requires_grad=True)
+    before = x._version_counter.value
+
+    _MarkDirtyAliasedArgument.apply(x, alias=x)
+
+    assert x._version_counter.value == before + 1
 
 
 
@@ -131,3 +152,24 @@ def test_duplicate_second_output_backward_uses_second_slot_only():
     a, b = _Duplicate.apply(x)
     backward(b.sum())
     assert x.grad.item() == 1.0
+
+
+
+def test_leaf_next_functions_use_zero_output_slot():
+    x = torch.tensor([3.0], requires_grad=True)
+    a, _ = _Duplicate.apply(x)
+    nf = a.grad_fn.next_functions
+    assert len(nf) == 1
+    _, output_nr = nf[0]
+    assert output_nr == 0
+
+
+
+def test_leaf_next_functions_ignore_leaf_output_slot_metadata():
+    x = torch.tensor([3.0], requires_grad=True)
+    x._output_nr = 7
+    a, _ = _Duplicate.apply(x)
+    nf = a.grad_fn.next_functions
+    assert len(nf) == 1
+    _, output_nr = nf[0]
+    assert output_nr == 0

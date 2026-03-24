@@ -85,13 +85,24 @@ def _function_apply(cls, args, kwargs):
 
     cdef set dirty = ctx._dirty
     cdef object dirty_obj
+    cdef set seen_dirty_ids
+    cdef object dirty_id
     if dirty:
+        seen_dirty_ids = set()
         for dirty_obj in args:
             if isinstance(dirty_obj, Tensor) and id(dirty_obj) in dirty:
+                dirty_id = id(dirty_obj)
+                if dirty_id in seen_dirty_ids:
+                    continue
                 dirty_obj._bump_version()
+                seen_dirty_ids.add(dirty_id)
         for dirty_obj in kwargs.values():
             if isinstance(dirty_obj, Tensor) and id(dirty_obj) in dirty:
+                dirty_id = id(dirty_obj)
+                if dirty_id in seen_dirty_ids:
+                    continue
                 dirty_obj._bump_version()
+                seen_dirty_ids.add(dirty_id)
 
     if not any_grad_needed:
         return output
