@@ -16,6 +16,12 @@ cdef object _py_mul_fn = None
 cdef object _py_matmul_fn = None
 cdef object _py_sub_fn = None
 cdef object _py_div_fn = None
+cdef object _py_atan2_fn = None
+cdef object _py_pow_fn = None
+cdef object _py_remainder_fn = None
+cdef object _py_fmod_fn = None
+cdef object _py_logaddexp_fn = None
+cdef object _py_logaddexp2_fn = None
 cdef object _py_relu_fn = None
 cdef object _py_neg_fn = None
 
@@ -24,8 +30,15 @@ cdef object _npu_add_fn = None
 cdef object _npu_mul_fn = None
 cdef object _npu_sub_fn = None
 cdef object _npu_div_fn = None
+cdef object _npu_atan2_fn = None
+cdef object _npu_pow_tt_fn = None
+cdef object _npu_remainder_fn = None
+cdef object _npu_fmod_fn = None
+cdef object _npu_logaddexp_fn = None
+cdef object _npu_logaddexp2_fn = None
 cdef object _grad_mode_state = None
 cdef object _is_functionalize_fn = None
+cdef object _use_soc_fallback_fn = None
 cdef object _current_pipeline_fn = None
 cdef bint _npu_refs_loaded = False
 
@@ -82,25 +95,38 @@ cdef void _collect_types(object val, object types):
 
 
 cdef inline void _ensure_originals():
-    global _py_add_fn, _py_mul_fn, _py_matmul_fn, _py_sub_fn, _py_div_fn
+    global _py_add_fn, _py_mul_fn, _py_matmul_fn, _py_sub_fn, _py_div_fn, _py_atan2_fn
+    global _py_pow_fn, _py_remainder_fn, _py_fmod_fn, _py_logaddexp_fn, _py_logaddexp2_fn
     global _py_relu_fn, _py_neg_fn
 
     _ensure_dispatch()
 
     if _py_add_fn is None:
-        from candle._functional import _py_add, _py_mul, _py_matmul, _py_sub, _py_div, _py_relu, _py_neg
+        from candle._functional import (
+            _py_add, _py_mul, _py_matmul, _py_sub, _py_div, _py_atan2,
+            _py_pow, _py_remainder, _py_fmod, _py_logaddexp, _py_logaddexp2,
+            _py_relu, _py_neg,
+        )
         _py_add_fn = _py_add
         _py_mul_fn = _py_mul
         _py_matmul_fn = _py_matmul
         _py_sub_fn = _py_sub
         _py_div_fn = _py_div
+        _py_atan2_fn = _py_atan2
+        _py_pow_fn = _py_pow
+        _py_remainder_fn = _py_remainder
+        _py_fmod_fn = _py_fmod
+        _py_logaddexp_fn = _py_logaddexp
+        _py_logaddexp2_fn = _py_logaddexp2
         _py_relu_fn = _py_relu
         _py_neg_fn = _py_neg
 
 
 cdef inline void _ensure_npu_refs():
     """Load NPU op refs and guard state once."""
-    global _npu_add_fn, _npu_mul_fn, _npu_sub_fn, _npu_div_fn
+    global _npu_add_fn, _npu_mul_fn, _npu_sub_fn, _npu_div_fn, _npu_atan2_fn
+    global _npu_pow_tt_fn, _npu_remainder_fn, _npu_fmod_fn
+    global _npu_logaddexp_fn, _npu_logaddexp2_fn
     global _grad_mode_state, _is_functionalize_fn, _current_pipeline_fn
     global _npu_refs_loaded
 
@@ -120,6 +146,30 @@ cdef inline void _ensure_npu_refs():
         from candle._cython._npu_ops import fast_div as _ndiv  # pylint: disable=import-error,no-name-in-module
     except ImportError:
         from candle._backends.npu.ops import div as _ndiv
+    try:
+        from candle._cython._npu_ops import fast_atan2 as _natan2  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        from candle._backends.npu.ops import atan2 as _natan2
+    try:
+        from candle._cython._npu_ops import fast_pow_tensor_tensor as _npow  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        _npow = None
+    try:
+        from candle._cython._npu_ops import fast_remainder as _nrem  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        _nrem = None
+    try:
+        from candle._cython._npu_ops import fast_fmod as _nfmod  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        _nfmod = None
+    try:
+        from candle._cython._npu_ops import fast_logaddexp as _nlae  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        _nlae = None
+    try:
+        from candle._cython._npu_ops import fast_logaddexp2 as _nlae2  # pylint: disable=import-error,no-name-in-module
+    except ImportError:
+        _nlae2 = None
     from candle.autograd.grad_mode import _GRAD_MODE_STATE as _gms
     from candle._dispatch.functionalize import is_functionalize_enabled as _ife
     from candle._dispatch.pipeline import current_pipeline as _cp
@@ -128,6 +178,12 @@ cdef inline void _ensure_npu_refs():
     _npu_mul_fn = _nmul
     _npu_sub_fn = _nsub
     _npu_div_fn = _ndiv
+    _npu_atan2_fn = _natan2
+    _npu_pow_tt_fn = _npow
+    _npu_remainder_fn = _nrem
+    _npu_fmod_fn = _nfmod
+    _npu_logaddexp_fn = _nlae
+    _npu_logaddexp2_fn = _nlae2
     _grad_mode_state = _gms
     _is_functionalize_fn = _ife
     _current_pipeline_fn = _cp
@@ -316,6 +372,127 @@ def div(a, b, *, rounding_mode=None):
     if rounding_mode == "floor":
         return _dispatch_fn("floor_divide", None, a, b)
     return _dispatch_fn("true_divide", None, a, b)
+
+
+def atan2(a, b):
+    """Fast atan2: skip __torch_function__ when both args are base Tensor."""
+    cdef object r
+
+    _ensure_originals()
+
+    if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
+        if _is_npu_tensor_pair(a, b):
+            _ensure_npu_refs()
+            if _npu_fast_ok(a, b):
+                return _npu_atan2_fn(a, b)
+        return _dispatch_fn("atan2", None, a, b)
+
+    r = _handle_torch_function(_py_atan2_fn, (a, b), {})
+    if r is not NotImplemented:
+        return r
+
+    return _dispatch_fn("atan2", None, a, b)
+
+
+def pow(a, b):
+    """Fast pow: skip __torch_function__ when both args are base Tensor."""
+    cdef object r
+
+    _ensure_originals()
+
+    if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
+        # Only tensor-tensor path gets the fast Cython path
+        if hasattr(b, "shape") and _is_npu_tensor_pair(a, b):
+            _ensure_npu_refs()
+            if _npu_fast_ok(a, b) and _npu_pow_tt_fn is not None:
+                return _npu_pow_tt_fn(a, b)
+        return _dispatch_fn("pow", None, a, b)
+
+    r = _handle_torch_function(_py_pow_fn, (a, b), {})
+    if r is not NotImplemented:
+        return r
+
+    return _dispatch_fn("pow", None, a, b)
+
+
+def remainder(a, b):
+    """Fast remainder: skip __torch_function__ when both args are base Tensor."""
+    cdef object r
+
+    _ensure_originals()
+
+    if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
+        if _is_npu_tensor_pair(a, b):
+            _ensure_npu_refs()
+            if _npu_fast_ok(a, b) and _npu_remainder_fn is not None:
+                return _npu_remainder_fn(a, b)
+        return _dispatch_fn("remainder", None, a, b)
+
+    r = _handle_torch_function(_py_remainder_fn, (a, b), {})
+    if r is not NotImplemented:
+        return r
+
+    return _dispatch_fn("remainder", None, a, b)
+
+
+def fmod(a, b):
+    """Fast fmod: skip __torch_function__ when both args are base Tensor."""
+    cdef object r
+
+    _ensure_originals()
+
+    if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
+        if _is_npu_tensor_pair(a, b):
+            _ensure_npu_refs()
+            if _npu_fast_ok(a, b) and _npu_fmod_fn is not None:
+                return _npu_fmod_fn(a, b)
+        return _dispatch_fn("fmod", None, a, b)
+
+    r = _handle_torch_function(_py_fmod_fn, (a, b), {})
+    if r is not NotImplemented:
+        return r
+
+    return _dispatch_fn("fmod", None, a, b)
+
+
+def logaddexp(a, b):
+    """Fast logaddexp: skip __torch_function__ when both args are base Tensor."""
+    cdef object r
+
+    _ensure_originals()
+
+    if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
+        if _is_npu_tensor_pair(a, b):
+            _ensure_npu_refs()
+            if _npu_fast_ok(a, b) and _npu_logaddexp_fn is not None:
+                return _npu_logaddexp_fn(a, b)
+        return _dispatch_fn("logaddexp", None, a, b)
+
+    r = _handle_torch_function(_py_logaddexp_fn, (a, b), {})
+    if r is not NotImplemented:
+        return r
+
+    return _dispatch_fn("logaddexp", None, a, b)
+
+
+def logaddexp2(a, b):
+    """Fast logaddexp2: skip __torch_function__ when both args are base Tensor."""
+    cdef object r
+
+    _ensure_originals()
+
+    if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
+        if _is_npu_tensor_pair(a, b):
+            _ensure_npu_refs()
+            if _npu_fast_ok(a, b) and _npu_logaddexp2_fn is not None:
+                return _npu_logaddexp2_fn(a, b)
+        return _dispatch_fn("logaddexp2", None, a, b)
+
+    r = _handle_torch_function(_py_logaddexp2_fn, (a, b), {})
+    if r is not NotImplemented:
+        return r
+
+    return _dispatch_fn("logaddexp2", None, a, b)
 
 
 def matmul(a, b):

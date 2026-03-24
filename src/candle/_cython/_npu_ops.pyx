@@ -307,6 +307,12 @@ cdef inline void _ensure_ffi_binary() except *:
     global _div_getws_ptr, _div_exec_ptr
     global _defer_executor_fn, _acl_rt_malloc_fn, _acl_rt_free_fn
     global _pta_cache_begin_fn, _pta_cache_end_fn
+    global _atan2_getws_ptr, _atan2_exec_ptr
+    global _pow_tensor_tensor_getws_ptr, _pow_tensor_tensor_exec_ptr
+    global _remainder_getws_ptr, _remainder_exec_ptr
+    global _fmod_getws_ptr, _fmod_exec_ptr
+    global _logaddexp_getws_ptr, _logaddexp_exec_ptr
+    global _logaddexp2_getws_ptr, _logaddexp2_exec_ptr
     if _ffi_ref is not None:
         return
     from candle._cython import _aclnn_ffi as _f  # pylint: disable=import-error,no-name-in-module
@@ -316,6 +322,12 @@ cdef inline void _ensure_ffi_binary() except *:
     _mul_getws_ptr, _mul_exec_ptr = _f.resolve_op("Mul")
     _sub_getws_ptr, _sub_exec_ptr = _f.resolve_op("Sub")
     _div_getws_ptr, _div_exec_ptr = _f.resolve_op("Div")
+    _atan2_getws_ptr, _atan2_exec_ptr = _f.resolve_op("Atan2")
+    _pow_tensor_tensor_getws_ptr, _pow_tensor_tensor_exec_ptr = _f.resolve_op("PowTensorTensor")
+    _remainder_getws_ptr, _remainder_exec_ptr = _f.resolve_op("RemainderTensorTensor")
+    _fmod_getws_ptr, _fmod_exec_ptr = _f.resolve_op("FmodTensor")
+    _logaddexp_getws_ptr, _logaddexp_exec_ptr = _f.resolve_op("LogAddExp")
+    _logaddexp2_getws_ptr, _logaddexp2_exec_ptr = _f.resolve_op("LogAddExp2")
     _defer_executor_fn = _def_ex
     _acl = _eacl()
     _acl_rt_malloc_fn = _acl.rt.malloc
@@ -834,6 +846,260 @@ def fast_div(a, b):
     _defer_executor_fn(executor)
 
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+# ---------------------------------------------------------------------------
+# Shared same-dtype no-alpha binary execution helpers
+# ---------------------------------------------------------------------------
+
+cdef _fast_binary_no_alpha_exec(a, b, object getws_ptr, object exec_ptr, str op_name):
+    """Shared execution helper for same-dtype no-alpha binary ops using binary_op_no_alpha FFI.
+
+    Used by fast_atan2 and similar ops that map to aclnn binary_op_no_alpha.
+    Callers pass pre-resolved getws_ptr and exec_ptr (fetched via resolve_op).
+    No PTA cache path — straight GetWorkspaceSize + Execute.
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    # 1. Validate device/dtype
+    a_dev = a.device
+    b_dev = b.device
+    if a_dev.type != "npu" or b_dev.type != "npu":
+        raise ValueError(f"fast {op_name} expects NPU tensors")
+    a_dtype = a.dtype
+    if a_dtype != b.dtype:
+        raise ValueError(f"fast {op_name} requires matching dtypes")
+
+    # 2. Get runtime + stream
+    cdef int dev_idx = a_dev.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    # 3. Extract shapes into C arrays
+    py_a_shape = a.shape
+    py_b_shape = b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+
+    # 4. C-level shape computation
+    cdef int out_ndim
+    cdef int64_t n
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+        c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+        n = c_numel(out_shape_buf, out_ndim)
+
+    # 5. Convert to Python tuples
+    out_shape = _to_tuple(out_shape_buf, out_ndim)
+    out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    # 6. Allocate output via cached allocator
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size = n * isize
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream.stream)
+
+    # 7. Get dtype code
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+
+    # 8. Get data pointers — direct C attribute access
+    cdef uintptr_t a_ptr, b_ptr, o_ptr
+    a_ptr = a._storage._untyped._device_ptr
+    b_ptr = b._storage._untyped._device_ptr
+    o_ptr = out_ptr
+
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    # 9. GetWorkspaceSize + Execute
+    ws_size, executor = _ffi_ref.binary_op_no_alpha(
+        getws_ptr, exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        out_shape, out_stride,
+        dtype_code, 2,  # ACL_FORMAT_ND = 2
+        a_ptr, b_ptr, o_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnn{op_name} execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+cdef _fast_binary_two_inputs_exec(a, b, object getws_ptr, object exec_ptr, str op_name):
+    """Shared execution helper for same-dtype no-alpha ops using binary_two_inputs_op FFI.
+
+    Used by fast_pow_tensor_tensor, fast_remainder, fast_fmod, fast_logaddexp,
+    fast_logaddexp2, and similar ops. All three dtype codes (self, other, out)
+    are set to the common input dtype — same-dtype only.
+    Callers pass pre-resolved getws_ptr and exec_ptr (fetched via resolve_op).
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    # 1. Validate device/dtype
+    a_dev = a.device
+    b_dev = b.device
+    if a_dev.type != "npu" or b_dev.type != "npu":
+        raise ValueError(f"fast {op_name} expects NPU tensors")
+    a_dtype = a.dtype
+    if a_dtype != b.dtype:
+        raise ValueError(f"fast {op_name} requires matching dtypes")
+
+    # 2. Get runtime + stream
+    cdef int dev_idx = a_dev.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    # 3. Extract shapes into C arrays
+    py_a_shape = a.shape
+    py_b_shape = b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+
+    # 4. C-level shape computation
+    cdef int out_ndim
+    cdef int64_t n
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+        c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+        n = c_numel(out_shape_buf, out_ndim)
+
+    # 5. Convert to Python tuples
+    out_shape = _to_tuple(out_shape_buf, out_ndim)
+    out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    # 6. Allocate output via cached allocator
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size = n * isize
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream.stream)
+
+    # 7. Get dtype code (same for self, other, out — same-dtype only)
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+
+    # 8. Get data pointers — direct C attribute access
+    cdef uintptr_t a_ptr, b_ptr, o_ptr
+    a_ptr = a._storage._untyped._device_ptr
+    b_ptr = b._storage._untyped._device_ptr
+    o_ptr = out_ptr
+
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    # 9. GetWorkspaceSize + Execute
+    # Pass dtype_code three times: self_dtype, other_dtype, out_dtype (same-dtype constraint)
+    ws_size, executor = _ffi_ref.binary_two_inputs_op(
+        getws_ptr, exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        out_shape, out_stride,
+        dtype_code, dtype_code, dtype_code, 2,  # ACL_FORMAT_ND = 2
+        a_ptr, b_ptr, o_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnn{op_name} execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+# BEGIN GENERATED SAME-DTYPE NO-ALPHA FAST BINARY OPS
+# op=atan2 resolve=Atan2 public=atan2
+cdef object _atan2_getws_ptr = None
+cdef object _atan2_exec_ptr = None
+
+def fast_atan2(a, b):
+    return _fast_binary_no_alpha_exec(a, b, _atan2_getws_ptr, _atan2_exec_ptr, "atan2")
+
+# op=pow_tensor_tensor resolve=PowTensorTensor public=pow
+cdef object _pow_tensor_tensor_getws_ptr = None
+cdef object _pow_tensor_tensor_exec_ptr = None
+
+def fast_pow_tensor_tensor(a, b):
+    return _fast_binary_two_inputs_exec(a, b, _pow_tensor_tensor_getws_ptr, _pow_tensor_tensor_exec_ptr, "pow")
+
+# op=remainder resolve=RemainderTensorTensor public=remainder
+cdef object _remainder_getws_ptr = None
+cdef object _remainder_exec_ptr = None
+
+def fast_remainder(a, b):
+    return _fast_binary_two_inputs_exec(a, b, _remainder_getws_ptr, _remainder_exec_ptr, "remainder")
+
+# op=fmod resolve=FmodTensor public=fmod
+cdef object _fmod_getws_ptr = None
+cdef object _fmod_exec_ptr = None
+
+def fast_fmod(a, b):
+    return _fast_binary_two_inputs_exec(a, b, _fmod_getws_ptr, _fmod_exec_ptr, "fmod")
+
+# op=logaddexp resolve=LogAddExp public=logaddexp
+cdef object _logaddexp_getws_ptr = None
+cdef object _logaddexp_exec_ptr = None
+
+def fast_logaddexp(a, b):
+    return _fast_binary_two_inputs_exec(a, b, _logaddexp_getws_ptr, _logaddexp_exec_ptr, "logaddexp")
+
+# op=logaddexp2 resolve=LogAddExp2 public=logaddexp2
+cdef object _logaddexp2_getws_ptr = None
+cdef object _logaddexp2_exec_ptr = None
+
+def fast_logaddexp2(a, b):
+    return _fast_binary_two_inputs_exec(a, b, _logaddexp2_getws_ptr, _logaddexp2_exec_ptr, "logaddexp2")
+
+# END GENERATED SAME-DTYPE NO-ALPHA FAST BINARY OPS
 
 
 # ---------------------------------------------------------------------------

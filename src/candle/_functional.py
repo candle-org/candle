@@ -152,6 +152,12 @@ try:
         mul as _cy_mul,
         sub as _cy_sub,
         div as _cy_div,
+        atan2 as _cy_atan2,
+        pow as _cy_pow,
+        remainder as _cy_remainder,
+        fmod as _cy_fmod,
+        logaddexp as _cy_logaddexp,
+        logaddexp2 as _cy_logaddexp2,
         matmul as _cy_matmul,
         relu as _cy_relu,
         transpose as _cy_transpose,
@@ -173,6 +179,12 @@ try:
     mul = _cy_mul
     sub = _cy_sub
     div = _cy_div
+    atan2 = _cy_atan2
+    pow = _cy_pow
+    remainder = _cy_remainder
+    fmod = _cy_fmod
+    logaddexp = _cy_logaddexp
+    logaddexp2 = _cy_logaddexp2
     matmul = _cy_matmul
     relu = _cy_relu
     transpose = _cy_transpose
@@ -283,6 +295,15 @@ def frac(a):
 
 def pow(a, b):
     return dispatch("pow", a.device.type, a, b)
+
+_py_pow = pow
+_py_pow.__name__ = "pow"
+
+# Restore Cython fast-path if loaded
+try:
+    pow = _cy_pow  # noqa: F811
+except NameError:
+    pass
 
 
 def log2(a):
@@ -437,6 +458,15 @@ def atan(a):
 def atan2(a, b):
     return dispatch("atan2", a.device.type, a, b)
 
+_py_atan2 = atan2
+_py_atan2.__name__ = "atan2"
+
+# Restore Cython fast-path if it was loaded earlier
+try:
+    atan2 = _cy_atan2  # noqa: F811
+except NameError:
+    pass
+
 
 def asin(a):
     return dispatch("asin", a.device.type, a)
@@ -461,9 +491,27 @@ def addcdiv(a, b, c, value=1.0):
 def logaddexp(a, b):
     return dispatch("logaddexp", a.device.type, a, b)
 
+_py_logaddexp = logaddexp
+_py_logaddexp.__name__ = "logaddexp"
+
+# Restore Cython fast-path if loaded
+try:
+    logaddexp = _cy_logaddexp  # noqa: F811
+except NameError:
+    pass
+
 
 def logaddexp2(a, b):
     return dispatch("logaddexp2", a.device.type, a, b)
+
+_py_logaddexp2 = logaddexp2
+_py_logaddexp2.__name__ = "logaddexp2"
+
+# Restore Cython fast-path if loaded
+try:
+    logaddexp2 = _cy_logaddexp2  # noqa: F811
+except NameError:
+    pass
 
 
 def hypot(a, b):
@@ -473,9 +521,27 @@ def hypot(a, b):
 def remainder(a, b):
     return dispatch("remainder", a.device.type, a, b)
 
+_py_remainder = remainder
+_py_remainder.__name__ = "remainder"
+
+# Restore Cython fast-path if loaded
+try:
+    remainder = _cy_remainder  # noqa: F811
+except NameError:
+    pass
+
 
 def fmod(a, b):
     return dispatch("fmod", a.device.type, a, b)
+
+_py_fmod = fmod
+_py_fmod.__name__ = "fmod"
+
+# Restore Cython fast-path if loaded
+try:
+    fmod = _cy_fmod  # noqa: F811
+except NameError:
+    pass
 
 
 def div(a, b, *, rounding_mode=None):
