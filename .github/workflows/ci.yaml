@@ -214,6 +214,7 @@ jobs:
       CCACHE_MAXSIZE: '200M'
       CC: ccache gcc
       CXX: ccache g++
+      GH_TOKEN: ${{ github.token }}
     steps:
     - uses: actions/checkout@v4
     - name: Set up ccache
@@ -248,7 +249,8 @@ jobs:
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
-        pytest tests/npu/common/ tests/npu/910b/ -v --tb=short
+        bash .github/scripts/ci-failfast-watcher.sh \
+          pytest tests/npu/common/ tests/npu/910b/ -v --tb=short
     - name: Cancel workflow on failure
       if: failure()
       run: |
@@ -266,6 +268,7 @@ jobs:
       CCACHE_MAXSIZE: '200M'
       CC: ccache gcc
       CXX: ccache g++
+      GH_TOKEN: ${{ github.token }}
     steps:
     - uses: actions/checkout@v4
     - name: Set up ccache
@@ -300,7 +303,8 @@ jobs:
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
-        pytest tests/npu/ -v --tb=short \
+        bash .github/scripts/ci-failfast-watcher.sh \
+          pytest tests/npu/ -v --tb=short \
           --ignore=tests/npu/common \
           --ignore=tests/npu/910a \
           --ignore=tests/npu/910b \
@@ -323,6 +327,7 @@ jobs:
       CCACHE_MAXSIZE: '200M'
       CC: ccache gcc
       CXX: ccache g++
+      GH_TOKEN: ${{ github.token }}
     steps:
     - uses: actions/checkout@v4
     - name: Set up ccache
@@ -357,7 +362,8 @@ jobs:
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
-        pytest tests/distributed/ -v --tb=short -k "hccl"
+        bash .github/scripts/ci-failfast-watcher.sh \
+          pytest tests/distributed/ -v --tb=short -k "hccl"
     - name: Cancel workflow on failure
       if: failure()
       run: |
@@ -386,6 +392,7 @@ jobs:
       CCACHE_MAXSIZE: '200M'
       CC: ccache gcc
       CXX: ccache g++
+      GH_TOKEN: ${{ github.token }}
     steps:
     - uses: actions/checkout@v4
     - name: Set up ccache
@@ -467,7 +474,8 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env pytest tests/npu/ -v --tb=short \
+        clean_env bash .github/scripts/ci-failfast-watcher.sh \
+          pytest tests/npu/ -v --tb=short \
           --ignore=tests/npu/test_pipeline_npu_bench_smoke.py \
           --ignore=tests/npu/910b/ \
           --ignore=tests/npu/310b/ \
@@ -498,6 +506,7 @@ jobs:
       CCACHE_MAXSIZE: '200M'
       CC: ccache gcc
       CXX: ccache g++
+      GH_TOKEN: ${{ github.token }}
     steps:
     - uses: actions/checkout@v4
     - name: Set up ccache
@@ -579,7 +588,8 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard and not test_ddp"
+        clean_env bash .github/scripts/ci-failfast-watcher.sh \
+          pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard and not test_ddp"
     - name: Run 2-card HCCL all_to_all coverage
       run: |
         set -o pipefail
@@ -641,6 +651,7 @@ jobs:
       CCACHE_MAXSIZE: '200M'
       CC: ccache gcc
       CXX: ccache g++
+      GH_TOKEN: ${{ github.token }}
     steps:
     - uses: actions/checkout@v4
     - name: Set up ccache
@@ -758,6 +769,7 @@ jobs:
       CCACHE_MAXSIZE: '200M'
       CC: ccache gcc
       CXX: ccache g++
+      GH_TOKEN: ${{ github.token }}
     steps:
     - uses: actions/checkout@v4
     - name: Set up ccache
@@ -862,7 +874,8 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env pytest tests/npu/310b/ -v --tb=short
+        clean_env bash .github/scripts/ci-failfast-watcher.sh \
+          pytest tests/npu/310b/ -v --tb=short
     - name: Free memory between test suites
       run: |
         pkill -9 -f 'pytest|python.*candle' || true
@@ -890,7 +903,8 @@ jobs:
             "$@"
           /usr/bin/sg "$ASCEND_REQUIRED_GROUP" -c "$cmd"
         }
-        clean_env pytest tests/npu/common/ -v --tb=short
+        clean_env bash .github/scripts/ci-failfast-watcher.sh \
+          pytest tests/npu/common/ -v --tb=short
     - name: Cancel workflow on failure
       if: failure()
       run: |
