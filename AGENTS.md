@@ -29,23 +29,38 @@ Treat this as a design guardrail, not a temporary check.
 
 ## Required Tests Before PR
 
-Every PR touching `src/candle/` must pass:
+**Determine validation scope based on what changed.** Do NOT blindly run pylint and the full test suite on every PR.
+
+### Change scope → validation matrix
+
+| Change scope | Pylint | CPU + contract tests | Local backend tests (MPS/NPU) |
+|---|---|---|---|
+| Only docs, markdown, scripts, CI yaml | Skip | Skip | Skip |
+| Only `tests/` (no `src/candle/` changes) | Skip | Run affected test files | Run if touching backend tests |
+| `src/candle/` code changes | **Required** | **Required** | **Required** if local hardware available |
+
+### When pylint is required
 
 ```bash
-pytest tests/contract/ -v --tb=short
+pylint src/candle/ --rcfile=.github/pylint.conf
 ```
 
-Recommended full gate:
+### When tests are required
+
+Every PR touching `src/candle/` must pass locally before pushing:
 
 ```bash
+# Always required
 pytest tests/cpu/ tests/contract/ -v --tb=short
-```
 
-On macOS with Apple Silicon, also run:
-
-```bash
+# Required on macOS with Apple Silicon
 pytest tests/mps/ -v --tb=short
+
+# Required on Ascend NPU hosts
+pytest tests/npu/ -v --tb=short
 ```
+
+**CI is a safety net, NOT a substitute for local testing.** Do NOT push untested code and rely on CI to catch failures. Run all locally available tests before opening a PR.
 
 ## PR Scope Rule
 
@@ -89,15 +104,11 @@ git rebase upstream/main
 
 Resolve any conflicts before proceeding.
 
-### 4. Pylint gate before PR
+### 4. Pre-PR validation gate
 
-Run pylint locally and confirm zero errors before pushing or creating a PR:
+Follow the validation matrix in [Required Tests Before PR](#required-tests-before-pr). Only run pylint and tests when the change scope requires it.
 
-```bash
-pylint src/candle/ --rcfile=.github/pylint.conf
-```
-
-Do NOT open a PR if pylint fails. Fix all issues first.
+Do NOT open a PR if pylint or tests fail. Fix all issues first.
 
 ### 5. Clean up after merge
 
