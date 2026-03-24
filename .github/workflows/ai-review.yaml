@@ -73,7 +73,8 @@ jobs:
           fi
 
           # Custom base URL (default: official Anthropic API)
-          API_BASE="${ANTHROPIC_API_BASE:-https://api.anthropic.com}"
+          RAW_API_BASE="${ANTHROPIC_API_BASE:-https://api.anthropic.com}"
+          API_BASE="${RAW_API_BASE%/}"
 
           SYSTEM_PROMPT=$(cat .github/scripts/ai-review-prompt.md)
           PR_META=$(cat pr_meta.json)
