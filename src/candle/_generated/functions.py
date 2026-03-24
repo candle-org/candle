@@ -13106,7 +13106,7 @@ class EluBackward0(Node):
         scale = self._scale
         input_scale = self._input_scale
         with _grad_context(keyset):
-            grad_self = _elu_grad(grad, self_, alpha, keyset)
+            grad_self = _celu_grad(grad, self_, alpha, keyset)
         return (grad_self,)
 
 class CeluBackward0(Node):
@@ -13134,7 +13134,7 @@ class CeluBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         alpha = self._alpha
         with _grad_context(keyset):
-            grad_self = _celu_grad(grad, self_, alpha, keyset)
+            grad_self = redispatch("elu_backward", keyset, grad, alpha, 1, redispatch("div", keyset, 1.0, float(alpha)), False, self_)
         return (grad_self,)
 
 class GeluBackward0(Node):
@@ -13632,35 +13632,28 @@ class SoftmaxBackward0(Node):
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
         self._saved_self_idx = None
-        self._saved_result_idx = None
         self._dim = None
         self._half_to_float = None
 
-    def _save(self, *, self_=None, result=None):
+    def _save(self, *, self_=None):
         tensors = []
         if self_ is not None:
             self._saved_self_idx = len(tensors)
             tensors.append(self_)
-        if result is not None:
-            self._saved_result_idx = len(tensors)
-            tensors.append(result)
         if tensors:
             super().save_for_backward(*tensors)
         if self._saved_self_idx is not None:
             self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
-        if self._saved_result_idx is not None:
-            self._saved_fields['result'] = self._saved_tensors_list[self._saved_result_idx]
 
     def backward(self, grad):
         from .._dispatch.dispatcher import current_dispatch_keyset
         keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
         _saved = self.saved_tensors()
         self_ = _saved[self._saved_self_idx]
-        result = _saved[self._saved_result_idx]
         dim = self._dim
         half_to_float = self._half_to_float
         with _grad_context(keyset):
-            grad_self = redispatch("_softmax_backward_data", keyset, grad, result, dim, self_.dtype)
+            grad_self = _softmax_grad(grad, self_, dim, keyset)
         return (grad_self,)
 
 class SparseSoftmaxBackward0(Node):

@@ -1455,6 +1455,13 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     saved_outputs = info.all_saved_outputs
     non_tensor_args = info.non_tensor_args
 
+    # Upstream keeps SoftmaxBackward0 on the self-based helper path even though
+    # the raw derivative entry references `result`. The legacy softmax forward
+    # wrapper saves only `self`, so preserving the upstream save/load surface is
+    # required for compatibility.
+    if cls_name == "SoftmaxBackward0":
+        saved_inputs = ["self"]
+        saved_outputs = []
     # Detect if any differentiable input is a Tensor[]
     has_tensor_list = any(a.is_tensor_list for a in info.differentiable_inputs)
 
@@ -1576,12 +1583,12 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
         lines.append("        return (grad_self, grad_other,)")
         return "\n".join(lines)
 
-    if info.backward_name == "EluBackward0":
-        lines.append("            grad_self = _elu_grad(grad, self_, alpha, keyset)")
+    if info.backward_name == "SoftmaxBackward0":
+        lines.append("            grad_self = _softmax_grad(grad, self_, dim, keyset)")
         lines.append("        return (grad_self,)")
         return "\n".join(lines)
 
-    if info.backward_name == "CeluBackward0":
+    if info.backward_name == "EluBackward0":
         lines.append("            grad_self = _celu_grad(grad, self_, alpha, keyset)")
         lines.append("        return (grad_self,)")
         return "\n".join(lines)
