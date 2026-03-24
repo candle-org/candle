@@ -22,6 +22,21 @@ def gen_variable_type(infos: list[DifferentiabilityInfo]) -> str:
         canonical_post = f"{info.op_name}_autograd_post"
         specific = f"{info.generated_func_stem}_autograd"
         specific_post = f"{info.generated_func_stem}_autograd_post"
+        if info.op_name == "pow":
+            alias_lines.append("def pow_autograd(self_, exponent, **_kwargs):")
+            alias_lines.append("    if hasattr(self_, 'device'):")
+            alias_lines.append("        if hasattr(exponent, 'device'):")
+            alias_lines.append("            return pow_tensor_tensor_autograd(self_, exponent, **_kwargs)")
+            alias_lines.append("        return pow_tensor_scalar_autograd(self_, exponent, **_kwargs)")
+            alias_lines.append("    return pow_scalar_autograd(self_, exponent, **_kwargs)")
+            alias_lines.append("")
+            alias_lines.append("def pow_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_kwargs):")
+            alias_lines.append("    if hasattr(self_, 'device'):")
+            alias_lines.append("        if hasattr(exponent, 'device'):")
+            alias_lines.append("            return pow_tensor_tensor_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)")
+            alias_lines.append("        return pow_tensor_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)")
+            alias_lines.append("    return pow_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)")
+            continue
         if canonical != specific:
             alias_lines.append(f"{canonical} = {specific}")
         if canonical_post != specific_post:
@@ -604,6 +619,21 @@ def gen_variable_type_pyx(infos: list) -> str:  # type: ignore[type-arg]
         canonical_post = f"{info.op_name}_autograd_post"
         specific = f"{info.generated_func_stem}_autograd"
         specific_post = f"{info.generated_func_stem}_autograd_post"
+        if info.op_name == "pow":
+            alias_lines.append("def pow_autograd(self_, exponent, **_kwargs):")
+            alias_lines.append("    if hasattr(self_, 'device'):")
+            alias_lines.append("        if hasattr(exponent, 'device'):")
+            alias_lines.append("            return pow_tensor_tensor_autograd(self_, exponent, **_kwargs)")
+            alias_lines.append("        return pow_tensor_scalar_autograd(self_, exponent, **_kwargs)")
+            alias_lines.append("    return pow_scalar_autograd(self_, exponent, **_kwargs)")
+            alias_lines.append("")
+            alias_lines.append("def pow_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_kwargs):")
+            alias_lines.append("    if hasattr(self_, 'device'):")
+            alias_lines.append("        if hasattr(exponent, 'device'):")
+            alias_lines.append("            return pow_tensor_tensor_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)")
+            alias_lines.append("        return pow_tensor_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)")
+            alias_lines.append("    return pow_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)")
+            continue
         if canonical != specific:
             alias_lines.append(f"{canonical} = {specific}")
         if canonical_post != specific_post:
