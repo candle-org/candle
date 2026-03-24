@@ -194,11 +194,10 @@ class TestGetFutureDoesNotEagerlyWait:
         )
 
     def test_future_has_no_result_before_wait(self):
-        """Future.result() must raise before wait() is called."""
+        """Future.wait() must raise/block before Work.wait() is called."""
         w = _make_pending_work(callback=lambda: None)
         fut = w.get_future()
-        with pytest.raises(RuntimeError):
-            fut.result()  # must raise — future not yet resolved
+        assert not fut.done(), "Future must be pending before Work.wait()"
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +223,7 @@ class TestWaitResolvesFutureExactlyOnce:
         assert not fut.done()
         w.wait()
         assert fut.done()
-        assert fut.result() == [], f"Expected [] from Work.result(), got {fut.result()!r}"
+        assert fut.wait() == [], f"Expected [] from Work.result(), got {fut.wait()!r}"
 
     def test_double_wait_callback_fires_once(self):
         """_on_wait callback fires exactly once; second wait() is a no-op."""
@@ -256,7 +255,7 @@ class TestAddDoneCallbackFiring:
         w = _make_pending_work(callback=lambda: None)
         fut = w.get_future()
         assert not fut.done(), "Future must be pending; eager wait() bug detected"
-        fut.add_done_callback(lambda f: cb_results.append(f.result()))
+        fut.add_done_callback(lambda f: cb_results.append(f.wait()))
         assert cb_results == [], "Callback must not fire before wait()"
         w.wait()
         assert len(cb_results) == 1, f"Callback must fire once after wait(); got {cb_results!r}"
@@ -356,8 +355,8 @@ class TestGetFutureOnCompletedWork:
         w.wait()
         assert w.is_completed()
         fut = w.get_future()
-        # Calling result() must not raise
-        value = fut.result()
+        # Calling wait() must not raise
+        value = fut.wait()
         assert value == []
 
 
@@ -392,7 +391,7 @@ class TestWorkResultPayload:
 
         w.wait()
         assert fut.done()
-        value = fut.result()
+        value = fut.wait()
         assert value == [42], f"Future must carry result from _on_wait; got {value!r}"
 
 
@@ -421,4 +420,4 @@ class TestGetFutureExceptionPath:
 
         assert fut.done(), "Future must be done() after a failed wait()"
         with pytest.raises(RuntimeError, match="kernel exploded"):
-            fut.result()
+            fut.wait()
