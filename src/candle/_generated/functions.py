@@ -15,6 +15,15 @@ from .._backends.autograd import (
 )
 from .._dispatch.dispatcher import redispatch
 from ..autograd.utils import reduce_grad
+from .functions_legacy import (
+    _as_strided_backward_helper,
+    _as_strided_scatter_backward_helper,
+    _pow_backward_exponent_helper,
+    _pow_backward_helper,
+    _pow_backward_self_helper,
+    _slice_backward_wrapper_helper,
+    _to_padded_tensor_backward_helper,
+)
 
 
 def _inverse_permutation(dims):

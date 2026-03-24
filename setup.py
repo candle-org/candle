@@ -177,7 +177,7 @@ ext_modules = cythonize(
         "boundscheck": False,
         "wraparound": False,
     },
-    nthreads=os.cpu_count() or 1,
+    nthreads=int(os.environ.get("CANDLE_BUILD_JOBS", os.cpu_count() or 1)),
 )
 
 
