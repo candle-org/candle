@@ -1,0 +1,75 @@
+name: "AI: Bug Report"
+description: Structured bug report generated or filed by an AI agent
+labels: ["bug"]
+title: "[AI Bug]: "
+body:
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Agent tool
+      options:
+        - Claude Code
+        - Cursor
+        - GitHub Copilot
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: linked
+    attributes:
+      label: Related issue or roadmap item
+      placeholder: "#205"
+    validations:
+      required: false
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Structured summary
+      placeholder: Describe the bug in 2-5 sentences
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Relevant files or subsystems
+      placeholder: |
+        - src/candle/...
+        - tests/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Exact reproduction commands
+      render: shell
+      placeholder: |
+        python -m pytest ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed output
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: root_cause
+    attributes:
+      label: Likely root cause
+      description: Optional but encouraged.
+    validations:
+      required: false

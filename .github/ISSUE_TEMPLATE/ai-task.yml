@@ -1,0 +1,64 @@
+name: "AI: Task"
+description: Structured implementation task created by an AI agent
+title: "[AI Task]: "
+body:
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Agent tool
+      options:
+        - Claude Code
+        - Cursor
+        - GitHub Copilot
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: parent
+    attributes:
+      label: Parent issue or roadmap item
+      placeholder: "#206"
+    validations:
+      required: true
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Task objective
+      placeholder: Describe the concrete deliverable
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope boundaries
+      placeholder: |
+        In scope:
+        - ...
+
+        Out of scope:
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Expected touched files
+      placeholder: |
+        - .github/...
+        - src/candle/...
+    validations:
+      required: false
