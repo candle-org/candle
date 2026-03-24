@@ -149,7 +149,7 @@ def tensor_detach(self):
     out.grad_fn = None
     out.grad = None
     out._pending = self._pending
-    out._version_value = self._version_value
+    out._version_counter = self._version_counter
     return out
 
 

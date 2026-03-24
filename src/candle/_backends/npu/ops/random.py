@@ -143,9 +143,9 @@ def normal_(a, mean=0.0, std=1.0, generator=None):
         idx = _cast_tensor_dtype(_npu_arange_1d(_numel(a.shape), a.device), float_dtype)
 
         # Two decorrelated pseudo-uniform streams in (0, 1) for Box-Muller.
-        u1 = sin(add(mul(idx, 12.9898), seed_mod * 78.233))
+        u1 = sin(_npu_add_scalar_(mul(idx, 12.9898), seed_mod * 78.233))
         u1 = frac(abs(mul(u1, 43758.5453)))
-        u2 = sin(add(mul(add(idx, 0.5), 93.9898), seed_mod * 67.345))
+        u2 = sin(_npu_add_scalar_(mul(_npu_add_scalar_(idx, 0.5), 93.9898), seed_mod * 67.345))
         u2 = frac(abs(mul(u2, 24634.6345)))
 
         eps = 1e-6
@@ -161,7 +161,7 @@ def normal_(a, mean=0.0, std=1.0, generator=None):
         if float(std) != 1.0:
             z = mul(z, float(std))
         if float(mean) != 0.0:
-            z = add(z, float(mean))
+            z = _npu_add_scalar_(z, float(mean))
         if a.dtype != float_dtype:
             z = _cast_tensor_dtype(z, a.dtype)
         return copy_(a, z)

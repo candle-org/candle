@@ -60,5 +60,6 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 |---|---|---|---|---|
 | `allclose` | 6-op composite | ACLNN 561000 under executor pool pressure | composite: `isclose(...).all()` | CANN 8.x |
 | `ones` / `zeros` creation via scalar fill | `aclnnInplaceFillScalar` | native creation path can segfault after prior NPU functionalize traffic | use native `aclnnInplaceOne` / `aclnnInplaceZero` for tensor creation; keep `fill_` on `aclnnInplaceFillScalar` | CANN 8.3 RC1 / 910A |
+| `normal_` / NPU `randn` fill path | `aclnnInplaceNormal` | segmentation fault during native random fill on 910A (e.g. NPU dropout/randn tests) | composite: on-device Box-Muller path in `normal_`; keep native kernel guarded for future re-enable | CANN 8.x / 910A |
 | `repeat_interleave` (tensor repeats) | `aclnnRepeatInterleave` / `aclnnRepeatInterleaveWithDim` | cross-op state corruption after native execution | composite: on-device `cumsum + searchsorted + index_select` | CANN 8.3 RC1 / 910A |
 | `linspace` / `logspace` | `aclnnLinspace` | 161002 | composite: on-device `ones + cumsum + mul + add`; `logspace` builds from composite `linspace` | CANN 8.x / 910A |

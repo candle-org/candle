@@ -480,7 +480,7 @@ class Tensor(_TensorBase):
         out.grad_fn = None
         out.grad = None
         out._pending = self._pending
-        out._version_value = self._version_value
+        out._version_counter = self._version_counter
         return out
 
     def detach_(self):
@@ -693,147 +693,129 @@ class Tensor(_TensorBase):
 
     def abs_(self):
         """In-place absolute value."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = abs_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("abs_", self.device.type, self)
 
     def neg_(self):
         """In-place negation."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = neg_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("neg_", self.device.type, self)
 
     def exp_(self):
         """In-place exponential."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = exp_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("exp_", self.device.type, self)
 
     def log_(self):
         """In-place natural logarithm."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = log_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("log_", self.device.type, self)
 
     def log2_(self):
         """In-place base-2 logarithm."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = log2_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("log2_", self.device.type, self)
 
     def log10_(self):
         """In-place base-10 logarithm."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = log10_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("log10_", self.device.type, self)
 
     def sqrt_(self):
         """In-place square root."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = sqrt_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("sqrt_", self.device.type, self)
 
     def sin_(self):
         """In-place sine."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = sin_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("sin_", self.device.type, self)
 
     def cos_(self):
         """In-place cosine."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = cos_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("cos_", self.device.type, self)
 
     def tan_(self):
         """In-place tangent."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = tan_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("tan_", self.device.type, self)
 
     def tanh_(self):
         """In-place hyperbolic tangent."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = tanh_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("tanh_", self.device.type, self)
 
     def sigmoid_(self):
         """In-place sigmoid."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = sigmoid_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("sigmoid_", self.device.type, self)
 
     def floor_(self):
         """In-place floor."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = floor_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("floor_", self.device.type, self)
 
     def ceil_(self):
         """In-place ceiling."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = ceil_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("ceil_", self.device.type, self)
 
     def round_(self):
         """In-place rounding."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = round_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("round_", self.device.type, self)
 
     def trunc_(self):
         """In-place truncation."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = trunc_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("trunc_", self.device.type, self)
 
     def pow_(self, exponent):
         """In-place power."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = pow_dispatch(self, exponent)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("pow_", self.device.type, self, exponent)
 
     def reciprocal_(self):
         """In-place reciprocal."""
+        from ._dispatch.dispatcher import dispatch
+
         self._check_inplace()
-        out = reciprocal_dispatch(self)
-        self._storage = out._storage
-        self._bump_version()
-        return self
+        return dispatch("reciprocal_", self.device.type, self)
 
     def to(self, *args, **kwargs):
         if self._pending:
@@ -1684,34 +1666,19 @@ class Tensor(_TensorBase):
         """In-place element-wise bitwise AND."""
         self._check_inplace()
         from ._dispatch.dispatcher import dispatch
-        out = dispatch("bitwise_and", self.device.type, self, other)
-        self._storage = out._storage
-        self.shape = out.shape
-        self.stride = out.stride
-        self._bump_version()
-        return self
+        return dispatch("bitwise_and_", self.device.type, self, other)
 
     def bitwise_or_(self, other):
         """In-place element-wise bitwise OR."""
         self._check_inplace()
         from ._dispatch.dispatcher import dispatch
-        out = dispatch("bitwise_or", self.device.type, self, other)
-        self._storage = out._storage
-        self.shape = out.shape
-        self.stride = out.stride
-        self._bump_version()
-        return self
+        return dispatch("bitwise_or_", self.device.type, self, other)
 
     def bitwise_xor_(self, other):
         """In-place element-wise bitwise XOR."""
         self._check_inplace()
         from ._dispatch.dispatcher import dispatch
-        out = dispatch("bitwise_xor", self.device.type, self, other)
-        self._storage = out._storage
-        self.shape = out.shape
-        self.stride = out.stride
-        self._bump_version()
-        return self
+        return dispatch("bitwise_xor_", self.device.type, self, other)
 
     def movedim(self, source, destination):
         """Move dimensions to new positions."""

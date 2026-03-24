@@ -202,8 +202,52 @@ class TestRandnNPU:
         assert abs(x_np.std() - 1.0) < 0.1
 
 
-@pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
-class TestNPUSeed:
+def test_randn_npu_910a_uses_soc_fallback_for_normal_kernel(monkeypatch):
+    from candle._backends.npu import creation as npu_creation
+    from candle._backends.npu import ops as npu_ops
+    from candle._backends.npu import ops_soc
+
+    calls = {"normal": 0, "fallback": 0}
+    orig_normal = npu_ops.normal_
+    orig_use_fallback = ops_soc.use_fallback
+
+    def wrapped_normal(t, *args, **kwargs):
+        calls["normal"] += 1
+        return orig_normal(t, *args, **kwargs)
+
+    def wrapped_use_fallback(name, profile=None):
+        result = orig_use_fallback(name, profile=profile)
+        if name == "normal_" and result:
+            calls["fallback"] += 1
+        return result
+
+    monkeypatch.setattr(ops_soc, "current_profile", lambda: "910a")
+    monkeypatch.setattr(ops_soc, "use_fallback", wrapped_use_fallback)
+    monkeypatch.setattr(npu_ops, "normal_", wrapped_normal)
+
+    x = npu_creation.randn_create((8,), dtype=torch.float32, device=torch.device("npu", 0))
+
+    assert x.device.type == "npu"
+    assert calls["normal"] == 1
+    assert calls["fallback"] == 1
+
+
+def test_normal_fallback_910a_avoids_add_kernel_path(monkeypatch):
+    from candle._backends.npu import ops_soc
+    from candle._backends.npu.ops import random as npu_random
+
+    monkeypatch.setattr(ops_soc, "current_profile", lambda: "910a")
+
+    def fail_add(*_args, **_kwargs):
+        raise AssertionError("normal_ fallback should not call tensor add helper")
+
+    monkeypatch.setattr(npu_random, "add", fail_add)
+
+    x = torch.empty((8,), device="npu")
+    out = npu_random.normal_(x, mean=1.5, std=2.0)
+
+    assert out is x
+    assert out.device.type == "npu"
     """Test NPU seed management."""
 
     def test_npu_manual_seed(self):

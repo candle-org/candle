@@ -297,18 +297,20 @@ cdef class Node:
         cdef object inp
         cdef object fn
         cdef object acc
+        cdef int output_nr
         for inp in self.inputs:
+            output_nr = <int>getattr(inp, "output_nr", 0)
             fn = getattr(inp, "grad_fn", None)
             if fn is not None:
-                next_functions.append((fn, 0))
+                next_functions.append((fn, output_nr))
             elif getattr(inp, "requires_grad", False):
                 acc = getattr(inp, "_accumulate_grad_node", None)
                 if acc is None:
                     acc = AccumulateGrad(inp)
                     inp._accumulate_grad_node = acc
-                next_functions.append((acc, 0))
+                next_functions.append((acc, output_nr))
             else:
-                next_functions.append((None, 0))
+                next_functions.append((None, output_nr))
         return tuple(next_functions)
 
     @property

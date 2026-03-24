@@ -85,16 +85,18 @@ def _allocate_device_bytes(nbytes):
         return 0
 
 
-def untyped_from_numpy(arr, device=None):
+def untyped_from_numpy(arr, device=None, stream=None):
     raw = np.ascontiguousarray(arr).view(np.uint8).reshape(-1).copy()
     ptr = _allocate_device_bytes(raw.size)
     if ptr and raw.size:
-        cuda_runtime.memcpy(
+        cuda_runtime.memcpy_async(
             ptr,
             int(raw.ctypes.data),
             raw.size,
             cuda_runtime.CUDA_MEMCPY_HOST_TO_DEVICE,
+            stream=stream,
         )
+        cuda_runtime.synchronize_stream(stream) if stream is not None else None
     return CudaUntypedStorage(raw.size, device=device, device_ptr=ptr, host_shadow=raw)
 
 
@@ -107,7 +109,7 @@ def empty_untyped(shape, dtype, device=None):
     return CudaUntypedStorage(nbytes, device=device, device_ptr=ptr, host_shadow=raw)
 
 
-def to_numpy(untyped, dtype, shape=None):
+def to_numpy(untyped, dtype, shape=None, stream=None):
     np_dtype = to_numpy_dtype(dtype)
     itemsize = np.dtype(np_dtype).itemsize
     if shape is None:
@@ -121,12 +123,22 @@ def to_numpy(untyped, dtype, shape=None):
 
     if untyped.data_ptr():
         arr = np.empty(shape, dtype=np_dtype)
-        cuda_runtime.memcpy(
-            int(arr.ctypes.data),
-            untyped.data_ptr(),
-            arr.nbytes,
-            cuda_runtime.CUDA_MEMCPY_DEVICE_TO_HOST,
-        )
+        if stream is None:
+            cuda_runtime.memcpy(
+                int(arr.ctypes.data),
+                untyped.data_ptr(),
+                arr.nbytes,
+                cuda_runtime.CUDA_MEMCPY_DEVICE_TO_HOST,
+            )
+        else:
+            cuda_runtime.memcpy_async(
+                int(arr.ctypes.data),
+                untyped.data_ptr(),
+                arr.nbytes,
+                cuda_runtime.CUDA_MEMCPY_DEVICE_TO_HOST,
+                stream=stream,
+            )
+            cuda_runtime.synchronize_stream(stream)
         untyped._host_shadow = arr.view(np.uint8).reshape(-1).copy()
         return arr
 

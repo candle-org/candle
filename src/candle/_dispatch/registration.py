@@ -7,6 +7,7 @@ _FORWARD_KEY_BY_DEVICE = {
     "npu": DispatchKey.NPU,
     "meta": DispatchKey.Meta,
     "cuda": DispatchKey.CUDA,
+    "mps": DispatchKey.PrivateUse2,
 }
 
 _AUTOGRAD_KEY_BY_DEVICE = {
@@ -14,6 +15,7 @@ _AUTOGRAD_KEY_BY_DEVICE = {
     "npu": DispatchKey.AutogradNPU,
     "meta": DispatchKey.AutogradMeta,
     "cuda": DispatchKey.AutogradCUDA,
+    "mps": DispatchKey.PrivateUse3,
 }
 
 

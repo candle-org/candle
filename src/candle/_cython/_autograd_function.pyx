@@ -47,7 +47,7 @@ cdef class FunctionCtx:
         return self._needs_input_grad
 
     def mark_dirty(self, *tensors):
-        self._dirty = {id(t) for t in tensors}
+        self._dirty.update(id(t) for t in tensors)
 
     def mark_non_differentiable(self, *tensors):
         self._non_differentiable = {id(t) for t in tensors}
@@ -83,6 +83,16 @@ def _function_apply(cls, args, kwargs):
     else:
         output = cls.forward(ctx, *args, **kwargs)
 
+    cdef set dirty = ctx._dirty
+    cdef object dirty_obj
+    if dirty:
+        for dirty_obj in args:
+            if isinstance(dirty_obj, Tensor) and id(dirty_obj) in dirty:
+                dirty_obj._bump_version()
+        for dirty_obj in kwargs.values():
+            if isinstance(dirty_obj, Tensor) and id(dirty_obj) in dirty:
+                dirty_obj._bump_version()
+
     if not any_grad_needed:
         return output
 
@@ -113,7 +123,7 @@ def _function_apply(cls, args, kwargs):
             node.save_for_backward(*ctx._to_save)
             ctx._saved_tensors = node._saved_tensors_list
 
-        _mark_output(output, non_diff, node, Tensor)
+        _mark_output(output, non_diff, node, Tensor, 0)
         return output
 
     if isinstance(output, tuple):
@@ -157,11 +167,11 @@ def _function_apply(cls, args, kwargs):
                     first_saved_list = node._saved_tensors_list
 
             node_holder["node"] = weakref.proxy(node)
-            _mark_output(o, non_diff, node, Tensor)
+            _mark_output(o, non_diff, node, Tensor, diff_index)
 
         for o in outputs:
             if not (isinstance(o, Tensor) and id(o) not in non_diff):
-                _mark_output(o, non_diff, None, Tensor)
+                _mark_output(o, non_diff, None, Tensor, 0)
 
         if first_saved_list is not None:
             ctx._saved_tensors = first_saved_list
@@ -170,7 +180,7 @@ def _function_apply(cls, args, kwargs):
     return output
 
 
-cdef void _mark_output(object o, set non_diff, object node, object Tensor):
+cdef void _mark_output(object o, set non_diff, object node, object Tensor, int output_nr=0):
     """Mark a single output tensor with grad_fn / non-differentiable."""
     cdef object view_meta
     if not isinstance(o, Tensor):
@@ -178,6 +188,7 @@ cdef void _mark_output(object o, set non_diff, object node, object Tensor):
     if id(o) not in non_diff:
         o.grad_fn = node
         o.requires_grad = True
+        o._output_nr = output_nr
         if o._is_view():
             view_meta = dict(getattr(o, "_view_meta", None) or {})
             view_meta["creation_kind"] = "custom_function"
@@ -185,3 +196,4 @@ cdef void _mark_output(object o, set non_diff, object node, object Tensor):
     else:
         o.grad_fn = None
         o.requires_grad = False
+        o._output_nr = 0

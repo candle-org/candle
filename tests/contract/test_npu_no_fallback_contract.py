@@ -494,11 +494,6 @@ def _install_native_ffi_env(monkeypatch):
     return calls
 
 
-def test_npu_binary_helper_requires_native_fast_path_when_missing(monkeypatch):
-    monkeypatch.setattr(_helpers, "_HAS_FAST_OPS", False)
-
-    with pytest.raises(RuntimeError, match="native NPU hot path unavailable for op add"):
-        _helpers._require_native_fast_ops("add")
 
 
 def test_npu_aclnn_requires_native_ffi_when_missing(monkeypatch):

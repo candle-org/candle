@@ -602,7 +602,6 @@ def destroy_scalar(uintptr_t handle):
 # ---------------------------------------------------------------------------
 # IntArray creation / destruction
 # ---------------------------------------------------------------------------
-
 def create_int_array(values_tuple):
     """Create an ACL int array from a tuple of ints.  Returns handle as int."""
     cdef int n = len(values_tuple)

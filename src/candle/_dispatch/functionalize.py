@@ -64,11 +64,8 @@ def _mutating_slots(schema_obj, args, kwargs):
     for param in params:
         if not param.mutates:
             continue
-        alias_set = getattr(param, "alias_set", None)
-        if alias_set in (None, ""):
-            continue
         if param.name in bound:
-            slots.append((alias_set, bound[param.name]))
+            slots.append((getattr(param, "alias_set", None), bound[param.name]))
     return slots
 
 

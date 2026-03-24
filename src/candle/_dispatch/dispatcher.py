@@ -90,8 +90,6 @@ def _mutating_args(schema_obj, args, kwargs):
     for param in params:
         if not param.mutates:
             continue
-        if getattr(param, "alias_set", None) in (None, ""):
-            continue
         if param.name in bound:
             mutated.append(bound[param.name])
     return mutated
@@ -172,7 +170,7 @@ class _PendingOp:
             pending._base = None
             pending._view_meta = None
 
-        result_version = result._version_value
+        result_version = result._version_counter.value
         if pending._version_value != result_version:
             pending._version_value = result_version
         pending._pending = False

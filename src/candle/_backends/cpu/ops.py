@@ -190,6 +190,34 @@ def _cython_scalar_binary(kernel_f32, kernel_f64, a_arr, scalar, out_np_dtype):
     return None
 
 
+def _cython_unary_inplace(kernel_f32, kernel_f64, arr):
+    if not arr.flags.c_contiguous:
+        return False
+    if arr.dtype == np.float32 and kernel_f32 is not None:
+        flat = arr.ravel()
+        kernel_f32(flat, flat)
+        return True
+    if arr.dtype == np.float64 and kernel_f64 is not None:
+        flat = arr.ravel()
+        kernel_f64(flat, flat)
+        return True
+    return False
+
+
+def _cython_scalar_unary_inplace(kernel_f32, kernel_f64, arr, scalar):
+    if not arr.flags.c_contiguous:
+        return False
+    if arr.dtype == np.float32 and kernel_f32 is not None:
+        flat = arr.ravel()
+        kernel_f32(flat, float(scalar), flat)
+        return True
+    if arr.dtype == np.float64 and kernel_f64 is not None:
+        flat = arr.ravel()
+        kernel_f64(flat, float(scalar), flat)
+        return True
+    return False
+
+
 def add(a, b):
     a_np = _to_numpy(a)
     b_np = _to_numpy(b) if isinstance(b, Tensor) else b
@@ -968,6 +996,183 @@ def add_(a, b):
 def mul_(a, b):
     arr = _to_numpy(a)
     arr *= _to_numpy(b) if isinstance(b, Tensor) else b
+    return a
+
+
+
+
+def abs_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.abs_f32, _ck.abs_f64, arr):
+        return a
+    np.abs(arr, out=arr)
+    return a
+
+
+def neg_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.neg_f32, _ck.neg_f64, arr):
+        return a
+    np.negative(arr, out=arr)
+    return a
+
+
+def exp_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.exp_f32, _ck.exp_f64, arr):
+        return a
+    np.exp(arr, out=arr)
+    return a
+
+
+def log_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.log_f32, _ck.log_f64, arr):
+        return a
+    np.log(arr, out=arr)
+    return a
+
+
+def log2_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.log2_f32, _ck.log2_f64, arr):
+        return a
+    np.log2(arr, out=arr)
+    return a
+
+
+def log10_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.log10_f32, _ck.log10_f64, arr):
+        return a
+    np.log10(arr, out=arr)
+    return a
+
+
+def sqrt_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.sqrt_f32, _ck.sqrt_f64, arr):
+        return a
+    np.sqrt(arr, out=arr)
+    return a
+
+
+def sin_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.sin_f32, _ck.sin_f64, arr):
+        return a
+    np.sin(arr, out=arr)
+    return a
+
+
+def cos_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.cos_f32, _ck.cos_f64, arr):
+        return a
+    np.cos(arr, out=arr)
+    return a
+
+
+def tan_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.tan_f32, _ck.tan_f64, arr):
+        return a
+    np.tan(arr, out=arr)
+    return a
+
+
+def tanh_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.tanh_f32, _ck.tanh_f64, arr):
+        return a
+    np.tanh(arr, out=arr)
+    return a
+
+
+def sigmoid_(a):
+    arr = _to_numpy(a)
+    if _cython_unary_inplace(_ck.sigmoid_f32, _ck.sigmoid_f64, arr):
+        return a
+    arr[...] = 1.0 / (1.0 + np.exp(-arr))
+    return a
+
+
+def floor_(a):
+    arr = _to_numpy(a)
+    # TODO: add native inplace kernels for MPS/CUDA/NPU when backend support lands.
+    if _cython_unary_inplace(_ck.floor_f32, _ck.floor_f64, arr):
+        return a
+    np.floor(arr, out=arr)
+    return a
+
+
+def ceil_(a):
+    arr = _to_numpy(a)
+    # TODO: add native inplace kernels for MPS/CUDA/NPU when backend support lands.
+    if _cython_unary_inplace(_ck.ceil_f32, _ck.ceil_f64, arr):
+        return a
+    np.ceil(arr, out=arr)
+    return a
+
+
+def round_(a):
+    arr = _to_numpy(a)
+    # TODO: add native inplace kernels for MPS/CUDA/NPU when backend support lands.
+    if _cython_unary_inplace(_ck.round_f32, _ck.round_f64, arr):
+        return a
+    np.round(arr, out=arr)
+    return a
+
+
+def trunc_(a):
+    arr = _to_numpy(a)
+    # TODO: add native inplace kernels for MPS/CUDA/NPU when backend support lands.
+    if _cython_unary_inplace(_ck.trunc_f32, _ck.trunc_f64, arr):
+        return a
+    np.trunc(arr, out=arr)
+    return a
+
+
+def reciprocal_(a):
+    arr = _to_numpy(a)
+    # TODO: add native inplace kernels for MPS/CUDA/NPU when backend support lands.
+    if _cython_unary_inplace(_ck.reciprocal_f32, _ck.reciprocal_f64, arr):
+        return a
+    np.divide(1.0, arr, out=arr)
+    return a
+
+
+def pow_(a, b):
+    arr = _to_numpy(a)
+    exponent = _to_numpy(b) if isinstance(b, Tensor) else b
+    # TODO: add native inplace kernels for MPS/CUDA/NPU when backend support lands.
+    if not isinstance(b, Tensor) and _cython_scalar_unary_inplace(_ck.pow_f32, _ck.pow_f64, arr, exponent):
+        return a
+    np.power(arr, exponent, out=arr)
+    return a
+
+
+def bitwise_and_(a, b):
+    arr = _to_numpy(a)
+    other = _to_numpy(b) if isinstance(b, Tensor) else b
+    # TODO: add native inplace kernels for MPS/CUDA/NPU when backend support lands.
+    np.bitwise_and(arr, other, out=arr)
+    return a
+
+
+def bitwise_or_(a, b):
+    arr = _to_numpy(a)
+    other = _to_numpy(b) if isinstance(b, Tensor) else b
+    # TODO: add native inplace kernels for MPS/CUDA/NPU when backend support lands.
+    np.bitwise_or(arr, other, out=arr)
+    return a
+
+
+def bitwise_xor_(a, b):
+    arr = _to_numpy(a)
+    other = _to_numpy(b) if isinstance(b, Tensor) else b
+    # TODO: add native inplace kernels for MPS/CUDA/NPU when backend support lands.
+    np.bitwise_xor(arr, other, out=arr)
     return a
 
 

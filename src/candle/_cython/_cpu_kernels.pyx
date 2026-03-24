@@ -10,10 +10,10 @@ cimport cython
 from libc.math cimport (
     expf, logf, sqrtf, sinf, cosf, tanf, tanhf,
     sinhf, coshf, asinhf, acoshf, atanhf, erff, erfcf,
-    exp2f, log2f, log10f, powf, fabsf,
+    exp2f, log2f, log10f, powf, fabsf, floorf, ceilf, roundf, truncf,
     exp, log, sqrt, sin, cos, tan, tanh,
     sinh, cosh, asinh, acosh, atanh, erf, erfc,
-    exp2, log2, log10, pow, fabs,
+    exp2, log2, log10, pow, fabs, floor, ceil, round, trunc,
 )
 
 
@@ -190,6 +190,12 @@ def rsqrt_f32(float[::1] a, float[::1] out):
         out[i] = 1.0 / sqrtf(a[i])
 
 
+def reciprocal_f32(float[::1] a, float[::1] out):
+    cdef Py_ssize_t i, n = a.shape[0]
+    for i in range(n):
+        out[i] = 1.0 / a[i]
+
+
 def sin_f32(float[::1] a, float[::1] out):
     cdef Py_ssize_t i, n = a.shape[0]
     for i in range(n):
@@ -212,6 +218,30 @@ def tanh_f32(float[::1] a, float[::1] out):
     cdef Py_ssize_t i, n = a.shape[0]
     for i in range(n):
         out[i] = tanhf(a[i])
+
+
+def floor_f32(float[::1] a, float[::1] out):
+    cdef Py_ssize_t i, n = a.shape[0]
+    for i in range(n):
+        out[i] = floorf(a[i])
+
+
+def ceil_f32(float[::1] a, float[::1] out):
+    cdef Py_ssize_t i, n = a.shape[0]
+    for i in range(n):
+        out[i] = ceilf(a[i])
+
+
+def round_f32(float[::1] a, float[::1] out):
+    cdef Py_ssize_t i, n = a.shape[0]
+    for i in range(n):
+        out[i] = roundf(a[i])
+
+
+def trunc_f32(float[::1] a, float[::1] out):
+    cdef Py_ssize_t i, n = a.shape[0]
+    for i in range(n):
+        out[i] = truncf(a[i])
 
 
 def sinh_f32(float[::1] a, float[::1] out):
@@ -347,6 +377,12 @@ def rsqrt_f64(double[::1] a, double[::1] out):
         out[i] = 1.0 / sqrt(a[i])
 
 
+def reciprocal_f64(double[::1] a, double[::1] out):
+    cdef Py_ssize_t i, n = a.shape[0]
+    for i in range(n):
+        out[i] = 1.0 / a[i]
+
+
 def sin_f64(double[::1] a, double[::1] out):
     cdef Py_ssize_t i, n = a.shape[0]
     for i in range(n):
@@ -369,6 +405,30 @@ def tanh_f64(double[::1] a, double[::1] out):
     cdef Py_ssize_t i, n = a.shape[0]
     for i in range(n):
         out[i] = tanh(a[i])
+
+
+def floor_f64(double[::1] a, double[::1] out):
+    cdef Py_ssize_t i, n = a.shape[0]
+    for i in range(n):
+        out[i] = floor(a[i])
+
+
+def ceil_f64(double[::1] a, double[::1] out):
+    cdef Py_ssize_t i, n = a.shape[0]
+    for i in range(n):
+        out[i] = ceil(a[i])
+
+
+def round_f64(double[::1] a, double[::1] out):
+    cdef Py_ssize_t i, n = a.shape[0]
+    for i in range(n):
+        out[i] = round(a[i])
+
+
+def trunc_f64(double[::1] a, double[::1] out):
+    cdef Py_ssize_t i, n = a.shape[0]
+    for i in range(n):
+        out[i] = trunc(a[i])
 
 
 def sinh_f64(double[::1] a, double[::1] out):

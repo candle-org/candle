@@ -59,9 +59,8 @@ cdef class TensorImpl:
     cdef public object _view_meta
     cdef public bint _pending
     cdef public bint _retain_grad
-    cdef public object _backward_hooks
+    cdef public int _output_nr
 
-    # -- Python tuple caches (avoid re-creating every access) --
     cdef public tuple _shape_tuple
     cdef public object _stride_tuple   # _StrideTuple instance
 
@@ -238,19 +237,23 @@ cdef class TensorImpl:
 
     @_version_counter.setter
     def _version_counter(self, value):
-        # When setting from a proxy, share the underlying impl's value
         if isinstance(value, _VersionCounterProxy):
-            self._version_value = (<_VersionCounterProxy>value)._impl._version_value
+            self._vc_proxy = value
+            self._version_value = (<_VersionCounterProxy>value).value
         else:
             self._version_value = <int64_t>getattr(value, "value", 0)
-        # Invalidate cached proxy
-        self._vc_proxy = None
+            self._vc_proxy = None
 
     def _bump_version(self):
+        cdef object proxy
         if self._base is not None:
             self._base._bump_version()
-        else:
-            self._version_value += 1
+            return
+        proxy = self._vc_proxy
+        if proxy is not None:
+            (<_VersionCounterProxy>proxy).bump()
+            return
+        self._version_value += 1
 
     # ---------------------------------------------------------------
     # Storage access
@@ -278,7 +281,7 @@ cdef class TensorImpl:
 
     @property
     def output_nr(self):
-        return 0
+        return self._output_nr
 
     @property
     def is_cuda(self):

@@ -1001,6 +1001,27 @@ def _npu_advanced_getitem(tensor, key):
             result = _npu_unsqueeze_view(result, pos)
         return result
 
+    # 910A workaround: native aclnnIndex on the x[0, idx] style path can poison
+    # later random-kernel execution.  For the common single-advanced-index case,
+    # use an on-device gather composite instead, avoiding CPU round-trips.
+    if (
+        ops_soc.current_profile() == "910a"
+        and len(adv_index_tensors) == 1
+        and len(adv_current_dims) == 1
+        and prepared.dim() == 1
+        and adv_current_dims[0] == 0
+        and adv_index_tensors[0].dim() == 1
+    ):
+        from .comparison import lt
+
+        idx = adv_index_tensors[0]
+        neg_mask = lt(idx, _scalar_to_npu_tensor(0, idx))
+        idx = _blend_negative_indices(idx, neg_mask, prepared.shape[0])
+        result = _gather_unchecked(prepared, 0, idx)
+        for pos in none_positions:
+            result = _npu_unsqueeze_view(result, pos)
+        return result
+
     # Broadcast all advanced index tensors
     idx_shapes = [t.shape for t in adv_index_tensors]
     broadcast_shape = _compute_broadcast_shape(idx_shapes)
@@ -2515,7 +2536,7 @@ def setitem(tensor, key, value):
 # ---------------------------------------------------------------------------
 
 
-def gather(a, dim, index):
+def _gather_unchecked(a, dim, index):
     dim = _normalize_dim(dim, a.dim())
     _require_int64_indices(index, "gather")
     if index.dim() != a.dim():
@@ -2523,10 +2544,6 @@ def gather(a, dim, index):
     for i, size in enumerate(index.shape):
         if i != dim and size != a.shape[i]:
             raise ValueError("index shape mismatch")
-    _validate_index_bounds(index, a.shape[dim], allow_negative=False, name="gather")
-
-    if _use_soc_fallback("gather"):
-        return _gather_310b_fallback(a, dim, index)
 
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
@@ -2554,22 +2571,20 @@ def gather(a, dim, index):
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
-def _index_select_known_nonnegative(a, dim, index):
+def gather(a, dim, index):
     dim = _normalize_dim(dim, a.dim())
-    _require_int64_indices(index, "index_select")
-    if index.dim() != 1:
-        raise ValueError("index must be 1D")
-    index_shape = list(a.shape)
-    index_shape[dim] = index.shape[0]
-    index_shape = tuple(index_shape)
-    expand_shape = [1] * a.dim()
-    expand_shape[dim] = index.shape[0]
-    expanded = view_backend.reshape(index, tuple(expand_shape))
-    repeats = []
-    for axis, size in enumerate(index_shape):
-        repeats.append(1 if axis == dim else int(size))
-    expanded = repeat(expanded, tuple(repeats))
-    return gather(a, dim, expanded)
+    _require_int64_indices(index, "gather")
+    if index.dim() != a.dim():
+        raise ValueError("index shape mismatch")
+    for i, size in enumerate(index.shape):
+        if i != dim and size != a.shape[i]:
+            raise ValueError("index shape mismatch")
+    _validate_index_bounds(index, a.shape[dim], allow_negative=False, name="gather")
+
+    if _use_soc_fallback("gather"):
+        return _gather_310b_fallback(a, dim, index)
+
+    return _gather_unchecked(a, dim, index)
 
 
 def index_select(a, dim, index):

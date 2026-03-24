@@ -45,3 +45,26 @@ def test_keyset_includes_adinplaceorview_when_grad_enabled():
     t = torch.ones((2,)).requires_grad_()
     keyset = DispatchKeySet.from_tensors((t,), grad_enabled=True)
     assert DispatchKey.ADInplaceOrView in keyset
+
+
+def test_registration_helpers_accept_mps_labels():
+    import uuid
+
+    from candle._dispatch.registration import register_autograd_kernels, register_forward_kernels
+    from candle._dispatch.registry import dispatch_key_from_string, registry
+
+    op_name = f"mps_registration_{uuid.uuid4().hex}"
+    registry.register_schema(op_name, f"{op_name}(Tensor input) -> Tensor")
+
+    def _forward(x):
+        return x
+
+    def _autograd(x):
+        return x
+
+    register_forward_kernels(op_name, mps=_forward)
+    register_autograd_kernels(op_name, mps=_autograd)
+
+    entry = registry.get(op_name)
+    assert entry.kernels[dispatch_key_from_string("MPS")] is _forward
+    assert entry.kernels[dispatch_key_from_string("AutogradMPS")] is _autograd
