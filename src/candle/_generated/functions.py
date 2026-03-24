@@ -7707,8 +7707,10 @@ class MulTensorBackward0(Node):
         other = _saved[self._saved_other_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = _sum_to_backward_helper(_mul_tensor_backward_helper(grad, other, self_.dtype, keyset), self_.shape, keyset)
-            grad_other = _sum_to_backward_helper(_mul_tensor_backward_helper(grad, self_, other.dtype, keyset), other.shape, keyset)
+            _self_dtype = self_.dtype if hasattr(self_, 'dtype') else grad.dtype
+            _other_dtype = other.dtype if hasattr(other, 'dtype') else grad.dtype
+            grad_self = _sum_to_backward_helper(_mul_tensor_backward_helper(grad, other, _self_dtype, keyset), self_.shape if hasattr(self_, 'shape') else (), keyset)
+            grad_other = _sum_to_backward_helper(_mul_tensor_backward_helper(grad, self_, _other_dtype, keyset), other.shape if hasattr(other, 'shape') else (), keyset)
         return (grad_self, grad_other,)
 
 class MulScalarBackward0(Node):
