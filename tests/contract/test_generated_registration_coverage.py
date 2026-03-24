@@ -114,8 +114,17 @@ def test_functions_legacy_has_expected_backward_nodes():
         assert f"class {cls}" in text, f"Expected {cls} in functions_legacy.py"
 
 
-def test_generated_functions_imports_shared_helpers_from_legacy():
+
+
+def test_generated_functions_has_no_duplicate_backward_class_definitions():
     text = _read("functions.py")
-    assert "from .functions_legacy import" in text
-    assert "_as_strided_backward_helper" in text
-    assert "_pow_backward_helper" in text
+    classes = re.findall(r"^class ([A-Za-z_][A-Za-z0-9_]*)\(Node\):", text, re.MULTILINE)
+    duplicates = sorted(name for name in set(classes) if classes.count(name) > 1)
+    assert duplicates == [], f"Duplicate backward classes in functions.py: {duplicates}"
+
+
+def test_generated_functions_cython_has_no_duplicate_backward_class_definitions():
+    text = _read("_functions_cy.pyx")
+    classes = re.findall(r"^class ([A-Za-z_][A-Za-z0-9_]*)\(_Node\):", text, re.MULTILINE)
+    duplicates = sorted(name for name in set(classes) if classes.count(name) > 1)
+    assert duplicates == [], f"Duplicate backward classes in _functions_cy.pyx: {duplicates}"

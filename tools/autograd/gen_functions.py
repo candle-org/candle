@@ -8,7 +8,11 @@ from .formula_transpiler import transpile
 def gen_functions(infos: list[DifferentiabilityInfo]) -> str:
     """Generate the full functions.py source."""
     parts = [_HEADER]
+    seen_backward_names = set()
     for info in infos:
+        if info.backward_name in seen_backward_names:
+            continue
+        seen_backward_names.add(info.backward_name)
         parts.append(_gen_one_node(info))
     seen_ops = set()
     alias_lines = []
@@ -1572,6 +1576,16 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
         lines.append("        return (grad_self, grad_other,)")
         return "\n".join(lines)
 
+    if info.backward_name == "EluBackward0":
+        lines.append("            grad_self = _elu_grad(grad, self_, alpha, keyset)")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "CeluBackward0":
+        lines.append("            grad_self = _celu_grad(grad, self_, alpha, keyset)")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
     if info.backward_name == "ClampMinBackward0":
         lines.append("            grad_self = redispatch(\"where\", keyset, redispatch(\"ge\", keyset, self_, min), grad, _scalar_tensor_like(grad, 0.))")
         lines.append("        return (grad_self,)")
@@ -1874,7 +1888,11 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
     import re as _re
     parts = [_PYX_HEADER]
     parts.append(_get_pyx_helpers_block())
+    seen_backward_names = set()
     for info in infos:
+        if info.backward_name in seen_backward_names:
+            continue
+        seen_backward_names.add(info.backward_name)
         parts.append(_gen_one_node_pyx(info))
     seen_ops: set = set()
     alias_lines = []
