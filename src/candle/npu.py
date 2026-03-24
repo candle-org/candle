@@ -615,8 +615,8 @@ class graph:
 
 
 def is_current_stream_capturing():
-    # TODO: re-enable native capture_get_info on 310B/310P/910A when CANN adds
-    # aclmdlRI support for those SoCs.
+    # TODO: re-enable native capture_get_info on 310B when CANN adds
+    # aclmdlRI support for that SoC.
     from ._backends.npu import ops_soc
     if not ops_soc.aclgraph_supported():
         return False
