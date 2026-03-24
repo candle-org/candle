@@ -6,13 +6,13 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please share enough context for someone else to answer without guessing.
+        Before opening a question, check the README, project docs, and existing issues — your answer might already be there.
 
   - type: textarea
     id: question
     attributes:
-      label: What is your question?
-      placeholder: I'm trying to understand ...
+      label: What's your question?
+      placeholder: How do I use candle with ... ?
     validations:
       required: true
 
@@ -20,7 +20,9 @@ body:
     id: context
     attributes:
       label: Relevant context
-      description: Share the API, backend, model, or workflow involved.
+      description: Which API, backend, device, or model is involved?
+      placeholder: |
+        I'm using the MPS backend on macOS and trying to ...
     validations:
       required: true
 
@@ -28,6 +30,6 @@ body:
     id: tried
     attributes:
       label: What have you already tried?
-      description: Optional. Mention docs, code, or experiments you checked first.
+      description: Optional — mention docs, code, or experiments you checked.
     validations:
       required: false

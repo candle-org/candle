@@ -9,6 +9,7 @@ body:
       label: Agent tool
       options:
         - Claude Code
+        - Codex
         - Cursor
         - GitHub Copilot
         - Other
@@ -19,6 +20,7 @@ body:
     id: linked
     attributes:
       label: Related issue or roadmap item
+      description: Link the parent issue if this bug was found during roadmap work.
       placeholder: "#205"
     validations:
       required: false
@@ -27,7 +29,10 @@ body:
     id: summary
     attributes:
       label: Structured summary
-      placeholder: Describe the bug in 2-5 sentences
+      description: 2-5 sentences. Include the op, backend, and failure mode.
+      placeholder: |
+        `candle.matmul` on NPU returns incorrect results for non-contiguous inputs.
+        The ACLNN kernel silently produces zeros instead of raising an error.
     validations:
       required: true
 
@@ -36,8 +41,8 @@ body:
     attributes:
       label: Relevant files or subsystems
       placeholder: |
-        - src/candle/...
-        - tests/...
+        - src/candle/_backends/npu/ops.py
+        - tests/npu/test_matmul.py
     validations:
       required: true
 
@@ -45,9 +50,11 @@ body:
     id: reproduce
     attributes:
       label: Exact reproduction commands
+      description: Must be runnable as-is. Use `import candle as torch`.
       render: shell
       placeholder: |
-        python -m pytest ...
+        source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+          python -c "import candle as torch; ..."
     validations:
       required: true
 
@@ -55,6 +62,7 @@ body:
     id: observed
     attributes:
       label: Observed output
+      description: Paste the actual terminal output — do not paraphrase.
       render: shell
     validations:
       required: true
@@ -63,13 +71,14 @@ body:
     id: expected
     attributes:
       label: Expected behavior
+      description: State the correct result. Reference PyTorch output if applicable.
     validations:
       required: true
 
   - type: textarea
     id: root_cause
     attributes:
-      label: Likely root cause
-      description: Optional but encouraged.
+      label: Verified root cause
+      description: Only include if you traced the issue to a specific line or condition. Do not speculate.
     validations:
       required: false
