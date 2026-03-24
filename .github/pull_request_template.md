@@ -1,5 +1,7 @@
 ## Summary
 
+<!-- What does this PR do, and why? One or two sentences is fine. -->
+
 -
 
 ## Linked issue
@@ -9,8 +11,9 @@
 
 ## Test plan
 
-- [ ] Not run (explain why)
-- [ ] `source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest ...`
+- [ ] Not run — explain why below
+- [ ] `source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/ tests/contract/ -v --tb=short`
+- [ ] `source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/mps/ -v --tb=short` (if MPS-related)
 - [ ] `pylint src/candle/ --rcfile=.github/pylint.conf`
 
 ## Checklist
@@ -20,4 +23,4 @@
 - [ ] I updated docs/comments only where needed
 - [ ] This PR does not include unrelated changes
 
-> If this PR is primarily AI-authored, switch to `.github/PULL_REQUEST_TEMPLATE/ai.md` so the submission includes tool disclosure, change summary, and validation evidence.
+> **AI-authored?** Switch to `.github/PULL_REQUEST_TEMPLATE/ai.md` for the structured AI submission template.

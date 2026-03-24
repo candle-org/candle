@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before opening a question, check the [README](../../README.md), project docs, and existing issues — your answer might already be there.
+        Before opening a question, check the README, project docs, and existing issues — your answer might already be there.
 
   - type: textarea
     id: question

@@ -2,4 +2,4 @@ blank_issues_enabled: false
 contact_links:
   - name: General project issues
     url: https://github.com/candle-org/candle/issues
-    about: If none of the templates fit, review existing issues before opening a new one.
+    about: Check existing issues first — your question or bug might already be tracked.

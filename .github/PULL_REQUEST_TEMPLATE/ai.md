@@ -1,7 +1,7 @@
 ## Agent tool
 
-- Tool:
-- Model / environment (optional):
+- **Tool:**
+- **Model / environment** (optional):
 
 ## Linked issue(s)
 
@@ -9,6 +9,8 @@
 - Related to #
 
 ## Change summary
+
+<!-- What changed and why — 2-3 bullets max. -->
 
 -
 
@@ -20,6 +22,8 @@
 
 ### Commands run
 
+<!-- Paste the exact commands you ran. Do not edit or abbreviate. -->
+
 ```bash
 source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest ...
 pylint src/candle/ --rcfile=.github/pylint.conf
@@ -27,8 +31,10 @@ pylint src/candle/ --rcfile=.github/pylint.conf
 
 ### Key output
 
+<!-- Paste the relevant terminal output — do not paraphrase. -->
+
 ```text
-Paste the relevant passing output here.
+...
 ```
 
 ## Test plan
@@ -36,8 +42,8 @@ Paste the relevant passing output here.
 - [ ] CPU tests
 - [ ] MPS tests (if relevant)
 - [ ] NPU tests (if relevant)
-- [ ] Pylint
-- [ ] Not run (explain why)
+- [ ] Pylint clean
+- [ ] Not run — explain why below
 
 ## Reviewer notes / remaining risks
 
@@ -45,11 +51,11 @@ Paste the relevant passing output here.
 
 ## Checklist
 
-- [ ] I disclosed the agent tool used for this submission
+- [ ] I disclosed the agent tool used
 - [ ] I linked the relevant issue(s)
 - [ ] I included a concise change summary
-- [ ] I included validation evidence and commands run
-- [ ] I did not add unrelated changes
-- [ ] I did not bypass schema validation to make tests pass
-- [ ] I did not introduce CPU fallback for GPU/NPU behavior
-- [ ] I only updated docs/comments where needed
+- [ ] I pasted actual validation output (not paraphrased)
+- [ ] I did **not** bypass schema validation to make tests pass
+- [ ] I did **not** introduce CPU fallback for GPU/NPU behavior
+- [ ] I did **not** add unrelated changes
+- [ ] I updated docs/comments only where needed
