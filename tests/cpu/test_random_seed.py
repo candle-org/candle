@@ -202,6 +202,7 @@ class TestRandnNPU:
         assert abs(x_np.std() - 1.0) < 0.1
 
 
+@pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
 def test_randn_npu_910a_uses_soc_fallback_for_normal_kernel(monkeypatch):
     from candle._backends.npu import creation as npu_creation
     from candle._backends.npu import ops as npu_ops
@@ -232,6 +233,7 @@ def test_randn_npu_910a_uses_soc_fallback_for_normal_kernel(monkeypatch):
     assert calls["fallback"] == 1
 
 
+@pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
 def test_normal_fallback_910a_avoids_add_kernel_path(monkeypatch):
     from candle._backends.npu import ops_soc
     from candle._backends.npu.ops import random as npu_random
@@ -248,6 +250,10 @@ def test_normal_fallback_910a_avoids_add_kernel_path(monkeypatch):
 
     assert out is x
     assert out.device.type == "npu"
+
+
+@pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
+class TestNPUSeed:
     """Test NPU seed management."""
 
     def test_npu_manual_seed(self):

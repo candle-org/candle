@@ -48,6 +48,11 @@ log2_f32 = None
 log10_f32 = None
 pow_f32 = None
 square_f32 = None
+floor_f32 = None
+ceil_f32 = None
+round_f32 = None
+trunc_f32 = None
+reciprocal_f32 = None
 # unary float64
 neg_f64 = None
 abs_f64 = None
@@ -74,6 +79,11 @@ log2_f64 = None
 log10_f64 = None
 pow_f64 = None
 square_f64 = None
+floor_f64 = None
+ceil_f64 = None
+round_f64 = None
+trunc_f64 = None
+reciprocal_f64 = None
 # matmul
 matmul_f32 = None
 matmul_f64 = None
