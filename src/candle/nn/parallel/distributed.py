@@ -213,13 +213,9 @@ class _Reducer:
                 # setting param.grad for it (the hook return handles it instead).
                 self._reduce_bucket(bucket_idx, triggering_param_idx=param_idx)
 
-            # Return the reduced grad for this param.  The autograd engine will
-            # accumulate this on top of any prior no_sync-accumulated param.grad,
-            # giving the correct total.  For non-triggering params _reduce_bucket
-            # already overwrote param.grad directly, so the engine's accumulation
-            # of this hook return would double-count — but _reduce_bucket zeroes
-            # out _bucket_grads for non-triggering params before returning, so
-            # what we return here (after the reduce call) is already 0 for them.
+            # Return the reduced delta for this param.  The autograd engine will
+            # accumulate this onto any existing param.grad from prior no_sync
+            # steps, producing the correct final synchronized gradient.
             return self._bucket_grads[bucket_idx][param_idx]
         return hook
 
@@ -286,13 +282,20 @@ class _Reducer:
                         grads[pi] = zeros_like(reduced)
 
     def _run_default_allreduce(self, bucket, grads, dist):
-        from ..._functional import mul
+        from ..._functional import add, mul, neg
         for pi, _ in bucket:
             g = grads[pi]
+            accumulated = getattr(self, '_pre_sync_grads', {}).get(pi)
+            if accumulated is not None:
+                g = add(accumulated, g)
             dist.all_reduce(g, op=dist.ReduceOp.SUM, group=self.process_group)
             # Keep parameter gradients detached from autograd graph across
             # iterations; DDP gradient reduction should not create a new graph.
-            grads[pi] = mul(g, 1.0 / self.world_size).detach()
+            reduced_total = mul(g, 1.0 / self.world_size).detach()
+            if accumulated is not None:
+                grads[pi] = add(reduced_total, neg(accumulated)).detach()
+            else:
+                grads[pi] = reduced_total
 
     def _run_comm_hook(self, bucket_idx, bucket, grads):
         # Call comm hook per-parameter (avoids needing cat on NPU)
@@ -407,7 +410,9 @@ class _Reducer:
 
     def prepare_for_backward(self):
         # Snapshot any grad accumulated during no_sync passes before resetting
-        # bucket state.  These will be added back after the synced reduction.
+        # bucket state. These local grads are folded into the next synced bucket
+        # reduction, while param.grad remains live so the autograd engine can
+        # accumulate the reduced delta on top of it.
         if self._require_backward_grad_sync:
             self._pre_sync_grads = {
                 idx: p.grad

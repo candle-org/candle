@@ -503,6 +503,37 @@ def reduce(tensor, dst=None, op=ReduceOp.SUM, group=None, async_op=False,
     return work
 
 
+def _attach_async_postprocess(work, callback):
+    """Attach post-processing to a Work, even for synchronous backends.
+
+    Gloo collectives complete eagerly and may return a Work that's already
+    marked completed.  In that case, attaching `_on_wait` directly would never
+    run because `wait()` returns early.  Wrap the callback in a fresh pending
+    Work so torch-style async materialization still happens on `wait()`.
+    """
+    if work is None:
+        wrapped = Work()
+        wrapped._on_wait = callback
+        return wrapped
+
+    if work.is_completed():
+        wrapped = Work()
+
+        def _wrapped_on_wait():
+            callback()
+
+        wrapped._on_wait = _wrapped_on_wait
+        return wrapped
+
+    prev_on_wait = getattr(work, "_on_wait", None)
+
+    def _on_wait_chain():
+        if prev_on_wait is not None:
+            prev_on_wait()
+        callback()
+
+    work._on_wait = _on_wait_chain
+    return work
 def all_gather(tensor_list, tensor, group=None, async_op=False):
     pg = group or _default_pg
     import candle as torch
@@ -520,13 +551,10 @@ def all_gather(tensor_list, tensor, group=None, async_op=False):
         _split_flat_to_list(flat_output, tensor_list, numel, tensor.dtype)
         return None
     # Async path still needs post-processing after transport completion.
-    work._on_wait = lambda: _split_flat_to_list(
-        flat_output,
-        tensor_list,
-        numel,
-        tensor.dtype,
+    return _attach_async_postprocess(
+        work,
+        lambda: _split_flat_to_list(flat_output, tensor_list, numel, tensor.dtype),
     )
-    return work
 
 
 def all_gather_into_tensor(output_tensor, input_tensor, group=None,
@@ -590,15 +618,8 @@ def gather(tensor, gather_list=None, dst=None, group=None, async_op=False,
         w = Work()
         w._completed = False
 
-    prev_on_wait = getattr(w, "_on_wait", None)
+    return _attach_async_postprocess(w, _writeback_gather_list)
 
-    def _on_wait_chain():
-        if prev_on_wait is not None:
-            prev_on_wait()
-        _writeback_gather_list()
-
-    w._on_wait = _on_wait_chain
-    return w
 
 
 def scatter(tensor, scatter_list=None, src=None, group=None, async_op=False,
@@ -832,8 +853,8 @@ def all_to_all_single(output, input, output_split_sizes=None,
                 n = t_np.size
                 output_np[offset:offset + n] = t_np
                 offset += n
-        work._on_wait = _writeback_cpu_output
-        return work
+        return _attach_async_postprocess(work, _writeback_cpu_output)
+
 
 
 # ---------------------------------------------------------------------------
