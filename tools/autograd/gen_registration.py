@@ -33,6 +33,10 @@ def gen_registration(infos: list[DifferentiabilityInfo]) -> str:
         )
         parts.append(f"    register_autograd_post_kernels({op!r}, _VT.{post_func_name})")
     parts.append("")
+    parts.append("    # Legacy ops (not in derivatives.yaml)")
+    parts.append("    from .variable_type_legacy import register_legacy_autograd_kernels")
+    parts.append("    register_legacy_autograd_kernels()")
+    parts.append("")
     return "\n".join(parts)
 
 
