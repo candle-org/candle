@@ -67,7 +67,7 @@ jobs:
         run: |
           # Skip if no API key configured
           if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "review_body=⚠️ AI review skipped — \`ANTHROPIC_API_KEY\` not configured." >> "$GITHUB_OUTPUT"
+            echo "⚠️ AI review skipped — \`ANTHROPIC_API_KEY\` not configured." > review_body.txt
             exit 0
           fi
 
@@ -76,21 +76,13 @@ jobs:
           PR_FILES=$(cat pr_files.txt)
           PR_DIFF=$(cat pr_diff_truncated.txt)
 
-          # Build the user message
-          USER_MSG=$(cat <<'ENDMSG'
-          PR metadata:
-          ENDMSG
-          )
-          USER_MSG="${USER_MSG}
-          ${PR_META}
-
-          Files changed:
-          ${PR_FILES}
-
-          Diff:
-          \`\`\`diff
-          ${PR_DIFF}
-          \`\`\`"
+          # Build the user message via jq to avoid shell escaping issues
+          USER_MSG=$(jq -n \
+            --arg meta "$PR_META" \
+            --arg files "$PR_FILES" \
+            --arg diff "$PR_DIFF" \
+            '"PR metadata:\n" + $meta + "\n\nFiles changed:\n" + $files + "\n\nDiff:\n```diff\n" + $diff + "\n```"' \
+            -r)
 
           # Call Claude API
           RESPONSE=$(curl -s -w "\n%{http_code}" \
@@ -112,16 +104,13 @@ jobs:
           BODY=$(echo "$RESPONSE" | sed '$d')
 
           if [ "$HTTP_CODE" != "200" ]; then
-            echo "review_body=⚠️ AI review failed (HTTP $HTTP_CODE). PR is not blocked." >> "$GITHUB_OUTPUT"
+            echo "⚠️ AI review failed (HTTP $HTTP_CODE). PR is not blocked." > review_body.txt
             exit 0
           fi
 
           # Extract text content
           REVIEW=$(echo "$BODY" | jq -r '.content[0].text // "AI review returned empty response."')
-
-          # Write to file to preserve newlines
           echo "$REVIEW" > review_body.txt
-          echo "has_review=true" >> "$GITHUB_OUTPUT"
 
       - name: Post or update comment
         if: always()
@@ -132,8 +121,6 @@ jobs:
 
           if [ -f review_body.txt ]; then
             REVIEW_BODY=$(cat review_body.txt)
-          elif [ -n "${{ steps.review.outputs.review_body }}" ]; then
-            REVIEW_BODY="${{ steps.review.outputs.review_body }}"
           else
             REVIEW_BODY="⚠️ AI review encountered an unexpected error. PR is not blocked."
           fi
