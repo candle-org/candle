@@ -45,8 +45,7 @@ jobs:
     - name: Set up ccache
       run: |
         if ! command -v ccache >/dev/null 2>&1; then
-          sudo apt-get update
-          sudo apt-get install -y ccache
+          "$CONDA_EXE" install -y -c conda-forge ccache
         fi
         ccache --version
     # ── Cython build artifacts cache ──────────────────────────────

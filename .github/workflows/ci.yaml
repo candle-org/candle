@@ -198,11 +198,9 @@ jobs:
     - name: Set up ccache
       run: |
         if ! command -v ccache >/dev/null 2>&1; then
-          sudo apt-get update
-          sudo apt-get install -y ccache
+          source /opt/miniconda3/etc/profile.d/conda.sh
+          conda install -y -n candle -c conda-forge ccache
         fi
-        CCACHE_BIN="$(command -v ccache)"
-        echo "$(dirname "$CCACHE_BIN")" >> "$GITHUB_PATH"
         ccache --version
     # ── Cython build artifacts ────────────────────────────────────
     - name: Cache Cython build artifacts
@@ -252,11 +250,9 @@ jobs:
     - name: Set up ccache
       run: |
         if ! command -v ccache >/dev/null 2>&1; then
-          sudo apt-get update
-          sudo apt-get install -y ccache
+          source /opt/miniconda3/etc/profile.d/conda.sh
+          conda install -y -n candle -c conda-forge ccache
         fi
-        CCACHE_BIN="$(command -v ccache)"
-        echo "$(dirname "$CCACHE_BIN")" >> "$GITHUB_PATH"
         ccache --version
     - name: Cache Cython build artifacts
       id: cython-cache
@@ -310,11 +306,9 @@ jobs:
     - name: Set up ccache
       run: |
         if ! command -v ccache >/dev/null 2>&1; then
-          sudo apt-get update
-          sudo apt-get install -y ccache
+          source /opt/miniconda3/etc/profile.d/conda.sh
+          conda install -y -n candle -c conda-forge ccache
         fi
-        CCACHE_BIN="$(command -v ccache)"
-        echo "$(dirname "$CCACHE_BIN")" >> "$GITHUB_PATH"
         ccache --version
     - name: Cache Cython build artifacts
       id: cython-cache
