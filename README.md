@@ -237,21 +237,9 @@ See [docs/support-matrix.md](docs/support-matrix.md) for the full `0.1.x` op sup
 
 ## Contributing
 
-```bash
-# Clone and install in dev mode
-git clone https://github.com/candle-org/candle.git
-cd candle
-pip install -e ".[test]"
+We welcome contributions! Whether it's new ops, backend support, bug fixes, or docs — see **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full development setup, workflow, and PR process.
 
-# Run tests
-pytest tests/cpu/ tests/contract/ -v --tb=short
-
-# Lint
-pip install -e ".[lint]"
-pylint src/candle --rcfile=.github/pylint.conf
-```
-
-We welcome contributions! Whether it's new ops, backend support, bug fixes, or docs — open an issue or submit a PR.
+For architecture deep-dives and backend-specific guides, check the [project Wiki](https://github.com/candle-org/candle/wiki).
 
 ## Friends
 

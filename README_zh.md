@@ -205,21 +205,9 @@ y = torch.matmul(x, x.T)  # 运行原生 ACLNN 算子
 
 ## 参与贡献
 
-```bash
-# 克隆并以开发模式安装
-git clone https://github.com/candle-org/candle.git
-cd candle
-pip install -e ".[test]"
+欢迎任何形式的贡献！无论是新算子、后端支持、bug 修复还是文档改进，请先阅读 **[CONTRIBUTING.md](CONTRIBUTING.md)**，其中包含完整的开发环境、工作流和 PR 提交流程。
 
-# 运行测试
-pytest tests/cpu/ tests/contract/ -v --tb=short
-
-# 代码检查
-pip install -e ".[lint]"
-pylint src/candle --rcfile=.github/pylint.conf
-```
-
-欢迎任何形式的贡献！无论是新算子、后端支持、bug 修复还是文档改进 — 提 issue 或者发 PR 都行。
+如需查看更深入的架构说明和后端专题文档，请访问 [project Wiki](https://github.com/candle-org/candle/wiki)。
 
 ## 友情链接
 
