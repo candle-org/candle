@@ -187,8 +187,23 @@ jobs:
     needs: pylint-check
     runs-on: [self-hosted, npu-unit]
     timeout-minutes: 30
+    env:
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
+    - name: Set up ccache
+      run: |
+        if ! command -v ccache >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y ccache
+        fi
+        CCACHE_BIN="$(command -v ccache)"
+        echo "$(dirname "$CCACHE_BIN")" >> "$GITHUB_PATH"
+        ccache --version
     # ── Cython build artifacts ────────────────────────────────────
     - name: Cache Cython build artifacts
       id: cython-cache
@@ -213,6 +228,9 @@ jobs:
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
         pip install -e .
+    - name: ccache statistics
+      if: always()
+      run: ccache -s
     - name: Run NPU common + 910B op tests
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
@@ -223,8 +241,23 @@ jobs:
     needs: pylint-check
     runs-on: [self-hosted, npu-integ]
     timeout-minutes: 30
+    env:
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
+    - name: Set up ccache
+      run: |
+        if ! command -v ccache >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y ccache
+        fi
+        CCACHE_BIN="$(command -v ccache)"
+        echo "$(dirname "$CCACHE_BIN")" >> "$GITHUB_PATH"
+        ccache --version
     - name: Cache Cython build artifacts
       id: cython-cache
       uses: actions/cache@v4
@@ -248,6 +281,9 @@ jobs:
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
         pip install -e .
+    - name: ccache statistics
+      if: always()
+      run: ccache -s
     - name: Run NPU integration tests
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
@@ -263,8 +299,23 @@ jobs:
     needs: [test-npu-910b-unit, test-npu-910b-integ]
     runs-on: [self-hosted, npu-dist]
     timeout-minutes: 45
+    env:
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
+    - name: Set up ccache
+      run: |
+        if ! command -v ccache >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y ccache
+        fi
+        CCACHE_BIN="$(command -v ccache)"
+        echo "$(dirname "$CCACHE_BIN")" >> "$GITHUB_PATH"
+        ccache --version
     - name: Cache Cython build artifacts
       id: cython-cache
       uses: actions/cache@v4
@@ -288,6 +339,9 @@ jobs:
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
         pip install -e .
+    - name: ccache statistics
+      if: always()
+      run: ccache -s
     - name: Run HCCL distributed tests
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh

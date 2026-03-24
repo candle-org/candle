@@ -35,8 +35,20 @@ jobs:
       ASCEND_RT_VISIBLE_DEVICES: 6,7
       ASCEND_VISIBLE_DEVICES: 6,7
       JOB_CONDA_ENV: /tmp/candle-npu-ci-6-7
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
+    - name: Set up ccache
+      run: |
+        if ! command -v ccache >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y ccache
+        fi
+        ccache --version
     # ── Cython build artifacts cache ──────────────────────────────
     - name: Cache Cython build artifacts
       id: cython-cache
@@ -159,8 +171,20 @@ jobs:
       ASCEND_RT_VISIBLE_DEVICES: 4,5
       ASCEND_VISIBLE_DEVICES: 4,5
       JOB_CONDA_ENV: /tmp/candle-npu-ci-4-5
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
+    - name: Set up ccache
+      run: |
+        if ! command -v ccache >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y ccache
+        fi
+        ccache --version
     # ── Cython build artifacts cache ──────────────────────────────
     - name: Cache Cython build artifacts
       id: cython-cache
@@ -313,8 +337,20 @@ jobs:
       ASCEND_RT_VISIBLE_DEVICES: 0,1,2,3
       ASCEND_VISIBLE_DEVICES: 0,1,2,3
       JOB_CONDA_ENV: /tmp/candle-npu-ci-0-3
+      CCACHE_DIR: /tmp/candle-ccache
+      CCACHE_COMPRESS: 'true'
+      CCACHE_MAXSIZE: '200M'
+      CC: ccache gcc
+      CXX: ccache g++
     steps:
     - uses: actions/checkout@v4
+    - name: Set up ccache
+      run: |
+        if ! command -v ccache >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y ccache
+        fi
+        ccache --version
     # ── Cython build artifacts cache ──────────────────────────────
     - name: Cache Cython build artifacts
       id: cython-cache
