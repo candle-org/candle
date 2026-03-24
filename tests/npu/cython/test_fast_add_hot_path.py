@@ -192,6 +192,9 @@ def test_fast_div_skips_python_aclnn_wrapper(npu_device, monkeypatch):
     assert calls["count"] == 0, (
         f"fast_div called aclnn.div {calls['count']} time(s); expected 0"
     )
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-4, atol=1e-4), (
+        "fast_div output differs from expected"
+    )
 
 
 def test_fast_pow_tensor_tensor_skips_python_aclnn_wrapper(npu_device, monkeypatch):
