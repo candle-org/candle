@@ -9,6 +9,7 @@ function boundaries on the hot path.
 """
 
 from libc.stdint cimport int64_t, uint32_t
+from candle._cython._tensor_impl cimport TensorImpl
 import os
 import inspect
 
@@ -452,9 +453,9 @@ cdef inline object _build_keyset_inline(list tensors, object dispatch_device):
     cdef int dev_type_int
 
     for tensor in tensors:
-        # Fast path: read _device_type directly from TensorImpl
-        dev_type_int = getattr(tensor, "_device_type", -1)
-        if dev_type_int >= 0:
+        # Fast path: direct C field access if TensorImpl
+        if isinstance(tensor, TensorImpl):
+            dev_type_int = (<TensorImpl>tensor)._device_type
             saw_device = True
             if dev_type_int == 4:    # meta
                 has_meta = True
@@ -466,36 +467,65 @@ cdef inline object _build_keyset_inline(list tensors, object dispatch_device):
                 has_mps = True
             else:                    # cpu (0) or unknown
                 has_cpu = True
+            # Read requires_grad directly
+            if (<TensorImpl>tensor).requires_grad:
+                requires_grad = True
+            # Check for __torch_dispatch__ subclass
+            if not has_dispatch_subclass:
+                tensor_cls = type(tensor)
+                if tensor_cls is not _BaseTensor:
+                    td = getattr(tensor_cls, "__torch_dispatch__", None)
+                    if td is not None:
+                        base_td = _BaseTensor.__dict__.get("__torch_dispatch__")
+                        actual_func = getattr(td, "__func__", td)
+                        base_func = getattr(base_td, "__func__", base_td)
+                        if actual_func is not base_func:
+                            has_dispatch_subclass = True
         else:
-            # Fallback for non-TensorImpl objects
-            dev = getattr(tensor, "device", None)
-            if dev is None:
-                continue
-            saw_device = True
-            dev_type = getattr(dev, "type", dev)
-            if dev_type == "meta":
-                has_meta = True
-            elif dev_type == "npu":
-                has_npu = True
-            elif dev_type == "cuda":
-                has_cuda = True
-            elif dev_type == "mps":
-                has_mps = True
+            # Fallback for non-TensorImpl objects (keep existing code)
+            dev_type_int = getattr(tensor, "_device_type", -1)
+            if dev_type_int >= 0:
+                saw_device = True
+                if dev_type_int == 4:    # meta
+                    has_meta = True
+                elif dev_type_int == 1:  # npu
+                    has_npu = True
+                elif dev_type_int == 2:  # cuda
+                    has_cuda = True
+                elif dev_type_int == 3:  # mps
+                    has_mps = True
+                else:                    # cpu (0) or unknown
+                    has_cpu = True
             else:
-                has_cpu = True
-        # Read requires_grad directly (C field access for TensorImpl)
-        if getattr(tensor, "requires_grad", False):
-            requires_grad = True
-        if not has_dispatch_subclass:
-            tensor_cls = type(tensor)
-            if tensor_cls is not _BaseTensor:
-                td = getattr(tensor_cls, "__torch_dispatch__", None)
-                if td is not None:
-                    base_td = _BaseTensor.__dict__.get("__torch_dispatch__")
-                    actual_func = getattr(td, "__func__", td)
-                    base_func = getattr(base_td, "__func__", base_td)
-                    if actual_func is not base_func:
-                        has_dispatch_subclass = True
+                # Fallback for non-TensorImpl objects
+                dev = getattr(tensor, "device", None)
+                if dev is None:
+                    continue
+                saw_device = True
+                dev_type = getattr(dev, "type", dev)
+                if dev_type == "meta":
+                    has_meta = True
+                elif dev_type == "npu":
+                    has_npu = True
+                elif dev_type == "cuda":
+                    has_cuda = True
+                elif dev_type == "mps":
+                    has_mps = True
+                else:
+                    has_cpu = True
+            # Read requires_grad directly (C field access for TensorImpl)
+            if getattr(tensor, "requires_grad", False):
+                requires_grad = True
+            if not has_dispatch_subclass:
+                tensor_cls = type(tensor)
+                if tensor_cls is not _BaseTensor:
+                    td = getattr(tensor_cls, "__torch_dispatch__", None)
+                    if td is not None:
+                        base_td = _BaseTensor.__dict__.get("__torch_dispatch__")
+                        actual_func = getattr(td, "__func__", td)
+                        base_func = getattr(base_td, "__func__", base_td)
+                        if actual_func is not base_func:
+                            has_dispatch_subclass = True
 
     if (not saw_device) and dispatch_device is not None:
         dev_type = getattr(dispatch_device, "type", dispatch_device)
