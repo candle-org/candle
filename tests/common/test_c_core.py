@@ -36,11 +36,17 @@ class TestStorageImpl:
         from candle._cython._storage_impl import StorageImpl
         arr = np.zeros(8, dtype=np.float32)
         ptr = arr.ctypes.data
-        s = StorageImpl.from_device_ptr(ptr, 32, 1, 0, owner=arr)
+        s = StorageImpl.from_device_ptr(ptr, 32, 0, -1, owner=arr)
         assert s.data_ptr() == ptr
         assert s.nbytes() == 32
-        assert s.device_type() == 1
-        assert s.device_index() == 0
+        assert s.device_type() == 0
+        assert s.device_index() == -1
+
+    def test_from_device_ptr_rejects_numpy_owner_for_non_cpu(self):
+        from candle._cython._storage_impl import StorageImpl
+        arr = np.zeros(8, dtype=np.float32)
+        with pytest.raises(TypeError, match="numpy-backed owner is only valid for CPU storage"):
+            StorageImpl.from_device_ptr(arr.ctypes.data, arr.nbytes, 1, 0, owner=arr)
 
     def test_resizable_flag(self):
         from candle._cython._storage_impl import StorageImpl
@@ -55,12 +61,12 @@ class TestStorageImpl:
         from candle._cython._storage_impl import StorageImpl
         arr = np.zeros(8, dtype=np.float32)
         ptr = arr.ctypes.data
-        s = StorageImpl.from_device_ptr(ptr, 32, 1, 0, owner=arr)
+        s = StorageImpl.from_device_ptr(ptr, 32, 0, -1, owner=arr)
         del arr
         gc.collect()
         # owner is held by s, so data_ptr must still be valid
         assert s.data_ptr() == ptr
-        assert s.device_index() == 0
+        assert s.device_index() == -1
 
     def test_alloc_cpu_zero_bytes(self):
         from candle._cython._storage_impl import StorageImpl
@@ -231,3 +237,21 @@ class TestViewOps:
         t = self._make_tensor([2, 3])
         with pytest.raises(IndexError):
             t.cy_transpose(0, 5)
+
+
+class TestBuildIsolation:
+    """Regression tests for editable install / build isolation issues."""
+
+    def test_setup_py_has_no_top_level_numpy_import(self):
+        from pathlib import Path
+
+        setup_py = Path(__file__).resolve().parents[2] / "setup.py"
+        text = setup_py.read_text(encoding="utf-8")
+        assert "import numpy as np" not in text
+
+    def test_setup_py_has_no_np_get_include_for_storage_impl(self):
+        from pathlib import Path
+
+        setup_py = Path(__file__).resolve().parents[2] / "setup.py"
+        text = setup_py.read_text(encoding="utf-8")
+        assert "np.get_include()" not in text

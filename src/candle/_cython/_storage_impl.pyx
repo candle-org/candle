@@ -2,7 +2,6 @@
 from libc.stdint cimport int64_t
 from libc.stdlib cimport malloc, free
 from libc.string cimport memset
-import numpy as np
 
 cdef class StorageImpl:
     def __cinit__(self):
@@ -14,12 +13,14 @@ cdef class StorageImpl:
         self._resizable = False
 
     def __dealloc__(self):
-        if self._owner is None and self._data_ptr != NULL and self._device_type == 0:
+        if self._owner is None and self._data_ptr != NULL and self._device_type == 0 and self._resizable:
             free(self._data_ptr)
             self._data_ptr = NULL
 
     @staticmethod
     def from_numpy(object arr):
+        import numpy as np
+
         cdef StorageImpl s = StorageImpl.__new__(StorageImpl)
         if not isinstance(arr, np.ndarray):
             raise TypeError("expected numpy.ndarray")
@@ -48,6 +49,13 @@ cdef class StorageImpl:
     @staticmethod
     def from_device_ptr(size_t ptr, int64_t nbytes, int device_type,
                         int device_index, object owner=None):
+        if owner is not None:
+            try:
+                import numpy as np
+                if isinstance(owner, np.ndarray) and device_type != 0:
+                    raise TypeError("numpy-backed owner is only valid for CPU storage")
+            except ImportError:
+                pass
         cdef StorageImpl s = StorageImpl.__new__(StorageImpl)
         s._data_ptr = <void*>ptr
         s._nbytes = nbytes

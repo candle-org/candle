@@ -171,7 +171,9 @@ cdef inline int _validate_npu_binary(object a, object b, str name,
     if a_dev_type != 1 or b_dev_type != 1:
         raise ValueError(f"NPU {name} expects NPU tensors")
 
-    # dtype check: use dtype_code if both are TensorImpl, else fall back
+    # dtype check: use dtype_code if both are TensorImpl, otherwise fall back
+    # to Python dtype objects. The asymmetric path (only one TensorImpl) still
+    # uses Python comparison intentionally to preserve compatibility.
     if a_dtype_code >= 0 and b_dtype_code >= 0:
         if a_dtype_code != b_dtype_code:
             raise ValueError(f"NPU {name} requires matching dtypes")
@@ -180,6 +182,12 @@ cdef inline int _validate_npu_binary(object a, object b, str name,
             raise ValueError(f"NPU {name} requires matching dtypes")
 
     return 0
+
+cdef inline object _device_obj_fast(object t):
+    """Return cached device object directly from TensorImpl when available."""
+    if isinstance(t, TensorImpl):
+        return (<TensorImpl>t)._device_obj
+    return t.device
 
 
 # ---------------------------------------------------------------------------
@@ -313,7 +321,7 @@ def fast_binary_op(a, b, fn, str name):
     )
 
     # 9. Wrap output — construct Tensor entirely in Cython (skips Python __init__)
-    a_dev = a.device
+    a_dev = _device_obj_fast(a)
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
@@ -450,7 +458,7 @@ def fast_add(a, b):
     # 1. Validate device/dtype — C field access when TensorImpl
     cdef int dev_idx
     _validate_npu_binary(a, b, "add", &dev_idx)
-    a_dev = a.device  # still needed for output tensor wrapping
+    a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
 
     # 2. Get runtime + stream
@@ -605,7 +613,7 @@ def fast_mul(a, b):
     # 1. Validate device/dtype — C field access when TensorImpl
     cdef int dev_idx
     _validate_npu_binary(a, b, "mul", &dev_idx)
-    a_dev = a.device  # still needed for output tensor wrapping
+    a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
 
     # 2. Get runtime + stream
@@ -703,7 +711,7 @@ def fast_sub(a, b):
     # 1. Validate device/dtype — C field access when TensorImpl
     cdef int dev_idx
     _validate_npu_binary(a, b, "sub", &dev_idx)
-    a_dev = a.device  # still needed for output tensor wrapping
+    a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
 
     runtime = _get_runtime_fast(dev_idx)
@@ -789,7 +797,7 @@ def fast_div(a, b):
     # 1. Validate device/dtype — C field access when TensorImpl
     cdef int dev_idx
     _validate_npu_binary(a, b, "div", &dev_idx)
-    a_dev = a.device  # still needed for output tensor wrapping
+    a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
 
     runtime = _get_runtime_fast(dev_idx)

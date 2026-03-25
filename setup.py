@@ -10,7 +10,6 @@ import os
 import platform
 import shutil
 
-import numpy as np
 from setuptools import setup, find_packages, Extension
 from setuptools.command.build_py import build_py
 from setuptools.command.build_ext import build_ext
@@ -52,7 +51,6 @@ if _system in ("Linux", "Darwin"):
         Extension(
             "candle._cython._storage_impl",
             ["src/candle/_cython/_storage_impl.pyx"],
-            include_dirs=[np.get_include()],
         ),
         Extension(
             "candle._cython._tensor_impl",

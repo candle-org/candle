@@ -33,6 +33,7 @@ cdef class TensorImpl:
     cdef public bint _pending
     cdef public bint _retain_grad
     cdef public int _output_nr
+    cdef public object _backward_hooks
 
     cdef public tuple _shape_tuple
     cdef public object _stride_tuple
