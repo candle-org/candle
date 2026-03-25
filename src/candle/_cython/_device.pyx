@@ -7,9 +7,7 @@ Maintains full API compatibility with the original ``device`` class:
 
 cdef class FastDevice:
     """C-level device with int type_code for fast comparison."""
-    cdef public int type_code    # 0=cpu, 1=npu, 2=cuda, 3=mps, 4=meta
-    cdef int _index              # -1 means None
-    cdef str _type_str
+    # Field declarations in _device.pxd
 
     def __init__(self, dev=None, index=None):
         if isinstance(dev, FastDevice):
