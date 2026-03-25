@@ -53,6 +53,11 @@ cdef class TensorImpl:
     cdef inline void _recompute_dispatch_keys(self)
     cdef inline void _set_dtype_from_obj(self, object dtype)
 
+    # -- view operations --
+    cpdef object cy_view(self, tuple new_shape)
+    cpdef object cy_as_strided(self, tuple size, tuple stride, int64_t storage_offset)
+    cpdef object cy_transpose(self, int dim0, int dim1)
+
 
 cdef class _VersionCounterProxy:
     cdef TensorImpl _impl
