@@ -383,7 +383,9 @@ def atan2(a, b):
     _ensure_originals()
 
     if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
-        if _is_npu_tensor_pair(a, b):
+        if hasattr(b, "shape") and _is_npu_tensor_pair(a, b):
+            if _use_soc_fallback_fn is not None and _use_soc_fallback_fn("atan2"):
+                return _dispatch_fn("atan2", None, a, b)
             _ensure_npu_refs()
             if _npu_fast_ok(a, b):
                 return _npu_atan2_fn(a, b)
@@ -394,6 +396,7 @@ def atan2(a, b):
         return r
 
     return _dispatch_fn("atan2", None, a, b)
+
 
 
 def pow(a, b):
