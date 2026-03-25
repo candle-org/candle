@@ -1,6 +1,14 @@
 """FSDPState -- hook orchestration for FSDP2."""
 from ....distributed.tensor.dtensor import DTensor
 
+try:
+    from ....distributed._fsdp_fastpath import (
+        writeback_shard_grad_flags as _cy_grad_flags,
+    )
+    _HAVE_FASTPATH = True
+except ImportError:  # pragma: no cover
+    _HAVE_FASTPATH = False
+
 
 class FSDPState:
     """Manages FSDP hook lifecycle for a module."""
@@ -18,10 +26,16 @@ class FSDPState:
         self._pending_grads = {}
         self._used_fsdp_params = set()
         self._sync_gradients = True  # False inside no_sync()
-        self._total_managed_params = sum(
-            1 for fp in param_group.fsdp_params
-            if fp._sharded_param.requires_grad
-        )
+        if _HAVE_FASTPATH:
+            _grad_flags = _cy_grad_flags(
+                [fp._sharded_param for fp in param_group.fsdp_params]
+            )
+            self._total_managed_params = sum(_grad_flags)
+        else:
+            self._total_managed_params = sum(
+                1 for fp in param_group.fsdp_params
+                if fp._sharded_param.requires_grad
+            )
 
         # Register forward hooks
         self._pre_fwd_handle = module.register_forward_pre_hook(

@@ -6,6 +6,30 @@ DTensor does NOT perform automatic redistribution in MVP.
 """
 from ..._tensor import Tensor
 
+# ---------------------------------------------------------------------------
+# Cython fastpath for shard/offset bookkeeping hot loops.
+# Falls back gracefully to the pure-Python implementations below when the
+# compiled extension is not available (e.g. editable install without build).
+# ---------------------------------------------------------------------------
+try:
+    from .._dtensor_fastpath import (  # pylint: disable=no-name-in-module
+        compute_local_shape_and_global_offset_cy as _cy_local_shape_offset,
+        compute_global_shape_cy as _cy_global_shape,
+        compute_global_stride_cy as _cy_global_stride,
+        normalize_shard_dim_cy as _cy_normalize_dim,
+        compute_gather_sizes_cy as _cy_gather_sizes,
+        compute_scatter_sizes_cy as _cy_scatter_sizes,
+    )
+    _DTENSOR_FASTPATH_ACTIVE = True
+except ImportError:
+    _DTENSOR_FASTPATH_ACTIVE = False
+
+# Expose fastpath module reference for test introspection
+try:
+    from .. import _dtensor_fastpath as _fp  # pylint: disable=no-name-in-module
+except ImportError:
+    _fp = None
+
 
 class TensorMeta:
     """Global tensor metadata (shape as if the tensor were not sharded)."""
@@ -98,6 +122,156 @@ class DTensor(Tensor):
     def to_local(self):
         """Extract the local tensor shard."""
         return self._local_tensor
+
+    def redistribute(self, device_mesh, placements):
+        """Redistribute this DTensor to a new placement on *device_mesh*.
+
+        Supported transitions (single-mesh-dim, NPU/HCCL path):
+
+        * Shard(d)  -> Replicate  : all_gather_into_tensor
+        * Replicate -> Shard(d)   : reduce_scatter_tensor (equal split)
+        * X         -> X          : no-op copy
+
+        Args:
+            device_mesh: target DeviceMesh (must match self.device_mesh for now).
+            placements:  sequence of Placement objects for the new distribution.
+
+        Returns:
+            A new DTensor with the requested placement.
+        """
+        from .placement import Shard, Replicate
+        from .. import is_initialized
+        import candle.distributed as dist
+
+        placements = list(placements)
+        current = list(self.placements)
+
+        # No-op when placement is identical
+        if placements == current:
+            new_spec = DTensorSpec(
+                device_mesh, placements,
+                TensorMeta(self._spec.tensor_meta.shape,
+                           self._spec.tensor_meta.stride,
+                           self._spec.tensor_meta.dtype),
+            )
+            return DTensor(self._local_tensor, new_spec)
+
+        # Only 1-D mesh supported for now
+        if len(placements) != 1 or len(current) != 1:
+            raise NotImplementedError(
+                "DTensor.redistribute currently supports 1-D mesh only."
+            )
+
+        src_p = current[0]
+        dst_p = placements[0]
+        global_shape = self._spec.tensor_meta.shape
+        mesh_size = device_mesh.size(0)
+
+        def _has_pg():
+            return bool(device_mesh._dim_groups)
+
+        if isinstance(src_p, Shard) and isinstance(dst_p, Replicate):
+            # all_gather: collect shards from all ranks into a full tensor
+            shard_dim = src_p.dim
+            if _DTENSOR_FASTPATH_ACTIVE:
+                full_sizes = _cy_gather_sizes(
+                    tuple(self._local_tensor.shape), shard_dim, mesh_size
+                )
+            else:
+                _fs = list(self._local_tensor.shape)
+                _fs[shard_dim] = _fs[shard_dim] * mesh_size
+                full_sizes = tuple(_fs)
+            import candle
+            full = candle.empty(full_sizes, dtype=self._local_tensor.dtype)
+            if is_initialized() and _has_pg():
+                dist.all_gather_into_tensor(
+                    full, self._local_tensor, group=device_mesh.get_group(0)
+                )
+            else:
+                # CPU-only fallback for single-rank / no-PG unit tests.
+                local_device_type = getattr(self._local_tensor.device, "type", "cpu")
+                if local_device_type != "cpu":
+                    raise RuntimeError(
+                        "DTensor.redistribute CPU-only fallback is not available "
+                        f"for device type {local_device_type!r}. Initialize a "
+                        "distributed process group to redistribute non-CPU tensors."
+                    )
+                import numpy as np
+                import candle as _candle
+                local_np = self._local_tensor.numpy()
+                tiled = np.tile(
+                    local_np,
+                    (mesh_size,) + (1,) * (local_np.ndim - 1)
+                )
+                full = _candle.tensor(tiled)
+            new_spec = DTensorSpec(
+                device_mesh, placements,
+                TensorMeta(global_shape,
+                           self._spec.tensor_meta.stride,
+                           self._spec.tensor_meta.dtype),
+            )
+            return DTensor(full, new_spec)
+
+        if isinstance(src_p, Replicate) and isinstance(dst_p, Shard):
+            # reduce_scatter: scatter equal chunks
+            shard_dim = dst_p.dim
+            if _DTENSOR_FASTPATH_ACTIVE:
+                local_sizes = _cy_scatter_sizes(
+                    tuple(self._local_tensor.shape), shard_dim, mesh_size
+                )
+            else:
+                _ls = list(self._local_tensor.shape)
+                _ls[shard_dim] = _ls[shard_dim] // mesh_size
+                local_sizes = tuple(_ls)
+            import candle
+            out = candle.empty(local_sizes, dtype=self._local_tensor.dtype)
+            if is_initialized() and _has_pg():
+                dist.reduce_scatter_tensor(
+                    out, self._local_tensor, group=device_mesh.get_group(0)
+                )
+            else:
+                local_device_type = getattr(self._local_tensor.device, "type", "cpu")
+                if local_device_type != "cpu":
+                    raise RuntimeError(
+                        "DTensor.redistribute CPU-only fallback is not available "
+                        f"for device type {local_device_type!r}. Initialize a "
+                        "distributed process group to redistribute non-CPU tensors."
+                    )
+                import numpy as np
+                import candle as _candle
+                local_np = self._local_tensor.numpy()
+                # For single-rank, take the first slice along shard_dim
+                slices = [slice(None)] * local_np.ndim
+                slices[shard_dim] = slice(0, local_sizes[shard_dim])
+                out = _candle.tensor(np.ascontiguousarray(local_np[tuple(slices)]))
+            new_spec = DTensorSpec(
+                device_mesh, placements,
+                TensorMeta(global_shape,
+                           self._spec.tensor_meta.stride,
+                           self._spec.tensor_meta.dtype),
+            )
+            return DTensor(out, new_spec)
+
+        raise NotImplementedError(
+            f"DTensor.redistribute: unsupported transition "
+            f"{src_p} -> {dst_p}. "
+            "Supported: Shard->Replicate, Replicate->Shard."
+        )
+
+    def full_tensor(self):
+        """Gather the full (global) tensor on every rank.
+
+        * If already Replicate: returns the local tensor directly (no comm).
+        * If Shard(d): calls all_gather_into_tensor and returns the result.
+
+        Returns a plain Tensor (not a DTensor).
+        """
+        from .placement import Replicate
+        if len(self.placements) == 1 and isinstance(self.placements[0], Replicate):
+            return self._local_tensor
+        # Gather via redistribute then unwrap
+        replicated = self.redistribute(self.device_mesh, [Replicate()])
+        return replicated._local_tensor
 
     @property
     def grad(self):
@@ -210,6 +384,9 @@ class DTensor(Tensor):
 def compute_local_shape_and_global_offset(global_shape, mesh, placements):
     """Compute local shard shape and global offset from distribution spec.
 
+    Delegates to the Cython fastpath when available, otherwise uses the
+    pure-Python fallback.
+
     Args:
         global_shape: the global (unsharded) tensor shape.
         mesh: DeviceMesh instance.
@@ -218,6 +395,13 @@ def compute_local_shape_and_global_offset(global_shape, mesh, placements):
     Returns:
         (local_shape, global_offset) as tuples of ints.
     """
+    if _DTENSOR_FASTPATH_ACTIVE:
+        return _cy_local_shape_offset(tuple(global_shape), mesh, placements)
+    return _compute_local_shape_and_global_offset_py(global_shape, mesh, placements)
+
+
+def _compute_local_shape_and_global_offset_py(global_shape, mesh, placements):
+    """Pure-Python fallback for compute_local_shape_and_global_offset."""
     from .placement import Shard
     local_shape = list(global_shape)
     global_offset = [0] * len(global_shape)
@@ -242,6 +426,13 @@ def compute_local_shape_and_global_offset(global_shape, mesh, placements):
 
 def _compute_global_shape(local_shape, mesh, placements):
     """Compute the global (unsharded) shape from a local shard shape."""
+    if _DTENSOR_FASTPATH_ACTIVE:
+        return _cy_global_shape(tuple(local_shape), mesh, placements)
+    return _compute_global_shape_py(local_shape, mesh, placements)
+
+
+def _compute_global_shape_py(local_shape, mesh, placements):
+    """Pure-Python fallback for _compute_global_shape."""
     from .placement import Shard
     global_shape = list(local_shape)
     for placement in placements:
@@ -250,8 +441,10 @@ def _compute_global_shape(local_shape, mesh, placements):
     return tuple(global_shape)
 
 
-def _compute_global_stride(local_stride, mesh, placements):
+def _compute_global_stride(local_stride, mesh, placements):  # pylint: disable=unused-argument
     """Compute the global stride (identity for MVP)."""
+    if _DTENSOR_FASTPATH_ACTIVE:
+        return _cy_global_stride(local_stride)
     return (
         tuple(local_stride)
         if not isinstance(local_stride, tuple)

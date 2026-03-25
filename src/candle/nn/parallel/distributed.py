@@ -5,8 +5,44 @@ Parameters are grouped into ~25MB buckets. When all grads in a bucket
 are ready, the bucket is allreduced (or passed to a custom comm hook).
 """
 
+import importlib
 from contextlib import contextmanager
 from ..module import Module
+
+# Try to use the compiled Cython fastpath for bucket bookkeeping.
+# Falls back to pure-Python equivalents when the extension is absent
+# (e.g. during editable installs before `python setup.py build_ext`).
+# Import the extension module as a module object so static tooling does not
+# need to resolve individual symbols from a generated Cython extension.
+try:
+    _cy_ddp_fastpath = importlib.import_module("candle.distributed._ddp_fastpath")
+    _cy_build_bucket_mapping = _cy_ddp_fastpath.build_bucket_mapping
+    _cy_make_bucket_pending_counts = _cy_ddp_fastpath.make_bucket_pending_counts
+    _cy_decrement_pending = _cy_ddp_fastpath.decrement_pending
+    _cy_dtype_itemsize = _cy_ddp_fastpath.dtype_itemsize
+    _HAVE_FASTPATH = True
+except ImportError:
+    _cy_ddp_fastpath = None
+    _cy_build_bucket_mapping = None
+    _cy_make_bucket_pending_counts = None
+    _cy_decrement_pending = None
+    _cy_dtype_itemsize = None
+    _HAVE_FASTPATH = False
+
+
+def _dtype_itemsize(dtype_obj) -> int:
+    """Return byte width of a candle dtype object (Python fallback)."""
+    if _HAVE_FASTPATH and _cy_dtype_itemsize is not None:
+        return _cy_dtype_itemsize(dtype_obj)
+    name = str(dtype_obj)
+    if '.' in name:
+        name = name.rsplit('.', 1)[1]
+    _table = {
+        'float32': 4, 'float64': 8, 'float16': 2, 'bfloat16': 2,
+        'int8': 1, 'int16': 2, 'int32': 4, 'int64': 8,
+        'uint8': 1, 'bool': 1,
+    }
+    return _table.get(name, getattr(dtype_obj, 'itemsize', 4))
 
 
 class GradBucket:
@@ -57,6 +93,7 @@ class _Reducer:
         self.comm_hook = None
         self.comm_hook_state = None
         self._require_backward_grad_sync = True
+        self._first_forward_done = False
 
         # Only keep params that require grad
         self.params = list(params)
@@ -80,14 +117,22 @@ class _Reducer:
         # Per-iteration state (must be after _gradient_as_bucket_view init)
         self._bucket_pending = []
         self._bucket_grads = []
+        self._pre_sync_grads = {}
         self._reset_state()
 
     def _build_buckets(self, bucket_cap_bytes):
+        if _HAVE_FASTPATH and _cy_build_bucket_mapping is not None:
+            self.buckets, self._param_to_bucket = _cy_build_bucket_mapping(
+                self.grad_params, bucket_cap_bytes
+            )
+            return
+
+        # Pure-Python fallback
         cur_bucket = []
         cur_size = 0
 
         for idx, param in reversed(self.grad_params):
-            param_bytes = param.numel() * 4  # assume 4 bytes
+            param_bytes = param.numel() * _dtype_itemsize(param.dtype)
             if cur_size + param_bytes > bucket_cap_bytes and cur_bucket:
                 self.buckets.append(list(cur_bucket))
                 cur_bucket = []
@@ -164,24 +209,28 @@ class _Reducer:
 
             self._bucket_pending[bucket_idx] -= 1
             if self._bucket_pending[bucket_idx] == 0:
-                self._reduce_bucket(bucket_idx)
-            # Return the (possibly averaged) grad for this param
+                # Pass the triggering param index so _reduce_bucket can skip
+                # setting param.grad for it (the hook return handles it instead).
+                self._reduce_bucket(bucket_idx, triggering_param_idx=param_idx)
+
+            # Return the reduced delta for this param.  The autograd engine will
+            # accumulate this onto any existing param.grad from prior no_sync
+            # steps, producing the correct final synchronized gradient.
             return self._bucket_grads[bucket_idx][param_idx]
         return hook
 
-    def _reduce_bucket(self, bucket_idx):
+    def _reduce_bucket(self, bucket_idx, triggering_param_idx=None):
         from ... import distributed as dist
-        from ..._functional import mul
+        from ..._functional import mul, zeros_like
         from ...autograd.grad_mode import no_grad
 
         bucket = self.buckets[bucket_idx]
         grads = self._bucket_grads[bucket_idx]
+        pre_sync = getattr(self, '_pre_sync_grads', {})
 
         with no_grad():
             if self._gradient_as_bucket_view:
-                # Ensure unused parameters stay zero in bucket-view mode: their
-                # placeholders are inserted before some used-grad hooks may fire,
-                # and later hook writes can otherwise overwrite those slots.
+                # Ensure unused parameters stay zero in bucket-view mode.
                 for pi, _ in bucket:
                     if pi not in grads:
                         grads[pi] = self._bucket_views[pi]
@@ -193,30 +242,60 @@ class _Reducer:
                 else:
                     dist.all_reduce(flat_buf, op=dist.ReduceOp.SUM, group=self.process_group)
                     self._bucket_buffers[bucket_idx] = mul(flat_buf, 1.0 / self.world_size)
-                    # Rebuild views from the new buffer (mul creates a new tensor)
                     self._rebuild_views_from_buffer(bucket_idx)
-                # Views are already param.grad (engine assigns hook return),
-                # but for earlier-arriving params we still need to overwrite.
+
                 for pi, param in bucket:
-                    param.grad = self._bucket_views[pi]
+                    reduced = self._bucket_views[pi]
+                    if pi == triggering_param_idx:
+                        # Hook return carries 'reduced' to engine, which will
+                        # accumulate it on top of param.grad (pre-sync value).
+                        # Nothing to do here for this param.
+                        pass
+                    else:
+                        # Hook already returned raw grad; engine set param.grad
+                        # to raw grad.  Overwrite with correct value:
+                        # pre_sync_accumulated + reduced.
+                        accumulated = pre_sync.get(pi)
+                        param.grad = (accumulated + reduced) if accumulated is not None else reduced
+                        # Zero out bucket_grads so hook return is 0 (already fired).
+                        self._bucket_grads[bucket_idx][pi] = zeros_like(reduced)
             else:
                 if self.comm_hook is not None:
                     self._run_comm_hook(bucket_idx, bucket, grads)
                 else:
                     self._run_default_allreduce(bucket, grads, dist)
 
-                # Write averaged grads back to all params in bucket.
                 for pi, param in bucket:
-                    param.grad = grads[pi]
+                    reduced = grads[pi]
+                    if pi == triggering_param_idx:
+                        # Engine will accumulate hook_return (= reduced) onto
+                        # param.grad (which holds the pre-sync accumulated value).
+                        # Leave param.grad and bucket_grads[pi] = reduced as-is.
+                        pass
+                    else:
+                        # Non-triggering: hook already returned raw grad and
+                        # engine set param.grad = raw_grad (or accumulated it).
+                        # Overwrite with correct final value.
+                        accumulated = pre_sync.get(pi)
+                        param.grad = (accumulated + reduced) if accumulated is not None else reduced
+                        # Zero out so hook return for this already-returned param is 0.
+                        grads[pi] = zeros_like(reduced)
 
     def _run_default_allreduce(self, bucket, grads, dist):
-        from ..._functional import mul
+        from ..._functional import add, mul, neg
         for pi, _ in bucket:
             g = grads[pi]
+            accumulated = getattr(self, '_pre_sync_grads', {}).get(pi)
+            if accumulated is not None:
+                g = add(accumulated, g)
             dist.all_reduce(g, op=dist.ReduceOp.SUM, group=self.process_group)
             # Keep parameter gradients detached from autograd graph across
             # iterations; DDP gradient reduction should not create a new graph.
-            grads[pi] = mul(g, 1.0 / self.world_size).detach()
+            reduced_total = mul(g, 1.0 / self.world_size).detach()
+            if accumulated is not None:
+                grads[pi] = add(reduced_total, neg(accumulated)).detach()
+            else:
+                grads[pi] = reduced_total
 
     def _run_comm_hook(self, bucket_idx, bucket, grads):
         # Call comm hook per-parameter (avoids needing cat on NPU)
@@ -330,9 +409,27 @@ class _Reducer:
             self._cached_unused_param_indices = unused_indices
 
     def prepare_for_backward(self):
+        # Snapshot any grad accumulated during no_sync passes before resetting
+        # bucket state. These local grads are folded into the next synced bucket
+        # reduction, while param.grad remains live so the autograd engine can
+        # accumulate the reduced delta on top of it.
+        if self._require_backward_grad_sync:
+            self._pre_sync_grads = {
+                idx: p.grad
+                for idx, p in self.grad_params
+                if p.grad is not None
+            }
+        else:
+            self._pre_sync_grads = {}
         self._reset_state()
+        self._first_forward_done = True
 
     def register_comm_hook(self, state, hook):
+        if getattr(self, '_first_forward_done', False):
+            raise RuntimeError(
+                "register_comm_hook() must be called before the first forward pass. "
+                "Cannot register a hook after forward has been invoked."
+            )
         self.comm_hook = hook
         self.comm_hook_state = state
 

@@ -189,13 +189,16 @@ def test_work_result():
 # ---------------------------------------------------------------------------
 
 def test_work_get_future():
-    """Work.get_future() returns a Future whose wait() returns []."""
+    """Work.get_future() is lazy and resolves after Work.wait()."""
     from candle.distributed._c10d import Work
     from candle.futures import Future
 
     w = Work()
     fut = w.get_future()
     assert isinstance(fut, Future)
+    assert fut.done() is False
+
+    w.wait()
     assert fut.wait() == []
 
 
