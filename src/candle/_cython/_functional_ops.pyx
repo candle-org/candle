@@ -97,7 +97,7 @@ cdef void _collect_types(object val, object types):
 cdef inline void _ensure_originals():
     global _py_add_fn, _py_mul_fn, _py_matmul_fn, _py_sub_fn, _py_div_fn, _py_atan2_fn
     global _py_pow_fn, _py_remainder_fn, _py_fmod_fn, _py_logaddexp_fn, _py_logaddexp2_fn
-    global _py_relu_fn, _py_neg_fn
+    global _py_relu_fn, _py_neg_fn, _use_soc_fallback_fn
 
     _ensure_dispatch()
 
@@ -107,6 +107,7 @@ cdef inline void _ensure_originals():
             _py_pow, _py_remainder, _py_fmod, _py_logaddexp, _py_logaddexp2,
             _py_relu, _py_neg,
         )
+        from candle._backends.npu.ops._helpers import _use_soc_fallback as _usf
         _py_add_fn = _py_add
         _py_mul_fn = _py_mul
         _py_matmul_fn = _py_matmul
@@ -120,6 +121,7 @@ cdef inline void _ensure_originals():
         _py_logaddexp2_fn = _py_logaddexp2
         _py_relu_fn = _py_relu
         _py_neg_fn = _py_neg
+        _use_soc_fallback_fn = _usf
 
 
 cdef inline void _ensure_npu_refs():
@@ -428,6 +430,8 @@ def remainder(a, b):
         # remainder has SoC fallback and scalar normalization in the backend;
         # only take the Cython fast path for tensor-tensor on non-fallback SoCs.
         if hasattr(b, "shape") and _is_npu_tensor_pair(a, b):
+            if _use_soc_fallback_fn is not None and _use_soc_fallback_fn("remainder"):
+                return _dispatch_fn("remainder", None, a, b)
             _ensure_npu_refs()
             if _npu_fast_ok(a, b) and _npu_remainder_fn is not None:
                 return _npu_remainder_fn(a, b)

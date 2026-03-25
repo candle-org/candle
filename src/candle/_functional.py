@@ -524,12 +524,24 @@ def remainder(a, b):
 _py_remainder = remainder
 _py_remainder.__name__ = "remainder"
 
+# Restore Cython fast-path if it was loaded earlier
+try:
+    remainder = _cy_remainder  # noqa: F811
+except NameError:
+    pass
+
 
 def fmod(a, b):
     return dispatch("fmod", a.device.type, a, b)
 
 _py_fmod = fmod
 _py_fmod.__name__ = "fmod"
+
+# Restore Cython fast-path if it was loaded earlier
+try:
+    fmod = _cy_fmod  # noqa: F811
+except NameError:
+    pass
 
 
 def div(a, b, *, rounding_mode=None):
