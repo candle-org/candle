@@ -164,14 +164,54 @@ class Tensor(_TensorBase):
             self._set_dtype_from_storage(dtype)
 
     _DEVICE_MAP = {"cpu": 0, "npu": 1, "cuda": 2, "mps": 3, "meta": 4}
+    # Dispatch key bit values — must stay in sync with _tensor_impl.pyx
+    _DK_CPU  = 1 << 15
+    _DK_NPU  = 1 << 13
+    _DK_CUDA = 1 << 14
+    _DK_MPS  = 1 << 21
+    _DK_META = 1 << 12
+    _DK_ADINPLACEORVIEW   = 1 << 4
+    _DK_AUTOGRAD          = 1 << 11
+    _DK_AUTOGRAD_CPU      = 1 << 6
+    _DK_AUTOGRAD_NPU      = 1 << 7
+    _DK_AUTOGRAD_CUDA     = 1 << 8
+    _DK_AUTOGRAD_MPS      = 1 << 22
+    _DK_AUTOGRAD_META     = 1 << 10
 
     def _set_device_from_storage(self, dev):
-        """Cache device from storage into TensorImpl fields."""
+        """Cache device from storage into TensorImpl fields and recompute dispatch keys."""
         self._device_obj = dev
         dt = getattr(dev, "type", str(dev))
-        self._device_type = Tensor._DEVICE_MAP.get(dt, -1)
+        devt = Tensor._DEVICE_MAP.get(dt, -1)
+        self._device_type = devt
         idx = getattr(dev, "index", None)
         self._device_index = idx if idx is not None else -1
+        # Mirror _recompute_dispatch_keys from _tensor_impl.pyx
+        if devt == 0:
+            dk = Tensor._DK_CPU
+        elif devt == 1:
+            dk = Tensor._DK_NPU
+        elif devt == 2:
+            dk = Tensor._DK_CUDA
+        elif devt == 3:
+            dk = Tensor._DK_MPS
+        elif devt == 4:
+            dk = Tensor._DK_META
+        else:
+            dk = Tensor._DK_CPU
+        if self.requires_grad:
+            dk |= Tensor._DK_ADINPLACEORVIEW | Tensor._DK_AUTOGRAD
+            if devt == 0:
+                dk |= Tensor._DK_AUTOGRAD_CPU
+            elif devt == 1:
+                dk |= Tensor._DK_AUTOGRAD_NPU
+            elif devt == 2:
+                dk |= Tensor._DK_AUTOGRAD_CUDA
+            elif devt == 3:
+                dk |= Tensor._DK_AUTOGRAD_MPS
+            elif devt == 4:
+                dk |= Tensor._DK_AUTOGRAD_META
+        self._dispatch_keys = dk
 
     def _set_dtype_from_storage(self, dtype):
         """Cache dtype from storage into TensorImpl fields."""

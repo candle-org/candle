@@ -347,6 +347,25 @@ class TestTensorFactoryInvariants:
         assert view._device_type == base._device_type
 
 
+    def test_cy_make_npu_tensor_initializes_dtype_code_like_python_tensor(self):
+        import candle as torch
+        if not torch.npu.is_available():
+            return
+        from candle._cython._storage import cy_make_npu_tensor
+        t = torch.ones((2, 2), dtype=torch.float16, device="npu")
+        out = cy_make_npu_tensor(
+            t.storage()._untyped._device_ptr,
+            4,
+            t.dtype,
+            t.device,
+            (2, 2),
+            (2, 1),
+        )
+        assert out._dtype_code == t._dtype_code
+        assert out._device_type == t._device_type
+        assert out._dispatch_keys == t._dispatch_keys
+
+
 class TestBuildIsolation:
     """Regression tests for editable install / build isolation issues."""
 
