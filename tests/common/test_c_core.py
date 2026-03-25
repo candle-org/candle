@@ -366,6 +366,18 @@ class TestTensorFactoryInvariants:
         assert out._dispatch_keys == t._dispatch_keys
 
 
+    def test_wrap_tensor_and_scalar_tensor_share_dtype_metadata_contract(self):
+        import candle as torch
+        if not torch.npu.is_available():
+            return
+        from candle._backends.npu.ops._helpers import _scalar_to_npu_tensor
+        ref = torch.ones((2, 2), dtype=torch.float16, device="npu")
+        scalar_t = _scalar_to_npu_tensor(1.0, ref)
+        assert scalar_t._dtype_code == ref._dtype_code
+        assert scalar_t._device_type == ref._device_type
+        assert scalar_t.dtype == ref.dtype
+
+
 class TestBuildIsolation:
     """Regression tests for editable install / build isolation issues."""
 

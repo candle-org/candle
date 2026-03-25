@@ -39,9 +39,9 @@ def _storage_meta(tensor):
 
 
 def _wrap_tensor(storage, shape, stride):
-    from ...._tensor import Tensor
+    from candle._cython._tensor_impl import cy_make_tensor_from_storage
 
-    return Tensor(storage, shape, stride)
+    return cy_make_tensor_from_storage(storage, tuple(shape), stride, 0, False)
 
 
 def _broadcast_shape_checked(a_shape, b_shape, name):
