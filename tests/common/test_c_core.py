@@ -296,6 +296,42 @@ class TestTensorFactoryInvariants:
         assert scalar_tensor._dtype_code == ref._dtype_code
         assert scalar_tensor._device_type == ref._device_type
 
+    def test_cy_make_tensor_from_storage_initializes_all_core_fields(self):
+        import numpy as np
+        from candle._cython._storage_impl import StorageImpl
+        from candle._cython._tensor_impl import cy_make_tensor_from_storage
+        from candle._dtype import float32
+        from candle._device import device
+
+        arr = np.arange(6, dtype=np.float32)
+        storage_impl = StorageImpl.from_numpy(arr)
+
+        class WrappedUntyped:
+            def __init__(self, impl, dev):
+                self._impl = impl
+                self.device = dev
+            def data_ptr(self):
+                return self._impl.data_ptr()
+
+        dev = device("cpu")
+        typed_storage = type("_TmpStorage", (), {})()
+        typed_storage.device = dev
+        typed_storage.dtype = float32
+        typed_storage._storage_impl = storage_impl
+        typed_storage._untyped = WrappedUntyped(storage_impl, dev)
+
+        t = cy_make_tensor_from_storage(typed_storage, (2, 3), (3, 1), 0, False)
+        assert t.shape == (2, 3)
+        assert t.stride == (3, 1)
+        assert t.offset == 0
+        assert t.dtype == float32
+        assert t._dtype_code == 0
+        assert t._itemsize == 4
+        assert t._device_type == 0
+        assert t._storage is typed_storage
+        assert t._base is None
+        assert t._version_value == 0
+
 
 class TestBuildIsolation:
     """Regression tests for editable install / build isolation issues."""

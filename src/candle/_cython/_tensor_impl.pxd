@@ -64,3 +64,20 @@ cdef class _VersionCounterProxy:
     cdef TensorImpl _impl
 
     cpdef void bump(self)
+
+
+cpdef object cy_make_tensor_from_storage(
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset=*,
+    bint requires_grad=*,
+)
+
+cpdef object cy_make_view_tensor(
+    object base,
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset=*,
+)

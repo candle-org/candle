@@ -519,6 +519,72 @@ cdef class TensorImpl:
 
 
 # -------------------------------------------------------------------
+# Module-level tensor factory functions
+# -------------------------------------------------------------------
+
+cpdef object cy_make_tensor_from_storage(
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset=0,
+    bint requires_grad=False,
+):
+    """Unified birth path: construct a Tensor from a typed storage object.
+
+    Sets all core metadata fields in one place so every factory goes through
+    the same initialisation sequence.
+    """
+    # Import Tensor lazily to avoid circular imports at module load time
+    from candle._tensor import Tensor
+
+    cdef TensorImpl t = Tensor.__new__(Tensor)
+
+    # -- storage --
+    t._storage = storage
+
+    # -- shape / stride / offset --
+    t._set_shape(shape)
+    t._set_stride(stride)
+    t._c_offset = offset
+
+    # -- autograd bookkeeping --
+    t.requires_grad = requires_grad
+    t.grad = None
+    t.grad_fn = None
+    t._pending = False
+    t._retain_grad = False
+    t._backward_hooks = None
+    t._version_value = 0
+    t._vc_proxy = None
+    t._base = None
+    t._view_meta = None
+
+    # -- device --
+    cdef object dev = storage.device
+    t._set_device_from_obj(dev)
+
+    # -- dtype --
+    cdef object dtype = storage.dtype
+    t._set_dtype_from_obj(dtype)
+
+    # -- dispatch keys --
+    t._recompute_dispatch_keys()
+
+    return t
+
+
+cpdef object cy_make_view_tensor(
+    object base,
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset=0,
+):
+    """Placeholder — implemented in Task 4."""
+    raise NotImplementedError("cy_make_view_tensor is implemented in Task 4")
+
+
+# -------------------------------------------------------------------
 # VersionCounter proxy — lightweight wrapper around TensorImpl._version_value
 # -------------------------------------------------------------------
 
