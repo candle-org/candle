@@ -55,27 +55,32 @@ jobs:
 
           # Real test/lint steps — if failure is here, it's a genuine failure
           # Pattern covers all test execution and validation steps in ci.yaml
-          TEST_PATTERN="Run .* tests|Run .* coverage|Run .* suite|Lint with pylint|Assert NPU|Verify MPS"
+          TEST_PATTERN="Run .* tests|Run .* coverage|Run .* suite|Lint with pylint|Assert NPU|Verify MPS|Run .*card HCCL"
 
+          # Classify each failed job as "test" or "infra"
           HAS_TEST_FAILURE=$(echo "$FAILED_JOBS" | jq --arg pat "$TEST_PATTERN" \
-            '[.[].failed_steps[] | test($pat; "i")] | any')
+            '[.[] | select([.failed_steps[] | test($pat; "i")] | any)] | length > 0')
+          HAS_INFRA_FAILURE=$(echo "$FAILED_JOBS" | jq --arg pat "$TEST_PATTERN" \
+            '[.[] | select((.failed_steps | length == 0) or ([.failed_steps[] | test($pat; "i")] | any | not))] | length > 0')
 
           echo "::endgroup::"
 
-          if [ "$HAS_TEST_FAILURE" = "true" ]; then
-            echo "::notice::Real test/lint failure detected — not retrying."
+          if [ "$HAS_INFRA_FAILURE" != "true" ]; then
+            echo "::notice::All failures are real test/lint failures — not retrying."
             exit 0
           fi
 
-          # All failures are infrastructure-related (setup, checkout, install, OOM, network)
-          echo "::notice::Only infrastructure failures detected — retrying (attempt $ATTEMPT → $((ATTEMPT + 1)))"
+          # There are infrastructure failures — retry.
+          # gh run rerun --failed will re-run all failed jobs; real test failures
+          # will fail again but infra failures get another chance.
+          echo "::notice::Infrastructure failures detected — retrying (attempt $ATTEMPT → $((ATTEMPT + 1)))"
 
           if [ "$HAS_CANCELLED" = "true" ]; then
-            # Sibling jobs were cancelled by cancel-on-failure step — must re-run entire workflow
+            # Sibling jobs were cancelled — must re-run entire workflow
             echo "Cancelled sibling jobs detected — re-running entire workflow."
             gh run rerun "$RUN_ID" --repo "$REPO"
           else
-            # Only specific jobs failed, others completed — re-run just the failed ones
+            # Re-run only failed jobs
             echo "Re-running only failed jobs."
             gh run rerun "$RUN_ID" --failed --repo "$REPO"
           fi
