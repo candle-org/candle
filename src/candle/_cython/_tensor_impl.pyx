@@ -29,51 +29,7 @@ DEF _DK_AUTOGRAD = 1 << 11
 
 cdef class TensorImpl:
     """C-level base for Tensor. All hot fields are cdef-typed."""
-
-    # -- shape / stride (C arrays + cached Python tuples) --
-    cdef int64_t _c_shape[MAX_NDIM]
-    cdef int64_t _c_stride[MAX_NDIM]
-    cdef public int _ndim
-    cdef public int64_t _c_numel
-    cdef public int64_t _c_offset
-
-    # -- device (int enum + cached object) --
-    cdef public int _device_type       # 0=cpu 1=npu 2=cuda 3=mps 4=meta
-    cdef public int _device_index
-    cdef public object _device_obj     # cached device instance
-
-    # -- dtype (int code + cached object) --
-    cdef public int _dtype_code
-    cdef public int _itemsize
-    cdef public object _dtype_obj      # cached DType instance
-
-    # -- storage --
-    cdef public object _storage
-
-    # -- autograd --
-    cdef public bint requires_grad
-    cdef public object grad
-    cdef public object grad_fn
-    cdef public int64_t _version_value   # inlined VersionCounter
-    cdef public object _base
-    cdef public object _view_meta
-    cdef public bint _pending
-    cdef public bint _retain_grad
-    cdef public int _output_nr
-
-    cdef public tuple _shape_tuple
-    cdef public object _stride_tuple   # _StrideTuple instance
-
-    # -- allow dynamic attrs (__dict__) for _fw_tangents etc. --
-    cdef dict __dict__
-
-    # -- cached version counter proxy --
-    cdef public object _vc_proxy
-
-    # -- precomputed dispatch key bits (Step 4) --
-    # Bitmask of DispatchKey values based on device_type and requires_grad.
-    # Updated by _set_device_from_obj and requires_grad setter.
-    cdef public unsigned int _dispatch_keys
+    # Field and method declarations in _tensor_impl.pxd
 
     # ---------------------------------------------------------------
     # Initialisation helpers
@@ -482,7 +438,7 @@ cdef class TensorImpl:
 # -------------------------------------------------------------------
 
 cdef class _VersionCounterProxy:
-    cdef TensorImpl _impl
+    # Field declarations in _tensor_impl.pxd
 
     def __cinit__(self, TensorImpl impl):
         self._impl = impl
