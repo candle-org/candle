@@ -22,6 +22,7 @@ Feature flags (set after import):
     _HAS_CYTHON_FUNCTIONAL_OPS  — True if _functional_ops.pyx compiled successfully
     _HAS_CYTHON_FAST_OPS        — True if _fast_ops.pyx compiled successfully
     _HAS_CYTHON_TENSOR_API      — True if _tensor_api.pyx compiled successfully
+    _HAS_CYTHON_STORAGE_IMPL    — True if _storage_impl.pyx compiled successfully
 """
 
 _HAS_CYTHON_DISPATCH = False
