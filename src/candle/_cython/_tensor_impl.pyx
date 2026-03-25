@@ -29,51 +29,7 @@ DEF _DK_AUTOGRAD = 1 << 11
 
 cdef class TensorImpl:
     """C-level base for Tensor. All hot fields are cdef-typed."""
-
-    # -- shape / stride (C arrays + cached Python tuples) --
-    cdef int64_t _c_shape[MAX_NDIM]
-    cdef int64_t _c_stride[MAX_NDIM]
-    cdef public int _ndim
-    cdef public int64_t _c_numel
-    cdef public int64_t _c_offset
-
-    # -- device (int enum + cached object) --
-    cdef public int _device_type       # 0=cpu 1=npu 2=cuda 3=mps 4=meta
-    cdef public int _device_index
-    cdef public object _device_obj     # cached device instance
-
-    # -- dtype (int code + cached object) --
-    cdef public int _dtype_code
-    cdef public int _itemsize
-    cdef public object _dtype_obj      # cached DType instance
-
-    # -- storage --
-    cdef public object _storage
-
-    # -- autograd --
-    cdef public bint requires_grad
-    cdef public object grad
-    cdef public object grad_fn
-    cdef public int64_t _version_value   # inlined VersionCounter
-    cdef public object _base
-    cdef public object _view_meta
-    cdef public bint _pending
-    cdef public bint _retain_grad
-    cdef public int _output_nr
-
-    cdef public tuple _shape_tuple
-    cdef public object _stride_tuple   # _StrideTuple instance
-
-    # -- allow dynamic attrs (__dict__) for _fw_tangents etc. --
-    cdef dict __dict__
-
-    # -- cached version counter proxy --
-    cdef public object _vc_proxy
-
-    # -- precomputed dispatch key bits (Step 4) --
-    # Bitmask of DispatchKey values based on device_type and requires_grad.
-    # Updated by _set_device_from_obj and requires_grad setter.
-    cdef public unsigned int _dispatch_keys
+    # Field and method declarations in _tensor_impl.pxd
 
     # ---------------------------------------------------------------
     # Initialisation helpers
@@ -476,13 +432,98 @@ cdef class TensorImpl:
             return reduce_fn(self)
         raise TypeError(f"cannot pickle {type(self).__name__}")
 
+    # ---------------------------------------------------------------
+    # View operations — share storage, only update layout
+    # ---------------------------------------------------------------
+
+    cpdef object cy_view(self, tuple new_shape):
+        cdef int64_t new_numel = 1
+        cdef int i
+        cdef int new_ndim = len(new_shape)
+        for i in range(new_ndim):
+            new_numel *= <int64_t>new_shape[i]
+        if new_numel != self._c_numel:
+            raise RuntimeError(
+                f"shape '{new_shape}' is invalid for input of size {self._c_numel}")
+        cdef TensorImpl v = TensorImpl.__new__(TensorImpl)
+        v._storage = self._storage
+        v._set_shape(new_shape)
+        cdef list strides = [0] * new_ndim
+        cdef int64_t acc = 1
+        for i in range(new_ndim - 1, -1, -1):
+            strides[i] = acc
+            acc *= <int64_t>new_shape[i]
+        v._set_stride(tuple(strides))
+        v._c_offset = self._c_offset
+        v._device_type = self._device_type
+        v._device_index = self._device_index
+        v._device_obj = self._device_obj
+        v._dtype_code = self._dtype_code
+        v._itemsize = self._itemsize
+        v._dtype_obj = self._dtype_obj
+        v._dispatch_keys = self._dispatch_keys
+        v.requires_grad = self.requires_grad
+        v.grad = None
+        v.grad_fn = self.grad_fn
+        v._version_value = self._version_value
+        v._base = self._base if self._base is not None else self
+        v._vc_proxy = None
+        v._view_meta = None
+        v._pending = False
+        v._retain_grad = False
+        v._backward_hooks = None
+        v._output_nr = 0
+        return v
+
+    cpdef object cy_as_strided(self, tuple size, tuple stride, int64_t storage_offset):
+        cdef TensorImpl v = TensorImpl.__new__(TensorImpl)
+        v._storage = self._storage
+        v._set_shape(size)
+        v._set_stride(stride)
+        v._c_offset = storage_offset
+        v._device_type = self._device_type
+        v._device_index = self._device_index
+        v._device_obj = self._device_obj
+        v._dtype_code = self._dtype_code
+        v._itemsize = self._itemsize
+        v._dtype_obj = self._dtype_obj
+        v._dispatch_keys = self._dispatch_keys
+        v.requires_grad = self.requires_grad
+        v.grad = None
+        v.grad_fn = self.grad_fn
+        v._version_value = self._version_value
+        v._base = self._base if self._base is not None else self
+        v._vc_proxy = None
+        v._view_meta = None
+        v._pending = False
+        v._retain_grad = False
+        v._backward_hooks = None
+        v._output_nr = 0
+        return v
+
+    cpdef object cy_transpose(self, int dim0, int dim1):
+        cdef int ndim = self._ndim
+        if dim0 < 0:
+            dim0 += ndim
+        if dim1 < 0:
+            dim1 += ndim
+        if dim0 < 0 or dim0 >= ndim or dim1 < 0 or dim1 >= ndim:
+            raise IndexError(
+                f"Dimension out of range (expected to be in range of "
+                f"[-{ndim}, {ndim-1}], but got {dim0} and {dim1})")
+        cdef list new_shape = list(self._shape_tuple)
+        cdef list new_stride = list(self._stride_tuple)
+        new_shape[dim0], new_shape[dim1] = new_shape[dim1], new_shape[dim0]
+        new_stride[dim0], new_stride[dim1] = new_stride[dim1], new_stride[dim0]
+        return self.cy_as_strided(tuple(new_shape), tuple(new_stride), self._c_offset)
+
 
 # -------------------------------------------------------------------
 # VersionCounter proxy — lightweight wrapper around TensorImpl._version_value
 # -------------------------------------------------------------------
 
 cdef class _VersionCounterProxy:
-    cdef TensorImpl _impl
+    # Field declarations in _tensor_impl.pxd
 
     def __cinit__(self, TensorImpl impl):
         self._impl = impl

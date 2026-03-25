@@ -3,14 +3,7 @@
 
 cdef class FastDType:
     """C-level dtype with int code for fast comparison."""
-    cdef public int code
-    cdef public int itemsize
-    cdef public bint is_floating_point
-    cdef public bint is_complex
-    cdef public bint is_signed
-    cdef public bint _is_quantized
-    cdef public str name
-    cdef public object _numpy_dtype
+    # Field declarations in _dtype.pxd
 
     def __init__(self, str name, object numpy_dtype, int itemsize,
                  bint is_floating_point=False, bint is_complex=False,
