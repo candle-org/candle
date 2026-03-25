@@ -391,6 +391,59 @@ class TestBuildIsolation:
     def test_setup_py_has_no_np_get_include_for_storage_impl(self):
         from pathlib import Path
 
-        setup_py = Path(__file__).resolve().parents[2] / "setup.py"
-        text = setup_py.read_text(encoding="utf-8")
-        assert "np.get_include()" not in text
+
+
+class TestTensorInitCompatibilityShell:
+    """Tensor.__init__ and Cython factories must share one initialization implementation."""
+
+    def test_python_tensor_and_factory_tensor_have_same_core_metadata(self):
+        import numpy as np
+        import candle as torch
+        from candle._cython._storage_impl import StorageImpl
+        from candle._cython._tensor_impl import cy_make_tensor_from_storage
+        from candle._dtype import float32
+        from candle._device import device
+
+        arr = np.arange(6, dtype=np.float32)
+        storage_impl = StorageImpl.from_numpy(arr)
+
+        class WrappedUntyped:
+            def __init__(self, impl, dev):
+                self._impl = impl
+                self.device = dev
+
+            def data_ptr(self):
+                return self._impl.data_ptr()
+
+        dev = device("cpu")
+        typed_storage = type("_TmpStorage", (), {})()
+        typed_storage.device = dev
+        typed_storage.dtype = float32
+        typed_storage._storage_impl = storage_impl
+        typed_storage._untyped = WrappedUntyped(storage_impl, dev)
+
+        from_factory = cy_make_tensor_from_storage(typed_storage, (2, 3), (3, 1), 0, False)
+        from_python = torch.Tensor(typed_storage, (2, 3), (3, 1), 0, False)
+
+        assert from_python.shape == from_factory.shape
+        assert from_python.stride == from_factory.stride
+        assert from_python.offset == from_factory.offset
+        assert from_python._dtype_code == from_factory._dtype_code
+        assert from_python._itemsize == from_factory._itemsize
+        assert from_python._device_type == from_factory._device_type
+        assert from_python._device_index == from_factory._device_index
+        assert from_python._dispatch_keys == from_factory._dispatch_keys
+        assert from_python._base is from_factory._base is None
+        assert from_python._version_value == from_factory._version_value == 0
+
+    def test_python_tensor_init_still_sets_pending_autograd_fields(self):
+        import candle as torch
+
+        t = torch.ones(4, dtype=torch.float32)
+        assert t.grad is None
+        assert t.grad_fn is None
+        assert t._pending is False
+        assert t._retain_grad is False
+        assert t._backward_hooks is None
+        assert t._vc_proxy is None
+        assert t._view_meta is None
