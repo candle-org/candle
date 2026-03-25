@@ -254,6 +254,49 @@ class TestTensorDTypeCaching:
         assert t._dtype_code == 5
 
 
+class TestTensorFactoryInvariants:
+    """Regression tests: tensor factory must always set all core metadata fields."""
+
+    def test_tensor_from_python_init_sets_all_core_dtype_fields(self):
+        import candle as torch
+        t = torch.ones(4, dtype=torch.float16)
+        assert t.dtype == torch.float16
+        assert t._dtype_code == 1
+        assert t._itemsize == 2
+        assert t._device_type == 0
+        assert t._device_index == -1
+
+    def test_tensor_from_python_init_sets_device_metadata(self):
+        import candle as torch
+        t = torch.ones(4, dtype=torch.float32)
+        assert t.device.type == "cpu"
+        assert t._device_obj.type == "cpu"
+        assert t._device_type == 0
+        assert isinstance(t._dispatch_keys, int)
+
+    def test_view_tensor_keeps_root_base_and_metadata(self):
+        import candle as torch
+        t = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+        v = t.cy_transpose(0, 1)
+        assert v._base is not None
+        assert v._base is t._base
+        assert v.dtype == t.dtype
+        assert v._dtype_code == t._dtype_code
+        assert v._device_type == t._device_type
+        assert v._storage is t._storage
+
+    def test_scalar_created_tensor_matches_reference_dtype_code(self):
+        import candle as torch
+        if not torch.npu.is_available():
+            pytest.skip("NPU not available")
+        from candle._backends.npu.ops._helpers import _scalar_to_npu_tensor
+        ref = torch.ones((2, 2), dtype=torch.float16, device="npu")
+        scalar_tensor = _scalar_to_npu_tensor(1.0, ref)
+        assert scalar_tensor.dtype == ref.dtype
+        assert scalar_tensor._dtype_code == ref._dtype_code
+        assert scalar_tensor._device_type == ref._device_type
+
+
 class TestBuildIsolation:
     """Regression tests for editable install / build isolation issues."""
 
