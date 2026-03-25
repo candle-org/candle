@@ -203,3 +203,11 @@ try:
     _HAS_CYTHON_TENSOR_API = True
 except ImportError:
     pass
+
+_HAS_CYTHON_STORAGE_IMPL = False
+
+try:
+    from ._storage_impl import StorageImpl  # noqa: F401
+    _HAS_CYTHON_STORAGE_IMPL = True
+except ImportError:
+    pass
