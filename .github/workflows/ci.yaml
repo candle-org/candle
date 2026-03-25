@@ -210,10 +210,11 @@ jobs:
       if: always()
       run: ccache -s
     - name: Run CPU tests
+      id: run-tests
       run: |
         pytest tests/cpu/ tests/contract/ -v --tb=short
     - name: Cancel workflow on failure
-      if: failure()
+      if: steps.run-tests.outcome == 'failure'
       run: |
         gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
       env:
@@ -291,10 +292,11 @@ jobs:
       run: |
         python -c "from candle._backends.mps.runtime import is_available; print('MPS available:', is_available())"
     - name: Run MPS tests
+      id: run-tests
       run: |
         pytest tests/mps/ -v --tb=short
     - name: Cancel workflow on failure
-      if: failure()
+      if: steps.run-tests.outcome == 'failure'
       run: |
         gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
       env:
@@ -348,13 +350,14 @@ jobs:
       if: always()
       run: ccache -s
     - name: Run NPU common + 910B op tests
+      id: run-tests
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
         bash .github/scripts/ci-failfast-watcher.sh \
           pytest tests/npu/common/ tests/npu/910b/ -v --tb=short
     - name: Cancel workflow on failure
-      if: failure()
+      if: steps.run-tests.outcome == 'failure'
       run: |
         gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
       env:
@@ -406,6 +409,7 @@ jobs:
       if: always()
       run: ccache -s
     - name: Run NPU integration tests
+      id: run-tests
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
@@ -417,7 +421,7 @@ jobs:
           --ignore=tests/npu/310b \
           --ignore=tests/npu/310p
     - name: Cancel workflow on failure
-      if: failure()
+      if: steps.run-tests.outcome == 'failure'
       run: |
         gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
       env:
@@ -470,13 +474,14 @@ jobs:
       if: always()
       run: ccache -s
     - name: Run HCCL distributed tests
+      id: run-tests
       run: |
         source /opt/miniconda3/etc/profile.d/conda.sh
         conda activate candle
         bash .github/scripts/ci-failfast-watcher.sh \
           pytest tests/distributed/ -v --tb=short -k "hccl"
     - name: Cancel workflow on failure
-      if: failure()
+      if: steps.run-tests.outcome == 'failure'
       run: |
         gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
       env:
@@ -569,6 +574,7 @@ jobs:
         }
         clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in NPU Suite (6-7)'; assert count >= 2, f'expected >=2 visible NPUs, found {count}'"
     - name: Run NPU tests
+      id: run-tests
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
@@ -602,7 +608,7 @@ jobs:
           --ignore=tests/npu/310b/ \
           --ignore=tests/npu/310p/
     - name: Cancel workflow on failure
-      if: failure()
+      if: steps.run-tests.outcome == 'failure'
       run: |
         gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
       env:
@@ -693,6 +699,7 @@ jobs:
         }
         clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in Distributed Suite (4-5)'; assert count >= 2, f'expected >=2 visible NPUs, found {count}'"
     - name: Run distributed baseline suite
+      id: run-dist-tests
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
@@ -722,6 +729,7 @@ jobs:
         clean_env bash .github/scripts/ci-failfast-watcher.sh \
           pytest tests/distributed/ -v --tb=short -k "not all_to_all_single_async_unequal_multicard and not all_to_all_single_invalid_split_pairing_multicard and not all_to_all_single_split_numel_validation_multicard and not test_ddp"
     - name: Run 2-card HCCL all_to_all coverage
+      id: run-hccl-tests
       run: |
         set -o pipefail
         source "$ASCEND_ENV_SCRIPT"
@@ -760,7 +768,7 @@ jobs:
           exit 1
         fi
     - name: Cancel workflow on failure
-      if: failure()
+      if: steps.run-dist-tests.outcome == 'failure' || steps.run-hccl-tests.outcome == 'failure'
       run: |
         gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
       env:
@@ -851,6 +859,7 @@ jobs:
         }
         clean_env python -c "import candle as torch; count = torch.npu.device_count(); assert torch.npu.is_available(), 'expected NPU to be available in HCCL 4-Card Suite (0-3)'; assert count >= 4, f'expected >=4 visible NPUs, found {count}'"
     - name: Run 4-card HCCL all_to_all coverage
+      id: run-hccl-4card-tests
       run: |
         set -o pipefail
         source "$ASCEND_ENV_SCRIPT"
@@ -889,7 +898,7 @@ jobs:
           exit 1
         fi
     - name: Cancel workflow on failure
-      if: failure()
+      if: steps.run-hccl-4card-tests.outcome == 'failure'
       run: |
         gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
       env:
@@ -1011,6 +1020,7 @@ jobs:
         }
         clean_env python -c "import candle as torch; assert torch.npu.is_available(), 'NPU not available on 310B runner'; print('NPU available:', torch.npu.is_available()); print('Device count:', torch.npu.device_count())"
     - name: Run 310B-specific tests
+      id: run-310b-tests
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
@@ -1043,6 +1053,7 @@ jobs:
         sleep 2
         sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
     - name: Run NPU common tests
+      id: run-common-tests
       run: |
         source "$ASCEND_ENV_SCRIPT"
         clean_env() {
@@ -1070,7 +1081,7 @@ jobs:
         clean_env bash .github/scripts/ci-failfast-watcher.sh \
           pytest tests/npu/common/ -v --tb=short
     - name: Cancel workflow on failure
-      if: failure()
+      if: steps.run-310b-tests.outcome == 'failure' || steps.run-common-tests.outcome == 'failure'
       run: |
         gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
       env:
