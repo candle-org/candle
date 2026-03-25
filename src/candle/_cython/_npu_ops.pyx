@@ -10,6 +10,7 @@ in Python — this module only accelerates the metadata computation.
 
 from libc.stdint cimport int64_t, int32_t, uint64_t
 from libc.stdint cimport uintptr_t
+from candle._cython._tensor_impl cimport TensorImpl
 
 DEF MAX_NDIM = 16
 
@@ -139,6 +140,48 @@ cdef inline tuple _to_tuple(const int64_t* arr, int n):
     return tuple([arr[i] for i in range(n)])
 
 
+cdef inline int _validate_npu_binary(object a, object b, str name,
+                                      int* a_dev_idx_out) except -1:
+    """Validate both tensors are NPU with matching dtype. Returns 0 on success.
+
+    Uses direct C field access when tensor is TensorImpl, falls back to
+    Python attribute access otherwise.
+    """
+    cdef int a_dev_type, b_dev_type
+    cdef int a_dtype_code, b_dtype_code
+
+    if isinstance(a, TensorImpl):
+        a_dev_type = (<TensorImpl>a)._device_type
+        a_dev_idx_out[0] = (<TensorImpl>a)._device_index
+        a_dtype_code = (<TensorImpl>a)._dtype_code
+    else:
+        a_dev = a.device
+        a_dev_type = 1 if getattr(a_dev, "type", "") == "npu" else -1
+        a_dev_idx_out[0] = getattr(a_dev, "index", 0) or 0
+        a_dtype_code = -1  # will use Python path
+
+    if isinstance(b, TensorImpl):
+        b_dev_type = (<TensorImpl>b)._device_type
+        b_dtype_code = (<TensorImpl>b)._dtype_code
+    else:
+        b_dev = b.device
+        b_dev_type = 1 if getattr(b_dev, "type", "") == "npu" else -1
+        b_dtype_code = -1
+
+    if a_dev_type != 1 or b_dev_type != 1:
+        raise ValueError(f"NPU {name} expects NPU tensors")
+
+    # dtype check: use dtype_code if both are TensorImpl, else fall back
+    if a_dtype_code >= 0 and b_dtype_code >= 0:
+        if a_dtype_code != b_dtype_code:
+            raise ValueError(f"NPU {name} requires matching dtypes")
+    else:
+        if a.dtype != b.dtype:
+            raise ValueError(f"NPU {name} requires matching dtypes")
+
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # fast_binary_op — drop-in replacement for _binary_op in _helpers.py
 # ---------------------------------------------------------------------------
@@ -199,23 +242,18 @@ def fast_binary_op(a, b, fn, str name):
     """
     _ensure_npu_imports()
 
-    # 1. Validate device/dtype (direct attribute access)
-    a_dev = a.device
-    b_dev = b.device
-    if a_dev.type != "npu" or b_dev.type != "npu":
-        raise ValueError(f"NPU {name} expects NPU tensors")
+    # 1. Validate device/dtype — C field access when TensorImpl
+    cdef int dev_idx
+    _validate_npu_binary(a, b, name, &dev_idx)
     a_dtype = a.dtype
-    if a_dtype != b.dtype:
-        raise ValueError(f"NPU {name} requires matching dtypes")
 
     # 2. Get runtime + stream (fast path: skip activate() and TLS lock)
-    cdef int dev_idx = a_dev.index or 0
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
 
     # 3. Extract shapes into C arrays
-    py_a_shape = a.shape
-    py_b_shape = b.shape
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
     cdef int a_ndim = len(py_a_shape)
     cdef int b_ndim = len(py_b_shape)
 
@@ -275,6 +313,7 @@ def fast_binary_op(a, b, fn, str name):
     )
 
     # 9. Wrap output — construct Tensor entirely in Cython (skips Python __init__)
+    a_dev = a.device
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
@@ -408,23 +447,19 @@ def fast_add(a, b):
     _ensure_npu_imports()
     _ensure_ffi_binary()
 
-    # 1. Validate device/dtype
-    a_dev = a.device
-    b_dev = b.device
-    if a_dev.type != "npu" or b_dev.type != "npu":
-        raise ValueError("fast_add expects NPU tensors")
+    # 1. Validate device/dtype — C field access when TensorImpl
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "add", &dev_idx)
+    a_dev = a.device  # still needed for output tensor wrapping
     a_dtype = a.dtype
-    if a_dtype != b.dtype:
-        raise ValueError("fast_add requires matching dtypes")
 
     # 2. Get runtime + stream
-    cdef int dev_idx = a_dev.index or 0
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
 
     # 3. Extract shapes into C arrays
-    py_a_shape = a.shape
-    py_b_shape = b.shape
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
     cdef int a_ndim = len(py_a_shape)
     cdef int b_ndim = len(py_b_shape)
 
@@ -567,23 +602,19 @@ def fast_mul(a, b):
     _ensure_npu_imports()
     _ensure_ffi_binary()
 
-    # 1. Validate device/dtype
-    a_dev = a.device
-    b_dev = b.device
-    if a_dev.type != "npu" or b_dev.type != "npu":
-        raise ValueError("fast_mul expects NPU tensors")
+    # 1. Validate device/dtype — C field access when TensorImpl
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "mul", &dev_idx)
+    a_dev = a.device  # still needed for output tensor wrapping
     a_dtype = a.dtype
-    if a_dtype != b.dtype:
-        raise ValueError("fast_mul requires matching dtypes")
 
     # 2. Get runtime + stream
-    cdef int dev_idx = a_dev.index or 0
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
 
     # 3. Extract shapes into C arrays
-    py_a_shape = a.shape
-    py_b_shape = b.shape
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
     cdef int a_ndim = len(py_a_shape)
     cdef int b_ndim = len(py_b_shape)
 
@@ -669,20 +700,17 @@ def fast_sub(a, b):
     _ensure_npu_imports()
     _ensure_ffi_binary()
 
-    a_dev = a.device
-    b_dev = b.device
-    if a_dev.type != "npu" or b_dev.type != "npu":
-        raise ValueError("fast_sub expects NPU tensors")
+    # 1. Validate device/dtype — C field access when TensorImpl
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "sub", &dev_idx)
+    a_dev = a.device  # still needed for output tensor wrapping
     a_dtype = a.dtype
-    if a_dtype != b.dtype:
-        raise ValueError("fast_sub requires matching dtypes")
 
-    cdef int dev_idx = a_dev.index or 0
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
 
-    py_a_shape = a.shape
-    py_b_shape = b.shape
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
     cdef int a_ndim = len(py_a_shape)
     cdef int b_ndim = len(py_b_shape)
 
@@ -758,20 +786,17 @@ def fast_div(a, b):
     _ensure_npu_imports()
     _ensure_ffi_binary()
 
-    a_dev = a.device
-    b_dev = b.device
-    if a_dev.type != "npu" or b_dev.type != "npu":
-        raise ValueError("fast_div expects NPU tensors")
+    # 1. Validate device/dtype — C field access when TensorImpl
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "div", &dev_idx)
+    a_dev = a.device  # still needed for output tensor wrapping
     a_dtype = a.dtype
-    if a_dtype != b.dtype:
-        raise ValueError("fast_div requires matching dtypes")
 
-    cdef int dev_idx = a_dev.index or 0
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
 
-    py_a_shape = a.shape
-    py_b_shape = b.shape
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
     cdef int a_ndim = len(py_a_shape)
     cdef int b_ndim = len(py_b_shape)
 
