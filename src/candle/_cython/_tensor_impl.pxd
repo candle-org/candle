@@ -66,6 +66,25 @@ cdef class _VersionCounterProxy:
     cpdef void bump(self)
 
 
+cpdef void cy_init_tensor_fields(
+    TensorImpl t,
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset,
+    bint requires_grad,
+    object grad,
+    object grad_fn,
+    object base,
+    object view_meta,
+    bint pending,
+    bint retain_grad,
+    object backward_hooks,
+    int64_t version_value,
+    object vc_proxy,
+)
+
+
 cpdef object cy_make_tensor_from_storage(
     object storage,
     tuple shape,

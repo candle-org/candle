@@ -78,6 +78,7 @@ from .autograd.engine import backward as _backward
 # TensorImpl base class: compiled Cython extension required.
 from ._cython._tensor_impl import TensorImpl as _TensorBase  # pylint: disable=import-error,no-name-in-module
 from ._cython._tensor_impl import _VersionCounterProxy  # noqa: F401  # pylint: disable=import-error,no-name-in-module
+from ._cython._tensor_impl import cy_init_tensor_fields  # pylint: disable=import-error,no-name-in-module
 
 
 class _StrideTuple(tuple):
@@ -141,27 +142,23 @@ class _HookHandle:
 
 class Tensor(_TensorBase):
     def __init__(self, storage, shape, stride, offset=0, requires_grad=False):
-        self._storage = storage
-        self.shape = tuple(shape)
-        self.stride = _StrideTuple(stride)
-        self.offset = int(offset)
-        self.requires_grad = requires_grad
-        self.grad = None
-        self.grad_fn = None
-        self._pending = False
-        self._retain_grad = False
-        self._backward_hooks = None
-        self._version_value = 0
-        self._vc_proxy = None
-        self._base = None
-        self._view_meta = None
-        # Cache device/dtype from storage into TensorImpl C fields
-        dev = getattr(storage, "device", None)
-        if dev is not None:
-            self._set_device_from_storage(dev)
-        dtype = getattr(storage, "dtype", None)
-        if dtype is not None:
-            self._set_dtype_from_storage(dtype)
+        cy_init_tensor_fields(
+            self,
+            storage,
+            tuple(shape),
+            _StrideTuple(stride),
+            int(offset),
+            bool(requires_grad),
+            None,
+            None,
+            None,
+            None,
+            False,
+            False,
+            None,
+            0,
+            None,
+        )
 
     _DEVICE_MAP = {"cpu": 0, "npu": 1, "cuda": 2, "mps": 3, "meta": 4}
     # Dispatch key bit values — must stay in sync with _tensor_impl.pyx

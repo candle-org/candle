@@ -471,10 +471,51 @@ cdef class TensorImpl:
         new_stride[dim0], new_stride[dim1] = new_stride[dim1], new_stride[dim0]
         return self.cy_as_strided(tuple(new_shape), tuple(new_stride), self._c_offset)
 
-
 # -------------------------------------------------------------------
 # Module-level tensor factory functions
 # -------------------------------------------------------------------
+
+cpdef void cy_init_tensor_fields(
+    TensorImpl t,
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset,
+    bint requires_grad,
+    object grad,
+    object grad_fn,
+    object base,
+    object view_meta,
+    bint pending,
+    bint retain_grad,
+    object backward_hooks,
+    int64_t version_value,
+    object vc_proxy,
+):
+    t._storage = storage
+    t._set_shape(shape)
+    t._set_stride(stride)
+    t._c_offset = offset
+    t.requires_grad = requires_grad
+    t.grad = grad
+    t.grad_fn = grad_fn
+    t._base = base
+    t._view_meta = view_meta
+    t._pending = pending
+    t._retain_grad = retain_grad
+    t._backward_hooks = backward_hooks
+    t._version_value = version_value
+    t._vc_proxy = vc_proxy
+    t._output_nr = 0
+
+    cdef object dev = getattr(storage, "device", None)
+    if dev is not None:
+        t._set_device_from_obj(dev)
+    cdef object dtype = getattr(storage, "dtype", None)
+    if dtype is not None:
+        t._set_dtype_from_obj(dtype)
+    t._recompute_dispatch_keys()
+
 
 cpdef object cy_make_tensor_from_storage(
     object storage,
@@ -492,38 +533,23 @@ cpdef object cy_make_tensor_from_storage(
     from candle._tensor import Tensor
 
     cdef TensorImpl t = Tensor.__new__(Tensor)
-
-    # -- storage --
-    t._storage = storage
-
-    # -- shape / stride / offset --
-    t._set_shape(shape)
-    t._set_stride(stride)
-    t._c_offset = offset
-
-    # -- autograd bookkeeping --
-    t.requires_grad = requires_grad
-    t.grad = None
-    t.grad_fn = None
-    t._pending = False
-    t._retain_grad = False
-    t._backward_hooks = None
-    t._version_value = 0
-    t._vc_proxy = None
-    t._base = None
-    t._view_meta = None
-
-    # -- device --
-    cdef object dev = storage.device
-    t._set_device_from_obj(dev)
-
-    # -- dtype --
-    cdef object dtype = storage.dtype
-    t._set_dtype_from_obj(dtype)
-
-    # -- dispatch keys --
-    t._recompute_dispatch_keys()
-
+    cy_init_tensor_fields(
+        t,
+        storage,
+        shape,
+        stride,
+        offset,
+        requires_grad,
+        None,
+        None,
+        None,
+        None,
+        False,
+        False,
+        None,
+        0,
+        None,
+    )
     return t
 
 
@@ -534,41 +560,29 @@ cpdef object cy_make_view_tensor(
     object stride,
     int64_t offset=0,
 ):
-    """Create a view tensor that shares storage with *base*.
+    """Create a view tensor that shares storage with *base*."""
+    from candle._tensor import Tensor
 
-    Copies device/dtype metadata from *base* directly so this factory works
-    regardless of whether *storage* is a typed storage or a raw StorageImpl.
-    """
     cdef TensorImpl b = <TensorImpl>base
-    cdef TensorImpl t = TensorImpl.__new__(TensorImpl)
-    t._storage = storage
-    t._set_shape(shape)
-    t._set_stride(tuple(stride))
-    t._c_offset = offset
-    # Copy device metadata from base
-    t._device_type = b._device_type
-    t._device_index = b._device_index
-    t._device_obj = b._device_obj
-    # Copy dtype metadata from base
-    t._dtype_code = b._dtype_code
-    t._itemsize = b._itemsize
-    t._dtype_obj = b._dtype_obj
-    # Copy dispatch keys from base
-    t._dispatch_keys = b._dispatch_keys
-    # Autograd bookkeeping
-    t.requires_grad = b.requires_grad
-    t.grad = None
-    t.grad_fn = b.grad_fn
-    t._pending = False
-    t._retain_grad = False
-    t._backward_hooks = None
-    t._output_nr = 0
-    t._vc_proxy = None
-    t._view_meta = None
-    # Determine root and wire up _base / version
     cdef object root = b._base if b._base is not None else base
-    t._base = root
-    t._version_value = (<TensorImpl>root)._version_value
+    cdef TensorImpl t = Tensor.__new__(Tensor)
+    cy_init_tensor_fields(
+        t,
+        storage,
+        shape,
+        tuple(stride),
+        offset,
+        b.requires_grad,
+        None,
+        b.grad_fn,
+        root,
+        None,
+        False,
+        False,
+        None,
+        (<TensorImpl>root)._version_value,
+        None,
+    )
     return t
 
 
