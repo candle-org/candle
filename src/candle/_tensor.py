@@ -177,6 +177,19 @@ class Tensor(_TensorBase):
         """Cache dtype from storage into TensorImpl fields."""
         self._dtype_obj = dtype
         self._itemsize = getattr(dtype, "itemsize", 4)
+        name = getattr(dtype, "name", "")
+        self._dtype_code = {
+            "float32": 0,
+            "float16": 1,
+            "float64": 2,
+            "bfloat16": 3,
+            "int32": 4,
+            "int64": 5,
+            "int16": 6,
+            "int8": 7,
+            "uint8": 8,
+            "bool": 9,
+        }.get(name, -1)
 
     def __delattr__(self, name):
         if name == "grad":

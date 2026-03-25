@@ -239,6 +239,21 @@ class TestViewOps:
             t.cy_transpose(0, 5)
 
 
+
+class TestTensorDTypeCaching:
+    """Regression tests for Tensor dtype metadata cached from storage."""
+
+    def test_tensor_init_sets_dtype_code_from_storage_float16(self):
+        import candle as torch
+        t = torch.ones(4, dtype=torch.float16)
+        assert t._dtype_code == 1
+
+    def test_tensor_init_sets_dtype_code_from_storage_int64(self):
+        import candle as torch
+        t = torch.arange(4, dtype=torch.int64)
+        assert t._dtype_code == 5
+
+
 class TestBuildIsolation:
     """Regression tests for editable install / build isolation issues."""
 
