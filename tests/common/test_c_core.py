@@ -333,6 +333,20 @@ class TestTensorFactoryInvariants:
         assert t._version_value == 0
 
 
+    def test_cy_make_view_tensor_preserves_root_base_and_metadata(self):
+        import candle as torch
+        from candle._cython._tensor_impl import cy_make_view_tensor
+
+        base = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+        view = cy_make_view_tensor(base, base._storage, (4, 3), (1, 4), 0)
+        assert view._base is base._base if base._base is not None else base
+        assert view._storage is base._storage
+        assert view.shape == (4, 3)
+        assert view.stride == (1, 4)
+        assert view._dtype_code == base._dtype_code
+        assert view._device_type == base._device_type
+
+
 class TestBuildIsolation:
     """Regression tests for editable install / build isolation issues."""
 

@@ -445,61 +445,15 @@ cdef class TensorImpl:
         if new_numel != self._c_numel:
             raise RuntimeError(
                 f"shape '{new_shape}' is invalid for input of size {self._c_numel}")
-        cdef TensorImpl v = TensorImpl.__new__(TensorImpl)
-        v._storage = self._storage
-        v._set_shape(new_shape)
         cdef list strides = [0] * new_ndim
         cdef int64_t acc = 1
         for i in range(new_ndim - 1, -1, -1):
             strides[i] = acc
             acc *= <int64_t>new_shape[i]
-        v._set_stride(tuple(strides))
-        v._c_offset = self._c_offset
-        v._device_type = self._device_type
-        v._device_index = self._device_index
-        v._device_obj = self._device_obj
-        v._dtype_code = self._dtype_code
-        v._itemsize = self._itemsize
-        v._dtype_obj = self._dtype_obj
-        v._dispatch_keys = self._dispatch_keys
-        v.requires_grad = self.requires_grad
-        v.grad = None
-        v.grad_fn = self.grad_fn
-        v._version_value = self._version_value
-        v._base = self._base if self._base is not None else self
-        v._vc_proxy = None
-        v._view_meta = None
-        v._pending = False
-        v._retain_grad = False
-        v._backward_hooks = None
-        v._output_nr = 0
-        return v
+        return cy_make_view_tensor(self, self._storage, new_shape, tuple(strides), self._c_offset)
 
     cpdef object cy_as_strided(self, tuple size, tuple stride, int64_t storage_offset):
-        cdef TensorImpl v = TensorImpl.__new__(TensorImpl)
-        v._storage = self._storage
-        v._set_shape(size)
-        v._set_stride(stride)
-        v._c_offset = storage_offset
-        v._device_type = self._device_type
-        v._device_index = self._device_index
-        v._device_obj = self._device_obj
-        v._dtype_code = self._dtype_code
-        v._itemsize = self._itemsize
-        v._dtype_obj = self._dtype_obj
-        v._dispatch_keys = self._dispatch_keys
-        v.requires_grad = self.requires_grad
-        v.grad = None
-        v.grad_fn = self.grad_fn
-        v._version_value = self._version_value
-        v._base = self._base if self._base is not None else self
-        v._vc_proxy = None
-        v._view_meta = None
-        v._pending = False
-        v._retain_grad = False
-        v._backward_hooks = None
-        v._output_nr = 0
-        return v
+        return cy_make_view_tensor(self, self._storage, size, stride, storage_offset)
 
     cpdef object cy_transpose(self, int dim0, int dim1):
         cdef int ndim = self._ndim
@@ -580,8 +534,42 @@ cpdef object cy_make_view_tensor(
     object stride,
     int64_t offset=0,
 ):
-    """Placeholder — implemented in Task 4."""
-    raise NotImplementedError("cy_make_view_tensor is implemented in Task 4")
+    """Create a view tensor that shares storage with *base*.
+
+    Copies device/dtype metadata from *base* directly so this factory works
+    regardless of whether *storage* is a typed storage or a raw StorageImpl.
+    """
+    cdef TensorImpl b = <TensorImpl>base
+    cdef TensorImpl t = TensorImpl.__new__(TensorImpl)
+    t._storage = storage
+    t._set_shape(shape)
+    t._set_stride(tuple(stride))
+    t._c_offset = offset
+    # Copy device metadata from base
+    t._device_type = b._device_type
+    t._device_index = b._device_index
+    t._device_obj = b._device_obj
+    # Copy dtype metadata from base
+    t._dtype_code = b._dtype_code
+    t._itemsize = b._itemsize
+    t._dtype_obj = b._dtype_obj
+    # Copy dispatch keys from base
+    t._dispatch_keys = b._dispatch_keys
+    # Autograd bookkeeping
+    t.requires_grad = b.requires_grad
+    t.grad = None
+    t.grad_fn = b.grad_fn
+    t._pending = False
+    t._retain_grad = False
+    t._backward_hooks = None
+    t._output_nr = 0
+    t._vc_proxy = None
+    t._view_meta = None
+    # Determine root and wire up _base / version
+    cdef object root = b._base if b._base is not None else base
+    t._base = root
+    t._version_value = (<TensorImpl>root)._version_value
+    return t
 
 
 # -------------------------------------------------------------------
