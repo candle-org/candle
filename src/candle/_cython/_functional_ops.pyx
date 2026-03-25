@@ -134,11 +134,18 @@ cdef inline void _ensure_npu_refs():
     _npu_refs_loaded = True
 
 
+cdef inline bint _profiler_active():
+    try:
+        from candle.profiler.profiler import is_profiler_enabled
+        return bool(is_profiler_enabled())
+    except Exception:
+        return False
+
+
 cdef inline bint _is_npu_tensor_pair(object a, object b):
     """True only when both operands are tensors on the NPU device."""
     cdef object a_dev = getattr(a, "device", None)
     cdef object b_dev = getattr(b, "device", None)
-
     if a_dev is None or b_dev is None:
         return False
     return a_dev.type == "npu" and b_dev.type == "npu"
@@ -226,7 +233,7 @@ def add(a=None, b=None, *, alpha=1, out=None):
             b = _dispatch_fn("mul", None, b, alpha)
         elif _is_npu_tensor_pair(a, b):
             _ensure_npu_refs()
-            if _npu_fast_ok(a, b):
+            if _npu_fast_ok(a, b) and not _profiler_active():
                 return _npu_add_fn(a, b)
         return _dispatch_fn("add", None, a, b)
 
@@ -248,7 +255,7 @@ def mul(a, b):
     if _is_base_tensor(a) and (_is_base_tensor(b) or not hasattr(b, "__torch_function__")):
         if _is_npu_tensor_pair(a, b):
             _ensure_npu_refs()
-            if _npu_fast_ok(a, b):
+            if _npu_fast_ok(a, b) and not _profiler_active():
                 return _npu_mul_fn(a, b)
         return _dispatch_fn("mul", None, a, b)
 

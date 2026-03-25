@@ -79,16 +79,16 @@ def test_functionalize_maps_writeback_by_return_alias_set():
     assert b.storage().data.tolist() == [10.0]
 
 
-def test_functionalize_mutating_args_require_alias_set():
+def test_functionalize_mutating_args_include_aliasless_mutation():
     from candle._dispatch.functionalize import _mutating_args
     from candle._dispatch.schema import OpSchema
 
     schema = OpSchema("foo_(Tensor(a!) x, Tensor(!) y, Tensor z) -> Tensor")
     mutated = _mutating_args(schema, (1, 2, 3), {})
-    assert mutated == [1]
+    assert mutated == [1, 2]
 
 
-def test_dispatch_functionalize_ignores_mutation_without_alias_set():
+def test_dispatch_functionalize_writebacks_aliasless_mutation():
     registry.register_schema("noalias", "noalias(Tensor x) -> Tensor")
     registry.register_schema("noalias_", "noalias_(Tensor(!) x) -> Tensor")
 
@@ -104,7 +104,6 @@ def test_dispatch_functionalize_ignores_mutation_without_alias_set():
     with torch.functionalize():
         out = dispatch("noalias_", x.device.type, x)
 
-    # no alias-set on mutating arg: functionalize should not write back to input
-    assert x.storage().data.tolist() == [1.0]
-    assert x._version_counter.value == v0
-    assert out.storage().data.tolist() == [2.0]
+    assert x.storage().data.tolist() == [2.0]
+    assert x._version_counter.value == v0 + 1
+    assert out is x

@@ -641,11 +641,11 @@ def mps_typed_storage_from_ptr(metal_buffer, size, dtype, device=None):
     return TypedStorage(untyped, dtype, int(size), data=typed_data)
 
 
-def cuda_typed_storage_from_numpy(arr, dtype, device=None):
+def cuda_typed_storage_from_numpy(arr, dtype, device=None, stream=None):
     arr = np.ascontiguousarray(arr, dtype=to_numpy_dtype(dtype))
     from ._backends.cuda import storage as cuda_storage
 
-    untyped = cuda_storage.untyped_from_numpy(arr, device=device)
+    untyped = cuda_storage.untyped_from_numpy(arr, device=device, stream=stream)
     return TypedStorage(untyped, dtype, arr.size)
 
 
@@ -660,10 +660,10 @@ def empty_cuda_typed_storage(shape, dtype, device=None):
     return TypedStorage(untyped, dtype, size)
 
 
-def cuda_typed_storage_to_numpy(storage, shape, dtype):
+def cuda_typed_storage_to_numpy(storage, shape, dtype, stream=None):
     from ._backends.cuda import storage as cuda_storage
 
-    return cuda_storage.to_numpy(storage.untyped_storage(), dtype, shape=shape)
+    return cuda_storage.to_numpy(storage.untyped_storage(), dtype, shape=shape, stream=stream)
 
 
 class PendingStorage:

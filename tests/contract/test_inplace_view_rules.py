@@ -59,10 +59,20 @@ def test_schema_parses_alias_set_for_non_mutation():
     assert schema.params[0].alias_set == "a"
 
 
-def test_dispatch_mutating_args_require_alias_set():
+
+
+def test_dispatch_mutating_args_include_aliasless_mutation():
     from candle._dispatch.dispatcher import _mutating_args
     from candle._dispatch.schema import OpSchema
 
     schema = OpSchema("foo(Tensor(a!) x, Tensor(!) y, Tensor z) -> Tensor")
     mutated = _mutating_args(schema, (1, 2, 3), {})
-    assert mutated == [1]
+    assert mutated == [1, 2]
+
+
+def test_unary_inplace_on_base_updates_existing_view_storage():
+    x = torch.tensor([[-1.0, 2.0], [-3.0, 4.0]])
+    v = x.view((4,))
+    out = x.abs_()
+    assert out is x
+    assert v.tolist() == [1.0, 2.0, 3.0, 4.0]

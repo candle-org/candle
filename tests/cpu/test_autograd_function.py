@@ -252,7 +252,9 @@ def test_set_materialize_grads_flag_is_preserved_on_ctx():
     assert _CaptureMaterializeFlag.captured is False
 
 
-def test_custom_function_multiple_outputs_accumulate_input_grad():
+
+
+def test_DuplicateOutput_multiple_outputs_accumulate_input_grad():
     x = torch.tensor([3.0], requires_grad=True)
     out_a, out_b = _DuplicateOutput.apply(x)
     assert out_a.grad_fn is not None

@@ -29,6 +29,7 @@ _FALLBACK_OPS = {
         "matmul",           # aclnnMatmul on 910A only supports float16; float32 inputs are cast
         "addmm",            # aclnnAddmm on 910A only supports float16; float32 inputs are cast
         "mv",               # aclnnMv on 910A only supports float16; float32 inputs are cast
+        "normal_",          # aclnnInplaceNormal can segfault on 910A during NPU randn/dropout paths; use on-device Box-Muller composite
         "repeat_interleave_tensor",  # aclnnRepeatInterleave* tensor-repeats poisons later ops on 910A
     }),
     "910b": frozenset({

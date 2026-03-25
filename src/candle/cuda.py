@@ -1,3 +1,4 @@
+from ._backends.cuda import state as cuda_state
 from ._backends.cuda import runtime as cuda_runtime
 from ._device import device as Device
 
@@ -29,12 +30,26 @@ def device_count():
 
 
 def current_device():
-    return cuda_runtime.current_device()
+    return cuda_state.current_device()
 
 
 def set_device(dev):
     cuda_dev = _normalize_cuda_device(dev)
-    cuda_runtime.set_device(cuda_dev.index or 0)
+    cuda_state.set_device(cuda_dev.index or 0)
+
+
+def default_stream(device=None):
+    cuda_dev = _normalize_cuda_device(device)
+    return cuda_state.default_stream(cuda_dev.index or 0)
+
+
+def current_stream(device=None):
+    cuda_dev = _normalize_cuda_device(device)
+    return cuda_state.current_stream(cuda_dev.index or 0)
+
+
+def set_stream(stream):
+    cuda_state.set_current_stream(stream)
 
 
 def synchronize(device=None):
@@ -45,12 +60,37 @@ def synchronize(device=None):
     cuda_runtime.synchronize(cuda_dev.index or 0)
 
 
+class stream:
+    def __init__(self, s):
+        self.stream = s
+        self._prev = None
+        self._dev_ctx = None
+
+    def __enter__(self):
+        self._prev = cuda_state.current_stream(self.stream.device.index or 0)
+        self._dev_ctx = cuda_state.device_guard(self.stream.device.index or 0)
+        self._dev_ctx.__enter__()
+        cuda_state.set_current_stream(self.stream)
+        return self.stream
+
+    def __exit__(self, exc_type, exc, tb):
+        cuda_state.set_current_stream(self._prev)
+        return self._dev_ctx.__exit__(exc_type, exc, tb)
+
+
 class Stream:
     def __init__(self, device=None, priority=0, stream=None):
         self.device = _normalize_cuda_device(device)
         self.priority = int(priority)
         self._owns_stream = stream is None
-        self.stream = int(stream) if stream is not None else cuda_runtime.create_stream()
+        if stream is not None:
+            self.stream = int(stream)
+        else:
+            try:
+                with cuda_state.device_guard(self.device.index or 0):
+                    self.stream = cuda_runtime.create_stream()
+            except OSError:
+                self.stream = 0
 
     def synchronize(self):
         cuda_runtime.synchronize_stream(self.stream)
@@ -114,6 +154,10 @@ __all__ = [
     "current_device",
     "set_device",
     "synchronize",
+    "default_stream",
+    "current_stream",
+    "set_stream",
+    "stream",
     "Stream",
     "Event",
     "device",

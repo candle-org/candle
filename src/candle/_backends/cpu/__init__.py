@@ -74,6 +74,27 @@ from .ops import (
     mul_,
     relu_,
     zero_,
+    abs_,
+    neg_,
+    exp_,
+    log_,
+    log2_,
+    log10_,
+    sqrt_,
+    sin_,
+    cos_,
+    tan_,
+    tanh_,
+    sigmoid_,
+    floor_,
+    ceil_,
+    round_,
+    trunc_,
+    reciprocal_,
+    pow_,
+    bitwise_and_,
+    bitwise_or_,
+    bitwise_xor_,
     uniform_,
     normal_,
     bernoulli_,
@@ -420,6 +441,27 @@ registry.register("add_", "cpu", add_, meta=meta_infer.infer_binary)
 registry.register("mul_", "cpu", mul_, meta=meta_infer.infer_binary)
 registry.register("relu_", "cpu", relu_, meta=meta_infer.infer_unary)
 registry.register("zero_", "cpu", zero_, meta=meta_infer.infer_unary)
+registry.register("abs_", "cpu", abs_, meta=meta_infer.infer_unary)
+registry.register("neg_", "cpu", neg_, meta=meta_infer.infer_unary)
+registry.register("exp_", "cpu", exp_, meta=meta_infer.infer_unary)
+registry.register("log_", "cpu", log_, meta=meta_infer.infer_unary)
+registry.register("log2_", "cpu", log2_, meta=meta_infer.infer_unary)
+registry.register("log10_", "cpu", log10_, meta=meta_infer.infer_unary)
+registry.register("sqrt_", "cpu", sqrt_, meta=meta_infer.infer_unary)
+registry.register("sin_", "cpu", sin_, meta=meta_infer.infer_unary)
+registry.register("cos_", "cpu", cos_, meta=meta_infer.infer_unary)
+registry.register("tan_", "cpu", tan_, meta=meta_infer.infer_unary)
+registry.register("tanh_", "cpu", tanh_, meta=meta_infer.infer_unary)
+registry.register("sigmoid_", "cpu", sigmoid_, meta=meta_infer.infer_unary)
+registry.register("floor_", "cpu", floor_, meta=meta_infer.infer_unary)
+registry.register("ceil_", "cpu", ceil_, meta=meta_infer.infer_unary)
+registry.register("round_", "cpu", round_, meta=meta_infer.infer_unary)
+registry.register("trunc_", "cpu", trunc_, meta=meta_infer.infer_unary)
+registry.register("reciprocal_", "cpu", reciprocal_, meta=meta_infer.infer_unary)
+registry.register("pow_", "cpu", pow_, meta=meta_infer.infer_unary)
+registry.register("bitwise_and_", "cpu", bitwise_and_, meta=meta_infer.infer_binary)
+registry.register("bitwise_or_", "cpu", bitwise_or_, meta=meta_infer.infer_binary)
+registry.register("bitwise_xor_", "cpu", bitwise_xor_, meta=meta_infer.infer_binary)
 registry.register("uniform_", "cpu", uniform_, meta=meta_infer.infer_unary)
 registry.register("normal_", "cpu", normal_, meta=meta_infer.infer_unary)
 registry.register("bernoulli_", "cpu", bernoulli_, meta=meta_infer.infer_unary)

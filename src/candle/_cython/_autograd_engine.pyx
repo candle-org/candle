@@ -257,6 +257,12 @@ cdef class _GraphTask:
                 for g in grads:
                     if isinstance(g, Tensor):
                         grad_counts[id(g)] = grad_counts.get(id(g), 0) + 1
+            # output_nr is currently graph metadata only. Candle's multi-output
+            # custom Function path creates one Node per differentiable output,
+            # and that node's closure routes the incoming grad to the correct
+            # backward slot. If the engine is later changed to a single-node-
+            # per-function model like PyTorch, this loop must use _output_nr to
+            # index gradients into the predecessor's output slot.
             for (t, g), (next_fn, _output_nr) in zip(zip(node.inputs, grads), node.next_functions):
                 if g is None:
                     continue

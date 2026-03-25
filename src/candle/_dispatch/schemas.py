@@ -43,6 +43,27 @@ CORE_SCHEMA_OPS = (
     "mul_",
     "relu_",
     "zero_",
+    "abs_",
+    "neg_",
+    "exp_",
+    "log_",
+    "log2_",
+    "log10_",
+    "sqrt_",
+    "sin_",
+    "cos_",
+    "tan_",
+    "tanh_",
+    "sigmoid_",
+    "floor_",
+    "ceil_",
+    "round_",
+    "trunc_",
+    "reciprocal_",
+    "pow_",
+    "bitwise_and_",
+    "bitwise_or_",
+    "bitwise_xor_",
     "uniform_",
     "normal_",
     "fill_",
@@ -230,19 +251,40 @@ def register_schemas():
     registry.register_schema("randn", "randn(int[] size, *, Dtype? dtype=None, MemoryFormat? memory_format=None, Generator? generator=None) -> Tensor")
     registry.register_schema("rand", "rand(int[] size, *, Dtype? dtype=None, MemoryFormat? memory_format=None, Generator? generator=None) -> Tensor")
 
-    registry.register_schema("add_", "add_(Tensor(a!) self, Tensor other) -> Tensor")
-    registry.register_schema("mul_", "mul_(Tensor(a!) self, Tensor other) -> Tensor")
-    registry.register_schema("relu_", "relu_(Tensor(a!) self) -> Tensor")
-    registry.register_schema("zero_", "zero_(Tensor(a!) self) -> Tensor")
-    registry.register_schema("uniform_", "uniform_(Tensor(a!) self, float low=0.0, float high=1.0, *, Generator? generator=None) -> Tensor")
-    registry.register_schema("normal_", "normal_(Tensor(a!) self, float mean=0.0, float std=1.0, *, Generator? generator=None) -> Tensor")
-    registry.register_schema("fill_", "fill_(Tensor(a!) self, Scalar value) -> Tensor")
-    registry.register_schema("clamp_", "clamp_(Tensor(a!) self, Scalar? min=None, Scalar? max=None) -> Tensor")
-    registry.register_schema("copy_", "copy_(Tensor(a!) self, Tensor src) -> Tensor")
-    registry.register_schema("erfinv_", "erfinv_(Tensor(a!) self) -> Tensor")
-    registry.register_schema("sub_", "sub_(Tensor(a!) self, Tensor other) -> Tensor")
+    registry.register_schema("add_", "add_(Tensor(a!) self, Tensor other) -> Tensor(a)")
+    registry.register_schema("mul_", "mul_(Tensor(a!) self, Tensor other) -> Tensor(a)")
+    registry.register_schema("relu_", "relu_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("zero_", "zero_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("abs_", "abs_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("neg_", "neg_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("exp_", "exp_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("log_", "log_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("log2_", "log2_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("log10_", "log10_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("sqrt_", "sqrt_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("sin_", "sin_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("cos_", "cos_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("tan_", "tan_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("tanh_", "tanh_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("sigmoid_", "sigmoid_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("floor_", "floor_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("ceil_", "ceil_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("round_", "round_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("trunc_", "trunc_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("reciprocal_", "reciprocal_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("pow_", "pow_(Tensor(a!) self, Any exponent) -> Tensor(a)")
+    registry.register_schema("bitwise_and_", "bitwise_and_(Tensor(a!) self, Any other) -> Tensor(a)")
+    registry.register_schema("bitwise_or_", "bitwise_or_(Tensor(a!) self, Any other) -> Tensor(a)")
+    registry.register_schema("bitwise_xor_", "bitwise_xor_(Tensor(a!) self, Any other) -> Tensor(a)")
+    registry.register_schema("uniform_", "uniform_(Tensor(a!) self, float low=0.0, float high=1.0, *, Generator? generator=None) -> Tensor(a)")
+    registry.register_schema("normal_", "normal_(Tensor(a!) self, float mean=0.0, float std=1.0, *, Generator? generator=None) -> Tensor(a)")
+    registry.register_schema("fill_", "fill_(Tensor(a!) self, Scalar value) -> Tensor(a)")
+    registry.register_schema("clamp_", "clamp_(Tensor(a!) self, Scalar? min=None, Scalar? max=None) -> Tensor(a)")
+    registry.register_schema("copy_", "copy_(Tensor(a!) self, Tensor src) -> Tensor(a)")
+    registry.register_schema("erfinv_", "erfinv_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("sub_", "sub_(Tensor(a!) self, Tensor other) -> Tensor(a)")
     registry.register_schema("getitem", "getitem(Tensor self, Any key) -> Tensor")
-    registry.register_schema("setitem", "setitem(Tensor(a!) self, Any key, Any value) -> Tensor")
+    registry.register_schema("setitem", "setitem(Tensor(a!) self, Any key, Any value) -> Tensor(a)")
 
     _register_reduction_ops(("all", "any", "argmax", "argmin", "count_nonzero"))
     registry.register_error_overrides(

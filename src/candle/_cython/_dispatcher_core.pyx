@@ -140,9 +140,6 @@ cdef void _fast_bump_versions(object schema_obj, tuple args, dict kwargs):
     for param in params:
         if not param.mutates:
             continue
-        alias = getattr(param, "alias_set", None)
-        if alias is None or alias == "":
-            continue
         target = bound.get(param.name)
         if target is None:
             continue
@@ -155,9 +152,8 @@ cdef void _fast_bump_versions(object schema_obj, tuple args, dict kwargs):
         tid = id(target)
         if tid in seen:
             continue
-        # Prefer direct _version_value (TensorImpl), fall back to _version_counter
         try:
-            target._version_value += 1
+            target._bump_version()
         except AttributeError:
             counter = getattr(target, "_version_counter", None)
             if counter is not None:

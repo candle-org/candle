@@ -66,6 +66,38 @@ def _tangent_or_zero(tangent, like):
     return tangent
 
 
+def _unary_tangent(x, _tangents):
+    return _tangent_or_zero(_tangents[0], x)
+
+
+def _sum_jvp(x, *, _tangents, **kwargs):
+    tangent = _tangent_or_zero(_tangents[0], x)
+    dim = kwargs.get("dim")
+    keepdim = kwargs.get("keepdim", False)
+    if dim is None:
+        return tangent.sum()
+    return tangent.sum(dim=dim, keepdim=keepdim)
+
+
+def _mean_jvp(x, *, _tangents, **kwargs):
+    tangent = _tangent_or_zero(_tangents[0], x)
+    dim = kwargs.get("dim")
+    keepdim = kwargs.get("keepdim", False)
+    if dim is None:
+        return tangent.mean()
+    return tangent.mean(dim=dim, keepdim=keepdim)
+
+
+def _view_jvp(x, shape, *, _tangents):
+    tangent = _tangent_or_zero(_tangents[0], x)
+    return tangent.view(shape)
+
+
+def _reshape_jvp(x, shape, *, _tangents):
+    tangent = _tangent_or_zero(_tangents[0], x)
+    return tangent.reshape(shape)
+
+
 def register_jvp(op_name, fn):
     _JVP_RULES[op_name] = fn
 
@@ -169,13 +201,16 @@ register_jvp(
     lambda x, y, *, _tangents: _tangent_or_zero(_tangents[0], x) * y
     + x * _tangent_or_zero(_tangents[1], y),
 )
-def _sum_jvp(x, *, _tangents, **kwargs):
-    tangent = _tangent_or_zero(_tangents[0], x)
-    dim = kwargs.get("dim")
-    keepdim = kwargs.get("keepdim", False)
-    if dim is None:
-        return tangent.sum()
-    return tangent.sum(dim=dim, keepdim=keepdim)
-
-
 register_jvp("sum", _sum_jvp)
+register_jvp("neg", lambda x, *, _tangents: -_unary_tangent(x, _tangents))
+register_jvp("exp", lambda x, *, _tangents: _unary_tangent(x, _tangents) * x.exp())
+register_jvp("sin", lambda x, *, _tangents: _unary_tangent(x, _tangents) * x.cos())
+register_jvp("cos", lambda x, *, _tangents: -_unary_tangent(x, _tangents) * x.sin())
+register_jvp(
+    "tanh",
+    lambda x, *, _tangents: _unary_tangent(x, _tangents)
+    * (x._ones_like() - x.tanh() * x.tanh()),
+)
+register_jvp("mean", _mean_jvp)
+register_jvp("view", _view_jvp)
+register_jvp("reshape", _reshape_jvp)
