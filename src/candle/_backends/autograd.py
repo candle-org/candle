@@ -5505,13 +5505,13 @@ def _ctc_loss_backward(grad_output, saved_lp, targets, input_lengths, target_len
         # 'none' would need per-sample grad_output, handle below
 
     from .._storage import typed_storage_from_numpy
-    from .._tensor import Tensor as _Tensor
+    from .._cython._tensor_impl import cy_make_tensor_from_storage
     from .._dtype import to_numpy_dtype
 
     grad_np = grad_np.astype(to_numpy_dtype(lp_t.dtype))
     storage = typed_storage_from_numpy(grad_np, lp_t.dtype, device=lp_t.device)
     stride = tuple(_np.array(grad_np.strides) // grad_np.itemsize)
-    grad_input = _Tensor(storage, grad_np.shape, stride)
+    grad_input = cy_make_tensor_from_storage(storage, grad_np.shape, stride, 0, False)
 
     # Scale by upstream gradient
     with _grad_context(keyset):
