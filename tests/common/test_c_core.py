@@ -679,3 +679,50 @@ class TestRuntimeCoreBirthProtocol:
         ref_z = torch.zeros((2, 2), dtype=torch.float64)
         assert y._dtype_code == ref_y._dtype_code
         assert z._dtype_code == ref_z._dtype_code
+
+
+class TestRNGBirthConsistency:
+    """Random creation APIs must return tensors with the same metadata contract as deterministic creation."""
+
+    def test_rand_cpu_metadata_matches_empty(self):
+        import candle as torch
+        a = torch.rand((2, 2), dtype=torch.float32)
+        b = torch.empty((2, 2), dtype=torch.float32)
+        assert a._dtype_code == b._dtype_code
+        assert a._device_type == b._device_type
+        assert a._dispatch_keys == b._dispatch_keys
+        assert a._base is None and b._base is None
+
+    def test_randn_cpu_metadata_matches_zeros(self):
+        import candle as torch
+        a = torch.randn((2, 2), dtype=torch.float32)
+        b = torch.zeros((2, 2), dtype=torch.float32)
+        assert a._dtype_code == b._dtype_code
+        assert a._device_type == b._device_type
+        assert a._dispatch_keys == b._dispatch_keys
+
+    def test_randint_cpu_metadata_matches_full(self):
+        import candle as torch
+        a = torch.randint(0, 10, (2, 2), dtype=torch.int64)
+        b = torch.full((2, 2), 0, dtype=torch.int64)
+        assert a._dtype_code == b._dtype_code
+        assert a._device_type == b._device_type
+        assert a._dispatch_keys == b._dispatch_keys
+
+    def test_randperm_cpu_metadata_matches_arange(self):
+        import candle as torch
+        a = torch.randperm(8, dtype=torch.int64)
+        b = torch.arange(8, dtype=torch.int64)
+        assert a._dtype_code == b._dtype_code
+        assert a._device_type == b._device_type
+        assert a._dispatch_keys == b._dispatch_keys
+
+    def test_npu_rand_metadata_matches_empty(self):
+        import candle as torch
+        if not torch.npu.is_available():
+            return
+        a = torch.rand((2, 2), dtype=torch.float32, device="npu")
+        b = torch.empty((2, 2), dtype=torch.float32, device="npu")
+        assert a._dtype_code == b._dtype_code
+        assert a._device_type == b._device_type
+        assert a._dispatch_keys == b._dispatch_keys
