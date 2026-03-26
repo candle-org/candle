@@ -1012,7 +1012,8 @@ class PyTorchFileReader:
 
         arr = np.frombuffer(data, dtype=np_dtype, count=numel).copy()
         storage = typed_storage_from_numpy(arr, dtype, device="cpu")
-        return Tensor(storage, (numel,), (1,))
+        from candle._cython._tensor_impl import cy_make_tensor_from_storage
+        return cy_make_tensor_from_storage(storage, (numel,), (1,), 0, False)
 
     def serialization_id(self) -> str:
         return self._reader.serializationId()
