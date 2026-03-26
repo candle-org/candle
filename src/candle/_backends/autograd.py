@@ -5616,12 +5616,12 @@ def _special_sinc_backward(grad, _a, saved_a, keyset):
             (_np.cos(pi_x) * pi_x - _np.sin(pi_x)) / (pi * x_np * x_np)
         )
         from .._storage import typed_storage_from_numpy
-        from .._tensor import Tensor as _Tensor
+        from .._cython._tensor_impl import cy_make_tensor_from_storage
         from .._dtype import to_numpy_dtype
         deriv_np = deriv_np.astype(to_numpy_dtype(saved_a.dtype))
         storage = typed_storage_from_numpy(deriv_np, saved_a.dtype, device=saved_a.device)
         stride = tuple(_np.array(deriv_np.strides) // deriv_np.itemsize)
-        deriv = _Tensor(storage, deriv_np.shape, stride)
+        deriv = cy_make_tensor_from_storage(storage, deriv_np.shape, stride, 0, False)
         return (redispatch("mul", keyset, grad, deriv),)
 
 
