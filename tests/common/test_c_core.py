@@ -517,3 +517,16 @@ class TestCreationPathConsistency:
         assert a._dtype_code == b._dtype_code
         assert a._device_type == b._device_type
         assert a._dispatch_keys == b._dispatch_keys
+
+
+class TestDeterministicBirthProtocol:
+    def test_public_and_helper_deterministic_paths_share_metadata_contract(self):
+        import candle as torch
+        a = torch.empty((2,), dtype=torch.float32)
+        b = torch.zeros((2,), dtype=torch.float32)
+        c = torch.ones((2,), dtype=torch.float32)
+        d = torch.full((2,), 5.0, dtype=torch.float32)
+        assert a._dtype_code == b._dtype_code == c._dtype_code == d._dtype_code
+        assert a._device_type == b._device_type == c._device_type == d._device_type
+        assert a._dispatch_keys == b._dispatch_keys == c._dispatch_keys == d._dispatch_keys
+        assert a._base is b._base is c._base is d._base is None
