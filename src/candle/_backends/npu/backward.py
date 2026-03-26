@@ -22,8 +22,8 @@ def _unwrap_storage(tensor):
 
 
 def _wrap_tensor(storage, shape, stride):
-    from ..._tensor import Tensor
-    return Tensor(storage, shape, stride)
+    from ..._cython._tensor_impl import cy_make_tensor_from_storage
+    return cy_make_tensor_from_storage(storage, shape, stride, 0, False)
 
 
 def _dtype_itemsize(dtype):

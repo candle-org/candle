@@ -3,7 +3,6 @@ import numpy as np
 from ..._cython._tensor_impl import cy_make_tensor_from_storage
 from ..._dtype import to_numpy_dtype
 from ..._storage import meta_typed_storage_from_shape
-from ..._tensor import Tensor
 
 
 def _contiguous_stride(shape):
@@ -54,7 +53,7 @@ def linspace_create_meta(start, end, steps, dtype=None, device=None):
     arr = np.linspace(start, end, steps, dtype=to_numpy_dtype(dtype))
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     storage = meta_typed_storage_from_shape(arr.shape, dtype, device=device)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def full_create_meta(shape, fill_value, dtype=None, device=None):
@@ -68,7 +67,7 @@ def logspace_create_meta(start, end, steps, dtype=None, device=None):
     arr = np.logspace(start, end, steps, dtype=to_numpy_dtype(dtype))
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     storage = meta_typed_storage_from_shape(arr.shape, dtype, device=device)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def eye_create_meta(n, m=None, dtype=None, device=None, out=None):
@@ -79,14 +78,14 @@ def eye_create_meta(n, m=None, dtype=None, device=None, out=None):
     arr = np.eye(n, m, dtype=to_numpy_dtype(dtype))
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     storage = meta_typed_storage_from_shape(arr.shape, dtype, device=device)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def range_create_meta(start, end, step=1, dtype=None, device=None):
     arr = np.arange(start, end + step, step, dtype=to_numpy_dtype(dtype))
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     storage = meta_typed_storage_from_shape(arr.shape, dtype, device=device)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def randn_create_meta(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
@@ -95,7 +94,7 @@ def randn_create_meta(shape, dtype=None, device=None, requires_grad=False, memor
     shape = tuple(shape)
     stride = _contiguous_stride(shape)
     storage = meta_typed_storage_from_shape(shape, dtype, device=device)
-    return Tensor(storage, shape, stride, requires_grad=requires_grad)
+    return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
 __all__ = [

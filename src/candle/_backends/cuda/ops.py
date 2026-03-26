@@ -2,19 +2,20 @@ import numpy as np
 
 from ..._storage import cuda_typed_storage_from_numpy, cuda_typed_storage_to_numpy
 from ..._tensor import Tensor
+from ..._cython._tensor_impl import cy_make_tensor_from_storage
 from . import state as cuda_state
 
 
 def _from_numpy(arr, dtype, device):
     storage = cuda_typed_storage_from_numpy(arr, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def _from_numpy_on_current_stream(arr, dtype, device, stream=None):
     storage = cuda_typed_storage_from_numpy(arr, dtype, device=device, stream=stream)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def add(a, b):

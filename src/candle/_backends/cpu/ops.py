@@ -18,6 +18,7 @@ from ..._dtype import from_numpy_dtype
 from ..._dtype import to_numpy_dtype
 from ..._storage import typed_storage_from_numpy
 from ..._tensor import Tensor, _StrideTuple
+from ..._cython._tensor_impl import cy_make_tensor_from_storage
 
 
 def _to_numpy(t):
@@ -33,7 +34,7 @@ def _normalize_tensor_sequence_args(tensors):
 def _from_numpy(arr, dtype, device):
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def _dtype_of(value):
