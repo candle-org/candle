@@ -18,7 +18,7 @@ from ..._dtype import from_numpy_dtype
 from ..._dtype import to_numpy_dtype
 from ..._storage import typed_storage_from_numpy
 from ..._tensor import Tensor, _StrideTuple
-from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=no-name-in-module
+from ..._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=no-name-in-module
 
 
 def _to_numpy(t):
@@ -1928,7 +1928,7 @@ def _basic_getitem_view(tensor, key):
     if any(s < 0 for s in out_stride):
         return None
 
-    return Tensor(tensor.storage(), tuple(out_shape), tuple(out_stride), out_offset)
+    return cy_make_view_tensor(tensor, tensor.storage(), tuple(out_shape), tuple(out_stride), out_offset)
 
 
 def getitem(tensor, key):
@@ -2181,7 +2181,7 @@ def expand(a, sizes):
             raise RuntimeError(
                 f"expand: size {sz} not compatible with dim size {src_shape[i]}"
             )
-    return Tensor(a.storage(), tuple(out_shape), tuple(out_stride), a.offset)
+    return cy_make_view_tensor(a, a.storage(), tuple(out_shape), tuple(out_stride), a.offset)
 
 
 def sum_to_size(a, size):

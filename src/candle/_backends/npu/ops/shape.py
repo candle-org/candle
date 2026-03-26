@@ -15,6 +15,8 @@ from ._helpers import (
     aclnn, npu_runtime, npu_state, ops_soc,
 )
 from ...common import view as view_backend
+from ...._tensor import Tensor
+from ...._cython._tensor_impl import cy_make_view_tensor  # pylint: disable=no-name-in-module
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +512,6 @@ def _npu_basic_getitem_view(tensor, key):
     Returns a Tensor sharing the same storage, or None if we need to fall back
     to a copy (e.g. negative-step slices that require aclnnSlice).
     """
-    from ...._tensor import Tensor
     import numpy as np
 
     keys = list(key) if isinstance(key, tuple) else [key]
@@ -591,7 +592,7 @@ def _npu_basic_getitem_view(tensor, key):
     out_shape = tuple(out_shape)
     out_stride = tuple(out_stride)
 
-    return Tensor(tensor.storage(), out_shape, out_stride, out_offset)
+    return cy_make_view_tensor(tensor, tensor.storage(), out_shape, out_stride, out_offset)
 
 
 def _npu_basic_getitem_with_strided_slices(tensor, keys):
@@ -600,7 +601,6 @@ def _npu_basic_getitem_with_strided_slices(tensor, keys):
     Process left-to-right: step==1 slices and ints become view ops;
     step!=1 slices use aclnnSlice which produces a contiguous copy.
     """
-    from ...._tensor import Tensor
 
     cur = tensor
     in_dim = 0
@@ -650,36 +650,32 @@ def _npu_basic_getitem_with_strided_slices(tensor, keys):
 
 def _npu_select_view(tensor, dim, idx):
     """Select a single element along *dim* — returns a view with dim removed."""
-    from ...._tensor import Tensor
     new_offset = tensor.offset + idx * tensor.stride[dim]
     new_shape = tensor.shape[:dim] + tensor.shape[dim + 1:]
     new_stride = tensor.stride[:dim] + tensor.stride[dim + 1:]
-    return Tensor(tensor.storage(), new_shape, new_stride, new_offset)
+    return cy_make_view_tensor(tensor, tensor.storage(), new_shape, new_stride, new_offset)
 
 
 def _npu_slice_view(tensor, dim, start, stop):
     """Step-1 slice as a view — adjust offset and shape[dim]."""
-    from ...._tensor import Tensor
     length = max(0, stop - start)
     new_offset = tensor.offset + start * tensor.stride[dim]
     new_shape = tensor.shape[:dim] + (length,) + tensor.shape[dim + 1:]
     new_stride = tensor.stride  # stride unchanged for step==1
-    return Tensor(tensor.storage(), new_shape, new_stride, new_offset)
+    return cy_make_view_tensor(tensor, tensor.storage(), new_shape, new_stride, new_offset)
 
 
 def _npu_strided_slice_view(tensor, dim, start, stop, step):
     """Strided slice as a view — adjust offset, shape, and stride. step must be > 0."""
-    from ...._tensor import Tensor
     length = len(range(start, stop, step))
     new_offset = tensor.offset + start * tensor.stride[dim]
     new_shape = tensor.shape[:dim] + (length,) + tensor.shape[dim + 1:]
     new_stride = tensor.stride[:dim] + (tensor.stride[dim] * step,) + tensor.stride[dim + 1:]
-    return Tensor(tensor.storage(), new_shape, new_stride, new_offset)
+    return cy_make_view_tensor(tensor, tensor.storage(), new_shape, new_stride, new_offset)
 
 
 def _npu_unsqueeze_view(tensor, dim):
     """Insert a size-1 dimension at *dim* — pure view."""
-    from ...._tensor import Tensor
     new_shape = tensor.shape[:dim] + (1,) + tensor.shape[dim:]
     # Compute a stride that keeps the tensor contiguous-looking
     if dim < len(tensor.stride):
@@ -689,7 +685,7 @@ def _npu_unsqueeze_view(tensor, dim):
     else:
         new_s = 1
     new_stride = tensor.stride[:dim] + (new_s,) + tensor.stride[dim:]
-    return Tensor(tensor.storage(), new_shape, new_stride, tensor.offset)
+    return cy_make_view_tensor(tensor, tensor.storage(), new_shape, new_stride, tensor.offset)
 
 
 def _npu_aclnn_slice(tensor, dim, start, stop, step):
@@ -793,7 +789,6 @@ def _npu_assign_to_view(view, value):
 
 def _is_advanced_index(item):
     """True if *item* is a Tensor, list, or other advanced index."""
-    from ...._tensor import Tensor
     if isinstance(item, Tensor):
         return True
     if isinstance(item, (list, tuple)):
@@ -804,7 +799,6 @@ def _is_advanced_index(item):
 
 def _to_npu_index_tensor(key, device, dtype_hint=None):
     """Convert a Python int/list/Tensor to an NPU int64 tensor for indexing."""
-    from ...._tensor import Tensor
     from ..creation import tensor_create
     import numpy as np
 
@@ -896,7 +890,6 @@ def _npu_advanced_getitem(tensor, key):
     Phase 1: Process basic indices (int, slice, None, Ellipsis) via views.
     Phase 2: Process advanced indices (Tensor, list, bool) via aclnnIndex.
     """
-    from ...._tensor import Tensor
 
     keys = list(key) if isinstance(key, tuple) else [key]
 
@@ -1130,7 +1123,6 @@ def _npu_advanced_getitem(tensor, key):
 
 def _npu_expand(tensor, target_shape):
     """Expand tensor to target shape (broadcast — no data copy, just stride manipulation)."""
-    from ...._tensor import Tensor
 
     src_shape = tensor.shape
     src_stride = tensor.stride
@@ -1149,12 +1141,11 @@ def _npu_expand(tensor, target_shape):
         else:
             raise RuntimeError(f"Cannot expand dim {i} from {ps} to {ts}")
 
-    return Tensor(tensor.storage(), tuple(target_shape), tuple(new_stride), tensor.offset)
+    return cy_make_view_tensor(tensor, tensor.storage(), tuple(target_shape), tuple(new_stride), tensor.offset)
 
 
 def _npu_advanced_setitem(tensor, key, value):
     """Full setitem for advanced indexing using aclnnIndexPutImpl."""
-    from ...._tensor import Tensor
     import numpy as np
 
     keys = list(key) if isinstance(key, tuple) else [key]
@@ -2500,7 +2491,6 @@ def column_stack(tensors):
 
 def getitem(tensor, key):
     """NPU tensor indexing — full support for basic and advanced indexing."""
-    from ...._tensor import Tensor
 
     if not isinstance(key, tuple):
         key = (key,)
@@ -2699,17 +2689,15 @@ def masked_select(a, mask):
 
 def narrow(a, dim, start, length):
     """Narrow: return a view of tensor along dim from start to start+length."""
-    from ...._tensor import Tensor
     d = dim if dim >= 0 else dim + a.dim()
     new_shape = list(a.shape)
     new_shape[d] = int(length)
     new_offset = a.offset + int(start) * a.stride[d]
-    return Tensor(a.storage(), tuple(new_shape), a.stride, new_offset)
+    return cy_make_view_tensor(a, a.storage(), tuple(new_shape), a.stride, new_offset)
 
 
 def select(a, dim, index):
     """Select: remove dim by indexing a single element along it (view op)."""
-    from ...._tensor import Tensor
     d = dim if dim >= 0 else dim + a.dim()
     idx = int(index)
     if idx < 0:
@@ -2719,12 +2707,11 @@ def select(a, dim, index):
     new_stride = list(a.stride)
     new_offset = a.offset + idx * a.stride[d]
     del new_stride[d]
-    return Tensor(a.storage(), tuple(new_shape), tuple(new_stride), new_offset)
+    return cy_make_view_tensor(a, a.storage(), tuple(new_shape), tuple(new_stride), new_offset)
 
 
 def expand(a, sizes):
     """Expand: broadcast tensor to larger sizes (view op, no copy)."""
-    from ...._tensor import Tensor
     sizes = tuple(sizes)
     ndiff = len(sizes) - a.dim()
     if ndiff < 0:
@@ -2747,7 +2734,7 @@ def expand(a, sizes):
             raise RuntimeError(
                 f"expand: size {sz} not compatible with dim size {src_shape[i]}"
             )
-    return Tensor(a.storage(), tuple(out_shape), tuple(out_stride), a.offset)
+    return cy_make_view_tensor(a, a.storage(), tuple(out_shape), tuple(out_stride), a.offset)
 
 
 def masked_fill(a, mask, value):
@@ -2858,7 +2845,6 @@ def index_add_(a, dim, index, source, alpha=1.0):
 
 def scatter_(a, dim, index, src):
     """In-place scatter_ — delegates to existing scatter with self as out."""
-    from ...._tensor import Tensor
     d = dim if dim >= 0 else dim + a.dim()
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
