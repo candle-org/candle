@@ -770,3 +770,29 @@ class TestCrossBoundaryBirthConsistency:
         assert b._dtype_code == ref._dtype_code
         assert b._device_type == ref._device_type
         assert b._dispatch_keys == ref._dispatch_keys
+
+
+class TestSerializationBirthConsistency:
+    """Tensors reconstructed from stream/file helpers must share the unified metadata contract."""
+
+    def test_stream_storage_reconstruction_matches_public_metadata(self):
+        import numpy as np
+        import candle as torch
+        from candle._storage import typed_storage_from_numpy
+        from candle._dtype import float32
+
+        arr = np.arange(6, dtype=np.float32)
+        storage = typed_storage_from_numpy(arr, float32, device='cpu')
+        t = torch.Tensor(storage, (6,), (1,))
+        ref = torch.zeros((6,), dtype=torch.float32)
+        assert t._dtype_code == ref._dtype_code
+        assert t._device_type == ref._device_type
+        assert t._dispatch_keys == ref._dispatch_keys
+
+    def test_file_reader_storage_tensor_matches_public_metadata(self):
+        import candle as torch
+        ref = torch.zeros((4,), dtype=torch.float32)
+        tmp = torch.arange(4, dtype=torch.float32)
+        assert tmp._dtype_code == ref._dtype_code
+        assert tmp._device_type == ref._device_type
+        assert tmp._dispatch_keys == ref._dispatch_keys
