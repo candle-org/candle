@@ -6745,12 +6745,12 @@ def _linalg_eigvalsh_backward(grad, _a, saved_a, keyset, args, kwargs):
         grad_np = grad._numpy_view().astype(_np.float64)
         grad_a_np = V_np @ (_np.eye(L_np.shape[-1]) * grad_np[..., None]) @ V_np.swapaxes(-2, -1)
         from .._storage import typed_storage_from_numpy
-        from .._tensor import Tensor as _Tensor
+        from .._cython._tensor_impl import cy_make_tensor_from_storage
         from .._dtype import to_numpy_dtype
         grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
         storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
         stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
-        return (_Tensor(storage, grad_a_np.shape, stride),)
+        return (cy_make_tensor_from_storage(storage, grad_a_np.shape, stride, 0, False),)
 
 
 def _autograd_linalg_solve_triangular(name):
@@ -6837,12 +6837,12 @@ def _linalg_svdvals_backward(grad, _a, saved_a, keyset):
             # Batched
             grad_a_np = U_np @ (_np.eye(k) * grad_np[..., None]) @ Vh_np
         from .._storage import typed_storage_from_numpy
-        from .._tensor import Tensor as _Tensor
+        from .._cython._tensor_impl import cy_make_tensor_from_storage
         from .._dtype import to_numpy_dtype
         grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
         storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
         stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
-        return (_Tensor(storage, grad_a_np.shape, stride),)
+        return (cy_make_tensor_from_storage(storage, grad_a_np.shape, stride, 0, False),)
 
 
 def _linalg_tensorinv_backward(grad, _a, saved_a, keyset, args, kwargs):
