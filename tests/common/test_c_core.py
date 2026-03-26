@@ -489,12 +489,31 @@ class TestCreationPathConsistency:
         assert a._device_type == b._device_type
         assert a._dispatch_keys == b._dispatch_keys
 
-    def test_npu_arange_metadata_consistent_with_zeros(self):
+
+    def test_mps_empty_and_ones_metadata_consistent(self):
         import candle as torch
-        if not torch.npu.is_available():
+        if not hasattr(torch.backends, "mps") or not torch.backends.mps.is_available():
             return
-        a = torch.arange(4, dtype=torch.int64, device="npu")
-        b = torch.zeros((4,), dtype=torch.int64, device="npu")
-        assert a._dtype_code == b._dtype_code == 5
+        a = torch.empty((2, 2), dtype=torch.float32, device="mps")
+        b = torch.ones((2, 2), dtype=torch.float32, device="mps")
+        assert a._dtype_code == b._dtype_code
+        assert a._device_type == b._device_type
+        assert a._dispatch_keys == b._dispatch_keys
+
+    def test_cuda_empty_and_zeros_metadata_consistent(self):
+        import candle as torch
+        if not hasattr(torch, "cuda") or not torch.cuda.is_available():
+            return
+        a = torch.empty((2, 2), dtype=torch.float32, device="cuda")
+        b = torch.zeros((2, 2), dtype=torch.float32, device="cuda")
+        assert a._dtype_code == b._dtype_code
+        assert a._device_type == b._device_type
+        assert a._dispatch_keys == b._dispatch_keys
+
+    def test_meta_empty_and_zeros_metadata_consistent(self):
+        import candle as torch
+        a = torch.empty((2, 2), dtype=torch.float32, device="meta")
+        b = torch.zeros((2, 2), dtype=torch.float32, device="meta")
+        assert a._dtype_code == b._dtype_code
         assert a._device_type == b._device_type
         assert a._dispatch_keys == b._dispatch_keys
