@@ -6460,12 +6460,12 @@ def _autograd_linalg_svd(name):
                 # grad_A = U @ diag(grad_S) @ Vh
                 grad_a_np = U_np @ (_np.eye(S_np.shape[-1]) * grad_np[..., :S_np.shape[-1], :S_np.shape[-1]].diagonal(axis1=-2, axis2=-1)[..., None]) @ Vh_np if grad_np.ndim >= 2 else _np.zeros_like(a_np)
                 from .._storage import typed_storage_from_numpy
-                from .._tensor import Tensor as _Tensor
+                from .._cython._tensor_impl import cy_make_tensor_from_storage
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
-                return (_Tensor(storage, grad_a_np.shape, stride),)
+                return (cy_make_tensor_from_storage(storage, grad_a_np.shape, stride, 0, False),)
 
             node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
             annotate_node_creation(node)
@@ -6507,12 +6507,12 @@ def _autograd_linalg_eigh(name):
                 grad_a_np = V_np @ (_np.eye(L_np.shape[-1]) * grad_np[..., None]) @ V_np.swapaxes(-2, -1) if grad_np.ndim >= 1 else _np.zeros_like(a_np)
 
                 from .._storage import typed_storage_from_numpy
-                from .._tensor import Tensor as _Tensor
+                from .._cython._tensor_impl import cy_make_tensor_from_storage
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
-                return (_Tensor(storage, grad_a_np.shape, stride),)
+                return (cy_make_tensor_from_storage(storage, grad_a_np.shape, stride, 0, False),)
 
             node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
             annotate_node_creation(node)
@@ -6607,12 +6607,12 @@ def _autograd_linalg_lu(name):
                 # Simplified: return gradient through identity-like
                 grad_a_np = grad_np.copy() if grad_np.shape == a_np.shape else _np.zeros_like(a_np)
                 from .._storage import typed_storage_from_numpy
-                from .._tensor import Tensor as _Tensor
+                from .._cython._tensor_impl import cy_make_tensor_from_storage
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
-                return (_Tensor(storage, grad_a_np.shape, stride),)
+                return (cy_make_tensor_from_storage(storage, grad_a_np.shape, stride, 0, False),)
 
             node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
             annotate_node_creation(node)
@@ -6645,12 +6645,12 @@ def _autograd_linalg_lu_factor(name):
                 grad_np = grad._numpy_view().astype(_np.float64)
                 grad_a_np = grad_np.copy() if grad_np.shape == a_np.shape else _np.zeros_like(a_np)
                 from .._storage import typed_storage_from_numpy
-                from .._tensor import Tensor as _Tensor
+                from .._cython._tensor_impl import cy_make_tensor_from_storage
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
-                return (_Tensor(storage, grad_a_np.shape, stride),)
+                return (cy_make_tensor_from_storage(storage, grad_a_np.shape, stride, 0, False),)
 
             node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
             annotate_node_creation(node)
@@ -6708,12 +6708,12 @@ def _autograd_linalg_eig(name):
                 a_np = saved_a._numpy_view()
                 grad_a_np = _np.zeros_like(a_np)
                 from .._storage import typed_storage_from_numpy
-                from .._tensor import Tensor as _Tensor
+                from .._cython._tensor_impl import cy_make_tensor_from_storage
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
-                return (_Tensor(storage, grad_a_np.shape, stride),)
+                return (cy_make_tensor_from_storage(storage, grad_a_np.shape, stride, 0, False),)
 
             node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
             annotate_node_creation(node)
