@@ -1,5 +1,6 @@
 import numpy as np
 
+from ._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor
 from ._storage import (
     Storage,
     empty_cpu_typed_storage,
@@ -441,7 +442,7 @@ class Tensor(_TensorBase):
                 numel *= s
             arr = np.empty(numel, dtype=to_numpy_dtype(dt))
             storage = typed_storage_from_numpy(arr, dt, device=dev)
-            return Tensor(storage, tuple(size), tuple(stride))
+            return cy_make_tensor_from_storage(storage, tuple(size), tuple(stride), 0, requires_grad)
         else:
             from ._creation import empty
             t = empty(size, dtype=dt, device=dev)
@@ -450,17 +451,16 @@ class Tensor(_TensorBase):
     def as_strided(self, size, stride, storage_offset=None):
         """Create a view of the tensor with given size, stride, and storage_offset."""
         offset = storage_offset if storage_offset is not None else self.offset
-        return Tensor(self._storage, tuple(size), tuple(stride), offset=offset,
-                      requires_grad=self.requires_grad)
+        return cy_make_view_tensor(self, self._storage, tuple(size), tuple(stride), offset)
 
     def _ones_like(self):
         if self.device.type == "meta":
             storage = meta_typed_storage_from_shape(self.shape, self.dtype, device=self.device)
-            return Tensor(storage, self.shape, self.stride)
+            return cy_make_tensor_from_storage(storage, self.shape, self.stride, 0, False)
         arr = np.ones(self.shape, dtype=to_numpy_dtype(self.dtype))
         storage = typed_storage_from_numpy(arr, self.dtype, device=self.device if self.device.type == "cpu" else None)
         stride = tuple(np.array(arr.strides) // arr.itemsize)
-        tensor = Tensor(storage, arr.shape, stride)
+        tensor = cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
         if self.device.type != "cpu":
             return tensor.to(self.device)
         return tensor
@@ -511,7 +511,7 @@ class Tensor(_TensorBase):
         if self.is_pinned():
             return self
         storage = pinned_cpu_typed_storage_from_numpy(self._numpy_view(), self.dtype, device=self.device)
-        return Tensor(storage, self.shape, self.stride, self.offset, self.requires_grad)
+        return cy_make_tensor_from_storage(storage, self.shape, self.stride, self.offset, self.requires_grad)
 
     def is_pinned(self):
         return self._storage.is_pinned()
@@ -526,7 +526,7 @@ class Tensor(_TensorBase):
         return self
 
     def detach(self):
-        out = Tensor(self._storage, self.shape, self.stride, self.offset, requires_grad=False)
+        out = cy_make_tensor_from_storage(self._storage, self.shape, self.stride, self.offset, False)
         out.grad_fn = None
         out.grad = None
         out._pending = self._pending
@@ -956,7 +956,7 @@ class Tensor(_TensorBase):
                 arr = arr.astype(target_np)
             storage = typed_storage_from_numpy(arr, dtype, device=self.device)
             stride = tuple(np.array(arr.strides) // arr.itemsize)
-            return Tensor(storage, arr.shape, stride)
+            return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
         elif self.device.type == "npu":
             from ._backends.npu.ops._helpers import _cast_tensor_dtype
             return _cast_tensor_dtype(self, dtype)
@@ -976,10 +976,10 @@ class Tensor(_TensorBase):
                 np.ascontiguousarray(arr), dtype, device=self.device
             )
             stride = tuple(np.array(arr.strides) // arr.itemsize) if arr.ndim > 0 else ()
-            return Tensor(storage, arr.shape, stride)
+            return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
         elif self.device.type == "meta":
             storage = meta_typed_storage_from_shape(self.shape, dtype, device=self.device)
-            return Tensor(storage, self.shape, _compute_strides(self.shape))
+            return cy_make_tensor_from_storage(storage, self.shape, _compute_strides(self.shape), 0, False)
         else:
             raise RuntimeError(
                 f"dtype conversion not yet supported on device {self.device.type}"
