@@ -1,6 +1,6 @@
 import numpy as np
 
-from ..._cython._tensor_impl import cy_make_tensor_from_storage
+from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=no-name-in-module
 from ..._dtype import to_numpy_dtype
 from ..._storage import meta_typed_storage_from_shape
 

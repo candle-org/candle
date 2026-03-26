@@ -2,7 +2,7 @@ import numpy as np
 
 from ..._storage import cuda_typed_storage_from_numpy, cuda_typed_storage_to_numpy
 from ..._tensor import Tensor
-from ..._cython._tensor_impl import cy_make_tensor_from_storage
+from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=no-name-in-module
 from . import state as cuda_state
 
 

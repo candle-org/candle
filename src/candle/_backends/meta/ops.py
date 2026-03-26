@@ -5,7 +5,7 @@ from ..._dtype import int64 as int64_dtype
 from ..._dtype import to_numpy_dtype
 from ..._device import device as Device
 from ..._storage import meta_typed_storage_from_shape
-from ..._cython._tensor_impl import cy_make_tensor_from_storage
+from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=no-name-in-module
 
 
 def _contiguous_stride(shape):
