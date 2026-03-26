@@ -533,6 +533,17 @@ class TestHelperAndGradBirthConsistency:
         assert b._device_type == ref._device_type
         assert b._dispatch_keys == ref._dispatch_keys
 
+    def test_reduce_grad_cpu_birth_matches_public_metadata(self):
+        import candle as torch
+        from candle.autograd.utils import reduce_grad
+
+        grad = torch.ones((2, 2), dtype=torch.float32)
+        reduced = reduce_grad(grad, (1, 2))
+        ref = torch.zeros((1, 2), dtype=torch.float32)
+        assert reduced._dtype_code == ref._dtype_code
+        assert reduced._device_type == ref._device_type
+        assert reduced._dispatch_keys == ref._dispatch_keys
+
     def test_autograd_grad_tensor_has_consistent_metadata(self):
         import candle as torch
         x = torch.ones((2, 2), dtype=torch.float32)
