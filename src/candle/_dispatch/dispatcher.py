@@ -251,11 +251,11 @@ class _FunctionalizePendingOp:
 
 
 def _pending_tensor_from_spec(spec, device):
+    from .._cython._tensor_impl import cy_make_tensor_from_storage
     from .._storage import PendingStorage
-    from .._tensor import Tensor
 
     storage = PendingStorage(spec.shape, spec.dtype, device)
-    return Tensor(storage, spec.shape, spec.stride, spec.offset)
+    return cy_make_tensor_from_storage(storage, spec.shape, spec.stride, spec.offset, False)
 
 
 def _pending_from_meta(meta, device):
