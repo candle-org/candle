@@ -519,6 +519,34 @@ class TestCreationPathConsistency:
         assert a._dispatch_keys == b._dispatch_keys
 
 
+
+
+class TestHelperAndGradBirthConsistency:
+    """Helper-born and grad-born tensors must share the unified metadata contract."""
+
+    def test_cpu_convert_like_birth_matches_public_tensor_metadata(self):
+        import candle as torch
+        a = torch.ones((2, 2), dtype=torch.float32)
+        b = a.to(dtype=torch.float64)
+        ref = torch.zeros((2, 2), dtype=torch.float64)
+        assert b._dtype_code == ref._dtype_code
+        assert b._device_type == ref._device_type
+        assert b._dispatch_keys == ref._dispatch_keys
+
+    def test_autograd_grad_tensor_has_consistent_metadata(self):
+        import candle as torch
+        x = torch.ones((2, 2), dtype=torch.float32)
+        x.requires_grad_(True)
+        y = (x * 2).sum()
+        y.backward()
+        g = x.grad
+        ref = torch.zeros((2, 2), dtype=torch.float32)
+        assert g is not None
+        assert g._dtype_code == ref._dtype_code
+        assert g._device_type == ref._device_type
+        assert g._dispatch_keys == ref._dispatch_keys
+
+
 class TestDeterministicBirthProtocol:
     def test_public_and_helper_deterministic_paths_share_metadata_contract(self):
         import candle as torch
