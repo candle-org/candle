@@ -601,3 +601,34 @@ class TestDeterministicBirthProtocol:
         assert a._device_type == b._device_type == c._device_type == d._device_type
         assert a._dispatch_keys == b._dispatch_keys == c._dispatch_keys == d._dispatch_keys
         assert a._base is b._base is c._base is d._base is None
+
+
+class TestMultiOutputBackwardBirthConsistency:
+    """Multi-output backward grad tensors must share the unified metadata contract."""
+
+    def test_binary_op_backward_both_grads_match_public_metadata(self):
+        import candle as torch
+        x = torch.ones((2, 2), dtype=torch.float32)
+        y = torch.ones((2, 2), dtype=torch.float32)
+        x.requires_grad_(True)
+        y.requires_grad_(True)
+        z = (x * y).sum()
+        z.backward()
+        ref = torch.zeros((2, 2), dtype=torch.float32)
+        for g in (x.grad, y.grad):
+            assert g is not None
+            assert g._dtype_code == ref._dtype_code
+            assert g._device_type == ref._device_type
+            assert g._dispatch_keys == ref._dispatch_keys
+
+    def test_single_slot_multi_output_backward_metadata(self):
+        import candle as torch
+        x = torch.ones((2, 2), dtype=torch.float32)
+        x.requires_grad_(True)
+        y = x.sum()
+        y.backward()
+        ref = torch.zeros((2, 2), dtype=torch.float32)
+        assert x.grad is not None
+        assert x.grad._dtype_code == ref._dtype_code
+        assert x.grad._device_type == ref._device_type
+        assert x.grad._dispatch_keys == ref._dispatch_keys
