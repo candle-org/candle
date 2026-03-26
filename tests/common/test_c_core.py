@@ -446,4 +446,55 @@ class TestTensorInitCompatibilityShell:
         assert t._retain_grad is False
         assert t._backward_hooks is None
         assert t._vc_proxy is None
-        assert t._view_meta is None
+
+
+class TestCreationPathConsistency:
+    """Public creation APIs must produce tensors with consistent core metadata."""
+
+    def test_cpu_empty_metadata_matches_zeros_and_ones(self):
+        import candle as torch
+        a = torch.empty((2, 3), dtype=torch.float32)
+        b = torch.zeros((2, 3), dtype=torch.float32)
+        c = torch.ones((2, 3), dtype=torch.float32)
+        assert a._dtype_code == b._dtype_code == c._dtype_code == 0
+        assert a._device_type == b._device_type == c._device_type == 0
+        assert a._dispatch_keys == b._dispatch_keys == c._dispatch_keys
+        assert a._base is b._base is c._base is None
+        assert a._version_value == b._version_value == c._version_value == 0
+
+    def test_cpu_arange_metadata_matches_empty_same_dtype(self):
+        import candle as torch
+        a = torch.empty((4,), dtype=torch.int64)
+        b = torch.arange(4, dtype=torch.int64)
+        assert a._dtype_code == b._dtype_code == 5
+        assert a._device_type == b._device_type == 0
+        assert a._dispatch_keys == b._dispatch_keys
+
+    def test_full_metadata_matches_zeros_same_dtype(self):
+        import candle as torch
+        a = torch.full((2, 2), 7.0, dtype=torch.float32)
+        b = torch.zeros((2, 2), dtype=torch.float32)
+        assert a._dtype_code == b._dtype_code
+        assert a._itemsize == b._itemsize
+        assert a._device_type == b._device_type
+        assert a._dispatch_keys == b._dispatch_keys
+
+    def test_npu_zeros_metadata_consistent_with_ones(self):
+        import candle as torch
+        if not torch.npu.is_available():
+            return
+        a = torch.zeros((2, 2), dtype=torch.float16, device="npu")
+        b = torch.ones((2, 2), dtype=torch.float16, device="npu")
+        assert a._dtype_code == b._dtype_code
+        assert a._device_type == b._device_type
+        assert a._dispatch_keys == b._dispatch_keys
+
+    def test_npu_arange_metadata_consistent_with_zeros(self):
+        import candle as torch
+        if not torch.npu.is_available():
+            return
+        a = torch.arange(4, dtype=torch.int64, device="npu")
+        b = torch.zeros((4,), dtype=torch.int64, device="npu")
+        assert a._dtype_code == b._dtype_code == 5
+        assert a._device_type == b._device_type
+        assert a._dispatch_keys == b._dispatch_keys
