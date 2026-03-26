@@ -558,6 +558,38 @@ class TestHelperAndGradBirthConsistency:
         assert g._dispatch_keys == ref._dispatch_keys
 
 
+
+
+class TestAutogradResidualBirthPatterns:
+    """Residual autograd-born tensors must share the unified metadata contract."""
+
+    def test_backward_tuple_single_grad_birth_matches_public_metadata(self):
+        import candle as torch
+        x = torch.ones((2, 2), dtype=torch.float32)
+        x.requires_grad_(True)
+        y = (x * x).sum()
+        y.backward()
+        g = x.grad
+        ref = torch.zeros((2, 2), dtype=torch.float32)
+        assert g is not None
+        assert g._dtype_code == ref._dtype_code
+        assert g._device_type == ref._device_type
+        assert g._dispatch_keys == ref._dispatch_keys
+
+    def test_backward_deriv_tensor_birth_matches_public_metadata(self):
+        import candle as torch
+        x = torch.ones((2, 2), dtype=torch.float32)
+        x.requires_grad_(True)
+        y = torch.special.sinc(x).sum()
+        y.backward()
+        g = x.grad
+        ref = torch.zeros((2, 2), dtype=torch.float32)
+        assert g is not None
+        assert g._dtype_code == ref._dtype_code
+        assert g._device_type == ref._device_type
+        assert g._dispatch_keys == ref._dispatch_keys
+
+
 class TestDeterministicBirthProtocol:
     def test_public_and_helper_deterministic_paths_share_metadata_contract(self):
         import candle as torch
