@@ -294,12 +294,12 @@ def _as_strided_scatter_backward(grad, a, src, _saved_a, _saved_src, keyset, arg
         base_strided[...] = grad_strided
         grad_src = np.ascontiguousarray(grad_strided)
         from .._storage import typed_storage_from_numpy
-        from .._tensor import Tensor
+        from .._cython._tensor_impl import cy_make_tensor_from_storage
         from .._dtype import from_numpy_dtype
         dtype_obj = from_numpy_dtype(grad_src.dtype)
         storage = typed_storage_from_numpy(grad_src, dtype_obj, device=grad.device)
         stride_tuple = tuple(int(s) // int(grad_src.itemsize) for s in grad_src.strides)
-        grad_src_tensor = Tensor(storage, tuple(grad_src.shape), stride_tuple)
+        grad_src_tensor = cy_make_tensor_from_storage(storage, tuple(grad_src.shape), stride_tuple, 0, False)
     return (base_grad, grad_src_tensor)
 
 
@@ -6092,12 +6092,12 @@ def _linalg_matrix_norm_backward(grad, _a, saved_a, keyset, args, kwargs):
             # For other norms, use numerical gradient
             deriv_np = _np.ones_like(saved_a._numpy_view())
             from .._storage import typed_storage_from_numpy
-            from .._tensor import Tensor as _Tensor
+            from .._cython._tensor_impl import cy_make_tensor_from_storage
             from .._dtype import to_numpy_dtype
             deriv_np = deriv_np.astype(to_numpy_dtype(saved_a.dtype))
             storage = typed_storage_from_numpy(deriv_np, saved_a.dtype, device=saved_a.device)
             stride = tuple(_np.array(deriv_np.strides) // deriv_np.itemsize)
-            deriv = _Tensor(storage, deriv_np.shape, stride)
+            deriv = cy_make_tensor_from_storage(storage, deriv_np.shape, stride, 0, False)
             return (redispatch("mul", keyset, grad, deriv),)
 
 
@@ -6884,12 +6884,12 @@ def _linalg_vander_backward(grad, _a, saved_a, keyset, args, kwargs):
         for j in range(1, n):
             grad_x += j * x_np ** (j - 1) * grad_np[..., j]
         from .._storage import typed_storage_from_numpy
-        from .._tensor import Tensor as _Tensor
+        from .._cython._tensor_impl import cy_make_tensor_from_storage
         from .._dtype import to_numpy_dtype
         grad_x = grad_x.astype(to_numpy_dtype(saved_a.dtype))
         storage = typed_storage_from_numpy(grad_x, saved_a.dtype, device=saved_a.device)
         stride = tuple(_np.array(grad_x.strides) // grad_x.itemsize)
-        return (_Tensor(storage, grad_x.shape, stride),)
+        return (cy_make_tensor_from_storage(storage, grad_x.shape, stride, 0, False),)
 
 
 # ---------------------------------------------------------------------------
@@ -6931,12 +6931,12 @@ def _autograd_nanmedian(name):
                         grad_np_up = _np.expand_dims(grad_np_up, axis=dim)
                     grad_np = _np.where(mask, grad_np_up / count, 0.0)
                 from .._storage import typed_storage_from_numpy
-                from .._tensor import Tensor as _Tensor
+                from .._cython._tensor_impl import cy_make_tensor_from_storage
                 from .._dtype import to_numpy_dtype
                 grad_np = grad_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_np, saved_a.dtype, device=saved_a.device)
                 stride = tuple(_np.array(grad_np.strides) // grad_np.itemsize)
-                return (_Tensor(storage, grad_np.shape, stride),)
+                return (cy_make_tensor_from_storage(storage, grad_np.shape, stride, 0, False),)
 
             node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
             annotate_node_creation(node)
@@ -7003,12 +7003,12 @@ def _quantile_backward(grad, _a, saved_a, keyset, args, kwargs):
                 _np.put_along_axis(grad_np, hi_idx, frac_val * _np.take(g_slice, [0], axis=dim if g_slice.ndim > 0 else 0), axis=dim)
 
         from .._storage import typed_storage_from_numpy
-        from .._tensor import Tensor as _Tensor
+        from .._cython._tensor_impl import cy_make_tensor_from_storage
         from .._dtype import to_numpy_dtype
         grad_np = grad_np.astype(to_numpy_dtype(saved_a.dtype))
         storage = typed_storage_from_numpy(grad_np, saved_a.dtype, device=saved_a.device)
         stride = tuple(_np.array(grad_np.strides) // grad_np.itemsize)
-        return (_Tensor(storage, grad_np.shape, stride),)
+        return (cy_make_tensor_from_storage(storage, grad_np.shape, stride, 0, False),)
 
 
 def _nanquantile_backward(grad, _a, saved_a, keyset, args, kwargs):
