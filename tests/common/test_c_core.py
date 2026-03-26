@@ -665,3 +665,17 @@ class TestRuntimeInternalBirths:
         assert y._dtype_code == ref._dtype_code
         assert y._device_type == ref._device_type
         assert y._dispatch_keys == ref._dispatch_keys
+
+
+class TestRuntimeCoreBirthProtocol:
+    """Final smoke: runtime-core tensor methods and dispatcher share metadata contract."""
+
+    def test_tensor_methods_and_dispatcher_share_metadata_contract(self):
+        import candle as torch
+        x = torch.ones((2, 2), dtype=torch.float32)
+        y = x.detach()
+        z = x.to(dtype=torch.float64)
+        ref_y = torch.zeros((2, 2), dtype=torch.float32)
+        ref_z = torch.zeros((2, 2), dtype=torch.float64)
+        assert y._dtype_code == ref_y._dtype_code
+        assert z._dtype_code == ref_z._dtype_code
