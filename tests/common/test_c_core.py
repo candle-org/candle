@@ -632,3 +632,36 @@ class TestMultiOutputBackwardBirthConsistency:
         assert x.grad._dtype_code == ref._dtype_code
         assert x.grad._device_type == ref._device_type
         assert x.grad._dispatch_keys == ref._dispatch_keys
+
+
+class TestRuntimeInternalBirths:
+    """Runtime-core internal tensor births must share the unified metadata contract."""
+
+    def test_detach_birth_matches_public_metadata(self):
+        import candle as torch
+        x = torch.ones((2, 2), dtype=torch.float32)
+        x.requires_grad_(True)
+        y = x.detach()
+        ref = torch.zeros((2, 2), dtype=torch.float32)
+        assert y._dtype_code == ref._dtype_code
+        assert y._device_type == ref._device_type
+        assert y._dispatch_keys == ref._dispatch_keys
+        assert y.requires_grad is False
+
+    def test_to_dtype_cpu_birth_matches_public_metadata(self):
+        import candle as torch
+        x = torch.ones((2, 2), dtype=torch.float32)
+        y = x.to(dtype=torch.float64)
+        ref = torch.zeros((2, 2), dtype=torch.float64)
+        assert y._dtype_code == ref._dtype_code
+        assert y._device_type == ref._device_type
+        assert y._dispatch_keys == ref._dispatch_keys
+
+    def test_ones_like_internal_birth_matches_public_metadata(self):
+        import candle as torch
+        x = torch.zeros((2, 2), dtype=torch.float32)
+        y = x._ones_like()
+        ref = torch.ones((2, 2), dtype=torch.float32)
+        assert y._dtype_code == ref._dtype_code
+        assert y._device_type == ref._device_type
+        assert y._dispatch_keys == ref._dispatch_keys
