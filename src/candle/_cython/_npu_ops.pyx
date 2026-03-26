@@ -345,6 +345,12 @@ cdef dict _alpha_one_handles = {}        # dtype_code -> alpha=1 scalar handle (
 cdef dict _alpha_one_bytes_cache = {}    # dtype_code -> (bytes, alpha_dtype_code) for PTA hash
 cdef object _pta_cache_begin_fn = None   # _aclnn_ffi.pta_begin_add_cache_lookup
 cdef object _pta_cache_end_fn = None     # _aclnn_ffi.pta_end_cache_lookup
+# Disabled by default: the PTA cached-executor path can reuse stale bound tensor
+# addresses across NPU add calls, which corrupts later view-based adds
+# (e.g. a prior x+x can make a later view+ones behave like view+view).
+# Keep the integration wired but guarded so it can be re-enabled once the
+# cached executor path safely rebinds descriptors/addresses.
+cdef bint _use_add_pta_cache = False
 
 
 cdef inline void _ensure_ffi_binary() except *:
@@ -516,7 +522,7 @@ def fast_add(a, b):
     cdef uintptr_t alpha_handle
 
     # 9. Try PTA executor cache (torch_npu-aligned hit_cache_v2 path)
-    if _pta_cache_begin_fn is not None:
+    if _use_add_pta_cache and _pta_cache_begin_fn is not None:
         alpha_bytes_pair = _get_alpha_one_bytes(dtype_code)
         state = _pta_cache_begin_fn(
             py_a_shape, a.stride,
