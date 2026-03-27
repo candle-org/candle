@@ -2447,3 +2447,94 @@ class TestMixedParamOpsProviders:
         idx = weights.multinomial(1)
         assert idx.tolist() == [1]
 
+
+
+class TestFinalBatchProviders:
+    """Final batch: properties + remaining dispatch wrappers from Cython tensor API layer."""
+
+    PROPERTY_NAMES = {"ndim", "is_floating_point", "is_complex", "T"}
+    DISPATCH_NAMES = {
+        "clamp_min", "clamp_max",
+        "fmin", "fmax", "where",
+        "logaddexp", "logaddexp2",
+        "remainder", "fmod",
+        "squeeze", "unsqueeze",
+        "argmax", "argmin",
+    }
+
+    def test_property_ops_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        # ndim / is_floating_point / is_complex are properties – check via instance
+        x = torch.tensor([1.0, 2.0], dtype=torch.float32)
+        assert x.ndim == 1
+        assert x.is_floating_point() is True
+        assert x.is_complex() is False
+        assert x.T.shape == (2,)
+
+        # Provider check via __module__ on the underlying function
+        for name in ("is_floating_point", "is_complex"):
+            assert getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        # ndim and T are properties — check fget module
+        assert torch.Tensor.ndim.fget.__module__ == "candle._cython._tensor_api"
+        assert torch.Tensor.T.fget.__module__ == "candle._cython._tensor_api"
+
+    def test_dispatch_ops_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        actual = {
+            name
+            for name in self.DISPATCH_NAMES
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == self.DISPATCH_NAMES
+
+    def test_final_batch_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+
+        # clamp_min / clamp_max
+        assert x.clamp_min(2.0).tolist() == [2.0, 2.0, 3.0]
+        assert x.clamp_max(2.0).tolist() == [1.0, 2.0, 2.0]
+
+        # fmin / fmax
+        a = torch.tensor([1.0, 4.0, 3.0], dtype=torch.float32)
+        b = torch.tensor([2.0, 2.0, 5.0], dtype=torch.float32)
+        assert a.fmin(b).tolist() == [1.0, 2.0, 3.0]
+        assert a.fmax(b).tolist() == [2.0, 4.0, 5.0]
+
+        # where
+        cond = torch.tensor([True, False, True], dtype=torch.bool)
+        vals = torch.tensor([10.0, 20.0, 30.0], dtype=torch.float32)
+        other = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32)
+        assert vals.where(cond, other).tolist() == [10.0, 0.0, 30.0]
+
+        # logaddexp / logaddexp2
+        la = x.logaddexp(x)
+        assert la.shape == (3,)
+        la2 = x.logaddexp2(x)
+        assert la2.shape == (3,)
+
+        # remainder / fmod
+        v = torch.tensor([7.0, 8.0, 9.0], dtype=torch.float32)
+        div = torch.tensor([3.0, 3.0, 3.0], dtype=torch.float32)
+        assert v.remainder(div).tolist() == [1.0, 2.0, 0.0]
+        assert v.fmod(div).tolist() == [1.0, 2.0, 0.0]
+
+        # squeeze / unsqueeze
+        s = torch.tensor([[1.0], [2.0], [3.0]], dtype=torch.float32)
+        assert s.squeeze(1).shape == (3,)
+        assert x.unsqueeze(0).shape == (1, 3)
+
+        # argmax / argmin
+        assert a.argmax().item() == 1
+        assert a.argmin().item() == 0
+
+        # ndim / T / is_floating_point / is_complex
+        m = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+        assert m.ndim == 2
+        assert m.T.shape == (2, 2)
+        assert m.is_floating_point() is True
+        assert m.is_complex() is False
+

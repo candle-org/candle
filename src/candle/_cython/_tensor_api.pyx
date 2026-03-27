@@ -2261,6 +2261,89 @@ def tensor_multinomial_method(self, num_samples, replacement=False, *, generator
     return _multinomial(self, num_samples, replacement=replacement, generator=generator)
 
 
+# ── final batch: properties + remaining dispatch wrappers ─────────────────────
+
+def tensor_ndim_fget(self):
+    return self._ndim
+
+
+def tensor_T_fget(self):
+    return self.t()
+
+
+def tensor_is_floating_point(self):
+    return self.dtype.is_floating_point
+
+
+def tensor_is_complex(self):
+    return self.dtype.is_complex
+
+
+def tensor_clamp_min_method(self, min_val):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("clamp_min", self.device.type, self, min_val)
+
+
+def tensor_clamp_max_method(self, max_val):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("clamp_max", self.device.type, self, max_val)
+
+
+def tensor_fmin_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("fmin", self.device.type, self, other)
+
+
+def tensor_fmax_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("fmax", self.device.type, self, other)
+
+
+def tensor_where_method(self, condition, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("where", self.device.type, condition, self, other)
+
+
+def tensor_logaddexp_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("logaddexp", self.device.type, self, other)
+
+
+def tensor_logaddexp2_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("logaddexp2", self.device.type, self, other)
+
+
+def tensor_remainder_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("remainder", self.device.type, self, other)
+
+
+def tensor_fmod_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("fmod", self.device.type, self, other)
+
+
+def tensor_squeeze_method(self, dim=None):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("squeeze", self.device.type, self, dim)
+
+
+def tensor_unsqueeze_method(self, dim):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("unsqueeze", self.device.type, self, dim)
+
+
+def tensor_argmax_method(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("argmax", self.device.type, self, dim=dim, keepdim=keepdim)
+
+
+def tensor_argmin_method(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("argmin", self.device.type, self, dim=dim, keepdim=keepdim)
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
 
 
