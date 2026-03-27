@@ -1873,6 +1873,7 @@ from . import _cython as _cython_mod
 if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor._set_device_from_storage = _cython_mod.tensor_set_device_from_storage
     Tensor._set_dtype_from_storage = _cython_mod.tensor_set_dtype_from_storage
+    Tensor.data = property(Tensor.data.fget, _cython_mod.tensor_set_data)
     Tensor.__delattr__ = _cython_mod.tensor_delattr
     Tensor._fw_get = _cython_mod.tensor_fw_get
     Tensor._fw_set = _cython_mod.tensor_fw_set
@@ -1967,6 +1968,7 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.swapdims_ = _cython_mod.tensor_swapdims_
     Tensor.swapaxes_ = _cython_mod.tensor_swapaxes_
 
+    Tensor.put_ = _cython_mod.tensor_put_
     Tensor.scatter_ = _cython_mod.tensor_scatter_
     Tensor.scatter_add_ = _cython_mod.tensor_scatter_add_
     Tensor.masked_fill_ = _cython_mod.tensor_masked_fill_

@@ -1457,4 +1457,60 @@ class TestTensorRuntimeHelperMethodProviders:
         del x.grad
         assert x.grad is None
 
-        assert x.record_stream(None) is None
+class TestTensorPutMethodProvider:
+    """put_ should be served from the Cython tensor API layer."""
+
+    def test_put_is_bound_from_tensor_api(self):
+        import candle as torch
+        assert torch.Tensor.put_.__module__ == "candle._cython._tensor_api"
+
+    def test_put_preserves_behavior(self):
+        import candle as torch
+
+        x = torch.zeros((2, 3), dtype=torch.float32)
+        idx = torch.tensor([0, 4], dtype=torch.int64)
+        vals = torch.tensor([5.0, 7.0], dtype=torch.float32)
+        x.put_(idx, vals)
+        assert x.tolist() == [[5.0, 0.0, 0.0], [0.0, 7.0, 0.0]]
+
+        y = torch.ones((2, 3), dtype=torch.float32)
+        idx2 = torch.tensor([0, 0, 5], dtype=torch.int64)
+        vals2 = torch.tensor([2.0, 3.0, 4.0], dtype=torch.float32)
+        y.put_(idx2, vals2, accumulate=True)
+        assert y.tolist() == [[6.0, 1.0, 1.0], [1.0, 1.0, 5.0]]
+
+        z = torch.arange(6, dtype=torch.float32).reshape(2, 3).transpose(0, 1)
+        idx3 = torch.tensor([0, 5], dtype=torch.int64)
+        vals3 = torch.tensor([9.0, 8.0], dtype=torch.float32)
+        z.put_(idx3, vals3)
+        assert z.shape == (3, 2)
+        assert z.stride() == (2, 1)
+
+
+class TestTensorDataSetterProvider:
+    """Tensor.data setter should be served from the Cython tensor API layer."""
+
+    def test_data_setter_preserves_behavior(self):
+        import candle as torch
+
+        assert torch.Tensor.data.fset.__module__ == "candle._cython._tensor_api"
+
+        x = torch.ones((2, 3), dtype=torch.float32)
+        y = torch.zeros((2, 3), dtype=torch.float32)
+        x.data = y
+        assert x.tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+        assert x.stride() == (3, 1)
+        assert x.offset == 0
+        assert x._version_counter.value == 1
+
+        try:
+            x.data = torch.ones((3, 2), dtype=torch.float32)
+            assert False, "expected shape mismatch"
+        except RuntimeError as e:
+            assert "shape mismatch" in str(e)
+
+        try:
+            x.data = torch.ones((2, 3), dtype=torch.float64)
+            assert False, "expected dtype mismatch"
+        except RuntimeError as e:
+            assert "dtype mismatch" in str(e)

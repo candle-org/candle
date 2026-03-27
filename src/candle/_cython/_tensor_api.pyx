@@ -253,6 +253,20 @@ def tensor_delattr(self, name):
     object.__delattr__(self, name)
 
 
+def tensor_set_data(self, new_data):
+    _ensure_base()
+    if not isinstance(new_data, _BaseTensor):
+        raise TypeError(f"data must be a Tensor, got {type(new_data).__name__}")
+    if new_data.shape != self.shape:
+        raise RuntimeError(f"shape mismatch: expected {self.shape}, got {new_data.shape}")
+    if new_data.dtype != self.dtype:
+        raise RuntimeError(f"dtype mismatch: expected {self.dtype}, got {new_data.dtype}")
+    self._storage = new_data._storage
+    self.stride = new_data.stride
+    self.offset = new_data.offset
+    self._bump_version()
+
+
 def tensor_fw_get(self, level):
     cdef object tangents = getattr(self, "_fw_tangents", None)
     if not tangents:
@@ -1226,7 +1240,43 @@ def tensor_reshape_as(self, other):
     return self.reshape(other.shape)
 
 
+def tensor_put_(self, indices, values, accumulate=False):
+    cdef object cont
+    cdef object numel_idx
+    cdef object shape
+    cdef object idx
+    cdef object val
+    cdef list multi_idx
+    cdef object tmp
+    cdef object d
+    cdef object i
+
+    self._check_inplace()
+    if not self.is_contiguous():
+        cont = self.contiguous()
+        self._storage = cont._storage
+        self.stride = cont.stride
+    numel_idx = indices.numel()
+    shape = self.shape
+    for i in range(numel_idx):
+        idx = int(indices.reshape((numel_idx,))[i].item())
+        val = values.reshape((numel_idx,))[i]
+        multi_idx = []
+        tmp = idx
+        for d in reversed(shape):
+            multi_idx.append(tmp % d)
+            tmp //= d
+        multi_idx = list(reversed(multi_idx))
+        if accumulate:
+            self[tuple(multi_idx)] = self[tuple(multi_idx)] + val
+        else:
+            self[tuple(multi_idx)] = val
+    self._bump_version()
+    return self
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
+
 
     cdef Py_ssize_t i
     cdef Py_ssize_t ndim = len(shape)
