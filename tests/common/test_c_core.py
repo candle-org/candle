@@ -2331,3 +2331,119 @@ class TestIndexingOpsProviders:
         assert sc.shape == (2, 1)
         assert sc.tolist() == [[1.0], [3.0]]
 
+
+
+class TestMixedParamOpsProviders:
+    """Mixed/parameterized ops should be served from the Cython tensor API layer."""
+
+    MIXED_NAMES = {
+        "softplus", "clamp", "relu6", "hardtanh",
+        "min", "max", "amin", "amax",
+        "addmm", "bmm", "mm",
+        "chunk", "split", "roll", "rot90",
+        "addcdiv", "addcmul", "hypot", "lerp",
+        "atan2", "asin", "acos", "atan",
+        "as_strided_copy", "as_strided_scatter",
+        "multinomial",
+    }
+
+    def test_mixed_ops_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        actual = {
+            name
+            for name in self.MIXED_NAMES
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == self.MIXED_NAMES
+
+    def test_mixed_ops_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.tensor([-2.0, -1.0, 0.0, 1.0, 2.0], dtype=torch.float32)
+
+        # relu6
+        assert x.relu6().tolist() == [0.0, 0.0, 0.0, 1.0, 2.0]
+
+        # hardtanh
+        assert x.hardtanh(-1.0, 1.0).tolist() == [-1.0, -1.0, 0.0, 1.0, 1.0]
+
+        # clamp
+        assert x.clamp(-1.0, 1.0).tolist() == [-1.0, -1.0, 0.0, 1.0, 1.0]
+
+        # softplus
+        sp = x.softplus().tolist()
+        assert sp[2] > 0.0  # softplus(0) = log(2)
+        assert sp[0] < sp[4]  # monotone
+
+        # min / max (element-wise with other)
+        a = torch.tensor([1.0, 4.0, 3.0], dtype=torch.float32)
+        b = torch.tensor([2.0, 2.0, 5.0], dtype=torch.float32)
+        assert a.min(b).tolist() == [1.0, 2.0, 3.0]
+        assert a.max(b).tolist() == [2.0, 4.0, 5.0]
+
+        # amin / amax (reduction)
+        m = torch.tensor([[1.0, 3.0], [2.0, 4.0]], dtype=torch.float32)
+        assert m.amin(dim=1).tolist() == [1.0, 2.0]
+        assert m.amax(dim=1).tolist() == [3.0, 4.0]
+
+        # mm / bmm / addmm
+        p = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32)
+        q = torch.tensor([[2.0, 3.0], [4.0, 5.0]], dtype=torch.float32)
+        assert p.mm(q).tolist() == [[2.0, 3.0], [4.0, 5.0]]
+        bp = p.unsqueeze(0)
+        bq = q.unsqueeze(0)
+        assert bp.bmm(bq).shape == (1, 2, 2)
+        bias = torch.zeros(2, 2, dtype=torch.float32)
+        assert bias.addmm(p, q, beta=1, alpha=1).tolist() == [[2.0, 3.0], [4.0, 5.0]]
+
+        # chunk / split
+        v = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dtype=torch.float32)
+        chunks = v.chunk(3)
+        assert len(chunks) == 3
+        assert chunks[0].tolist() == [1.0, 2.0]
+        parts = v.split(2)
+        assert len(parts) == 3
+        assert parts[0].tolist() == [1.0, 2.0]
+
+        # roll
+        rolled = v.roll(2)
+        assert rolled.tolist() == [5.0, 6.0, 1.0, 2.0, 3.0, 4.0]
+
+        # rot90
+        grid = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+        rotated = grid.rot90(1, [0, 1])
+        assert rotated.tolist() == [[2.0, 4.0], [1.0, 3.0]]
+
+        # atan / asin / acos / atan2 / hypot / lerp
+        zero = torch.tensor([0.0], dtype=torch.float32)
+        one = torch.tensor([1.0], dtype=torch.float32)
+        assert abs(zero.atan().tolist()[0] - 0.0) < 1e-5
+        assert abs(zero.asin().tolist()[0] - 0.0) < 1e-5
+        assert abs(one.acos().tolist()[0] - 0.0) < 1e-5
+        assert abs(one.atan2(one).tolist()[0] - 0.7854) < 1e-3
+        assert abs(one.hypot(zero).tolist()[0] - 1.0) < 1e-5
+        t0 = torch.tensor([0.0], dtype=torch.float32)
+        t1 = torch.tensor([10.0], dtype=torch.float32)
+        assert abs(t0.lerp(t1, 0.5).tolist()[0] - 5.0) < 1e-5
+
+        # addcmul / addcdiv
+        base = torch.tensor([1.0, 1.0], dtype=torch.float32)
+        t1v = torch.tensor([2.0, 3.0], dtype=torch.float32)
+        t2v = torch.tensor([4.0, 5.0], dtype=torch.float32)
+        assert base.addcmul(t1v, t2v, value=1.0).tolist() == [9.0, 16.0]
+        addcdiv_out = base.addcdiv(t1v, t2v, value=2.0).tolist()
+        assert abs(addcdiv_out[0] - 2.0) < 1e-5
+        assert abs(addcdiv_out[1] - 2.2) < 1e-4
+
+        # as_strided_copy
+        flat = torch.arange(4, dtype=torch.float32)
+        strided = flat.as_strided_copy([2, 2], [2, 1])
+        assert strided.shape == (2, 2)
+        assert strided.tolist() == [[0.0, 1.0], [2.0, 3.0]]
+
+        # multinomial
+        weights = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32)
+        idx = weights.multinomial(1)
+        assert idx.tolist() == [1]
+

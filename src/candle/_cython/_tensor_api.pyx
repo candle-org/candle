@@ -2129,6 +2129,138 @@ def tensor_sum_to_size_method(self, *size):
     return _functional_sum_to_size_fn(self, *size)
 
 
+# ── mixed / parameterized ops ─────────────────────────────────────────────────
+
+def tensor_softplus_method(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("softplus", self.device.type, self)
+
+
+def tensor_clamp_method(self, min_val=None, max_val=None):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("clamp", self.device.type, self, min_val, max_val)
+
+
+def tensor_relu6_method(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("relu6", self.device.type, self)
+
+
+def tensor_hardtanh_method(self, min_val=-1.0, max_val=1.0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("hardtanh", self.device.type, self, min_val, max_val)
+
+
+def tensor_min_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("min", self.device.type, self, other)
+
+
+def tensor_max_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("max", self.device.type, self, other)
+
+
+def tensor_amin_method(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("amin", self.device.type, self, dim=dim, keepdim=keepdim)
+
+
+def tensor_amax_method(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("amax", self.device.type, self, dim=dim, keepdim=keepdim)
+
+
+def tensor_addmm_method(self, mat1, mat2, *, beta=1, alpha=1):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("addmm", self.device.type, self, mat1, mat2, beta=beta, alpha=alpha)
+
+
+def tensor_bmm_method(self, batch2):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("bmm", self.device.type, self, batch2)
+
+
+def tensor_mm_method(self, mat2):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("mm", self.device.type, self, mat2)
+
+
+def tensor_chunk_method(self, chunks, dim=0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("chunk", self.device.type, self, chunks, dim=dim)
+
+
+def tensor_split_method(self, split_size_or_sections, dim=0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("split", self.device.type, self, split_size_or_sections, dim=dim)
+
+
+def tensor_roll_method(self, shifts, dims=None):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("roll", self.device.type, self, shifts, dims)
+
+
+def tensor_rot90_method(self, k=1, dims=(0, 1)):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("rot90", self.device.type, self, k, dims)
+
+
+def tensor_addcdiv_method(self, tensor1, tensor2, value=1.0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("addcdiv", self.device.type, self, tensor1, tensor2, value=value)
+
+
+def tensor_addcmul_method(self, tensor1, tensor2, value=1.0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("addcmul", self.device.type, self, tensor1, tensor2, value=value)
+
+
+def tensor_hypot_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("hypot", self.device.type, self, other)
+
+
+def tensor_lerp_method(self, other, weight):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("lerp", self.device.type, self, other, weight)
+
+
+def tensor_atan2_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("atan2", self.device.type, self, other)
+
+
+def tensor_asin_method(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("asin", self.device.type, self)
+
+
+def tensor_acos_method(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("acos", self.device.type, self)
+
+
+def tensor_atan_method(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("atan", self.device.type, self)
+
+
+def tensor_as_strided_copy_method(self, size, stride, storage_offset=None):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("as_strided_copy", self.device.type, self, size, stride, storage_offset)
+
+
+def tensor_as_strided_scatter_method(self, src, size, stride, storage_offset=None):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("as_strided_scatter", self.device.type, self, src, size, stride, storage_offset)
+
+
+def tensor_multinomial_method(self, num_samples, replacement=False, *, generator=None):
+    from candle._random import multinomial as _multinomial
+    return _multinomial(self, num_samples, replacement=replacement, generator=generator)
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
 
 
