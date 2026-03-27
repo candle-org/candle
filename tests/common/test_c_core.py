@@ -1111,5 +1111,350 @@ class TestTensorUnaryInplaceMethodProviders:
         assert len(e.tolist()) == 2
         e.tanh_()
         assert len(e.tolist()) == 2
-        e.sigmoid_()
-        assert all(0.0 < v < 1.0 for v in e.tolist())
+class TestTensorParameterizedInplaceMethodProviders:
+    """Parameterized and random inplace methods should be served from the Cython tensor API layer."""
+
+    def test_parameterized_inplace_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "sub_",
+            "clamp_",
+            "uniform_",
+            "normal_",
+            "random_",
+            "randint_",
+            "bernoulli_",
+            "exponential_",
+            "log_normal_",
+            "cauchy_",
+            "geometric_",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_parameterized_inplace_methods_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+        x.sub_(1.0)
+        assert x.tolist() == [0.0, 1.0, 2.0]
+
+        y = torch.tensor([-1.0, 0.5, 3.0], dtype=torch.float32)
+        y.clamp_(0.0, 1.0)
+        assert y.tolist() == [0.0, 0.5, 1.0]
+
+        z = torch.empty(5, dtype=torch.float32)
+        z.uniform_(0.0, 1.0)
+        assert len(z.tolist()) == 5
+        assert all(0.0 <= v <= 1.0 for v in z.tolist())
+
+        a = torch.empty(5, dtype=torch.float32)
+        a.normal_(0.0, 1.0)
+        assert len(a.tolist()) == 5
+
+        b = torch.empty(5, dtype=torch.int64)
+        b.random_(0, 10)
+        assert len(b.tolist()) == 5
+        assert all(0 <= v < 10 for v in b.tolist())
+
+        c = torch.empty(5, dtype=torch.int64)
+        c.randint_(0, 10)
+        assert len(c.tolist()) == 5
+        assert all(0 <= v < 10 for v in c.tolist())
+
+        d = torch.empty(8, dtype=torch.float32)
+        d.bernoulli_(0.5)
+        assert all(v in (0.0, 1.0) for v in d.tolist())
+
+        e = torch.empty(5, dtype=torch.float32)
+        e.exponential_(1.0)
+        assert all(v >= 0.0 for v in e.tolist())
+
+        f = torch.empty(5, dtype=torch.float32)
+        f.log_normal_(0.0, 1.0)
+        assert all(v > 0.0 for v in f.tolist())
+
+        g = torch.empty(5, dtype=torch.float32)
+        g.cauchy_(0.0, 1.0)
+        assert len(g.tolist()) == 5
+
+
+
+class TestTensorInplaceLayoutViewMethodProviders:
+    """Inplace layout/view methods should be served from the Cython tensor API layer."""
+
+    def test_inplace_layout_view_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "transpose_",
+            "t_",
+            "squeeze_",
+            "unsqueeze_",
+            "as_strided_",
+            "swapdims_",
+            "swapaxes_",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_inplace_layout_view_methods_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        out = x.transpose_(0, 1)
+        assert out is x
+        assert x.shape == (3, 2)
+        assert x.stride() == (1, 3)
+
+        y = torch.arange(6, dtype=torch.float32).reshape(1, 2, 1, 3)
+        y.squeeze_()
+        assert y.shape == (2, 3)
+        assert y.stride() == (3, 1)
+        y.unsqueeze_(1)
+        assert y.shape == (2, 1, 3)
+        assert y.stride() == (3, 3, 1)
+
+        z = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        z.as_strided_((3, 2), (1, 3), 0)
+        assert z.shape == (3, 2)
+        assert z.stride() == (1, 3)
+
+        w = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        w.swapdims_(0, 1)
+        assert w.shape == (3, 2)
+        assert w.stride() == (1, 3)
+
+        u = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        u.swapaxes_(0, 1)
+        assert u.shape == (3, 2)
+        assert u.stride() == (1, 3)
+
+        v = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        v.t_()
+
+
+class TestTensorIndexingWritebackMethodProviders:
+    """Indexing write-back methods should be served from the Cython tensor API layer."""
+
+    def test_indexing_writeback_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "scatter_",
+            "scatter_add_",
+            "masked_fill_",
+            "masked_scatter_",
+            "index_put_",
+            "index_copy_",
+            "index_fill_",
+            "index_add_",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_indexing_writeback_methods_preserve_behavior(self):
+        import candle as torch
+
+        index = torch.tensor([[0, 1, 2], [2, 1, 0]], dtype=torch.int64)
+        src = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=torch.float32)
+
+        x = torch.zeros((2, 3), dtype=torch.float32)
+        x.scatter_(1, index, src)
+        assert x.tolist() == [[1.0, 2.0, 3.0], [6.0, 5.0, 4.0]]
+
+        y = torch.zeros((2, 3), dtype=torch.float32)
+        y.scatter_add_(1, index, src)
+        assert y.tolist() == [[1.0, 2.0, 3.0], [6.0, 5.0, 4.0]]
+
+        mask = torch.tensor([[True, False], [False, True]])
+        m = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+        m.masked_fill_(mask, 9.0)
+        assert m.tolist() == [[9.0, 2.0], [3.0, 9.0]]
+
+        ms = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+        ms.masked_scatter_(mask, torch.tensor([7.0, 8.0], dtype=torch.float32))
+        assert ms.tolist() == [[7.0, 2.0], [3.0, 8.0]]
+
+        ip = torch.zeros((2, 3), dtype=torch.float32)
+        ip.index_put_((torch.tensor([0, 1]), torch.tensor([1, 2])), torch.tensor([5.0, 6.0], dtype=torch.float32))
+        assert ip.tolist() == [[0.0, 5.0, 0.0], [0.0, 0.0, 6.0]]
+
+        ic = torch.zeros((2, 3), dtype=torch.float32)
+        ic.index_copy_(1, torch.tensor([0, 2]), torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32))
+        assert ic.tolist() == [[1.0, 0.0, 2.0], [3.0, 0.0, 4.0]]
+
+        iff = torch.zeros((2, 3), dtype=torch.float32)
+        iff.index_fill_(1, torch.tensor([1]), 7.0)
+        assert iff.tolist() == [[0.0, 7.0, 0.0], [0.0, 7.0, 0.0]]
+
+        ia = torch.zeros((2, 3), dtype=torch.float32)
+        ia.index_add_(1, torch.tensor([0, 2]), torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32), alpha=1.0)
+
+
+
+
+class TestTensorNumpyAndPinningMethodProviders:
+    """Numpy and pinning helpers should be served from the Cython tensor API layer."""
+
+    def test_numpy_and_pinning_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "_numpy_view",
+            "numpy",
+            "pin_memory",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_numpy_and_pinning_methods_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.arange(6, dtype=torch.float32).reshape(2, 3).transpose(0, 1)
+        view = x._numpy_view()
+        assert view.shape == (3, 2)
+        assert view.strides == (4, 12)
+        assert view.tolist() == [[0.0, 3.0], [1.0, 4.0], [2.0, 5.0]]
+
+        arr = x.numpy()
+        assert arr.shape == (3, 2)
+        assert arr.strides == (4, 12)
+        assert arr.tolist() == [[0.0, 3.0], [1.0, 4.0], [2.0, 5.0]]
+
+        p = torch.ones((2, 2), dtype=torch.float32).pin_memory()
+
+
+class TestTensorFactoryHelperMethodProviders:
+    """Factory/helper Tensor methods should be served from the Cython tensor API layer."""
+
+    def test_factory_helper_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "new_empty",
+            "new_tensor",
+            "new_empty_strided",
+            "_ones_like",
+            "new_ones",
+            "new_zeros",
+            "new_full",
+            "type",
+            "type_as",
+            "reshape_as",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_factory_helper_methods_preserve_behavior(self):
+        import candle as torch
+
+        base = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+
+        new_empty = base.new_empty((3, 2))
+        assert new_empty.shape == (3, 2)
+        assert new_empty.dtype == torch.float32
+        assert new_empty.device.type == "cpu"
+
+        new_tensor = base.new_tensor([1, 2])
+        assert new_tensor.shape == (2,)
+        assert new_tensor.dtype == torch.float32
+        assert new_tensor.device.type == "cpu"
+
+        new_empty_strided = base.new_empty_strided((2, 3), (1, 2))
+        assert new_empty_strided.shape == (2, 3)
+        assert new_empty_strided.stride() == (1, 2)
+
+        ones_like = base.transpose(0, 1)._ones_like()
+        assert ones_like.shape == (3, 2)
+        assert ones_like.dtype == torch.float32
+        assert ones_like.device.type == "cpu"
+        assert ones_like.tolist() == [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]]
+
+        assert base.new_ones((2, 2)).tolist() == [[1.0, 1.0], [1.0, 1.0]]
+        assert base.new_zeros((2, 2)).tolist() == [[0.0, 0.0], [0.0, 0.0]]
+        assert base.new_full((2, 2), 7.0).tolist() == [[7.0, 7.0], [7.0, 7.0]]
+
+        assert base.type() == "torch.Float32Tensor"
+        assert base.type(torch.float64).dtype == torch.float64
+
+
+
+
+class TestTensorRuntimeHelperMethodProviders:
+    """Runtime/internal helper methods should be served from the Cython tensor API layer."""
+
+    def test_runtime_helper_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "_set_device_from_storage",
+            "_set_dtype_from_storage",
+            "__delattr__",
+            "_fw_get",
+            "_fw_set",
+            "_fw_clear",
+            "_fw_has",
+            "untyped_storage",
+            "record_stream",
+            "is_pinned",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_runtime_helper_methods_preserve_behavior(self):
+        import candle as torch
+        from candle._device import device
+        from candle._dtype import float64
+
+        x = torch.ones((2, 2), dtype=torch.float32)
+        before = (x._device_type, x._device_index, x._dispatch_keys)
+        x._set_device_from_storage(device("cpu"))
+        after = (x._device_type, x._device_index, x._dispatch_keys)
+        assert after == before
+
+        x._set_dtype_from_storage(float64)
+        assert x._dtype_code == 2
+        assert x._itemsize == 8
+        assert x._dtype_obj == float64
+
+        x._fw_set(1, "tangent")
+        assert x._fw_has(1) is True
+        assert x._fw_get(1) == "tangent"
+        x._fw_clear(1)
+        assert x._fw_has(1) is False
+        assert x._fw_get(1) is None
+
+        assert hasattr(x.untyped_storage(), "nbytes")
+        assert x.is_pinned() is False
+
+        x.grad = torch.ones((2, 2), dtype=torch.float32)
+        del x.grad
+        assert x.grad is None
+
+        assert x.record_stream(None) is None

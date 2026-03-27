@@ -1871,6 +1871,17 @@ class Tensor(_TensorBase):
 from . import _cython as _cython_mod
 
 if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
+    Tensor._set_device_from_storage = _cython_mod.tensor_set_device_from_storage
+    Tensor._set_dtype_from_storage = _cython_mod.tensor_set_dtype_from_storage
+    Tensor.__delattr__ = _cython_mod.tensor_delattr
+    Tensor._fw_get = _cython_mod.tensor_fw_get
+    Tensor._fw_set = _cython_mod.tensor_fw_set
+    Tensor._fw_clear = _cython_mod.tensor_fw_clear
+    Tensor._fw_has = _cython_mod.tensor_fw_has
+    Tensor.untyped_storage = _cython_mod.tensor_untyped_storage
+    Tensor.record_stream = _cython_mod.tensor_record_stream
+    Tensor.is_pinned = _cython_mod.tensor_is_pinned
+
     Tensor.__add__ = _cython_mod.tensor_add
     Tensor.__sub__ = _cython_mod.tensor_sub
     Tensor.__mul__ = _cython_mod.tensor_mul
@@ -1880,6 +1891,7 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.__iadd__ = _cython_mod.tensor_iadd
     Tensor.__imul__ = _cython_mod.tensor_imul
     Tensor.__neg__ = _cython_mod.tensor_neg
+
     Tensor.clone = _cython_mod.tensor_clone
     Tensor.detach = _cython_mod.tensor_detach
     Tensor.detach_ = _cython_mod.tensor_detach_
@@ -1901,17 +1913,20 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.as_strided = _cython_mod.tensor_as_strided
     Tensor.size = _cython_mod.tensor_size
     Tensor.dim = _cython_mod.tensor_dim
+
     Tensor.retain_grad = _cython_mod.tensor_retain_grad
     Tensor.requires_grad_ = _cython_mod.tensor_requires_grad_
     Tensor.register_hook = _cython_mod.tensor_register_hook
     Tensor._is_view = _cython_mod.tensor_is_view
     Tensor._check_inplace = _cython_mod.tensor_check_inplace
+
     Tensor.add_ = _cython_mod.tensor_add_
     Tensor.mul_ = _cython_mod.tensor_mul_
     Tensor.relu_ = _cython_mod.tensor_relu_
     Tensor.zero_ = _cython_mod.tensor_zero_
     Tensor.fill_ = _cython_mod.tensor_fill_
     Tensor.copy_ = _cython_mod.tensor_copy_
+
     Tensor.abs_ = _cython_mod.tensor_abs_
     Tensor.neg_ = _cython_mod.tensor_neg_
     Tensor.exp_ = _cython_mod.tensor_exp_
@@ -1932,3 +1947,46 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.reciprocal_ = _cython_mod.tensor_reciprocal_
     Tensor.erfinv_ = _cython_mod.tensor_erfinv_
 
+    Tensor.sub_ = _cython_mod.tensor_sub_
+    Tensor.clamp_ = _cython_mod.tensor_clamp_
+    Tensor.uniform_ = _cython_mod.tensor_uniform_
+    Tensor.normal_ = _cython_mod.tensor_normal_
+    Tensor.random_ = _cython_mod.tensor_random_
+    Tensor.randint_ = _cython_mod.tensor_randint_
+    Tensor.bernoulli_ = _cython_mod.tensor_bernoulli_
+    Tensor.exponential_ = _cython_mod.tensor_exponential_
+    Tensor.log_normal_ = _cython_mod.tensor_log_normal_
+    Tensor.cauchy_ = _cython_mod.tensor_cauchy_
+    Tensor.geometric_ = _cython_mod.tensor_geometric_
+
+    Tensor.transpose_ = _cython_mod.tensor_transpose_
+    Tensor.t_ = _cython_mod.tensor_t_
+    Tensor.squeeze_ = _cython_mod.tensor_squeeze_
+    Tensor.unsqueeze_ = _cython_mod.tensor_unsqueeze_
+    Tensor.as_strided_ = _cython_mod.tensor_as_strided_
+    Tensor.swapdims_ = _cython_mod.tensor_swapdims_
+    Tensor.swapaxes_ = _cython_mod.tensor_swapaxes_
+
+    Tensor.scatter_ = _cython_mod.tensor_scatter_
+    Tensor.scatter_add_ = _cython_mod.tensor_scatter_add_
+    Tensor.masked_fill_ = _cython_mod.tensor_masked_fill_
+    Tensor.masked_scatter_ = _cython_mod.tensor_masked_scatter_
+    Tensor.index_put_ = _cython_mod.tensor_index_put_
+    Tensor.index_copy_ = _cython_mod.tensor_index_copy_
+    Tensor.index_fill_ = _cython_mod.tensor_index_fill_
+    Tensor.index_add_ = _cython_mod.tensor_index_add_
+
+    Tensor.new_empty = _cython_mod.tensor_new_empty
+    Tensor.new_tensor = _cython_mod.tensor_new_tensor
+    Tensor.new_empty_strided = _cython_mod.tensor_new_empty_strided
+    Tensor._ones_like = _cython_mod.tensor_ones_like
+    Tensor.new_ones = _cython_mod.tensor_new_ones
+    Tensor.new_zeros = _cython_mod.tensor_new_zeros
+    Tensor.new_full = _cython_mod.tensor_new_full
+    Tensor.type = _cython_mod.tensor_type
+    Tensor.type_as = _cython_mod.tensor_type_as
+    Tensor.reshape_as = _cython_mod.tensor_reshape_as
+
+    Tensor.numpy = _cython_mod.tensor_numpy
+    Tensor._numpy_view = _cython_mod.tensor_numpy_view
+    Tensor.pin_memory = _cython_mod.tensor_pin_memory

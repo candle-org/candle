@@ -37,6 +37,8 @@ cdef object _bfloat16_dtype = None
 cdef object _bf16_to_f32_fn = None
 cdef object _f32_to_bf16_fn = None
 cdef object _cast_tensor_dtype_npu_fn = None
+cdef object _pinned_cpu_typed_storage_from_numpy_fn = None
+cdef object _npu_available_fn = None
 
 
 cdef inline void _ensure_base():
@@ -139,28 +141,32 @@ cdef inline void _ensure_functional_refs():
 
 cdef inline void _ensure_conversion_refs():
     global _typed_storage_from_numpy_fn, _meta_typed_storage_from_shape_fn
-    global _mps_typed_storage_from_numpy_fn, _to_numpy_dtype_fn
-    global _bfloat16_dtype, _bf16_to_f32_fn, _f32_to_bf16_fn
-    global _cast_tensor_dtype_npu_fn
+    global _mps_typed_storage_from_numpy_fn, _pinned_cpu_typed_storage_from_numpy_fn
+    global _to_numpy_dtype_fn, _bfloat16_dtype, _bf16_to_f32_fn, _f32_to_bf16_fn
+    global _cast_tensor_dtype_npu_fn, _npu_available_fn
 
     if _typed_storage_from_numpy_fn is None:
         from candle._storage import (
             typed_storage_from_numpy,
             meta_typed_storage_from_shape,
             mps_typed_storage_from_numpy,
+            pinned_cpu_typed_storage_from_numpy,
         )
         from candle._dtype import to_numpy_dtype, bfloat16
         from candle._tensor import _bf16_to_f32, _f32_to_bf16
         from candle._backends.npu.ops._helpers import _cast_tensor_dtype
+        from candle import npu as npu_api
 
         _typed_storage_from_numpy_fn = typed_storage_from_numpy
         _meta_typed_storage_from_shape_fn = meta_typed_storage_from_shape
         _mps_typed_storage_from_numpy_fn = mps_typed_storage_from_numpy
+        _pinned_cpu_typed_storage_from_numpy_fn = pinned_cpu_typed_storage_from_numpy
         _to_numpy_dtype_fn = to_numpy_dtype
         _bfloat16_dtype = bfloat16
         _bf16_to_f32_fn = _bf16_to_f32
         _f32_to_bf16_fn = _f32_to_bf16
         _cast_tensor_dtype_npu_fn = _cast_tensor_dtype
+        _npu_available_fn = npu_api.is_available
 
 
 cdef inline void _flush_pending(object tensor):
@@ -177,6 +183,120 @@ def tensor_add(self, other):
     _ensure_functional_refs()
     return _add_fn(self, other)
 
+
+def tensor_set_device_from_storage(self, dev):
+    cdef object dt
+    cdef object idx
+    cdef int devt
+    cdef unsigned int dk
+
+    _ensure_base()
+    self._device_obj = dev
+    dt = getattr(dev, "type", str(dev))
+    devt = _BaseTensor._DEVICE_MAP.get(dt, -1)
+    self._device_type = devt
+    idx = getattr(dev, "index", None)
+    self._device_index = idx if idx is not None else -1
+
+    if devt == 0:
+        dk = _BaseTensor._DK_CPU
+    elif devt == 1:
+        dk = _BaseTensor._DK_NPU
+    elif devt == 2:
+        dk = _BaseTensor._DK_CUDA
+    elif devt == 3:
+        dk = _BaseTensor._DK_MPS
+    elif devt == 4:
+        dk = _BaseTensor._DK_META
+    else:
+        dk = _BaseTensor._DK_CPU
+    if self.requires_grad:
+        dk |= _BaseTensor._DK_ADINPLACEORVIEW | _BaseTensor._DK_AUTOGRAD
+        if devt == 0:
+            dk |= _BaseTensor._DK_AUTOGRAD_CPU
+        elif devt == 1:
+            dk |= _BaseTensor._DK_AUTOGRAD_NPU
+        elif devt == 2:
+            dk |= _BaseTensor._DK_AUTOGRAD_CUDA
+        elif devt == 3:
+            dk |= _BaseTensor._DK_AUTOGRAD_MPS
+        elif devt == 4:
+            dk |= _BaseTensor._DK_AUTOGRAD_META
+    self._dispatch_keys = dk
+
+
+def tensor_set_dtype_from_storage(self, dtype):
+    cdef object name
+    self._dtype_obj = dtype
+    self._itemsize = getattr(dtype, "itemsize", 4)
+    name = getattr(dtype, "name", "")
+    self._dtype_code = {
+        "float32": 0,
+        "float16": 1,
+        "float64": 2,
+        "bfloat16": 3,
+        "int32": 4,
+        "int64": 5,
+        "int16": 6,
+        "int8": 7,
+        "uint8": 8,
+        "bool": 9,
+    }.get(name, -1)
+
+
+def tensor_delattr(self, name):
+    if name == "grad":
+        object.__setattr__(self, "grad", None)
+        return
+    if name in {"data", "requires_grad", "_grad_fn", "grad_fn", "_backward_hooks"}:
+        raise RuntimeError(f"cannot delete {name}")
+    object.__delattr__(self, name)
+
+
+def tensor_fw_get(self, level):
+    cdef object tangents = getattr(self, "_fw_tangents", None)
+    if not tangents:
+        return None
+    return tangents.get(level)
+
+
+def tensor_fw_set(self, level, tangent):
+    cdef object tangents = getattr(self, "_fw_tangents", None)
+    if tangents is None:
+        tangents = {}
+        self._fw_tangents = tangents
+    tangents[level] = tangent
+
+
+def tensor_fw_clear(self, level):
+    cdef object tangents = getattr(self, "_fw_tangents", None)
+    if not tangents:
+        return
+    tangents.pop(level, None)
+    if not tangents:
+        self._fw_tangents = {}
+
+
+def tensor_fw_has(self, level):
+    cdef object tangents = getattr(self, "_fw_tangents", None)
+    return bool(tangents) and level in tangents
+
+
+def tensor_untyped_storage(self):
+    return self._storage.untyped_storage()
+
+
+def tensor_record_stream(self, stream):
+    cdef object alloc
+    if self.device.type != "npu":
+        return
+    from candle._backends.npu import allocator as npu_allocator
+    alloc = npu_allocator.get_allocator(self.device.index or 0)
+    alloc.record_stream(self.storage().data_ptr(), stream.stream)
+
+
+def tensor_is_pinned(self):
+    return self._storage.is_pinned()
 
 def tensor_sub(self, other):
     _ensure_base()
@@ -734,7 +854,380 @@ def tensor_erfinv_(self):
     return _dispatch_fn("erfinv_", self.device.type, self)
 
 
+def tensor_sub_(self, other, alpha=1):
+    cdef object rhs = other
+    _ensure_dispatch_ref()
+    _ensure_functional_refs()
+    self._check_inplace()
+    if alpha != 1:
+        rhs = _mul_fn(other, alpha)
+    return _dispatch_fn("sub_", self.device.type, self, rhs)
+
+
+def tensor_clamp_(self, min=None, max=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("clamp_", self.device.type, self, min, max)
+
+
+def tensor_uniform_(self, low=0.0, high=1.0, generator=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("uniform_", self.device.type, self, low, high, generator=generator)
+
+
+def tensor_normal_(self, mean=0.0, std=1.0, generator=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("normal_", self.device.type, self, mean, std, generator=generator)
+
+
+def tensor_random_(self, from_=0, to=None, generator=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("random_", self.device.type, self, from_, to, generator=generator)
+
+
+def tensor_randint_(self, low, high=None, generator=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("randint_", self.device.type, self, low, high, generator=generator)
+
+
+def tensor_bernoulli_(self, p=0.5, generator=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("bernoulli_", self.device.type, self, p, generator=generator)
+
+
+def tensor_exponential_(self, lambd=1.0, generator=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("exponential_", self.device.type, self, lambd, generator=generator)
+
+
+def tensor_log_normal_(self, mean=1.0, std=2.0, generator=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("log_normal_", self.device.type, self, mean, std, generator=generator)
+
+
+def tensor_cauchy_(self, median=0.0, sigma=1.0, generator=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("cauchy_", self.device.type, self, median, sigma, generator=generator)
+
+
+def tensor_geometric_(self, p, generator=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("geometric_", self.device.type, self, p, generator=generator)
+
+
+def tensor_transpose_(self, dim0, dim1):
+    cdef Py_ssize_t ndim = len(self.shape)
+    cdef Py_ssize_t d0 = dim0 if dim0 >= 0 else dim0 + ndim
+    cdef Py_ssize_t d1 = dim1 if dim1 >= 0 else dim1 + ndim
+    cdef list shape
+    cdef list stride
+
+    if d0 < 0 or d0 >= ndim or d1 < 0 or d1 >= ndim:
+        raise IndexError("Dimension out of range")
+    shape = list(self.shape)
+    stride = list(self.stride)
+    shape[d0], shape[d1] = shape[d1], shape[d0]
+    stride[d0], stride[d1] = stride[d1], stride[d0]
+    return self.as_strided_(tuple(shape), tuple(stride))
+
+
+def tensor_t_(self):
+    cdef Py_ssize_t ndim = len(self.shape)
+    if ndim > 2:
+        raise RuntimeError(f"t_() expects a tensor with <= 2 dimensions, but self is {ndim}D")
+    self._check_inplace()
+    if ndim < 2:
+        return self
+    return self.transpose_(0, 1)
+
+
+def tensor_squeeze_(self, dim=None):
+    cdef Py_ssize_t ndim
+    cdef list shape
+    cdef list stride
+    cdef list pairs
+    cdef object targets
+    cdef object item
+    cdef Py_ssize_t d
+
+    if dim is not None:
+        if isinstance(dim, (list, tuple)):
+            if dim:
+                ndim = len(self.shape)
+                targets = set()
+                for item in dim:
+                    d = item if item >= 0 else item + ndim
+                    targets.add(d)
+                pairs = [
+                    (s, st)
+                    for idx, (s, st) in enumerate(zip(self.shape, self.stride))
+                    if idx not in targets or s != 1
+                ]
+                shape = [p[0] for p in pairs]
+                stride = [p[1] for p in pairs]
+            else:
+                shape = list(self.shape)
+                stride = list(self.stride)
+        else:
+            d = dim if dim >= 0 else dim + len(self.shape)
+            shape = list(self.shape)
+            stride = list(self.stride)
+            if 0 <= d < len(shape) and shape[d] == 1:
+                del shape[d]
+                del stride[d]
+    else:
+        pairs = [(s, st) for s, st in zip(self.shape, self.stride) if s != 1]
+        shape = [p[0] for p in pairs]
+        stride = [p[1] for p in pairs]
+    return self.as_strided_(tuple(shape), tuple(stride))
+
+
+def tensor_unsqueeze_(self, dim):
+    cdef Py_ssize_t ndim = len(self.shape)
+    cdef Py_ssize_t d = dim if dim >= 0 else dim + ndim + 1
+    cdef list shape
+    cdef list stride
+    cdef Py_ssize_t new_stride
+
+    if d < 0 or d > ndim:
+        raise IndexError("Dimension out of range")
+    shape = list(self.shape)
+    stride = list(self.stride)
+    new_stride = stride[d] * shape[d] if d < ndim else 1
+    shape.insert(d, 1)
+    stride.insert(d, new_stride)
+    return self.as_strided_(tuple(shape), tuple(stride))
+
+
+def tensor_as_strided_(self, size, stride, storage_offset=None):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("as_strided_", self.device.type, self, size, stride, storage_offset)
+
+
+def tensor_swapdims_(self, dim0, dim1):
+    return self.transpose_(dim0, dim1)
+
+
+def tensor_swapaxes_(self, axis0, axis1):
+    return self.swapdims_(axis0, axis1)
+
+
+def tensor_scatter_(self, dim, index, src):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("scatter_", self.device.type, self, dim, index, src)
+
+
+def tensor_scatter_add_(self, dim, index, src):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("scatter_add_", self.device.type, self, dim, index, src)
+
+
+def tensor_masked_fill_(self, mask, value):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("masked_fill_", self.device.type, self, mask, value)
+
+
+def tensor_masked_scatter_(self, mask, source):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("masked_scatter_", self.device.type, self, mask, source)
+
+
+def tensor_index_put_(self, indices, values, accumulate=False):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("index_put_", self.device.type, self, indices, values, accumulate)
+
+
+def tensor_index_copy_(self, dim, index, source):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("index_copy_", self.device.type, self, dim, index, source)
+
+
+def tensor_index_fill_(self, dim, index, value):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("index_fill_", self.device.type, self, dim, index, value)
+
+
+def tensor_index_add_(self, dim, index, source, alpha=1.0):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("index_add_", self.device.type, self, dim, index, source, alpha)
+
+
+def tensor_numpy_view(self):
+    cdef object base
+    cdef object itemsize
+    cdef tuple strides
+    if self.device.type == "meta":
+        raise RuntimeError("meta tensor has no data")
+    if self.device.type != "cpu":
+        return self.to("cpu")._numpy_view()
+    base = self._storage.data.ravel()
+    itemsize = base.itemsize
+    strides = tuple(s * itemsize for s in self.stride)
+    return np.lib.stride_tricks.as_strided(
+        base[self.offset:], shape=self.shape, strides=strides
+    )
+
+
+def tensor_numpy(self):
+    _flush_pending(self)
+    if self.device.type == "meta":
+        raise RuntimeError("meta tensor has no data")
+    if self.device.type != "cpu":
+        raise RuntimeError("numpy() is only available for CPU tensors")
+    return self._numpy_view()
+
+
+def tensor_pin_memory(self):
+    cdef object storage
+    _ensure_conversion_refs()
+    _ensure_tensor_factory_ref()
+    if self.device.type != "cpu":
+        raise RuntimeError("pin_memory only supports CPU tensors")
+    if not _npu_available_fn():
+        raise RuntimeError("Cannot access accelerator device when none is available.")
+    if self.is_pinned():
+        return self
+    storage = _pinned_cpu_typed_storage_from_numpy_fn(self._numpy_view(), self.dtype, device=self.device)
+    return _cy_make_tensor_from_storage_fn(storage, self.shape, self.stride, self.offset, self.requires_grad)
+
+
+def tensor_new_empty(self, size, *, dtype=None, device=None, requires_grad=False):
+    from candle._creation import empty
+    cdef object dt = dtype if dtype is not None else self.dtype
+    cdef object dev = device if device is not None else self.device
+    return empty(size, dtype=dt, device=dev)
+
+
+def tensor_new_tensor(self, data, *, dtype=None, device=None, requires_grad=False):
+    from candle._creation import tensor
+    cdef object dt = dtype if dtype is not None else self.dtype
+    cdef object dev = device if device is not None else self.device
+    return tensor(data, dtype=dt, device=dev)
+
+
+def tensor_new_empty_strided(self, size, stride, *, dtype=None, device=None, requires_grad=False):
+    from candle._creation import empty
+    cdef object dt = dtype if dtype is not None else self.dtype
+    cdef object dev = device if device is not None else self.device
+    cdef Py_ssize_t numel = 1
+    cdef object arr
+    cdef object storage
+    cdef object t
+    cdef object s
+
+    if dev.type == "cpu":
+        _ensure_conversion_refs()
+        _ensure_tensor_factory_ref()
+        for s in size:
+            numel *= s
+        arr = np.empty(numel, dtype=_to_numpy_dtype_fn(dt))
+        storage = _typed_storage_from_numpy_fn(arr, dt, device=dev)
+        return _cy_make_tensor_from_storage_fn(storage, tuple(size), tuple(stride), 0, requires_grad)
+    t = empty(size, dtype=dt, device=dev)
+    return t
+
+
+def tensor_ones_like(self):
+    cdef object storage
+    cdef object arr
+    cdef object stride
+    cdef object tensor
+
+    _ensure_conversion_refs()
+    _ensure_tensor_factory_ref()
+
+    if self.device.type == "meta":
+        storage = _meta_typed_storage_from_shape_fn(self.shape, self.dtype, device=self.device)
+        return _cy_make_tensor_from_storage_fn(storage, self.shape, self.stride, 0, False)
+    arr = np.ones(self.shape, dtype=_to_numpy_dtype_fn(self.dtype))
+    storage = _typed_storage_from_numpy_fn(arr, self.dtype, device=self.device if self.device.type == "cpu" else None)
+    stride = tuple(np.array(arr.strides) // arr.itemsize)
+    tensor = _cy_make_tensor_from_storage_fn(storage, arr.shape, stride, 0, False)
+    if self.device.type != "cpu":
+        return tensor.to(self.device)
+    return tensor
+
+
+def tensor_new_ones(self, size, dtype=None, device=None):
+    from candle._creation import ones
+    if dtype is None:
+        dtype = self.dtype
+    if device is None:
+        device = self.device
+    return ones(size, dtype=dtype, device=device)
+
+
+def tensor_new_zeros(self, size, dtype=None, device=None):
+    from candle._creation import zeros
+    if dtype is None:
+        dtype = self.dtype
+    if device is None:
+        device = self.device
+    return zeros(size, dtype=dtype, device=device)
+
+
+def tensor_new_full(self, size, fill_value, *, dtype=None, device=None, requires_grad=False):
+    from candle._creation import full
+    cdef object dt = dtype if dtype is not None else self.dtype
+    cdef object dev = device if device is not None else self.device
+    return full(size, fill_value, dtype=dt, device=dev)
+
+
+def tensor_type(self, dtype=None):
+    cdef object dt
+    if dtype is None:
+        return f"torch.{self.dtype.name.capitalize()}Tensor"
+    if isinstance(dtype, str):
+        _ensure_dtype_ref()
+        from candle._dtype import float32, float64, float16, bfloat16, int64, int32, int16, int8, uint8
+        from candle._dtype import bool as dtype_bool
+        _type_map = {
+            "torch.FloatTensor": float32,
+            "torch.DoubleTensor": float64,
+            "torch.HalfTensor": float16,
+            "torch.BFloat16Tensor": bfloat16,
+            "torch.LongTensor": int64,
+            "torch.IntTensor": int32,
+            "torch.ShortTensor": int16,
+            "torch.CharTensor": int8,
+            "torch.ByteTensor": uint8,
+            "torch.BoolTensor": dtype_bool,
+        }
+        dt = _type_map.get(dtype) or _from_name_fn(dtype)
+        if dt is None:
+            raise RuntimeError(f"Unknown type: {dtype}")
+        return self._to_dtype(dt)
+    return self._to_dtype(dtype)
+
+
+def tensor_type_as(self, other):
+    return self.to(other.dtype)
+
+
+def tensor_reshape_as(self, other):
+    return self.reshape(other.shape)
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
+
     cdef Py_ssize_t i
     cdef Py_ssize_t ndim = len(shape)
     cdef list strides = [0] * ndim
