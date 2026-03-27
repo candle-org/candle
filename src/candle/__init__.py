@@ -392,6 +392,7 @@ from . import distributed
 from . import onnx
 from . import futures
 from . import amp
+from . import accelerator
 from . import compiler
 from . import _dynamo
 from . import quasirandom
@@ -689,6 +690,7 @@ __all__ = [
     "onnx",
     # amp
     "amp",
+    "accelerator",
     "is_autocast_enabled",
     "set_autocast_enabled",
     "get_autocast_dtype",
