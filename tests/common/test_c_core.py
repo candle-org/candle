@@ -796,3 +796,36 @@ class TestSerializationBirthConsistency:
         assert tmp._dtype_code == ref._dtype_code
         assert tmp._device_type == ref._device_type
         assert tmp._dispatch_keys == ref._dispatch_keys
+
+
+class TestCallableStrideContract:
+    """Unified birth path must preserve callable stride() semantics."""
+
+    def test_factory_born_tensor_stride_is_callable(self):
+        import numpy as np
+        from candle._cython._storage_impl import StorageImpl
+        from candle._cython._tensor_impl import cy_make_tensor_from_storage
+        from candle._dtype import float32
+        from candle._device import device
+
+        arr = np.arange(6, dtype=np.float32)
+        storage_impl = StorageImpl.from_numpy(arr)
+
+        class WrappedUntyped:
+            def __init__(self, impl, dev):
+                self._impl = impl
+                self.device = dev
+            def data_ptr(self):
+                return self._impl.data_ptr()
+
+        dev = device("cpu")
+        typed_storage = type("_TmpStorage", (), {})()
+        typed_storage.device = dev
+        typed_storage.dtype = float32
+        typed_storage._storage_impl = storage_impl
+        typed_storage._untyped = WrappedUntyped(storage_impl, dev)
+
+        t = cy_make_tensor_from_storage(typed_storage, (2, 3), (3, 1), 0, False)
+        assert t.stride() == (3, 1)
+        assert t.stride(0) == 3
+        assert t.stride(1) == 1
