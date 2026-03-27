@@ -21,6 +21,8 @@ cdef object _reshape_dispatch_fn = None
 cdef object _transpose_dispatch_fn = None
 cdef object _view_dispatch_fn = None
 cdef object _to_dispatch_fn = None
+cdef object _dispatch_fn = None
+cdef object _cy_make_view_tensor_fn = None
 
 
 cdef inline void _ensure_base():
@@ -56,6 +58,20 @@ cdef inline void _ensure_pipeline_ref():
     if _current_pipeline_fn is None:
         from candle._dispatch.pipeline import current_pipeline
         _current_pipeline_fn = current_pipeline
+
+
+cdef inline void _ensure_dispatch_ref():
+    global _dispatch_fn
+    if _dispatch_fn is None:
+        from candle._dispatch import dispatch
+        _dispatch_fn = dispatch
+
+
+cdef inline void _ensure_view_factory_ref():
+    global _cy_make_view_tensor_fn
+    if _cy_make_view_tensor_fn is None:
+        from candle._cython._tensor_impl import cy_make_view_tensor
+        _cy_make_view_tensor_fn = cy_make_view_tensor
 
 
 cdef inline void _ensure_functional_refs():
@@ -257,6 +273,59 @@ def tensor_view(self, *shape):
     return _view_dispatch_fn(self, shape)
 
 
+def tensor_is_contiguous(self, memory_format=None):
+    cdef tuple expected
+    expected = _contiguous_stride_tuple(self.shape)
+    return self.stride == expected
+
+
+def tensor_contiguous(self, memory_format=None):
+    if self.is_contiguous(memory_format=memory_format):
+        return self
+    _ensure_dispatch_ref()
+    return _dispatch_fn("contiguous", self.device.type, self)
+
+
+def tensor_flatten(self, start_dim=0, end_dim=-1):
+    cdef Py_ssize_t ndim = len(self.shape)
+    cdef Py_ssize_t i
+    cdef Py_ssize_t flattened = 1
+    cdef tuple new_shape
+
+    if ndim == 0:
+        return self.reshape((1,))
+    if start_dim < 0:
+        start_dim += ndim
+    if end_dim < 0:
+        end_dim += ndim
+    if start_dim < 0 or start_dim >= ndim:
+        raise IndexError("Dimension out of range")
+    if end_dim < 0 or end_dim >= ndim:
+        raise IndexError("Dimension out of range")
+    if start_dim > end_dim:
+        raise RuntimeError("flatten() has invalid args: start_dim cannot come after end_dim")
+
+    for i in range(start_dim, end_dim + 1):
+        flattened *= self.shape[i]
+    new_shape = self.shape[:start_dim] + (flattened,) + self.shape[end_dim + 1:]
+    return self.reshape(new_shape)
+
+
+def tensor_t(self):
+    cdef Py_ssize_t ndim = len(self.shape)
+    if ndim > 2:
+        raise RuntimeError(f"t() expects a tensor with <= 2 dimensions, but self is {ndim}D")
+    if ndim < 2:
+        return self
+    return self.transpose(0, 1)
+
+
+def tensor_as_strided(self, size, stride, storage_offset=None):
+    cdef object offset = storage_offset if storage_offset is not None else self.offset
+    _ensure_view_factory_ref()
+    return _cy_make_view_tensor_fn(self, self._storage, tuple(size), tuple(stride), offset)
+
+
 def tensor_size(self, dim=None):
     cdef Py_ssize_t ndim
 
@@ -272,3 +341,14 @@ def tensor_size(self, dim=None):
 
 def tensor_dim(self):
     return self._ndim
+
+
+cdef inline tuple _contiguous_stride_tuple(tuple shape):
+    cdef Py_ssize_t i
+    cdef Py_ssize_t ndim = len(shape)
+    cdef list strides = [0] * ndim
+    cdef Py_ssize_t acc = 1
+    for i in range(ndim - 1, -1, -1):
+        strides[i] = acc
+        acc *= shape[i]
+    return tuple(strides)

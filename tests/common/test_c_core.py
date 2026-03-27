@@ -829,3 +829,47 @@ class TestCallableStrideContract:
         assert t.stride() == (3, 1)
         assert t.stride(0) == 3
         assert t.stride(1) == 1
+
+
+class TestTensorLayoutMethodProviders:
+    """Layout/view Tensor methods should be served from the Cython tensor API layer."""
+
+    def test_remaining_layout_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "is_contiguous",
+            "contiguous",
+            "flatten",
+            "t",
+            "as_strided",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_tensor_api_bound_layout_methods_preserve_behavior(self):
+        import candle as torch
+
+        base = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        transposed = base.transpose(0, 1)
+
+        assert transposed.is_contiguous() is False
+        cont = transposed.contiguous()
+        assert cont.is_contiguous() is True
+        assert cont.shape == (3, 2)
+
+        flat = base.flatten()
+        assert flat.shape == (6,)
+
+        tt = base.t()
+        assert tt.shape == (3, 2)
+        assert tt.stride() == (1, 3)
+
+        view = base.as_strided((3, 2), (1, 3), 0)
+        assert view.shape == (3, 2)
+        assert view.stride() == (1, 3)
+        assert view._storage is base._storage

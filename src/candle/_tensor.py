@@ -1883,9 +1883,14 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.to = _cython_mod.tensor_to
     Tensor.backward = _cython_mod.tensor_backward
     Tensor.relu = _cython_mod.tensor_relu
+    Tensor.is_contiguous = _cython_mod.tensor_is_contiguous
+    Tensor.contiguous = _cython_mod.tensor_contiguous
     Tensor.reshape = _cython_mod.tensor_reshape
     Tensor.transpose = _cython_mod.tensor_transpose
     Tensor.view = _cython_mod.tensor_view
+    Tensor.flatten = _cython_mod.tensor_flatten
+    Tensor.t = _cython_mod.tensor_t
+    Tensor.as_strided = _cython_mod.tensor_as_strided
     Tensor.size = _cython_mod.tensor_size
     Tensor.dim = _cython_mod.tensor_dim
 
