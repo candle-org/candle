@@ -6,6 +6,8 @@ is available so the hottest Tensor forwarding paths run through compiled code
 while preserving the existing Python fallback behavior in ``candle._tensor``.
 """
 
+import numpy as np
+
 cdef object _BaseTensor = None
 cdef object _Device = None
 cdef object _from_name_fn = None
@@ -23,8 +25,18 @@ cdef object _view_dispatch_fn = None
 cdef object _to_dispatch_fn = None
 cdef object _dispatch_fn = None
 cdef object _cy_make_view_tensor_fn = None
+cdef object _cy_make_tensor_from_storage_fn = None
 cdef object _HookHandle_cls = None
 cdef object _is_grad_enabled_fn = None
+
+cdef object _typed_storage_from_numpy_fn = None
+cdef object _meta_typed_storage_from_shape_fn = None
+cdef object _mps_typed_storage_from_numpy_fn = None
+cdef object _to_numpy_dtype_fn = None
+cdef object _bfloat16_dtype = None
+cdef object _bf16_to_f32_fn = None
+cdef object _f32_to_bf16_fn = None
+cdef object _cast_tensor_dtype_npu_fn = None
 
 
 cdef inline void _ensure_base():
@@ -76,6 +88,13 @@ cdef inline void _ensure_view_factory_ref():
         _cy_make_view_tensor_fn = cy_make_view_tensor
 
 
+cdef inline void _ensure_tensor_factory_ref():
+    global _cy_make_tensor_from_storage_fn
+    if _cy_make_tensor_from_storage_fn is None:
+        from candle._cython._tensor_impl import cy_make_tensor_from_storage
+        _cy_make_tensor_from_storage_fn = cy_make_tensor_from_storage
+
+
 cdef inline void _ensure_hook_handle_ref():
     global _HookHandle_cls
     if _HookHandle_cls is None:
@@ -116,6 +135,32 @@ cdef inline void _ensure_functional_refs():
         _transpose_dispatch_fn = transpose_dispatch_fn
         _view_dispatch_fn = view_dispatch_fn
         _to_dispatch_fn = to_dispatch_fn
+
+
+cdef inline void _ensure_conversion_refs():
+    global _typed_storage_from_numpy_fn, _meta_typed_storage_from_shape_fn
+    global _mps_typed_storage_from_numpy_fn, _to_numpy_dtype_fn
+    global _bfloat16_dtype, _bf16_to_f32_fn, _f32_to_bf16_fn
+    global _cast_tensor_dtype_npu_fn
+
+    if _typed_storage_from_numpy_fn is None:
+        from candle._storage import (
+            typed_storage_from_numpy,
+            meta_typed_storage_from_shape,
+            mps_typed_storage_from_numpy,
+        )
+        from candle._dtype import to_numpy_dtype, bfloat16
+        from candle._tensor import _bf16_to_f32, _f32_to_bf16
+        from candle._backends.npu.ops._helpers import _cast_tensor_dtype
+
+        _typed_storage_from_numpy_fn = typed_storage_from_numpy
+        _meta_typed_storage_from_shape_fn = meta_typed_storage_from_shape
+        _mps_typed_storage_from_numpy_fn = mps_typed_storage_from_numpy
+        _to_numpy_dtype_fn = to_numpy_dtype
+        _bfloat16_dtype = bfloat16
+        _bf16_to_f32_fn = _bf16_to_f32
+        _f32_to_bf16_fn = _f32_to_bf16
+        _cast_tensor_dtype_npu_fn = _cast_tensor_dtype
 
 
 cdef inline void _flush_pending(object tensor):
@@ -444,6 +489,84 @@ def tensor_check_inplace(self):
             raise RuntimeError("a view of a leaf Variable that requires grad is being used in an in-place operation.")
     if self.grad_fn is None and not self._is_view():
         raise RuntimeError("a leaf Variable that requires grad is being used in an in-place operation.")
+
+
+def tensor_to_dtype(self, dtype):
+    cdef object arr
+    cdef object src_dtype
+    cdef object target_np
+    cdef object storage
+    cdef object stride
+
+    _ensure_conversion_refs()
+    _ensure_tensor_factory_ref()
+
+    if self.device.type == "cpu":
+        arr = self._numpy_view()
+        src_dtype = self.dtype
+        target_np = _to_numpy_dtype_fn(dtype)
+        if src_dtype == _bfloat16_dtype:
+            arr = _bf16_to_f32_fn(arr)
+        if dtype == _bfloat16_dtype:
+            arr = arr.astype(np.float32)
+            arr = _f32_to_bf16_fn(arr)
+        else:
+            arr = arr.astype(target_np)
+        storage = _typed_storage_from_numpy_fn(arr, dtype, device=self.device)
+        stride = tuple(np.array(arr.strides) // arr.itemsize)
+        return _cy_make_tensor_from_storage_fn(storage, arr.shape, stride, 0, False)
+    elif self.device.type == "npu":
+        return _cast_tensor_dtype_npu_fn(self, dtype)
+    elif self.device.type == "mps":
+        arr = self._numpy_view()
+        src_dtype = self.dtype
+        target_np = _to_numpy_dtype_fn(dtype)
+        if src_dtype == _bfloat16_dtype:
+            arr = _bf16_to_f32_fn(arr)
+        if dtype == _bfloat16_dtype:
+            arr = arr.astype(np.float32)
+            arr = _f32_to_bf16_fn(arr)
+        else:
+            arr = arr.astype(target_np)
+        storage = _mps_typed_storage_from_numpy_fn(np.ascontiguousarray(arr), dtype, device=self.device)
+        stride = tuple(np.array(arr.strides) // arr.itemsize) if arr.ndim > 0 else ()
+        return _cy_make_tensor_from_storage_fn(storage, arr.shape, stride, 0, False)
+    elif self.device.type == "meta":
+        storage = _meta_typed_storage_from_shape_fn(self.shape, dtype, device=self.device)
+        return _cy_make_tensor_from_storage_fn(storage, self.shape, _contiguous_stride_tuple(self.shape), 0, False)
+    else:
+        raise RuntimeError(
+            f"dtype conversion not yet supported on device {self.device.type}"
+        )
+
+
+def tensor_cpu(self, memory_format=None):
+    if memory_format is None:
+        return self.to("cpu")
+    return self.to("cpu", memory_format=memory_format)
+
+
+def tensor_npu(self, device=None, non_blocking=False, memory_format=None):
+    if device is None:
+        device = "npu"
+    return self.to(device, non_blocking=non_blocking, memory_format=memory_format)
+
+
+def tensor_mps(self, memory_format=None):
+    if memory_format is None:
+        return self.to("mps")
+    return self.to("mps", memory_format=memory_format)
+
+
+def tensor_cuda(self, device=None, non_blocking=False, memory_format=None):
+    cdef object target
+    if device is None:
+        target = "cuda"
+    elif isinstance(device, str):
+        target = device
+    else:
+        target = f"cuda:{int(device)}"
+    return self.to(target, non_blocking=non_blocking, memory_format=memory_format)
 
 
 cdef inline tuple _contiguous_stride_tuple(tuple shape):

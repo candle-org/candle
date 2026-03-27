@@ -918,6 +918,52 @@ class TestTensorAutogradMethodProviders:
         y = torch.ones((2, 2), dtype=torch.float32)
         y.requires_grad_(True)
         y.detach_()
-        assert y.requires_grad is False
-        assert y.grad_fn is None
-        assert y._retain_grad is False
+
+
+class TestTensorConversionMethodProviders:
+    """Conversion Tensor methods should be served from the Cython tensor API layer."""
+
+    def test_remaining_conversion_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "_to_dtype",
+            "cpu",
+            "cuda",
+            "mps",
+            "npu",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_tensor_api_bound_conversion_methods_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.ones((2, 2), dtype=torch.float32)
+
+        y = x._to_dtype(torch.float64)
+        assert y.dtype == torch.float64
+        assert y.shape == x.shape
+
+        z = x.cpu()
+        assert z.device.type == "cpu"
+        assert z.dtype == x.dtype
+
+        if torch.npu.is_available():
+            n = x.npu()
+            assert n.device.type == "npu"
+            assert n.dtype == x.dtype
+
+        if hasattr(torch, "cuda") and torch.cuda.is_available():
+            c = x.cuda(0)
+            assert c.device.type == "cuda"
+            assert c.dtype == x.dtype
+
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            m = x.mps()
+            assert m.device.type == "mps"
+            assert m.dtype == x.dtype

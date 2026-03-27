@@ -1882,6 +1882,11 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.detach = _cython_mod.tensor_detach
     Tensor.detach_ = _cython_mod.tensor_detach_
     Tensor.to = _cython_mod.tensor_to
+    Tensor._to_dtype = _cython_mod.tensor_to_dtype
+    Tensor.cpu = _cython_mod.tensor_cpu
+    Tensor.npu = _cython_mod.tensor_npu
+    Tensor.mps = _cython_mod.tensor_mps
+    Tensor.cuda = _cython_mod.tensor_cuda
     Tensor.backward = _cython_mod.tensor_backward
     Tensor.relu = _cython_mod.tensor_relu
     Tensor.is_contiguous = _cython_mod.tensor_is_contiguous
