@@ -1921,3 +1921,94 @@ class TestLog1pExpm1LtLeGtGeProviders:
         assert a.gt(b).tolist() == [False, False, True]
         assert a.ge(b).tolist() == [False, True, True]
 
+
+class TestUnaryOpsProviders:
+    """Unary element-wise ops should be served from the Cython tensor API layer."""
+
+    UNARY_NAMES = {
+        "abs", "neg", "exp", "log", "sqrt",
+        "sin", "cos", "tan", "tanh", "sigmoid",
+        "floor", "ceil", "round", "trunc", "frac",
+        "log2", "log10", "exp2", "rsqrt",
+        "sign", "signbit", "square",
+        "isnan", "isinf", "isfinite",
+        "sinh", "cosh", "asinh", "acosh", "atanh",
+        "erf", "erfc", "reciprocal",
+    }
+    # tril / triu / diag take an optional diagonal arg but are still unary-ish
+    WITH_OPT_ARG = {"tril", "triu", "diag"}
+
+    def test_unary_ops_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = self.UNARY_NAMES | self.WITH_OPT_ARG
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_unary_ops_preserve_behavior(self):
+        import candle as torch
+        import math
+
+        pos = torch.tensor([1.0, 4.0, 9.0], dtype=torch.float32)
+        assert pos.abs().tolist() == [1.0, 4.0, 9.0]
+        neg = torch.tensor([-1.0, -4.0, -9.0], dtype=torch.float32)
+        assert neg.abs().tolist() == [1.0, 4.0, 9.0]
+
+        x = torch.tensor([1.0, 2.0], dtype=torch.float32)
+        assert x.neg().tolist() == [-1.0, -2.0]
+
+        e = torch.tensor([0.0, 1.0], dtype=torch.float32)
+        exp_out = e.exp().tolist()
+        assert abs(exp_out[0] - 1.0) < 1e-5
+        assert abs(exp_out[1] - math.e) < 1e-5
+
+        log_out = pos.log().tolist()
+        assert abs(log_out[0] - 0.0) < 1e-5
+        assert abs(log_out[1] - math.log(4.0)) < 1e-5
+
+        sqrt_out = pos.sqrt().tolist()
+        assert abs(sqrt_out[0] - 1.0) < 1e-5
+        assert abs(sqrt_out[1] - 2.0) < 1e-5
+        assert abs(sqrt_out[2] - 3.0) < 1e-5
+
+        angles = torch.tensor([0.0, math.pi / 2], dtype=torch.float32)
+        assert abs(angles.sin().tolist()[0] - 0.0) < 1e-5
+        assert abs(angles.sin().tolist()[1] - 1.0) < 1e-5
+        assert abs(angles.cos().tolist()[0] - 1.0) < 1e-5
+
+        z = torch.tensor([0.0], dtype=torch.float32)
+        assert z.floor().tolist() == [0.0]
+        assert z.ceil().tolist() == [0.0]
+        assert z.round().tolist() == [0.0]
+        assert z.trunc().tolist() == [0.0]
+
+        frac_in = torch.tensor([1.5, -1.5], dtype=torch.float32)
+        frac_out = frac_in.frac().tolist()
+        assert abs(frac_out[0] - 0.5) < 1e-5
+
+        ones = torch.tensor([1.0, 1.0], dtype=torch.float32)
+        assert ones.reciprocal().tolist() == [1.0, 1.0]
+
+        # isnan / isinf / isfinite
+        nan_t = torch.tensor([float('nan'), 1.0], dtype=torch.float32)
+        assert nan_t.isnan().tolist() == [True, False]
+        inf_t = torch.tensor([float('inf'), 1.0], dtype=torch.float32)
+        assert inf_t.isinf().tolist() == [True, False]
+        assert inf_t.isfinite().tolist() == [False, True]
+
+        # tril / triu
+        m = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]], dtype=torch.float32)
+        tril_out = m.tril().tolist()
+        assert tril_out == [[1.0, 0.0, 0.0], [4.0, 5.0, 0.0], [7.0, 8.0, 9.0]]
+        triu_out = m.triu().tolist()
+        assert triu_out == [[1.0, 2.0, 3.0], [0.0, 5.0, 6.0], [0.0, 0.0, 9.0]]
+
+        # diag
+        v = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+        diag_out = v.diag().tolist()
+        assert diag_out == [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]
+

@@ -1589,6 +1589,183 @@ def tensor_ge(self, other):
     return _dispatch_fn("ge", self.device.type, self, other)
 
 
+# ── unary element-wise ops ────────────────────────────────────────────────────
+
+def tensor_abs(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("abs", self.device.type, self)
+
+
+def tensor_exp(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("exp", self.device.type, self)
+
+
+def tensor_log(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("log", self.device.type, self)
+
+
+def tensor_sqrt(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("sqrt", self.device.type, self)
+
+
+def tensor_sin(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("sin", self.device.type, self)
+
+
+def tensor_cos(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("cos", self.device.type, self)
+
+
+def tensor_tan(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("tan", self.device.type, self)
+
+
+def tensor_tanh(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("tanh", self.device.type, self)
+
+
+def tensor_sigmoid(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("sigmoid", self.device.type, self)
+
+
+def tensor_floor(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("floor", self.device.type, self)
+
+
+def tensor_ceil(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("ceil", self.device.type, self)
+
+
+def tensor_round(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("round", self.device.type, self)
+
+
+def tensor_trunc(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("trunc", self.device.type, self)
+
+
+def tensor_frac(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("frac", self.device.type, self)
+
+
+def tensor_log2(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("log2", self.device.type, self)
+
+
+def tensor_log10(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("log10", self.device.type, self)
+
+
+def tensor_exp2(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("exp2", self.device.type, self)
+
+
+def tensor_rsqrt(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("rsqrt", self.device.type, self)
+
+
+def tensor_sign(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("sign", self.device.type, self)
+
+
+def tensor_signbit(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("signbit", self.device.type, self)
+
+
+def tensor_square(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("square", self.device.type, self)
+
+
+def tensor_isnan(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("isnan", self.device.type, self)
+
+
+def tensor_isinf(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("isinf", self.device.type, self)
+
+
+def tensor_isfinite(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("isfinite", self.device.type, self)
+
+
+def tensor_sinh(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("sinh", self.device.type, self)
+
+
+def tensor_cosh(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("cosh", self.device.type, self)
+
+
+def tensor_asinh(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("asinh", self.device.type, self)
+
+
+def tensor_acosh(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("acosh", self.device.type, self)
+
+
+def tensor_atanh(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("atanh", self.device.type, self)
+
+
+def tensor_erf(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("erf", self.device.type, self)
+
+
+def tensor_erfc(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("erfc", self.device.type, self)
+
+
+def tensor_reciprocal(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("reciprocal", self.device.type, self)
+
+
+def tensor_tril(self, diagonal=0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("tril", self.device.type, self, diagonal)
+
+
+def tensor_triu(self, diagonal=0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("triu", self.device.type, self, diagonal)
+
+
+def tensor_diag(self, diagonal=0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("diag", self.device.type, self, diagonal)
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
 
 
