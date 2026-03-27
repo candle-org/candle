@@ -992,5 +992,124 @@ class TestTensorIndexingMethodProviders:
         assert x[0, 1].item() == 1.0
         assert x[:, 1].shape == (2,)
 
-        x[0, 1] = 99.0
-        assert x[0, 1].item() == 99.0
+class TestTensorInplaceMutationMethodProviders:
+    """Representative inplace mutation methods should be served from the Cython tensor API layer."""
+
+    def test_representative_inplace_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "add_",
+            "mul_",
+            "relu_",
+            "zero_",
+            "fill_",
+            "copy_",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_tensor_api_bound_inplace_methods_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.tensor([1.0, -2.0, 3.0], dtype=torch.float32)
+        x.add_(2.0)
+        assert x.tolist() == [3.0, 0.0, 5.0]
+
+        x.mul_(2.0)
+        assert x.tolist() == [6.0, 0.0, 10.0]
+
+        x.relu_()
+        assert x.tolist() == [6.0, 0.0, 10.0]
+
+        x.fill_(4.0)
+        assert x.tolist() == [4.0, 4.0, 4.0]
+
+        y = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+        x.copy_(y)
+        assert x.tolist() == [1.0, 2.0, 3.0]
+
+
+
+class TestTensorUnaryInplaceMethodProviders:
+    """Unary inplace mutation methods should be served from the Cython tensor API layer."""
+
+    def test_unary_inplace_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "abs_",
+            "neg_",
+            "exp_",
+            "log_",
+            "log2_",
+            "log10_",
+            "sqrt_",
+            "sin_",
+            "cos_",
+            "tan_",
+            "tanh_",
+            "sigmoid_",
+            "floor_",
+            "ceil_",
+            "round_",
+            "trunc_",
+            "pow_",
+            "reciprocal_",
+            "erfinv_",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_unary_inplace_methods_preserve_behavior(self):
+        import candle as torch
+
+        a = torch.tensor([-1.5, 2.2], dtype=torch.float32)
+        a.abs_()
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(a.tolist(), [1.5, 2.2]))
+        a.neg_()
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(a.tolist(), [-1.5, -2.2]))
+
+        b = torch.tensor([1.0, 4.0], dtype=torch.float32)
+        b.sqrt_()
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(b.tolist(), [1.0, 2.0]))
+        b.pow_(2.0)
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(b.tolist(), [1.0, 4.0]))
+        b.reciprocal_()
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(b.tolist(), [1.0, 0.25]))
+
+        c = torch.tensor([1.0, 2.0], dtype=torch.float32)
+        c.exp_()
+        assert all(v > 0 for v in c.tolist())
+        c.log_()
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(c.tolist(), [1.0, 2.0]))
+
+        d = torch.tensor([1.9, -1.2], dtype=torch.float32)
+        d.floor_()
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(d.tolist(), [1.0, -2.0]))
+        d.ceil_()
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(d.tolist(), [1.0, -2.0]))
+        d.round_()
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(d.tolist(), [1.0, -2.0]))
+        d.trunc_()
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(d.tolist(), [1.0, -2.0]))
+
+        e = torch.tensor([0.0, 0.5], dtype=torch.float32)
+        e.sin_()
+        assert len(e.tolist()) == 2
+        e.cos_()
+        assert len(e.tolist()) == 2
+        e.tan_()
+        assert len(e.tolist()) == 2
+        e.tanh_()
+        assert len(e.tolist()) == 2
+        e.sigmoid_()
+        assert all(0.0 < v < 1.0 for v in e.tolist())

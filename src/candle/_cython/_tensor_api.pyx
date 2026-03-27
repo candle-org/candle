@@ -580,6 +580,160 @@ def tensor_setitem(self, key, value):
     _dispatch_fn("setitem", self.device.type, self, key, value)
 
 
+def tensor_add_(self, other, alpha=1):
+    cdef object rhs = other
+    _ensure_dispatch_ref()
+    _ensure_functional_refs()
+    self._check_inplace()
+    if alpha != 1:
+        rhs = _mul_fn(other, alpha)
+    return _dispatch_fn("add_", self.device.type, self, rhs)
+
+
+def tensor_mul_(self, other):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("mul_", self.device.type, self, other)
+
+
+def tensor_relu_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("relu_", self.device.type, self)
+
+
+def tensor_zero_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("zero_", self.device.type, self)
+
+
+def tensor_fill_(self, value):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("fill_", self.device.type, self, value)
+
+
+def tensor_copy_(self, src):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("copy_", self.device.type, self, src)
+
+
+def tensor_abs_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("abs_", self.device.type, self)
+
+
+def tensor_neg_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("neg_", self.device.type, self)
+
+
+def tensor_exp_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("exp_", self.device.type, self)
+
+
+def tensor_log_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("log_", self.device.type, self)
+
+
+def tensor_log2_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("log2_", self.device.type, self)
+
+
+def tensor_log10_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("log10_", self.device.type, self)
+
+
+def tensor_sqrt_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("sqrt_", self.device.type, self)
+
+
+def tensor_sin_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("sin_", self.device.type, self)
+
+
+def tensor_cos_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("cos_", self.device.type, self)
+
+
+def tensor_tan_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("tan_", self.device.type, self)
+
+
+def tensor_tanh_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("tanh_", self.device.type, self)
+
+
+def tensor_sigmoid_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("sigmoid_", self.device.type, self)
+
+
+def tensor_floor_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("floor_", self.device.type, self)
+
+
+def tensor_ceil_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("ceil_", self.device.type, self)
+
+
+def tensor_round_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("round_", self.device.type, self)
+
+
+def tensor_trunc_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("trunc_", self.device.type, self)
+
+
+def tensor_pow_(self, exponent):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("pow_", self.device.type, self, exponent)
+
+
+def tensor_reciprocal_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("reciprocal_", self.device.type, self)
+
+
+def tensor_erfinv_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("erfinv_", self.device.type, self)
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
     cdef Py_ssize_t i
     cdef Py_ssize_t ndim = len(shape)
