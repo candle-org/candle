@@ -873,3 +873,51 @@ class TestTensorLayoutMethodProviders:
         assert view.shape == (3, 2)
         assert view.stride() == (1, 3)
         assert view._storage is base._storage
+
+
+class TestTensorAutogradMethodProviders:
+    """Autograd state Tensor methods should be served from the Cython tensor API layer."""
+
+    def test_remaining_autograd_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "detach_",
+            "retain_grad",
+            "requires_grad_",
+            "register_hook",
+            "_is_view",
+            "_check_inplace",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_tensor_api_bound_autograd_methods_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.ones((2, 2), dtype=torch.float32)
+        x.requires_grad_(True)
+        assert x.requires_grad is True
+
+        x.retain_grad()
+        assert x._retain_grad is True
+
+        handle = x.register_hook(lambda g: g)
+        assert handle.id in x._backward_hooks
+        handle.remove()
+        assert handle.id not in x._backward_hooks
+
+        v = x.view(4)
+        assert v._is_view() is True
+        assert x._is_view() is False
+
+        y = torch.ones((2, 2), dtype=torch.float32)
+        y.requires_grad_(True)
+        y.detach_()
+        assert y.requires_grad is False
+        assert y.grad_fn is None
+        assert y._retain_grad is False

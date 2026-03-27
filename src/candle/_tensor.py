@@ -1880,6 +1880,7 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.__neg__ = _cython_mod.tensor_neg
     Tensor.clone = _cython_mod.tensor_clone
     Tensor.detach = _cython_mod.tensor_detach
+    Tensor.detach_ = _cython_mod.tensor_detach_
     Tensor.to = _cython_mod.tensor_to
     Tensor.backward = _cython_mod.tensor_backward
     Tensor.relu = _cython_mod.tensor_relu
@@ -1893,4 +1894,9 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.as_strided = _cython_mod.tensor_as_strided
     Tensor.size = _cython_mod.tensor_size
     Tensor.dim = _cython_mod.tensor_dim
+    Tensor.retain_grad = _cython_mod.tensor_retain_grad
+    Tensor.requires_grad_ = _cython_mod.tensor_requires_grad_
+    Tensor.register_hook = _cython_mod.tensor_register_hook
+    Tensor._is_view = _cython_mod.tensor_is_view
+    Tensor._check_inplace = _cython_mod.tensor_check_inplace
 

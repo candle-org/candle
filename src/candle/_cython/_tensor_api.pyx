@@ -23,6 +23,8 @@ cdef object _view_dispatch_fn = None
 cdef object _to_dispatch_fn = None
 cdef object _dispatch_fn = None
 cdef object _cy_make_view_tensor_fn = None
+cdef object _HookHandle_cls = None
+cdef object _is_grad_enabled_fn = None
 
 
 cdef inline void _ensure_base():
@@ -72,6 +74,20 @@ cdef inline void _ensure_view_factory_ref():
     if _cy_make_view_tensor_fn is None:
         from candle._cython._tensor_impl import cy_make_view_tensor
         _cy_make_view_tensor_fn = cy_make_view_tensor
+
+
+cdef inline void _ensure_hook_handle_ref():
+    global _HookHandle_cls
+    if _HookHandle_cls is None:
+        from candle._tensor import _HookHandle
+        _HookHandle_cls = _HookHandle
+
+
+cdef inline void _ensure_grad_mode_ref():
+    global _is_grad_enabled_fn
+    if _is_grad_enabled_fn is None:
+        from candle.autograd.grad_mode import is_grad_enabled
+        _is_grad_enabled_fn = is_grad_enabled
 
 
 cdef inline void _ensure_functional_refs():
@@ -167,6 +183,13 @@ def tensor_detach(self):
     out._pending = self._pending
     out._version_counter = self._version_counter
     return out
+
+
+def tensor_detach_(self):
+    self.requires_grad = False
+    self.grad_fn = None
+    self._retain_grad = False
+    return self
 
 
 def tensor_to(self, *args, **kwargs):
@@ -341,6 +364,86 @@ def tensor_size(self, dim=None):
 
 def tensor_dim(self):
     return self._ndim
+
+
+def tensor_retain_grad(self):
+    self._retain_grad = True
+
+
+def tensor_requires_grad_(self, requires_grad=True):
+    self.requires_grad = bool(requires_grad)
+    if not self.requires_grad:
+        self.grad_fn = None
+    return self
+
+
+def tensor_register_hook(self, hook):
+    cdef object hooks
+    cdef object handle
+    if not callable(hook):
+        raise TypeError("hook must be callable")
+    hooks = getattr(self, "_backward_hooks", None)
+    if hooks is None:
+        hooks = {}
+        self._backward_hooks = hooks
+    _ensure_hook_handle_ref()
+    handle = _HookHandle_cls(hooks)
+    hooks[handle.id] = hook
+    return handle
+
+
+def tensor_is_view(self):
+    return self._base is not None
+
+
+def tensor_check_inplace(self):
+    cdef object view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object grad_fn_name
+    cdef object display_name
+
+    _ensure_grad_mode_ref()
+    if not _is_grad_enabled_fn():
+        return
+    if not self.requires_grad:
+        return
+    if self._is_view() and self._base is not None:
+        view_meta = getattr(self, "_view_meta", None) or {}
+        creation_mode = view_meta.get("creation_mode")
+        creation_kind = view_meta.get("creation_kind")
+        grad_fn_name = self.grad_fn.name() if self.grad_fn is not None and hasattr(self.grad_fn, "name") else "<unknown>"
+        if creation_kind == "multi_view":
+            raise RuntimeError(
+                f"Output 0 of {grad_fn_name} is a view and is being modified inplace. This view is the output of a function that returns multiple views. Such functions do not allow the output views to be modified inplace. You should replace the inplace operation by an out-of-place one."
+            )
+        if creation_kind == "custom_function":
+            display_name = grad_fn_name.removesuffix("Backward0") if grad_fn_name.endswith("Backward0") else grad_fn_name
+            raise RuntimeError(
+                f"Output 0 of {display_name} is a view and is being modified inplace. This view was created inside a custom Function (or because an input was returned as-is) and the autograd logic to handle view+inplace would override the custom backward associated with the custom Function, leading to incorrect gradients. This behavior is forbidden. You can fix this by cloning the output of the custom Function."
+            )
+        if creation_mode == "no_grad":
+            if creation_kind == "view_of_view":
+                raise RuntimeError(
+                    "a view of a view which is being modified inside the no_grad block."
+                )
+            if creation_kind == "view":
+                raise RuntimeError(
+                    "A view was created in no_grad mode and is being modified inplace with grad mode enabled."
+                )
+        if creation_mode == "inference_mode":
+            if creation_kind == "view_of_view":
+                raise RuntimeError(
+                    "a view of a view which is being modified inside the inference_mode."
+                )
+            if creation_kind == "view":
+                raise RuntimeError(
+                    "A view was created in inference_mode and is being modified inplace in normal mode."
+                )
+        if self._base.grad_fn is None and self._base.requires_grad:
+            raise RuntimeError("a view of a leaf Variable that requires grad is being used in an in-place operation.")
+    if self.grad_fn is None and not self._is_view():
+        raise RuntimeError("a leaf Variable that requires grad is being used in an in-place operation.")
 
 
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
