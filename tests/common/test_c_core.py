@@ -1603,4 +1603,132 @@ class TestTensorWritebackConvenienceMethodProviders:
         ia = torch.zeros((2, 3), dtype=torch.float32)
         out4 = ia.index_add(1, torch.tensor([0, 2]), torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32), alpha=1)
         assert out4.tolist() == [[1.0, 0.0, 2.0], [3.0, 0.0, 4.0]]
-        assert ia.tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+
+
+class TestTensorShapeReductionWrapperProviders:
+    """Selected shape/reduction wrappers should be served from the Cython tensor API layer."""
+
+    def test_shape_reduction_wrappers_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "permute",
+            "mean",
+            "std",
+            "repeat",
+            "tile",
+            "flip",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_shape_reduction_wrappers_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        assert x.permute(1, 0).shape == (3, 2)
+        assert x.permute(1, 0).tolist() == [[0.0, 3.0], [1.0, 4.0], [2.0, 5.0]]
+
+        assert x.mean().item() == 2.5
+        assert x.mean(dim=1).tolist() == [1.0, 4.0]
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(x.std(dim=1, unbiased=False).tolist(), [0.8164966106414795, 0.8164966106414795]))
+
+        repeated = x.repeat(2, 1)
+        assert repeated.shape == (4, 3)
+        assert repeated.tolist() == [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]
+
+        tiled = x.tile((2, 1))
+        assert tiled.shape == (4, 3)
+        assert tiled.tolist() == [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [0.0, 1.0, 2.0], [3.0, 4.0, 5.0]]
+
+        assert x.flip([1]).tolist() == [[2.0, 1.0, 0.0], [5.0, 4.0, 3.0]]
+
+
+class TestTensorLogicalBitwiseWrapperProviders:
+    """Logical and bitwise wrappers should be served from the Cython tensor API layer."""
+
+    def test_logical_bitwise_wrappers_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "logical_and",
+            "logical_or",
+            "logical_xor",
+            "logical_not",
+            "bitwise_and",
+            "bitwise_or",
+            "bitwise_xor",
+            "bitwise_not",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_logical_bitwise_wrappers_preserve_behavior(self):
+        import candle as torch
+
+        a = torch.tensor([True, False, True], dtype=torch.bool)
+        b = torch.tensor([True, True, False], dtype=torch.bool)
+        assert a.logical_and(b).tolist() == [True, False, False]
+        assert a.logical_or(b).tolist() == [True, True, True]
+        assert a.logical_xor(b).tolist() == [False, True, True]
+        assert a.logical_not().tolist() == [False, True, False]
+
+        x = torch.tensor([1, 2, 3], dtype=torch.int32)
+        y = torch.tensor([3, 1, 1], dtype=torch.int32)
+        assert x.bitwise_and(y).tolist() == [1, 0, 1]
+        assert x.bitwise_or(y).tolist() == [3, 3, 3]
+        assert x.bitwise_xor(y).tolist() == [2, 3, 2]
+        assert x.bitwise_not().tolist() == [-2, -3, -4]
+
+
+class TestTensorNumericHelperMethodProviders:
+    """Selected numeric/statistical helpers should be served from the Cython tensor API layer."""
+
+    def test_numeric_helper_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "logsumexp",
+            "trace",
+            "det",
+            "matrix_power",
+            "dist",
+            "renorm",
+            "nansum",
+            "nanmean",
+            "argwhere",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_numeric_helper_methods_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+        assert all(abs(v - ref) < 1e-6 for v, ref in zip(x.logsumexp(dim=1).tolist(), [2.3132617473602295, 4.31326150894165]))
+        assert x.trace().item() == 5.0
+        assert x.det().item() == -2.0
+        assert x.matrix_power(2).tolist() == [[7.0, 10.0], [15.0, 22.0]]
+        assert abs(x.dist(torch.zeros((2, 2), dtype=torch.float32), p=2).item() - 5.4772257804870605) < 1e-6
+
+        y = torch.tensor([[3.0, 4.0], [0.0, 0.0]], dtype=torch.float32)
+        assert y.renorm(2, 0, 1.0).tolist() == [[1.0, 1.0], [0.0, 0.0]]
+
+        z = torch.tensor([1.0, float('nan'), 3.0], dtype=torch.float32)
+        assert z.nansum().item() == 4.0
+        assert z.nanmean().item() == 2.0
+
+        w = torch.tensor([[0, 1], [2, 0]], dtype=torch.int32)
+        assert w.argwhere().tolist() == [[0, 1], [1, 0]]

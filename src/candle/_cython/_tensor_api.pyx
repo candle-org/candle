@@ -1330,6 +1330,178 @@ def tensor_index_add(self, dim, index, source, alpha=1):
     return out
 
 
+def tensor_permute(self, *dims):
+    _ensure_dispatch_ref()
+    if len(dims) == 1 and isinstance(dims[0], (tuple, list)):
+        dims = tuple(dims[0])
+    return _dispatch_fn("permute", self.device.type, self, dims)
+
+
+def tensor_mean(self, dim=None, keepdim=False, dtype=None, axis=None):
+    from candle._functional import mean as mean_dispatch
+    if axis is not None:
+        dim = axis
+    return mean_dispatch(self, dim=dim, keepdim=keepdim, dtype=dtype)
+
+
+def tensor_std(self, dim=None, keepdim=False, unbiased=True, axis=None):
+    from candle._functional import std as std_dispatch
+    if axis is not None:
+        dim = axis
+    return std_dispatch(self, dim=dim, keepdim=keepdim, unbiased=unbiased)
+
+
+def tensor_repeat(self, *repeats):
+    from candle._functional import repeat as repeat_dispatch
+    if len(repeats) == 1 and isinstance(repeats[0], (tuple, list)):
+        repeats = tuple(repeats[0])
+    return repeat_dispatch(self, repeats)
+
+
+def tensor_tile(self, *dims):
+    from candle._functional import tile as tile_dispatch
+    if len(dims) == 1 and isinstance(dims[0], (tuple, list)):
+        dims = tuple(dims[0])
+    return tile_dispatch(self, dims)
+
+
+def tensor_flip(self, dims):
+    from candle._functional import flip as flip_dispatch
+    if isinstance(dims, int):
+        dims = [dims]
+    return flip_dispatch(self, dims)
+
+
+def tensor_logsumexp(self, dim, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("logsumexp", self.device.type, self, dim, keepdim)
+
+
+def tensor_trace(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("trace", self.device.type, self)
+
+
+def tensor_det(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("det", self.device.type, self)
+
+
+def tensor_matrix_power(self, n):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("matrix_power", self.device.type, self, n)
+
+
+def tensor_dist(self, other, p=2):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("dist", self.device.type, self, other, p)
+
+
+def tensor_renorm(self, p, dim, maxnorm):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("renorm", self.device.type, self, p, dim, maxnorm)
+
+
+def tensor_nansum(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("nansum", self.device.type, self, dim, keepdim)
+
+
+def tensor_nanmean(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("nanmean", self.device.type, self, dim, keepdim)
+
+
+def tensor_argwhere(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("argwhere", self.device.type, self)
+
+
+def tensor_logical_and(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("logical_and", self.device.type, self, other)
+
+
+def tensor_logical_or(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("logical_or", self.device.type, self, other)
+
+
+def tensor_logical_xor(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("logical_xor", self.device.type, self, other)
+
+
+def tensor_logical_not(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("logical_not", self.device.type, self)
+
+
+def tensor_bitwise_and(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("bitwise_and", self.device.type, self, other)
+
+
+def tensor_bitwise_or(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("bitwise_or", self.device.type, self, other)
+
+
+def tensor_bitwise_xor(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("bitwise_xor", self.device.type, self, other)
+
+
+def tensor_bitwise_not(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("bitwise_not", self.device.type, self)
+
+
+def tensor_logsumexp(self, dim, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("logsumexp", self.device.type, self, dim, keepdim)
+
+
+def tensor_trace(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("trace", self.device.type, self)
+
+
+def tensor_det(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("det", self.device.type, self)
+
+
+def tensor_matrix_power(self, n):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("matrix_power", self.device.type, self, n)
+
+
+def tensor_dist(self, other, p=2):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("dist", self.device.type, self, other, p)
+
+
+def tensor_renorm(self, p, dim, maxnorm):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("renorm", self.device.type, self, p, dim, maxnorm)
+
+
+def tensor_nansum(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("nansum", self.device.type, self, dim, keepdim)
+
+
+def tensor_nanmean(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("nanmean", self.device.type, self, dim, keepdim)
+
+
+def tensor_argwhere(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("argwhere", self.device.type, self)
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
 
 
