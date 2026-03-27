@@ -18,7 +18,7 @@ from ..._dtype import from_numpy_dtype
 from ..._dtype import to_numpy_dtype
 from ..._storage import typed_storage_from_numpy
 from ..._tensor import Tensor, _StrideTuple
-from ..._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=no-name-in-module
+from ..._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 
 
 def _to_numpy(t):

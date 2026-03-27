@@ -297,7 +297,7 @@ def alloc_npu_tensor(shape, dtype, device=None):
     """
     from . import runtime as npu_runtime
     from ..._storage import npu_typed_storage_from_ptr
-    from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=no-name-in-module
+    from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
     from ..._device import device as Device
 
     if device is None:
@@ -344,7 +344,7 @@ def alloc_like(t):
     """
     from . import runtime as npu_runtime
     from ..._storage import npu_typed_storage_from_ptr
-    from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=no-name-in-module
+    from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 
     device_id = (t.device.index if hasattr(t.device, "index") else None) or 0
     runtime = npu_runtime.get_runtime(device_id)

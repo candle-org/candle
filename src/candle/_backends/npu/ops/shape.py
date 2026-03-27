@@ -16,7 +16,7 @@ from ._helpers import (
 )
 from ...common import view as view_backend
 from ...._tensor import Tensor
-from ...._cython._tensor_impl import cy_make_view_tensor  # pylint: disable=no-name-in-module
+from ...._cython._tensor_impl import cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ def _unwrap_storage(tensor):
 
 
 def _wrap_tensor(storage, shape, stride):
-    from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=no-name-in-module
+    from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
     return cy_make_tensor_from_storage(storage, shape, stride, 0, False)
 
 
