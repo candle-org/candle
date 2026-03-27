@@ -221,6 +221,36 @@ class TestImportHook:
         out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
         assert "OK" in out
 
+    def test_torch_accelerator_tutorial_snippet(self):
+        """Compatibility: tutorial device selection works through torch.accelerator."""
+        code = textwrap.dedent("""\
+            import torch
+
+            assert hasattr(torch, "accelerator")
+            assert hasattr(torch.accelerator, "is_available")
+            assert hasattr(torch.accelerator, "current_accelerator")
+
+            expected = any(
+                hasattr(torch, name) and hasattr(getattr(torch, name), "is_available")
+                and getattr(torch, name).is_available()
+                for name in ("npu", "cuda", "mps")
+            )
+            assert torch.accelerator.is_available() is expected
+
+            tensor = torch.ones(1)
+            if torch.accelerator.is_available():
+                accelerator = torch.accelerator.current_accelerator()
+                assert accelerator is not None
+                tensor = tensor.to(accelerator)
+                assert tensor.device.type == accelerator.type
+            else:
+                assert torch.accelerator.current_accelerator() is None
+
+            print("OK")
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
     def test_no_redirect_when_disabled(self):
         """When USE_CANDLE=0, ``import torch`` should NOT redirect."""
         code = textwrap.dedent("""\
