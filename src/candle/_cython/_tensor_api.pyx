@@ -26,6 +26,8 @@ cdef object _to_dispatch_fn = None
 cdef object _dispatch_fn = None
 cdef object _functional_add_fn = None
 cdef object _functional_sub_fn = None
+cdef object _functional_expand_fn = None
+cdef object _functional_expand_copy_fn = None
 cdef object _cy_make_view_tensor_fn = None
 cdef object _cy_make_tensor_from_storage_fn = None
 cdef object _HookHandle_cls = None
@@ -91,6 +93,14 @@ cdef inline void _ensure_functional_add_sub_ref():
         from candle._functional import add as _fadd, sub as _fsub
         _functional_add_fn = _fadd
         _functional_sub_fn = _fsub
+
+
+cdef inline void _ensure_functional_expand_ref():
+    global _functional_expand_fn, _functional_expand_copy_fn
+    if _functional_expand_fn is None:
+        from candle._functional import expand as _fexpand, expand_copy as _fexpand_copy
+        _functional_expand_fn = _fexpand
+        _functional_expand_copy_fn = _fexpand_copy
 
 
 cdef inline void _ensure_view_factory_ref():
@@ -1974,6 +1984,79 @@ def tensor_sort_method(self, dim=-1, descending=False, stable=False):
 def tensor_topk_method(self, k, dim=-1, largest=True, sorted=True):
     _ensure_dispatch_ref()
     return _dispatch_fn("topk", self.device.type, self, k, dim=dim, largest=largest, sorted=sorted)
+
+
+# ── comparison ops ────────────────────────────────────────────────────────────
+
+def tensor_eq_method(self, other):
+    return self.__eq__(other)
+
+
+def tensor_ne_method(self, other):
+    return self.__ne__(other)
+
+
+def tensor_allclose_method(self, other, rtol=1e-05, atol=1e-08, equal_nan=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("allclose", self.device.type, self, other, rtol=rtol, atol=atol, equal_nan=equal_nan)
+
+
+def tensor_isclose_method(self, other, rtol=1e-05, atol=1e-08, equal_nan=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("isclose", self.device.type, self, other, rtol=rtol, atol=atol, equal_nan=equal_nan)
+
+
+def tensor_equal_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("equal", self.device.type, self, other)
+
+
+# ── view / shape alias ops ────────────────────────────────────────────────────
+
+def tensor_view_as(self, other):
+    return self.view(other.shape)
+
+
+def tensor_expand_method(self, *sizes):
+    _ensure_functional_expand_ref()
+    return _functional_expand_fn(self, *sizes)
+
+
+def tensor_expand_as_method(self, other):
+    _ensure_functional_expand_ref()
+    return _functional_expand_fn(self, *other.shape)
+
+
+def tensor_expand_copy_method(self, *sizes):
+    _ensure_functional_expand_ref()
+    return _functional_expand_copy_fn(self, sizes)
+
+
+def tensor_narrow_method(self, dim, start, length):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("narrow", self.device.type, self, dim, start, length)
+
+
+def tensor_select_method(self, dim, index):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("select", self.device.type, self, dim, index)
+
+
+def tensor_unfold_method(self, dimension, size, step):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("unfold", self.device.type, self, dimension, size, step)
+
+
+def tensor_moveaxis_method(self, source, destination):
+    return self.movedim(source, destination)
+
+
+def tensor_swapdims_method(self, dim0, dim1):
+    return self.transpose(dim0, dim1)
+
+
+def tensor_swapaxes_method(self, axis0, axis1):
+    return self.transpose(axis0, axis1)
 
 
 cdef inline tuple _contiguous_stride_tuple(tuple shape):

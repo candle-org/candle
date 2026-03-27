@@ -2158,3 +2158,85 @@ class TestReductionOpsProviders:
         assert x.tolist() == [[1.0, 2.0], [3.0, 4.0]]
 
 
+
+
+class TestComparisonAndViewOpsProviders:
+    """Comparison + view/shape alias ops should be served from the Cython tensor API layer."""
+
+    COMPARISON_NAMES = {"eq", "ne", "allclose", "isclose", "equal"}
+    VIEW_NAMES = {
+        "view_as", "expand", "expand_as", "expand_copy",
+        "narrow", "select", "unfold",
+        "moveaxis", "swapdims", "swapaxes",
+    }
+
+    def test_comparison_ops_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = self.COMPARISON_NAMES
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_view_ops_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = self.VIEW_NAMES
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_comparison_ops_preserve_behavior(self):
+        import candle as torch
+
+        a = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+        b = torch.tensor([1.0, 0.0, 3.0], dtype=torch.float32)
+        assert a.eq(b).tolist() == [True, False, True]
+        assert a.ne(b).tolist() == [False, True, False]
+        assert a.equal(b) is False
+        assert a.equal(torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)) is True
+        assert a.allclose(b) is False
+        c = torch.tensor([1.0001, 2.0001, 3.0001], dtype=torch.float32)
+        assert a.allclose(c, atol=1e-3) is True
+        ic = a.isclose(c, atol=1e-3)
+        assert ic.tolist() == [True, True, True]
+
+    def test_view_ops_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        ref = torch.zeros(2, 3, dtype=torch.float32)
+        assert x.view_as(ref).shape == (2, 3)
+        assert x.view_as(ref).tolist() == x.tolist()
+
+        e = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+        expanded = e.expand(2, 3)
+        assert expanded.shape == (2, 3)
+        assert expanded.tolist() == [[1.0, 2.0, 3.0], [1.0, 2.0, 3.0]]
+
+        other = torch.zeros(2, 3, dtype=torch.float32)
+        assert e.expand_as(other).shape == (2, 3)
+
+        n = x.narrow(0, 0, 1)
+        assert n.shape == (1, 3)
+        assert n.tolist() == [[0.0, 1.0, 2.0]]
+
+        s = x.select(1, 1)
+        assert s.shape == (2,)
+        assert s.tolist() == [1.0, 4.0]
+
+        y = torch.arange(9, dtype=torch.float32)
+        unfolded = y.unfold(0, 3, 1)
+        assert unfolded.shape == (7, 3)
+
+        m = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
+        assert m.moveaxis(0, 2).shape == (3, 4, 2)
+        assert m.swapdims(0, 1).shape == (3, 2, 4)
+        assert m.swapaxes(0, 2).shape == (4, 3, 2)
+
