@@ -24,6 +24,8 @@ cdef object _transpose_dispatch_fn = None
 cdef object _view_dispatch_fn = None
 cdef object _to_dispatch_fn = None
 cdef object _dispatch_fn = None
+cdef object _functional_add_fn = None
+cdef object _functional_sub_fn = None
 cdef object _cy_make_view_tensor_fn = None
 cdef object _cy_make_tensor_from_storage_fn = None
 cdef object _HookHandle_cls = None
@@ -81,6 +83,14 @@ cdef inline void _ensure_dispatch_ref():
     if _dispatch_fn is None:
         from candle._dispatch import dispatch
         _dispatch_fn = dispatch
+
+
+cdef inline void _ensure_functional_add_sub_ref():
+    global _functional_add_fn, _functional_sub_fn
+    if _functional_add_fn is None:
+        from candle._functional import add as _fadd, sub as _fsub
+        _functional_add_fn = _fadd
+        _functional_sub_fn = _fsub
 
 
 cdef inline void _ensure_view_factory_ref():
@@ -1764,6 +1774,134 @@ def tensor_triu(self, diagonal=0):
 def tensor_diag(self, diagonal=0):
     _ensure_dispatch_ref()
     return _dispatch_fn("diag", self.device.type, self, diagonal)
+
+
+# ── operator sugar ────────────────────────────────────────────────────────────
+
+def tensor_add_method(self, other, *, alpha=1):
+    _ensure_functional_add_sub_ref()
+    return _functional_add_fn(self, other, alpha=alpha)
+
+
+def tensor_sub_method(self, other, *, alpha=1):
+    _ensure_functional_add_sub_ref()
+    return _functional_sub_fn(self, other, alpha=alpha)
+
+
+def tensor_mul_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("mul", self.device.type, self, other)
+
+
+def tensor_div_method(self, other, *, rounding_mode=None):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("div", self.device.type, self, other)
+
+
+def tensor_pow_method(self, exponent):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("pow", self.device.type, self, exponent)
+
+
+def tensor_matmul_method(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("matmul", self.device.type, self, other)
+
+
+def tensor_rsub(self, other):
+    """other - self  (reflected sub)"""
+    _ensure_dispatch_ref()
+    neg_self = _dispatch_fn("neg", self.device.type, self)
+    return _dispatch_fn("add", self.device.type, neg_self, other)
+
+
+def tensor_rmul(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("mul", self.device.type, self, other)
+
+
+def tensor_truediv(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("true_divide", self.device.type, self, other)
+
+
+def tensor_rtruediv(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("true_divide", self.device.type, other, self)
+
+
+def tensor_pow_op(self, exponent):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("pow", self.device.type, self, exponent)
+
+
+def tensor_rpow(self, base):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("pow", self.device.type, base, self)
+
+
+def tensor_floordiv(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("floor_divide", self.device.type, self, other)
+
+
+def tensor_rfloordiv(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("floor_divide", self.device.type, other, self)
+
+
+def tensor_mod(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("remainder", self.device.type, self, other)
+
+
+def tensor_rmod(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("remainder", self.device.type, other, self)
+
+
+def tensor_rmatmul(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("matmul", self.device.type, other, self)
+
+
+def tensor_and(self, other):
+    _ensure_dispatch_ref()
+    try:
+        s_bool = self.bool()
+    except Exception:
+        s_bool = self
+    try:
+        o_bool = other.bool() if hasattr(other, 'bool') else bool(other)
+    except Exception:
+        o_bool = other
+    return _dispatch_fn("mul", self.device.type, s_bool, o_bool)
+
+
+def tensor_or(self, other):
+    _ensure_dispatch_ref()
+    try:
+        s_bool = self.bool()
+    except Exception:
+        s_bool = self
+    try:
+        o_bool = other.bool() if hasattr(other, 'bool') else bool(other)
+    except Exception:
+        o_bool = other
+    return _dispatch_fn("add", self.device.type, s_bool, o_bool)
+
+
+def tensor_xor(self, other):
+    _ensure_dispatch_ref()
+    try:
+        s_bool = self.bool()
+    except Exception:
+        s_bool = self
+    try:
+        o_bool = other.bool() if hasattr(other, 'bool') else bool(other)
+    except Exception:
+        o_bool = other
+    return _dispatch_fn("ne", self.device.type, s_bool, o_bool)
 
 
 cdef inline tuple _contiguous_stride_tuple(tuple shape):

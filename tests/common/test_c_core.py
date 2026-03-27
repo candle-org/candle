@@ -2012,3 +2012,69 @@ class TestUnaryOpsProviders:
         diag_out = v.diag().tolist()
         assert diag_out == [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]]
 
+
+
+class TestOperatorSugarProviders:
+    """Arithmetic/bitwise operator methods should be served from the Cython tensor API layer."""
+
+    OPERATOR_NAMES = {
+        "add", "sub", "mul", "div", "pow",
+        "matmul",
+        "__rsub__", "__rmul__",
+        "__truediv__", "__rtruediv__",
+        "__pow__", "__rpow__",
+        "__floordiv__", "__rfloordiv__",
+        "__mod__", "__rmod__",
+        "__rmatmul__",
+        "__and__", "__or__", "__xor__",
+    }
+
+    def test_operator_sugar_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        actual = {
+            name
+            for name in self.OPERATOR_NAMES
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == self.OPERATOR_NAMES
+
+    def test_operator_sugar_preserve_behavior(self):
+        import candle as torch
+
+        a = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+        b = torch.tensor([2.0, 2.0, 2.0], dtype=torch.float32)
+
+        assert a.add(b).tolist() == [3.0, 4.0, 5.0]
+        assert a.add(b, alpha=2).tolist() == [5.0, 6.0, 7.0]
+        assert a.sub(b).tolist() == [-1.0, 0.0, 1.0]
+        assert a.mul(b).tolist() == [2.0, 4.0, 6.0]
+        assert a.div(b).tolist() == [0.5, 1.0, 1.5]
+        assert a.pow(b).tolist() == [1.0, 4.0, 9.0]
+
+        # matmul
+        x = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32)
+        y = torch.tensor([[2.0, 3.0], [4.0, 5.0]], dtype=torch.float32)
+        assert x.matmul(y).tolist() == [[2.0, 3.0], [4.0, 5.0]]
+
+        # reflected operators
+        assert (b.__rsub__(a)).tolist() == [-1.0, 0.0, 1.0]  # a - b
+        assert (b.__rmul__(a)).tolist() == [2.0, 4.0, 6.0]
+        assert (a.__truediv__(b)).tolist() == [0.5, 1.0, 1.5]
+        assert (b.__rtruediv__(a)).tolist() == [0.5, 1.0, 1.5]
+        assert (a.__pow__(b)).tolist() == [1.0, 4.0, 9.0]
+        assert (a.__floordiv__(b)).tolist() == [0.0, 1.0, 1.0]
+        assert (b.__rfloordiv__(a)).tolist() == [0.0, 1.0, 1.0]
+        assert (a.__mod__(b)).tolist() == [1.0, 0.0, 1.0]
+        # __rmatmul__: other @ self  →  x2 @ y2
+        x2 = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32)
+        y2 = torch.tensor([[2.0, 3.0], [4.0, 5.0]], dtype=torch.float32)
+        assert (y2.__rmatmul__(x2)).tolist() == x2.matmul(y2).tolist()
+
+        # bitwise as bool ops
+        t = torch.tensor([1.0, 0.0, 1.0], dtype=torch.float32)
+        f = torch.tensor([0.0, 1.0, 1.0], dtype=torch.float32)
+        assert (t.__and__(f)).tolist() == [False, False, True]
+        assert (t.__or__(f)).tolist() == [True, True, True]
+        assert (t.__xor__(f)).tolist() == [True, True, False]
+
