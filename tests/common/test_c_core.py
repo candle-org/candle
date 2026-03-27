@@ -1873,3 +1873,51 @@ class TestTensorOperatorSugarAndBaddbmmProviders:
             [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
             [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
         ]
+
+
+class TestLog1pExpm1LtLeGtGeProviders:
+    """log1p / expm1 / lt / le / gt / ge should be served from the Cython tensor API layer."""
+
+    def test_log1p_expm1_comparisons_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "log1p",
+            "expm1",
+            "lt",
+            "le",
+            "gt",
+            "ge",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_log1p_expm1_comparisons_preserve_behavior(self):
+        import candle as torch
+        import math
+
+        x = torch.tensor([0.0, 1.0, 2.0], dtype=torch.float32)
+        out = x.log1p()
+        assert len(out.tolist()) == 3
+        assert abs(out.tolist()[0] - 0.0) < 1e-5
+        assert abs(out.tolist()[1] - math.log(2.0)) < 1e-5
+        assert abs(out.tolist()[2] - math.log(3.0)) < 1e-5
+
+        y = torch.tensor([0.0, 1.0, 2.0], dtype=torch.float32)
+        out2 = y.expm1()
+        assert len(out2.tolist()) == 3
+        assert abs(out2.tolist()[0] - 0.0) < 1e-5
+        assert abs(out2.tolist()[1] - (math.e - 1.0)) < 1e-5
+        assert abs(out2.tolist()[2] - (math.e ** 2 - 1.0)) < 1e-5
+
+        a = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+        b = torch.tensor([2.0, 2.0, 2.0], dtype=torch.float32)
+        assert a.lt(b).tolist() == [True, False, False]
+        assert a.le(b).tolist() == [True, True, False]
+        assert a.gt(b).tolist() == [False, False, True]
+        assert a.ge(b).tolist() == [False, True, True]
+

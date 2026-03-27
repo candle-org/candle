@@ -2020,6 +2020,12 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.dsplit = _cython_mod.tensor_dsplit
     Tensor.take_along_dim = _cython_mod.tensor_take_along_dim
     Tensor.cummin = _cython_mod.tensor_cummin
+    Tensor.log1p = _cython_mod.tensor_log1p
+    Tensor.expm1 = _cython_mod.tensor_expm1
+    Tensor.lt = _cython_mod.tensor_lt
+    Tensor.le = _cython_mod.tensor_le
+    Tensor.gt = _cython_mod.tensor_gt
+    Tensor.ge = _cython_mod.tensor_ge
     Tensor.logical_and = _cython_mod.tensor_logical_and
     Tensor.logical_or = _cython_mod.tensor_logical_or
     Tensor.logical_xor = _cython_mod.tensor_logical_xor

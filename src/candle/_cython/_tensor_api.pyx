@@ -1559,6 +1559,36 @@ def tensor_cummin(self, dim):
     return _dispatch_fn("cummin", self.device.type, self, dim)
 
 
+def tensor_log1p(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("log1p", self.device.type, self)
+
+
+def tensor_expm1(self):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("expm1", self.device.type, self)
+
+
+def tensor_lt(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("lt", self.device.type, self, other)
+
+
+def tensor_le(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("le", self.device.type, self, other)
+
+
+def tensor_gt(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("gt", self.device.type, self, other)
+
+
+def tensor_ge(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("ge", self.device.type, self, other)
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
 
 
