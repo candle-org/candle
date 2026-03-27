@@ -16,11 +16,12 @@ REQUIRED_INPUTS = [
     "compute_source",
     "has_internet",
     "timeout_minutes",
+    "reuse_timeout_minutes",
     "keep_task_on_failure",
 ]
 
 REQUIRED_SUBCOMMANDS = [
-    "create-task",
+    "ensure-task",
     "wait-task",
     "prepare-remote",
     "run-910a-suite",
@@ -51,6 +52,11 @@ def test_workflow_dispatch_inputs_present(workflow):
     inputs = (_workflow_on(workflow).get("workflow_dispatch") or {}).get("inputs") or {}
     missing = [name for name in REQUIRED_INPUTS if name not in inputs]
     assert not missing, f"Missing workflow_dispatch inputs: {missing}"
+
+
+def test_workflow_defaults_to_4card_910a_spec(workflow):
+    inputs = (_workflow_on(workflow).get("workflow_dispatch") or {}).get("inputs") or {}
+    assert inputs.get("spec_id", {}).get("default") == "340"
 
 
 def test_at_least_one_job_runs_on_ubuntu_latest(workflow):
@@ -84,6 +90,17 @@ def test_workflow_has_individual_openi_ci_steps(workflow):
         if f"python .github/scripts/openi_ci.py {subcommand}" not in combined_runs
     ]
     assert not missing, f"Missing openi_ci.py subcommands: {missing}"
+    assert "python .github/scripts/openi_ci.py create-task" not in combined_runs
+
+
+def test_workflow_passes_reuse_timeout_to_ensure_task(workflow):
+    jobs = workflow.get("jobs") or {}
+    combined_runs = "\n".join(
+        step.get("run", "")
+        for job in jobs.values()
+        for step in job.get("steps", [])
+    )
+    assert '--reuse-timeout-minutes "${{ inputs.reuse_timeout_minutes }}"' in combined_runs
 
 
 def test_workflow_uploads_openi_artifacts(workflow):

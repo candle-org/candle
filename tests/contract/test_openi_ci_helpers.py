@@ -320,6 +320,363 @@ def test_create_task_quota_limit_raises_instead_of_auto_fallback(openi_ci_module
         openi_ci_module._handle_create_task(args)
 
 
+
+def test_ensure_task_creates_when_no_prior_task_state(openi_ci_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+
+    fake_session = _FakeSession([
+        {"code": 0, "data": {"id": 111, "status": "WAITING"}},
+    ])
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: fake_session)
+
+    def _fake_create_task(_args):
+        openi_ci_module._save_json_state("task", {"id": 111, "status": "WAITING", "repo_url": _args.repo_url, "ref": _args.ref})
+        return 0
+
+    monkeypatch.setattr(openi_ci_module, "_handle_create_task", _fake_create_task)
+
+    args = openi_ci_module._build_parser().parse_args([
+        "ensure-task",
+        "--repo-url", "https://github.com/candle-org/candle.git",
+        "--ref", "main",
+        "--image-id", "image-1",
+        "--image-name", "image-name-1",
+        "--spec-id", "328",
+        "--cluster", "C2Net",
+        "--compute-source", "NPU",
+        "--has-internet", "2",
+    ])
+
+    assert openi_ci_module._handle_ensure_task(args) == 0
+    saved = openi_ci_module._load_json_state("task")
+    assert saved["id"] == 111
+    assert saved["status"] == "WAITING"
+    assert saved["repo_url"] == "https://github.com/candle-org/candle.git"
+    assert saved["ref"] == "main"
+    assert fake_session.calls == []
+
+
+
+def test_ensure_task_falls_back_to_create_when_saved_task_brief_is_forbidden(openi_ci_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    openi_ci_module._save_json_state("task", {"id": 999, "status": "STOPPED"})
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+
+    def _api_call(_session, method, path, **kwargs):
+        if path.startswith("/api/v1/ai_task/brief?id=999"):
+            response = requests.Response()
+            response.status_code = 403
+            response.url = path
+            raise requests.exceptions.HTTPError(response=response)
+        if path == "/api/v1/ai_task/my_list":
+            return {"data": {"list": []}}
+        raise AssertionError(f"Unexpected api call: {method} {path}")
+
+    monkeypatch.setattr(openi_ci_module, "_api_call", _api_call)
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: object())
+
+    def _fake_create_task(_args):
+        openi_ci_module._save_json_state("task", {"id": 111, "status": "WAITING", "repo_url": _args.repo_url, "ref": _args.ref})
+        return 0
+
+    monkeypatch.setattr(openi_ci_module, "_handle_create_task", _fake_create_task)
+
+    args = openi_ci_module._build_parser().parse_args([
+        "ensure-task",
+        "--repo-url", "https://github.com/candle-org/candle.git",
+        "--ref", "main",
+        "--image-id", "image-1",
+        "--image-name", "image-name-1",
+        "--spec-id", "328",
+        "--cluster", "C2Net",
+        "--compute-source", "NPU",
+        "--has-internet", "2",
+    ])
+
+    assert openi_ci_module._handle_ensure_task(args) == 0
+    saved = openi_ci_module._load_json_state("task")
+    assert saved["id"] == 111
+    assert saved["status"] == "WAITING"
+
+
+
+def test_ensure_task_reuses_recent_running_task_discovered_from_my_list(openi_ci_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    openi_ci_module._save_json_state("task", {"id": 999, "status": "STOPPED"})
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+    monkeypatch.setattr(openi_ci_module.time, "time", lambda: 1060)
+
+    def _api_call(_session, method, path, **kwargs):
+        if path.startswith("/api/v1/ai_task/brief?id=999"):
+            response = requests.Response()
+            response.status_code = 403
+            response.url = path
+            raise requests.exceptions.HTTPError(response=response)
+        if path == "/api/v1/ai_task/my_list":
+            return {"data": {"tasks": [
+                {"task": {"id": 202, "status": "RUNNING", "start_time": 1000, "end_time": 0, "image_id": "image-1", "image_name": "image-name-1", "cluster": "C2Net", "compute_source": "NPU"}}
+            ]}}
+        raise AssertionError(f"Unexpected api call: {method} {path}")
+
+    monkeypatch.setattr(openi_ci_module, "_api_call", _api_call)
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: object())
+
+    args = openi_ci_module._build_parser().parse_args([
+        "ensure-task",
+        "--repo-url", "https://github.com/candle-org/candle.git",
+        "--ref", "main",
+        "--image-id", "image-1",
+        "--image-name", "image-name-1",
+        "--spec-id", "328",
+        "--cluster", "C2Net",
+        "--compute-source", "NPU",
+        "--has-internet", "2",
+    ])
+
+    assert openi_ci_module._handle_ensure_task(args) == 0
+    saved = openi_ci_module._load_json_state("task")
+    assert saved["id"] == 202
+    assert saved["status"] == "RUNNING"
+    assert saved["repo_url"] == "https://github.com/candle-org/candle.git"
+    assert saved["ref"] == "main"
+
+
+
+def test_ensure_task_restarts_discovered_task_after_reuse_timeout(openi_ci_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    openi_ci_module._save_json_state("task", {"id": 999, "status": "STOPPED"})
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+    monkeypatch.setattr(openi_ci_module.time, "time", lambda: 1000 + 12601)
+
+    def _api_call(_session, method, path, **kwargs):
+        if path.startswith("/api/v1/ai_task/brief?id=999"):
+            response = requests.Response()
+            response.status_code = 403
+            response.url = path
+            raise requests.exceptions.HTTPError(response=response)
+        if path == "/api/v1/ai_task/my_list":
+            return {"data": {"tasks": [
+                {"task": {"id": 202, "status": "RUNNING", "start_time": 1000, "end_time": 0, "image_id": "image-1", "image_name": "image-name-1", "cluster": "C2Net", "compute_source": "NPU"}}
+            ]}}
+        raise AssertionError(f"Unexpected api call: {method} {path}")
+
+    monkeypatch.setattr(openi_ci_module, "_api_call", _api_call)
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: object())
+
+    def _fake_restart_task(_args):
+        openi_ci_module._save_json_state("task", {"id": 303, "status": "WAITING"})
+        return 0
+
+    monkeypatch.setattr(openi_ci_module, "_handle_restart_task", _fake_restart_task)
+
+    args = openi_ci_module._build_parser().parse_args([
+        "ensure-task",
+        "--repo-url", "https://github.com/candle-org/candle.git",
+        "--ref", "main",
+        "--image-id", "image-1",
+        "--image-name", "image-name-1",
+        "--spec-id", "328",
+        "--cluster", "C2Net",
+        "--compute-source", "NPU",
+        "--has-internet", "2",
+    ])
+
+    assert openi_ci_module._handle_ensure_task(args) == 0
+    saved = openi_ci_module._load_json_state("task")
+    assert saved["id"] == 303
+    assert saved["status"] == "WAITING"
+    assert saved["repo_url"] == "https://github.com/candle-org/candle.git"
+    assert saved["ref"] == "main"
+
+
+
+def test_restart_task_stops_then_restarts_and_persists_new_task(openi_ci_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    openi_ci_module._save_json_state("task", {"id": 202, "status": "RUNNING"})
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+
+    class _RestartSession(_FakeSession):
+        pass
+
+    fake_session = _RestartSession([
+        {"code": 0, "data": {"id": 202, "status": "STOPPING"}},
+        {"code": 0, "data": {"id": 202, "status": "STOPPING"}},
+        {"code": 0, "data": {"id": 202, "status": "STOPPED"}},
+        {"code": 0, "data": {"id": 303, "status": "WAITING"}},
+    ])
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: fake_session)
+    monkeypatch.setattr(openi_ci_module.time, "sleep", lambda *_args, **_kwargs: None)
+
+    args = openi_ci_module._build_parser().parse_args(["restart-task"])
+    assert openi_ci_module._handle_restart_task(args) == 0
+    saved = openi_ci_module._load_json_state("task")
+    assert saved["id"] == 303
+    assert saved["status"] == "WAITING"
+    methods = [call[0] for call in fake_session.calls]
+    assert methods == ["post", "get", "get", "post"]
+    assert "/stop?id=202" in fake_session.calls[0][1]
+    assert "/api/v1/ai_task/restart?id=202" in fake_session.calls[3][1]
+
+
+
+def test_restart_task_times_out_if_task_never_stops(openi_ci_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    openi_ci_module._save_json_state("task", {"id": 404, "status": "RUNNING"})
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+
+    class _NeverStopsSession(_FakeSession):
+        pass
+
+    fake_session = _NeverStopsSession([
+        {"code": 0, "data": {"id": 404, "status": "STOPPING"}},
+    ] * 100)
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: fake_session)
+
+    times = iter([0, 1, 2, 3, 4, 605])
+    monkeypatch.setattr(openi_ci_module.time, "time", lambda: next(times))
+    monkeypatch.setattr(openi_ci_module.time, "sleep", lambda *_args, **_kwargs: None)
+
+    args = openi_ci_module._build_parser().parse_args(["restart-task"])
+    with pytest.raises(openi_ci_module.OpenITaskError, match="did not stop within"):
+        openi_ci_module._handle_restart_task(args)
+
+
+
+def test_wait_task_polls_until_running(openi_ci_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    openi_ci_module._save_json_state("task", {"id": 101, "status": "CREATED"})
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+    fake_session = _FakeSession([
+        {"code": 0, "data": {"id": 101, "status": "CREATED"}},
+        {"code": 0, "data": {"id": 101, "status": "RUNNING"}},
+    ])
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: fake_session)
+    monkeypatch.setattr(openi_ci_module.time, "sleep", lambda *_args, **_kwargs: None)
+    args = openi_ci_module._build_parser().parse_args(["wait-task"])
+    assert openi_ci_module._handle_wait_task(args) == 0
+    saved = openi_ci_module._load_json_state("task")
+    assert saved["status"] == "RUNNING"
+    get_calls = [call for call in fake_session.calls if call[0] == "get"]
+    assert len(get_calls) == 2
+
+
+def test_ensure_task_reuses_recent_running_task(openi_ci_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    openi_ci_module._save_json_state("task", {"id": 202, "status": "RUNNING"})
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+    fake_session = _FakeSession([
+        {"code": 0, "data": {"id": 202, "status": "RUNNING", "start_time": 1000, "end_time": 0, "image_id": "image-1", "image_name": "image-name-1", "cluster": "C2Net", "compute_source": "NPU"}},
+    ])
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: fake_session)
+    monkeypatch.setattr(openi_ci_module.time, "time", lambda: 1060)
+
+    args = openi_ci_module._build_parser().parse_args([
+        "ensure-task",
+        "--repo-url", "https://github.com/candle-org/candle.git",
+        "--ref", "main",
+        "--image-id", "image-1",
+        "--image-name", "image-name-1",
+        "--spec-id", "328",
+        "--cluster", "C2Net",
+        "--compute-source", "NPU",
+        "--has-internet", "2",
+    ])
+
+    assert openi_ci_module._handle_ensure_task(args) == 0
+    saved = openi_ci_module._load_json_state("task")
+    assert saved["id"] == 202
+    assert saved["status"] == "RUNNING"
+    assert saved["repo_url"] == "https://github.com/candle-org/candle.git"
+    assert saved["ref"] == "main"
+    assert [call[0] for call in fake_session.calls] == ["get"]
+
+
+
+def test_ensure_task_restarts_after_reuse_timeout(openi_ci_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    openi_ci_module._save_json_state("task", {"id": 202, "status": "RUNNING"})
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+    fake_session = _FakeSession([
+        {"code": 0, "data": {"id": 202, "status": "RUNNING", "start_time": 1000, "end_time": 0, "image_id": "image-1", "image_name": "image-name-1", "cluster": "C2Net", "compute_source": "NPU"}},
+        {"code": 0, "data": {"id": 202, "status": "STOPPING"}},
+        {"code": 0, "data": {"id": 202, "status": "STOPPED"}},
+        {"code": 0, "data": {"id": 303, "status": "WAITING"}},
+    ])
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: fake_session)
+    monkeypatch.setattr(openi_ci_module.time, "time", lambda: 1000 + 12601)
+    monkeypatch.setattr(openi_ci_module.time, "sleep", lambda *_args, **_kwargs: None)
+
+    args = openi_ci_module._build_parser().parse_args([
+        "ensure-task",
+        "--repo-url", "https://github.com/candle-org/candle.git",
+        "--ref", "main",
+        "--image-id", "image-1",
+        "--image-name", "image-name-1",
+        "--spec-id", "328",
+        "--cluster", "C2Net",
+        "--compute-source", "NPU",
+        "--has-internet", "2",
+    ])
+
+    assert openi_ci_module._handle_ensure_task(args) == 0
+    saved = openi_ci_module._load_json_state("task")
+    assert saved["id"] == 303
+    assert saved["status"] == "WAITING"
+    assert saved["repo_url"] == "https://github.com/candle-org/candle.git"
+    assert saved["ref"] == "main"
+    assert [call[0] for call in fake_session.calls] == ["get", "post", "get", "post"]
+
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    openi_ci_module._save_json_state("task", {"id": 202, "status": "RUNNING"})
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+
+    class _RestartSession(_FakeSession):
+        pass
+
+    fake_session = _RestartSession([
+        {"code": 0, "data": {"id": 202, "status": "STOPPING"}},
+        {"code": 0, "data": {"id": 202, "status": "STOPPING"}},
+        {"code": 0, "data": {"id": 202, "status": "STOPPED"}},
+        {"code": 0, "data": {"id": 303, "status": "WAITING"}},
+    ])
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: fake_session)
+    monkeypatch.setattr(openi_ci_module.time, "sleep", lambda *_args, **_kwargs: None)
+
+    args = openi_ci_module._build_parser().parse_args(["restart-task"])
+    assert openi_ci_module._handle_restart_task(args) == 0
+    saved = openi_ci_module._load_json_state("task")
+    assert saved["id"] == 303
+    assert saved["status"] == "WAITING"
+    methods = [call[0] for call in fake_session.calls]
+    assert methods == ["post", "get", "get", "post"]
+    assert "/stop?id=202" in fake_session.calls[0][1]
+    assert "/api/v1/ai_task/restart?id=202" in fake_session.calls[3][1]
+
+
+def test_restart_task_times_out_if_task_never_stops(openi_ci_module, tmp_path, monkeypatch):
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
+    openi_ci_module._save_json_state("task", {"id": 404, "status": "RUNNING"})
+    monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
+
+    class _NeverStopsSession(_FakeSession):
+        pass
+
+    fake_session = _NeverStopsSession([
+        {"code": 0, "data": {"id": 404, "status": "STOPPING"}},
+    ] * 100)
+    monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: fake_session)
+
+    times = iter([0, 1, 2, 3, 4, 605])
+    monkeypatch.setattr(openi_ci_module.time, "time", lambda: next(times))
+    monkeypatch.setattr(openi_ci_module.time, "sleep", lambda *_args, **_kwargs: None)
+
+    args = openi_ci_module._build_parser().parse_args(["restart-task"])
+    with pytest.raises(openi_ci_module.OpenITaskError, match="did not stop within"):
+        openi_ci_module._handle_restart_task(args)
+
+
+
 def test_wait_task_polls_until_running(openi_ci_module, tmp_path, monkeypatch):
     monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
     openi_ci_module._save_json_state("task", {"id": 101, "status": "CREATED"})
