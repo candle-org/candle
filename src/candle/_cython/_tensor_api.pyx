@@ -28,6 +28,7 @@ cdef object _functional_add_fn = None
 cdef object _functional_sub_fn = None
 cdef object _functional_expand_fn = None
 cdef object _functional_expand_copy_fn = None
+cdef object _functional_sum_to_size_fn = None
 cdef object _cy_make_view_tensor_fn = None
 cdef object _cy_make_tensor_from_storage_fn = None
 cdef object _HookHandle_cls = None
@@ -101,6 +102,13 @@ cdef inline void _ensure_functional_expand_ref():
         from candle._functional import expand as _fexpand, expand_copy as _fexpand_copy
         _functional_expand_fn = _fexpand
         _functional_expand_copy_fn = _fexpand_copy
+
+
+cdef inline void _ensure_functional_sum_to_size_ref():
+    global _functional_sum_to_size_fn
+    if _functional_sum_to_size_fn is None:
+        from candle._functional import sum_to_size as _fsum_to_size
+        _functional_sum_to_size_fn = _fsum_to_size
 
 
 cdef inline void _ensure_view_factory_ref():
@@ -2057,6 +2065,68 @@ def tensor_swapdims_method(self, dim0, dim1):
 
 def tensor_swapaxes_method(self, axis0, axis1):
     return self.transpose(axis0, axis1)
+
+
+# ── indexing / scatter ops ────────────────────────────────────────────────────
+
+def tensor_gather_method(self, dim, index):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("gather", self.device.type, self, dim, index)
+
+
+def tensor_scatter_method(self, dim, index, src):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("scatter", self.device.type, self, dim, index, src)
+
+
+def tensor_index_select_method(self, dim, index):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("index_select", self.device.type, self, dim, index)
+
+
+def tensor_take_method(self, index):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("take", self.device.type, self, index)
+
+
+def tensor_masked_fill_method(self, mask, value):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("masked_fill", self.device.type, self, mask, value)
+
+
+def tensor_masked_select_method(self, mask):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("masked_select", self.device.type, self, mask)
+
+
+def tensor_index_put_method(self, indices, values, accumulate=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("index_put", self.device.type, self, indices, values, accumulate)
+
+
+def tensor_slice_method(self, dim, start=0, end=9223372036854775807, step=1):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("slice", self.device.type, self, dim, start, end, step)
+
+
+def tensor_slice_copy_method(self, dim, start=0, end=9223372036854775807, step=1):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("slice_copy", self.device.type, self, dim, start, end, step)
+
+
+def tensor_slice_scatter_method(self, src, dim, start=0, end=9223372036854775807, step=1):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("slice_scatter", self.device.type, self, src, dim, start, end, step)
+
+
+def tensor_nonzero_method(self, as_tuple=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("nonzero", self.device.type, self, as_tuple=as_tuple)
+
+
+def tensor_sum_to_size_method(self, *size):
+    _ensure_functional_sum_to_size_ref()
+    return _functional_sum_to_size_fn(self, *size)
 
 
 cdef inline tuple _contiguous_stride_tuple(tuple shape):

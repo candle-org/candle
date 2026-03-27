@@ -2240,3 +2240,94 @@ class TestComparisonAndViewOpsProviders:
         assert m.swapdims(0, 1).shape == (3, 2, 4)
         assert m.swapaxes(0, 2).shape == (4, 3, 2)
 
+
+
+class TestIndexingOpsProviders:
+    """Indexing/scatter ops should be served from the Cython tensor API layer."""
+
+    INDEXING_NAMES = {
+        "gather",
+        "scatter",
+        "index_select",
+        "take",
+        "masked_fill",
+        "masked_select",
+        "index_put",
+        "slice",
+        "slice_copy",
+        "slice_scatter",
+        "nonzero",
+        "sum_to_size",
+    }
+
+    def test_indexing_ops_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        actual = {
+            name
+            for name in self.INDEXING_NAMES
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == self.INDEXING_NAMES
+
+    def test_indexing_ops_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+
+        # gather
+        idx = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
+        g = x.gather(1, idx)
+        assert g.tolist() == [[1.0, 2.0], [4.0, 3.0]]
+
+        # scatter (non-inplace)
+        base = torch.zeros(2, 2, dtype=torch.float32)
+        src = torch.tensor([[9.0, 8.0], [7.0, 6.0]], dtype=torch.float32)
+        s = base.scatter(1, idx, src)
+        assert s.tolist() == [[9.0, 8.0], [6.0, 7.0]]
+
+        # index_select
+        col = x.index_select(1, torch.tensor([1], dtype=torch.long))
+        assert col.shape == (2, 1)
+        assert col.tolist() == [[2.0], [4.0]]
+
+        # masked_fill (non-inplace)
+        mask = torch.tensor([[True, False], [False, True]], dtype=torch.bool)
+        filled = x.masked_fill(mask, 0.0)
+        assert filled.tolist() == [[0.0, 2.0], [3.0, 0.0]]
+
+        # masked_select
+        sel = x.masked_select(mask)
+        assert sel.tolist() == [1.0, 4.0]
+
+        # nonzero
+        z = torch.tensor([0.0, 1.0, 0.0, 2.0], dtype=torch.float32)
+        nz = z.nonzero()
+        assert nz.tolist() == [[1], [3]]
+
+        # sum_to_size
+        y = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+        reduced = y.sum_to_size(1, 2)
+        assert reduced.tolist() == [[4.0, 6.0]]
+
+        # slice
+        sliced = x.slice(1, 0, 1)
+        assert sliced.shape == (2, 1)
+        assert sliced.tolist() == [[1.0], [3.0]]
+
+        # take
+        flat_idx = torch.tensor([0, 3], dtype=torch.long)
+        taken = x.take(flat_idx)
+        assert taken.tolist() == [1.0, 4.0]
+
+        # index_put (non-inplace)
+        v = torch.tensor([1.0, 2.0, 3.0, 4.0], dtype=torch.float32)
+        new_v = v.index_put((torch.tensor([1, 3], dtype=torch.long),),
+                             torch.tensor([9.0, 8.0], dtype=torch.float32))
+        assert new_v.tolist() == [1.0, 9.0, 3.0, 8.0]
+
+        # slice_copy
+        sc = x.slice_copy(1, 0, 1)
+        assert sc.shape == (2, 1)
+        assert sc.tolist() == [[1.0], [3.0]]
+
