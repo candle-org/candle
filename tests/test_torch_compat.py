@@ -209,6 +209,91 @@ class TestImportHook:
         out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
         assert "OK" in out
 
+    def test_from_torch_hub_imports_torchvision_symbols(self):
+        """Regression: torchvision imports these names from torch.hub."""
+        code = textwrap.dedent("""\
+            from torch.hub import _get_torch_home, load_state_dict_from_url
+            assert callable(_get_torch_home)
+            assert callable(load_state_dict_from_url)
+            print("OK")
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
+    def test_torch_hub_set_dir_updates_get_dir_without_warning(self):
+        code = textwrap.dedent("""\
+            import tempfile
+            import warnings
+            import torch.hub
+            target = tempfile.mkdtemp(prefix='candle-hub-dir-')
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter('always')
+                torch.hub.set_dir(target)
+            assert torch.hub.get_dir() == target
+            assert not caught, [str(w.message) for w in caught]
+            print('OK')
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
+    def test_torch_hub_load_state_dict_cleans_partial_file_on_failure(self):
+        code = textwrap.dedent("""\
+            import pathlib
+            import tempfile
+            import urllib.request
+            import torch.hub
+
+            class BrokenResponse:
+                def __init__(self):
+                    self.calls = 0
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def read(self, _size=-1):
+                    self.calls += 1
+                    if self.calls == 1:
+                        return b'partial-download'
+                    raise RuntimeError('simulated download failure')
+
+            original_urlopen = urllib.request.urlopen
+            urllib.request.urlopen = lambda request: BrokenResponse()
+            model_dir = tempfile.mkdtemp(prefix='candle-hub-download-')
+            try:
+                try:
+                    torch.hub.load_state_dict_from_url(
+                        'https://example.com/state.pt',
+                        model_dir=model_dir,
+                        progress=False,
+                    )
+                except RuntimeError as exc:
+                    assert 'simulated download failure' in str(exc)
+                else:
+                    raise AssertionError('expected download failure')
+                partials = sorted(path.name for path in pathlib.Path(model_dir).glob('*.partial'))
+                cached = pathlib.Path(model_dir) / 'state.pt'
+                assert partials == [], partials
+                assert not cached.exists()
+                print('OK')
+            finally:
+                urllib.request.urlopen = original_urlopen
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
+    def test_from_torch_utils_model_zoo_imports_load_url(self):
+        """Older torchvision versions fall back to torch.utils.model_zoo."""
+        code = textwrap.dedent("""\
+            from torch.utils.model_zoo import load_url
+            assert callable(load_url)
+            print("OK")
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
     def test_torch_zeros(self):
         """Functional: actually create a tensor through the redirected import."""
         code = textwrap.dedent("""\
