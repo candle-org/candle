@@ -1689,6 +1689,54 @@ class TestTensorLogicalBitwiseWrapperProviders:
         assert x.bitwise_not().tolist() == [-2, -3, -4]
 
 
+class TestTensorSplitIndexingWrapperProviders:
+    """Split and indexed-selection wrappers should be served from the Cython tensor API layer."""
+
+    def test_split_indexing_wrappers_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "vsplit",
+            "hsplit",
+            "dsplit",
+            "take_along_dim",
+            "cummin",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_split_indexing_wrappers_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.arange(12, dtype=torch.float32).reshape(4, 3)
+        assert [t.tolist() for t in x.vsplit(2)] == [
+            [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]],
+            [[6.0, 7.0, 8.0], [9.0, 10.0, 11.0]],
+        ]
+
+        y = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+        assert [t.tolist() for t in y.hsplit(2)] == [
+            [[0.0, 1.0], [4.0, 5.0], [8.0, 9.0]],
+            [[2.0, 3.0], [6.0, 7.0], [10.0, 11.0]],
+        ]
+
+        z = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
+        assert [t.shape for t in z.dsplit(2)] == [(2, 3, 2), (2, 3, 2)]
+
+        idx = torch.tensor([[3, 1], [0, 2]], dtype=torch.int64)
+        a = torch.tensor([[10.0, 20.0, 30.0, 40.0], [50.0, 60.0, 70.0, 80.0]], dtype=torch.float32)
+        assert a.take_along_dim(idx, 1).tolist() == [[40.0, 20.0], [50.0, 70.0]]
+
+        b = torch.tensor([[3.0, 1.0, 2.0], [4.0, 0.0, 5.0]], dtype=torch.float32)
+        vals, inds = b.cummin(1)
+        assert vals.tolist() == [[3.0, 1.0, 1.0], [4.0, 0.0, 0.0]]
+        assert inds.tolist() == [[0, 1, 1], [0, 1, 1]]
+
+
 class TestTensorNumericHelperMethodProviders:
     """Selected numeric/statistical helpers should be served from the Cython tensor API layer."""
 
@@ -1732,3 +1780,96 @@ class TestTensorNumericHelperMethodProviders:
 
         w = torch.tensor([[0, 1], [2, 0]], dtype=torch.int32)
         assert w.argwhere().tolist() == [[0, 1], [1, 0]]
+
+
+class TestTensorViewSelectionWrapperProviders:
+    """Selected view/selection wrappers should be served from the Cython tensor API layer."""
+
+    def test_view_selection_wrappers_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "movedim",
+            "diagonal",
+            "unbind",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_view_selection_wrappers_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.arange(24, dtype=torch.float32).reshape(2, 3, 4)
+        moved = x.movedim(0, 2)
+        assert moved.shape == (3, 4, 2)
+        assert moved.tolist() == [
+            [[0.0, 12.0], [1.0, 13.0], [2.0, 14.0], [3.0, 15.0]],
+            [[4.0, 16.0], [5.0, 17.0], [6.0, 18.0], [7.0, 19.0]],
+            [[8.0, 20.0], [9.0, 21.0], [10.0, 22.0], [11.0, 23.0]],
+        ]
+
+        y = torch.arange(9, dtype=torch.float32).reshape(3, 3)
+        diag = y.diagonal()
+        assert diag.shape == (3,)
+        assert diag.tolist() == [0.0, 4.0, 8.0]
+
+        parts = x.unbind(1)
+        assert len(parts) == 3
+        assert [p.shape for p in parts] == [(2, 4), (2, 4), (2, 4)]
+        assert parts[0].tolist() == [[0.0, 1.0, 2.0, 3.0], [12.0, 13.0, 14.0, 15.0]]
+        assert parts[1].tolist() == [[4.0, 5.0, 6.0, 7.0], [16.0, 17.0, 18.0, 19.0]]
+        assert parts[2].tolist() == [[8.0, 9.0, 10.0, 11.0], [20.0, 21.0, 22.0, 23.0]]
+
+        assert x.shape == (2, 3, 4)
+        assert x.tolist() == [
+            [[0.0, 1.0, 2.0, 3.0], [4.0, 5.0, 6.0, 7.0], [8.0, 9.0, 10.0, 11.0]],
+            [[12.0, 13.0, 14.0, 15.0], [16.0, 17.0, 18.0, 19.0], [20.0, 21.0, 22.0, 23.0]],
+        ]
+
+
+class TestTensorOperatorSugarAndBaddbmmProviders:
+    """Operator sugar and baddbmm should be served from the Cython tensor API layer."""
+
+    def test_operator_sugar_and_baddbmm_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "__isub__",
+            "__itruediv__",
+            "baddbmm",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_operator_sugar_and_baddbmm_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.tensor([5.0, 7.0], dtype=torch.float32)
+        x -= 2.0
+        assert x.tolist() == [3.0, 5.0]
+
+        y = torch.tensor([8.0, 4.0], dtype=torch.float32)
+        y /= 2.0
+        assert y.tolist() == [4.0, 2.0]
+
+        a = torch.ones((2, 2, 2), dtype=torch.float32)
+        b = torch.ones((2, 2, 3), dtype=torch.float32)
+        base = torch.zeros((2, 2, 3), dtype=torch.float32)
+        out = base.baddbmm(a, b, beta=1, alpha=1)
+        assert out.shape == (2, 2, 3)
+        assert out.tolist() == [
+            [[2.0, 2.0, 2.0], [2.0, 2.0, 2.0]],
+            [[2.0, 2.0, 2.0], [2.0, 2.0, 2.0]],
+        ]
+        assert base.tolist() == [
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        ]

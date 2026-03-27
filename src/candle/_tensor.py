@@ -1890,7 +1890,9 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.__getitem__ = _cython_mod.tensor_getitem
     Tensor.__setitem__ = _cython_mod.tensor_setitem
     Tensor.__iadd__ = _cython_mod.tensor_iadd
+    Tensor.__isub__ = _cython_mod.tensor_isub
     Tensor.__imul__ = _cython_mod.tensor_imul
+    Tensor.__itruediv__ = _cython_mod.tensor_itruediv
     Tensor.__neg__ = _cython_mod.tensor_neg
 
     Tensor.clone = _cython_mod.tensor_clone
@@ -2012,6 +2014,12 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.nansum = _cython_mod.tensor_nansum
     Tensor.nanmean = _cython_mod.tensor_nanmean
     Tensor.argwhere = _cython_mod.tensor_argwhere
+    Tensor.baddbmm = _cython_mod.tensor_baddbmm
+    Tensor.vsplit = _cython_mod.tensor_vsplit
+    Tensor.hsplit = _cython_mod.tensor_hsplit
+    Tensor.dsplit = _cython_mod.tensor_dsplit
+    Tensor.take_along_dim = _cython_mod.tensor_take_along_dim
+    Tensor.cummin = _cython_mod.tensor_cummin
     Tensor.logical_and = _cython_mod.tensor_logical_and
     Tensor.logical_or = _cython_mod.tensor_logical_or
     Tensor.logical_xor = _cython_mod.tensor_logical_xor
@@ -2020,6 +2028,9 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.bitwise_or = _cython_mod.tensor_bitwise_or
     Tensor.bitwise_xor = _cython_mod.tensor_bitwise_xor
     Tensor.bitwise_not = _cython_mod.tensor_bitwise_not
+    Tensor.movedim = _cython_mod.tensor_movedim
+    Tensor.diagonal = _cython_mod.tensor_diagonal
+    Tensor.unbind = _cython_mod.tensor_unbind
 
     Tensor.numpy = _cython_mod.tensor_numpy
     Tensor._numpy_view = _cython_mod.tensor_numpy_view

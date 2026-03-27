@@ -336,10 +336,27 @@ def tensor_iadd(self, other):
     return self
 
 
+def tensor_isub(self, other):
+    self._check_inplace()
+    self.sub_(other)
+    return self
+
+
 def tensor_imul(self, other):
     self._check_inplace()
     self.mul_(other)
     return self
+
+
+def tensor_itruediv(self, other):
+    self._check_inplace()
+    self.div_(other)
+    return self
+
+
+def tensor_baddbmm(self, batch1, batch2, beta=1, alpha=1):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("baddbmm", self.device.type, self, batch1, batch2, beta=beta, alpha=alpha)
 
 
 def tensor_neg(self):
@@ -1500,6 +1517,46 @@ def tensor_nanmean(self, dim=None, keepdim=False):
 def tensor_argwhere(self):
     _ensure_dispatch_ref()
     return _dispatch_fn("argwhere", self.device.type, self)
+
+
+def tensor_movedim(self, source, destination):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("movedim", self.device.type, self, source, destination)
+
+
+def tensor_diagonal(self, offset=0, dim1=0, dim2=1):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("diagonal", self.device.type, self, offset, dim1, dim2)
+
+
+def tensor_unbind(self, dim=0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("unbind", self.device.type, self, dim)
+
+
+def tensor_vsplit(self, split_size_or_sections):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("vsplit", self.device.type, self, split_size_or_sections)
+
+
+def tensor_hsplit(self, split_size_or_sections):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("hsplit", self.device.type, self, split_size_or_sections)
+
+
+def tensor_dsplit(self, split_size_or_sections):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("dsplit", self.device.type, self, split_size_or_sections)
+
+
+def tensor_take_along_dim(self, indices, dim):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("take_along_dim", self.device.type, self, indices, dim)
+
+
+def tensor_cummin(self, dim):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("cummin", self.device.type, self, dim)
 
 
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
