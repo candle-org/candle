@@ -1,5 +1,6 @@
 import numpy as np
 
+from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from .._storage import typed_storage_from_numpy
 
 
@@ -19,8 +20,7 @@ def reduce_grad(grad, shape):
             arr = arr.sum(axis=i, keepdims=True)
     storage = typed_storage_from_numpy(arr, grad.dtype)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    from .._tensor import Tensor
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def _reduce_grad_dispatch(grad, shape):

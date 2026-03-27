@@ -10,6 +10,7 @@ from ...._dtype import float64 as float64_dtype
 from ...._dtype import to_numpy_dtype
 from ...._storage import mps_typed_storage_from_numpy, _MPSUntypedStorage, TypedStorage
 from ...._tensor import Tensor
+from ...._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from .. import accelerate as _accel
 
 from candle._cython._mps_helpers import (  # pylint: disable=import-error,no-name-in-module
@@ -198,7 +199,7 @@ def _normalize_tensor_sequence_args(tensors):
 def _from_numpy(arr, dtype, device):
     storage = mps_typed_storage_from_numpy(arr, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def _can_use_blas(arr):

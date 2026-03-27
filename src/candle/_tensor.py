@@ -1,5 +1,6 @@
 import numpy as np
 
+from ._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 from ._storage import (
     Storage,
     empty_cpu_typed_storage,
@@ -78,6 +79,7 @@ from .autograd.engine import backward as _backward
 # TensorImpl base class: compiled Cython extension required.
 from ._cython._tensor_impl import TensorImpl as _TensorBase  # pylint: disable=import-error,no-name-in-module
 from ._cython._tensor_impl import _VersionCounterProxy  # noqa: F401  # pylint: disable=import-error,no-name-in-module
+from ._cython._tensor_impl import cy_init_tensor_fields  # pylint: disable=import-error,no-name-in-module
 
 
 class _StrideTuple(tuple):
@@ -141,37 +143,73 @@ class _HookHandle:
 
 class Tensor(_TensorBase):
     def __init__(self, storage, shape, stride, offset=0, requires_grad=False):
-        self._storage = storage
-        self.shape = tuple(shape)
-        self.stride = _StrideTuple(stride)
-        self.offset = int(offset)
-        self.requires_grad = requires_grad
-        self.grad = None
-        self.grad_fn = None
-        self._pending = False
-        self._retain_grad = False
-        self._backward_hooks = None
-        self._version_value = 0
-        self._vc_proxy = None
-        self._base = None
-        self._view_meta = None
-        # Cache device/dtype from storage into TensorImpl C fields
-        dev = getattr(storage, "device", None)
-        if dev is not None:
-            self._set_device_from_storage(dev)
-        dtype = getattr(storage, "dtype", None)
-        if dtype is not None:
-            self._set_dtype_from_storage(dtype)
+        cy_init_tensor_fields(
+            self,
+            storage,
+            tuple(shape),
+            _StrideTuple(stride),
+            int(offset),
+            bool(requires_grad),
+            None,
+            None,
+            None,
+            None,
+            False,
+            False,
+            None,
+            0,
+            None,
+        )
 
     _DEVICE_MAP = {"cpu": 0, "npu": 1, "cuda": 2, "mps": 3, "meta": 4}
+    # Dispatch key bit values — must stay in sync with _tensor_impl.pyx
+    _DK_CPU  = 1 << 15
+    _DK_NPU  = 1 << 13
+    _DK_CUDA = 1 << 14
+    _DK_MPS  = 1 << 21
+    _DK_META = 1 << 12
+    _DK_ADINPLACEORVIEW   = 1 << 4
+    _DK_AUTOGRAD          = 1 << 11
+    _DK_AUTOGRAD_CPU      = 1 << 6
+    _DK_AUTOGRAD_NPU      = 1 << 7
+    _DK_AUTOGRAD_CUDA     = 1 << 8
+    _DK_AUTOGRAD_MPS      = 1 << 22
+    _DK_AUTOGRAD_META     = 1 << 10
 
     def _set_device_from_storage(self, dev):
-        """Cache device from storage into TensorImpl fields."""
+        """Cache device from storage into TensorImpl fields and recompute dispatch keys."""
         self._device_obj = dev
         dt = getattr(dev, "type", str(dev))
-        self._device_type = Tensor._DEVICE_MAP.get(dt, -1)
+        devt = Tensor._DEVICE_MAP.get(dt, -1)
+        self._device_type = devt
         idx = getattr(dev, "index", None)
         self._device_index = idx if idx is not None else -1
+        # Mirror _recompute_dispatch_keys from _tensor_impl.pyx
+        if devt == 0:
+            dk = Tensor._DK_CPU
+        elif devt == 1:
+            dk = Tensor._DK_NPU
+        elif devt == 2:
+            dk = Tensor._DK_CUDA
+        elif devt == 3:
+            dk = Tensor._DK_MPS
+        elif devt == 4:
+            dk = Tensor._DK_META
+        else:
+            dk = Tensor._DK_CPU
+        if self.requires_grad:
+            dk |= Tensor._DK_ADINPLACEORVIEW | Tensor._DK_AUTOGRAD
+            if devt == 0:
+                dk |= Tensor._DK_AUTOGRAD_CPU
+            elif devt == 1:
+                dk |= Tensor._DK_AUTOGRAD_NPU
+            elif devt == 2:
+                dk |= Tensor._DK_AUTOGRAD_CUDA
+            elif devt == 3:
+                dk |= Tensor._DK_AUTOGRAD_MPS
+            elif devt == 4:
+                dk |= Tensor._DK_AUTOGRAD_META
+        self._dispatch_keys = dk
 
     def _set_dtype_from_storage(self, dtype):
         """Cache dtype from storage into TensorImpl fields."""
@@ -404,7 +442,7 @@ class Tensor(_TensorBase):
                 numel *= s
             arr = np.empty(numel, dtype=to_numpy_dtype(dt))
             storage = typed_storage_from_numpy(arr, dt, device=dev)
-            return Tensor(storage, tuple(size), tuple(stride))
+            return cy_make_tensor_from_storage(storage, tuple(size), tuple(stride), 0, requires_grad)
         else:
             from ._creation import empty
             t = empty(size, dtype=dt, device=dev)
@@ -413,17 +451,16 @@ class Tensor(_TensorBase):
     def as_strided(self, size, stride, storage_offset=None):
         """Create a view of the tensor with given size, stride, and storage_offset."""
         offset = storage_offset if storage_offset is not None else self.offset
-        return Tensor(self._storage, tuple(size), tuple(stride), offset=offset,
-                      requires_grad=self.requires_grad)
+        return cy_make_view_tensor(self, self._storage, tuple(size), tuple(stride), offset)
 
     def _ones_like(self):
         if self.device.type == "meta":
             storage = meta_typed_storage_from_shape(self.shape, self.dtype, device=self.device)
-            return Tensor(storage, self.shape, self.stride)
+            return cy_make_tensor_from_storage(storage, self.shape, self.stride, 0, False)
         arr = np.ones(self.shape, dtype=to_numpy_dtype(self.dtype))
         storage = typed_storage_from_numpy(arr, self.dtype, device=self.device if self.device.type == "cpu" else None)
         stride = tuple(np.array(arr.strides) // arr.itemsize)
-        tensor = Tensor(storage, arr.shape, stride)
+        tensor = cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
         if self.device.type != "cpu":
             return tensor.to(self.device)
         return tensor
@@ -474,7 +511,7 @@ class Tensor(_TensorBase):
         if self.is_pinned():
             return self
         storage = pinned_cpu_typed_storage_from_numpy(self._numpy_view(), self.dtype, device=self.device)
-        return Tensor(storage, self.shape, self.stride, self.offset, self.requires_grad)
+        return cy_make_tensor_from_storage(storage, self.shape, self.stride, self.offset, self.requires_grad)
 
     def is_pinned(self):
         return self._storage.is_pinned()
@@ -489,7 +526,7 @@ class Tensor(_TensorBase):
         return self
 
     def detach(self):
-        out = Tensor(self._storage, self.shape, self.stride, self.offset, requires_grad=False)
+        out = cy_make_tensor_from_storage(self._storage, self.shape, self.stride, self.offset, False)
         out.grad_fn = None
         out.grad = None
         out._pending = self._pending
@@ -505,10 +542,12 @@ class Tensor(_TensorBase):
     def register_hook(self, hook):
         if not callable(hook):
             raise TypeError("hook must be callable")
-        if self._backward_hooks is None:
-            self._backward_hooks = {}
-        handle = _HookHandle(self._backward_hooks)
-        self._backward_hooks[handle.id] = hook
+        hooks = getattr(self, "_backward_hooks", None)
+        if hooks is None:
+            hooks = {}
+            self._backward_hooks = hooks
+        handle = _HookHandle(hooks)
+        hooks[handle.id] = hook
         return handle
 
     def _is_view(self):
@@ -919,7 +958,7 @@ class Tensor(_TensorBase):
                 arr = arr.astype(target_np)
             storage = typed_storage_from_numpy(arr, dtype, device=self.device)
             stride = tuple(np.array(arr.strides) // arr.itemsize)
-            return Tensor(storage, arr.shape, stride)
+            return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
         elif self.device.type == "npu":
             from ._backends.npu.ops._helpers import _cast_tensor_dtype
             return _cast_tensor_dtype(self, dtype)
@@ -939,10 +978,10 @@ class Tensor(_TensorBase):
                 np.ascontiguousarray(arr), dtype, device=self.device
             )
             stride = tuple(np.array(arr.strides) // arr.itemsize) if arr.ndim > 0 else ()
-            return Tensor(storage, arr.shape, stride)
+            return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
         elif self.device.type == "meta":
             storage = meta_typed_storage_from_shape(self.shape, dtype, device=self.device)
-            return Tensor(storage, self.shape, _compute_strides(self.shape))
+            return cy_make_tensor_from_storage(storage, self.shape, _compute_strides(self.shape), 0, False)
         else:
             raise RuntimeError(
                 f"dtype conversion not yet supported on device {self.device.type}"

@@ -13,6 +13,7 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
+from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from ..._dtype import from_numpy_dtype, to_numpy_dtype
 from ..._storage import typed_storage_from_numpy
 from ..._tensor import Tensor
@@ -172,7 +173,7 @@ def _tensor_from_buffer(buf, shape, dtype_str, offset, nbytes):
     candle_dtype = from_numpy_dtype(np.dtype(dtype_str))
     storage = typed_storage_from_numpy(arr, candle_dtype)
     stride = tuple(np.array(arr.strides) // arr.itemsize) if arr.ndim > 0 else ()
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def deserialize_batch_from_slot(meta, pool, slot_id):

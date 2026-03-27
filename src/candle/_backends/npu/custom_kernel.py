@@ -297,7 +297,7 @@ def alloc_npu_tensor(shape, dtype, device=None):
     """
     from . import runtime as npu_runtime
     from ..._storage import npu_typed_storage_from_ptr
-    from ..._tensor import Tensor
+    from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
     from ..._device import device as Device
 
     if device is None:
@@ -316,7 +316,7 @@ def alloc_npu_tensor(shape, dtype, device=None):
     ptr = npu_runtime._alloc_device(nbytes, runtime=runtime)
     storage = npu_typed_storage_from_ptr(ptr, numel, dtype, device=device)
     stride = _contiguous_stride(shape)
-    return Tensor(storage, tuple(shape), stride)
+    return cy_make_tensor_from_storage(storage, tuple(shape), stride, 0, False)
 
 
 def tensor_ptr(t):
@@ -344,7 +344,7 @@ def alloc_like(t):
     """
     from . import runtime as npu_runtime
     from ..._storage import npu_typed_storage_from_ptr
-    from ..._tensor import Tensor
+    from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 
     device_id = (t.device.index if hasattr(t.device, "index") else None) or 0
     runtime = npu_runtime.get_runtime(device_id)
@@ -352,7 +352,7 @@ def alloc_like(t):
     ptr = npu_runtime._alloc_device(nbytes, runtime=runtime)
     storage = npu_typed_storage_from_ptr(ptr, t.numel(), t.dtype, device=t.device)
     stride = _contiguous_stride(t.shape)
-    return Tensor(storage, t.shape, stride)
+    return cy_make_tensor_from_storage(storage, t.shape, stride, 0, False)
 
 
 def copy_h2d(data, device_id=0):
