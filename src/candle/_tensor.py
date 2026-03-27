@@ -1,6 +1,6 @@
 import numpy as np
 
-from ._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor
+from ._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 from ._storage import (
     Storage,
     empty_cpu_typed_storage,
@@ -542,10 +542,12 @@ class Tensor(_TensorBase):
     def register_hook(self, hook):
         if not callable(hook):
             raise TypeError("hook must be callable")
-        if self._backward_hooks is None:
-            self._backward_hooks = {}
-        handle = _HookHandle(self._backward_hooks)
-        self._backward_hooks[handle.id] = hook
+        hooks = getattr(self, "_backward_hooks", None)
+        if hooks is None:
+            hooks = {}
+            self._backward_hooks = hooks
+        handle = _HookHandle(hooks)
+        hooks[handle.id] = hook
         return handle
 
     def _is_view(self):

@@ -1,7 +1,7 @@
 from multiprocessing import reduction
 
 from .. import multiprocessing as _mt_mp
-from .._cython._tensor_impl import cy_make_tensor_from_storage
+from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from .._storage import _CPUUntypedStorage, TypedStorage
 from .._tensor import Tensor
 

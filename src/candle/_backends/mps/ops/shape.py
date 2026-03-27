@@ -3,7 +3,7 @@ import ctypes
 import struct
 import numpy as np
 
-from ._helpers import (
+from ._helpers import (  # pylint: disable=no-name-in-module
     _can_use_gpu, _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
     _alloc_output_buf, _metal_buf_to_bytes, _from_metal_buffer,
     _get_dispatcher, _dispatch_unary_gpu, _dispatch_unary_predicate_gpu,
@@ -18,7 +18,7 @@ from ._helpers import (
     mps_typed_storage_from_numpy, _MPSUntypedStorage, TypedStorage,
     _accel,
 )
-from ...._cython._tensor_impl import cy_make_view_tensor
+from ...._cython._tensor_impl import cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 
 def contiguous(a):
     if a.device.type != "mps":

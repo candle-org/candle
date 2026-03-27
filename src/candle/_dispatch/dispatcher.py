@@ -251,7 +251,7 @@ class _FunctionalizePendingOp:
 
 
 def _pending_tensor_from_spec(spec, device):
-    from .._cython._tensor_impl import cy_make_tensor_from_storage
+    from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
     from .._storage import PendingStorage
 
     storage = PendingStorage(spec.shape, spec.dtype, device)
