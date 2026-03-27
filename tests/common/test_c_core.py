@@ -2078,3 +2078,83 @@ class TestOperatorSugarProviders:
         assert (t.__or__(f)).tolist() == [True, True, True]
         assert (t.__xor__(f)).tolist() == [True, True, False]
 
+
+
+class TestReductionOpsProviders:
+    """Reduction ops should be served from the Cython tensor API layer."""
+
+    REDUCTION_NAMES = {
+        "all",
+        "any",
+        "sum",
+        "prod",
+        "var",
+        "var_mean",
+        "norm",
+        "count_nonzero",
+        "cumsum",
+        "cumprod",
+        "cummax",
+        "argsort",
+        "sort",
+        "topk",
+    }
+
+    def test_reduction_ops_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        actual = {
+            name
+            for name in self.REDUCTION_NAMES
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == self.REDUCTION_NAMES
+
+    def test_reduction_ops_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+        assert x.sum().item() == 10.0
+        assert x.sum(dim=0).tolist() == [4.0, 6.0]
+        assert x.prod().item() == 24.0
+        assert x.prod(dim=1).tolist() == [2.0, 12.0]
+
+        y = torch.tensor([[True, True], [False, True]], dtype=torch.bool)
+        assert y.all().item() is False
+        assert y.any().item() is True
+        assert y.all(dim=1).tolist() == [True, False]
+        assert y.any(dim=1).tolist() == [True, True]
+
+        z = torch.tensor([[0.0, 1.0], [2.0, 0.0]], dtype=torch.float32)
+        assert z.count_nonzero().item() == 2
+        assert z.count_nonzero(dim=1).tolist() == [1, 1]
+
+        v = torch.tensor([1.0, 3.0, 2.0], dtype=torch.float32)
+        assert v.cumsum(0).tolist() == [1.0, 4.0, 6.0]
+        assert v.cumprod(0).tolist() == [1.0, 3.0, 6.0]
+        cummax_vals, cummax_idx = v.cummax(0)
+        assert cummax_vals.tolist() == [1.0, 3.0, 3.0]
+        assert cummax_idx.tolist() == [0, 1, 1]
+
+        args = torch.tensor([3.0, 1.0, 2.0], dtype=torch.float32)
+        assert args.argsort().tolist() == [1, 2, 0]
+        sort_vals, sort_idx = args.sort()
+        assert sort_vals.tolist() == [1.0, 2.0, 3.0]
+        assert sort_idx.tolist() == [1, 2, 0]
+        topk_vals, topk_idx = args.topk(2)
+        assert topk_vals.tolist() == [3.0, 2.0]
+        assert topk_idx.tolist() == [0, 2]
+
+        n = torch.tensor([3.0, 4.0], dtype=torch.float32)
+        assert n.norm().item() == 5.0
+
+        s = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32)
+        assert abs(s.var(unbiased=False).item() - (2.0 / 3.0)) < 1e-5
+        var_out, mean_out = s.var_mean(unbiased=False)
+        assert abs(var_out.item() - (2.0 / 3.0)) < 1e-5
+        assert abs(mean_out.item() - 2.0) < 1e-5
+
+        assert x.shape == (2, 2)
+        assert x.tolist() == [[1.0, 2.0], [3.0, 4.0]]
+
+

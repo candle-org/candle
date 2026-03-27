@@ -1904,6 +1904,78 @@ def tensor_xor(self, other):
     return _dispatch_fn("ne", self.device.type, s_bool, o_bool)
 
 
+# ── reduction ops ─────────────────────────────────────────────────────────────
+
+def tensor_all_method(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("all", self.device.type, self, dim=dim, keepdim=keepdim)
+
+
+def tensor_any_method(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("any", self.device.type, self, dim=dim, keepdim=keepdim)
+
+
+def tensor_sum_method(self, dim=None, keepdim=False, *, dtype=None):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("sum", self.device.type, self, dim=dim, keepdim=keepdim, dtype=dtype)
+
+
+def tensor_prod_method(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("prod", self.device.type, self, dim=dim, keepdim=keepdim)
+
+
+def tensor_var_method(self, dim=None, keepdim=False, unbiased=True):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("var", self.device.type, self, dim=dim, keepdim=keepdim, unbiased=unbiased)
+
+
+def tensor_var_mean_method(self, dim=None, keepdim=False, unbiased=True):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("var_mean", self.device.type, self, dim=dim, keepdim=keepdim, unbiased=unbiased)
+
+
+def tensor_norm_method(self, p=2, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("norm", self.device.type, self, p=p, dim=dim, keepdim=keepdim)
+
+
+def tensor_count_nonzero_method(self, dim=None, keepdim=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("count_nonzero", self.device.type, self, dim=dim, keepdim=keepdim)
+
+
+def tensor_cumsum_method(self, dim=0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("cumsum", self.device.type, self, dim)
+
+
+def tensor_cumprod_method(self, dim=0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("cumprod", self.device.type, self, dim)
+
+
+def tensor_cummax_method(self, dim=0):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("cummax", self.device.type, self, dim)
+
+
+def tensor_argsort_method(self, dim=-1, descending=False, stable=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("argsort", self.device.type, self, dim=dim, descending=descending, stable=stable)
+
+
+def tensor_sort_method(self, dim=-1, descending=False, stable=False):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("sort", self.device.type, self, dim=dim, descending=descending, stable=stable)
+
+
+def tensor_topk_method(self, k, dim=-1, largest=True, sorted=True):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("topk", self.device.type, self, k, dim=dim, largest=largest, sorted=sorted)
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
 
 
