@@ -1968,6 +1968,10 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.swapdims_ = _cython_mod.tensor_swapdims_
     Tensor.swapaxes_ = _cython_mod.tensor_swapaxes_
 
+    Tensor.scatter_add = _cython_mod.tensor_scatter_add
+    Tensor.index_fill = _cython_mod.tensor_index_fill
+    Tensor.index_copy = _cython_mod.tensor_index_copy
+    Tensor.index_add = _cython_mod.tensor_index_add
     Tensor.put_ = _cython_mod.tensor_put_
     Tensor.scatter_ = _cython_mod.tensor_scatter_
     Tensor.scatter_add_ = _cython_mod.tensor_scatter_add_
@@ -1985,6 +1989,11 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.new_ones = _cython_mod.tensor_new_ones
     Tensor.new_zeros = _cython_mod.tensor_new_zeros
     Tensor.new_full = _cython_mod.tensor_new_full
+    Tensor.div_ = _cython_mod.tensor_div_
+    Tensor.unflatten = _cython_mod.tensor_unflatten
+    Tensor.bitwise_and_ = _cython_mod.tensor_bitwise_and_
+    Tensor.bitwise_or_ = _cython_mod.tensor_bitwise_or_
+    Tensor.bitwise_xor_ = _cython_mod.tensor_bitwise_xor_
     Tensor.type = _cython_mod.tensor_type
     Tensor.type_as = _cython_mod.tensor_type_as
     Tensor.reshape_as = _cython_mod.tensor_reshape_as

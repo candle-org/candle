@@ -1205,6 +1205,37 @@ def tensor_new_full(self, size, fill_value, *, dtype=None, device=None, requires
     return full(size, fill_value, dtype=dt, device=dev)
 
 
+def tensor_div_(self, other):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("div_", self.device.type, self, other)
+
+
+def tensor_unflatten(self, dim, sizes):
+    cdef Py_ssize_t ndim = len(self.shape)
+    if dim < 0:
+        dim += ndim
+    return self.view(self.shape[:dim] + tuple(sizes) + self.shape[dim + 1:])
+
+
+def tensor_bitwise_and_(self, other):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("bitwise_and_", self.device.type, self, other)
+
+
+def tensor_bitwise_or_(self, other):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("bitwise_or_", self.device.type, self, other)
+
+
+def tensor_bitwise_xor_(self, other):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("bitwise_xor_", self.device.type, self, other)
+
+
 def tensor_type(self, dtype=None):
     cdef object dt
     if dtype is None:
@@ -1275,7 +1306,32 @@ def tensor_put_(self, indices, values, accumulate=False):
     return self
 
 
+def tensor_scatter_add(self, dim, index, src):
+    cdef object out = self.clone()
+    out.scatter_add_(dim, index, src)
+    return out
+
+
+def tensor_index_fill(self, dim, index, value):
+    cdef object out = self.clone()
+    out.index_fill_(dim, index, value)
+    return out
+
+
+def tensor_index_copy(self, dim, index, source):
+    cdef object out = self.clone()
+    out.index_copy_(dim, index, source)
+    return out
+
+
+def tensor_index_add(self, dim, index, source, alpha=1):
+    cdef object out = self.clone()
+    out.index_add_(dim, index, source, alpha)
+    return out
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
+
 
 
     cdef Py_ssize_t i

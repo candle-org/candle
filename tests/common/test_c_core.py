@@ -1514,3 +1514,93 @@ class TestTensorDataSetterProvider:
             assert False, "expected dtype mismatch"
         except RuntimeError as e:
             assert "dtype mismatch" in str(e)
+
+
+class TestTensorMiscHelperMethodProviders:
+    """Selected medium-complexity helpers should be served from the Cython tensor API layer."""
+
+    def test_misc_helper_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "div_",
+            "bitwise_and_",
+            "bitwise_or_",
+            "bitwise_xor_",
+            "unflatten",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_misc_helper_methods_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.tensor([8.0, 4.0], dtype=torch.float32)
+        x.div_(2.0)
+        assert x.tolist() == [4.0, 2.0]
+
+        a = torch.tensor([1, 2, 3], dtype=torch.int32)
+        a.bitwise_and_(torch.tensor([3, 1, 1], dtype=torch.int32))
+        assert a.tolist() == [1, 0, 1]
+
+        b = torch.tensor([1, 2, 3], dtype=torch.int32)
+        b.bitwise_or_(torch.tensor([4, 1, 0], dtype=torch.int32))
+        assert b.tolist() == [5, 3, 3]
+
+        c = torch.tensor([1, 2, 3], dtype=torch.int32)
+        c.bitwise_xor_(torch.tensor([1, 3, 1], dtype=torch.int32))
+        assert c.tolist() == [0, 1, 2]
+
+        d = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+        u = d.unflatten(1, (2, 2))
+        assert u.shape == (3, 2, 2)
+
+
+class TestTensorWritebackConvenienceMethodProviders:
+    """Non-inplace writeback convenience wrappers should be served from the Cython tensor API layer."""
+
+    def test_writeback_convenience_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "scatter_add",
+            "index_fill",
+            "index_copy",
+            "index_add",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_writeback_convenience_methods_preserve_behavior(self):
+        import candle as torch
+
+        index = torch.tensor([[0, 1, 2], [2, 1, 0]], dtype=torch.int64)
+        src = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], dtype=torch.float32)
+
+        base = torch.zeros((2, 3), dtype=torch.float32)
+        out = base.scatter_add(1, index, src)
+        assert out.tolist() == [[1.0, 2.0, 3.0], [6.0, 5.0, 4.0]]
+        assert base.tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+
+        iff = torch.zeros((2, 3), dtype=torch.float32)
+        out2 = iff.index_fill(1, torch.tensor([1]), 7.0)
+        assert out2.tolist() == [[0.0, 7.0, 0.0], [0.0, 7.0, 0.0]]
+        assert iff.tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+
+        ic = torch.zeros((2, 3), dtype=torch.float32)
+        out3 = ic.index_copy(1, torch.tensor([0, 2]), torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32))
+        assert out3.tolist() == [[1.0, 0.0, 2.0], [3.0, 0.0, 4.0]]
+        assert ic.tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+
+        ia = torch.zeros((2, 3), dtype=torch.float32)
+        out4 = ia.index_add(1, torch.tensor([0, 2]), torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32), alpha=1)
+        assert out4.tolist() == [[1.0, 0.0, 2.0], [3.0, 0.0, 4.0]]
+        assert ia.tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
