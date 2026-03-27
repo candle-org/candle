@@ -22,8 +22,9 @@ on:
         required: true
         type: string
       spec_id:
-        description: OpenI spec id
+        description: OpenI spec id (default 340 = 4-card 910A)
         required: true
+        default: '340'
         type: string
       cluster:
         description: OpenI cluster name
@@ -44,6 +45,11 @@ on:
         description: Workflow timeout in minutes
         required: true
         default: '120'
+        type: string
+      reuse_timeout_minutes:
+        description: Reuse a running task until this many minutes, then stop and restart it
+        required: true
+        default: '210'
         type: string
       keep_task_on_failure:
         description: Keep remote task for debugging when a step fails
@@ -71,14 +77,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests websocket-client
 
-      - name: Create OpenI task
+      - name: Ensure OpenI task
         env:
           OPENI_COOKIE: ${{ secrets.OPENI_COOKIE }}
           OPENI_CSRF: ${{ secrets.OPENI_CSRF }}
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
         run: |
-          python .github/scripts/openi_ci.py create-task \
+          python .github/scripts/openi_ci.py ensure-task \
             --repo-url "${{ inputs.repo_url }}" \
             --ref "${{ inputs.ref }}" \
             --image-id "${{ inputs.image_id }}" \
@@ -87,6 +93,7 @@ jobs:
             --cluster "${{ inputs.cluster }}" \
             --compute-source "${{ inputs.compute_source }}" \
             --has-internet "${{ inputs.has_internet }}" \
+            --reuse-timeout-minutes "${{ inputs.reuse_timeout_minutes }}" \
             --keep-task-on-failure "${{ inputs.keep_task_on_failure }}"
 
       - name: Wait for task to start

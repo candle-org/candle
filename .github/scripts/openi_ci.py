@@ -32,6 +32,8 @@ REMOTE_ARTIFACTS = ARTIFACT_ROOT / "remote"
 REMOTE_WORKDIR = "/home/ma-user/work/candle-openi-ci"
 DEFAULT_WAIT_TIMEOUT_SECONDS = 600
 DEFAULT_WAIT_INTERVAL_SECONDS = 10
+RESTART_STOP_TIMEOUT_SECONDS = 600
+
 REMOTE_ARTIFACT_NAMES = [
     "pytest.log",
     "junit.xml",
@@ -503,15 +505,119 @@ def _load_kernel_client() -> OpenIJupyterClient:
     )
 
 
+def _save_task_with_context(task: dict, args: argparse.Namespace) -> None:
+    task.update({"repo_url": args.repo_url, "ref": args.ref, "spec_id": str(args.spec_id)})
+    _save_json_state("task", task)
+
+
+def _task_matches_request(task: dict, args: argparse.Namespace) -> bool:
+    saved_spec = task.get("spec_id")
+    spec_id_match = str(saved_spec) == str(args.spec_id) if saved_spec is not None else True
+    return (
+        task.get("image_id") == args.image_id
+        and task.get("image_name") == args.image_name
+        and task.get("cluster") == args.cluster
+        and task.get("compute_source") == args.compute_source
+        and spec_id_match
+    )
+
+
+def _find_matching_task_in_my_list(session: requests.Session, args: argparse.Namespace) -> dict | None:
+    payload = _api_call(session, "get", "/api/v1/ai_task/my_list")
+    data = payload.get("data")
+    tasks = []
+    if isinstance(data, dict):
+        raw_tasks = data.get("tasks") or data.get("list") or []
+        for item in raw_tasks:
+            if isinstance(item, dict) and isinstance(item.get("task"), dict):
+                tasks.append(item["task"])
+            elif isinstance(item, dict):
+                tasks.append(item)
+    elif isinstance(data, list):
+        tasks = data
+    candidates = [task for task in tasks if _task_matches_request(task, args)]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda task: (int(task.get("start_time") or 0), int(task.get("id") or 0)), reverse=True)
+    return candidates[0]
+
+
 def _handle_create_task(args: argparse.Namespace) -> int:
     session_cfg = _load_session_config()
     session = _make_requests_session(session_cfg)
     payload = _build_create_payload(args)
     response = _api_call(session, "post", "/api/v1/-/-/ai_task/create", json=payload)
     task = response["data"]
-    task.update({"repo_url": args.repo_url, "ref": args.ref})
-    _save_json_state("task", task)
+    _save_task_with_context(task, args)
     return 0
+
+
+
+
+def _handle_ensure_task(args: argparse.Namespace) -> int:
+    task_path = _state_path("task")
+    if not task_path.exists():
+        return _handle_create_task(args)
+
+    session_cfg = _load_session_config()
+    session = _make_requests_session(session_cfg)
+    existing_task = _load_json_state("task")
+    try:
+        response = _api_call(session, "get", f"/api/v1/ai_task/brief?id={existing_task['id']}")
+        task = response["data"]
+    except requests.exceptions.HTTPError as exc:
+        response_obj = getattr(exc, "response", None)
+        if response_obj is None or response_obj.status_code != 403:
+            raise
+        task = _find_matching_task_in_my_list(session, args)
+        if task is None:
+            return _handle_create_task(args)
+
+    if not _task_matches_request(task, args):
+        discovered_task = _find_matching_task_in_my_list(session, args)
+        if discovered_task is None:
+            return _handle_create_task(args)
+        task = discovered_task
+
+    status = task.get("status", "")
+    reusable_statuses = {"RUNNING", "WAITING", "CREATED"}
+    restartable_statuses = reusable_statuses | {"STOPPED", "STOP"}
+    reuse_timeout_seconds = int(args.reuse_timeout_minutes) * 60
+    started_at = task.get("start_time") or 0
+    age_seconds = max(0, int(time.time() - started_at)) if started_at else 0
+
+    if status in reusable_statuses and age_seconds < reuse_timeout_seconds:
+        _save_task_with_context(task, args)
+        return 0
+
+    if status in restartable_statuses:
+        _save_json_state("task", task)
+        _handle_restart_task(args)
+        restarted_task = _load_json_state("task")
+        _save_task_with_context(restarted_task, args)
+        return 0
+
+    return _handle_create_task(args)
+
+
+def _handle_restart_task(args: argparse.Namespace) -> int:
+    session_cfg = _load_session_config()
+    session = _make_requests_session(session_cfg)
+    task = _load_json_state("task")
+    task_id = task["id"]
+
+    _api_call(session, "post", f"/api/v1/ai_task/stop?id={task_id}")
+    deadline = time.time() + RESTART_STOP_TIMEOUT_SECONDS
+    while time.time() < deadline:
+        response = _api_call(session, "get", f"/api/v1/ai_task/brief?id={task_id}")
+        task = response["data"]
+        status = task.get("status", "")
+        if status in {"STOPPED", "STOP"}:
+            restart_response = _api_call(session, "post", f"/api/v1/ai_task/restart?id={task_id}")
+            _save_json_state("task", restart_response["data"])
+            return 0
+        time.sleep(DEFAULT_WAIT_INTERVAL_SECONDS)
+    raise OpenITaskError(f"Task {task_id} did not stop within {RESTART_STOP_TIMEOUT_SECONDS}s")
 
 
 def _handle_wait_task(args: argparse.Namespace) -> int:
@@ -631,6 +737,19 @@ def _build_parser() -> argparse.ArgumentParser:
     create.add_argument("--has-internet", required=True)
     create.add_argument("--keep-task-on-failure", required=False)
 
+    ensure = subparsers.add_parser("ensure-task", help="Create, reuse, or restart OpenI task")
+    ensure.add_argument("--repo-url", required=True)
+    ensure.add_argument("--ref", required=True)
+    ensure.add_argument("--image-id", required=True)
+    ensure.add_argument("--image-name", required=True)
+    ensure.add_argument("--spec-id", required=True)
+    ensure.add_argument("--cluster", required=True)
+    ensure.add_argument("--compute-source", required=True)
+    ensure.add_argument("--has-internet", required=True)
+    ensure.add_argument("--reuse-timeout-minutes", required=False, default="210")
+    ensure.add_argument("--keep-task-on-failure", required=False)
+
+    subparsers.add_parser("restart-task", help="Stop current task and restart it")
     subparsers.add_parser("wait-task", help="Wait for OpenI task to run")
 
     prepare = subparsers.add_parser("prepare-remote", help="Prepare remote checkout")
@@ -652,6 +771,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     handlers = {
         "create-task": _handle_create_task,
+        "ensure-task": _handle_ensure_task,
+        "restart-task": _handle_restart_task,
         "wait-task": _handle_wait_task,
         "prepare-remote": _handle_prepare_remote,
         "run-910a-suite": _handle_run_910a_suite,
