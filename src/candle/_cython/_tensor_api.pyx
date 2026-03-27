@@ -569,6 +569,17 @@ def tensor_cuda(self, device=None, non_blocking=False, memory_format=None):
     return self.to(target, non_blocking=non_blocking, memory_format=memory_format)
 
 
+def tensor_getitem(self, key):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("getitem", self.device.type, self, key)
+
+
+def tensor_setitem(self, key, value):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    _dispatch_fn("setitem", self.device.type, self, key, value)
+
+
 cdef inline tuple _contiguous_stride_tuple(tuple shape):
     cdef Py_ssize_t i
     cdef Py_ssize_t ndim = len(shape)

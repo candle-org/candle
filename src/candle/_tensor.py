@@ -1875,6 +1875,8 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.__sub__ = _cython_mod.tensor_sub
     Tensor.__mul__ = _cython_mod.tensor_mul
     Tensor.__matmul__ = _cython_mod.tensor_matmul
+    Tensor.__getitem__ = _cython_mod.tensor_getitem
+    Tensor.__setitem__ = _cython_mod.tensor_setitem
     Tensor.__iadd__ = _cython_mod.tensor_iadd
     Tensor.__imul__ = _cython_mod.tensor_imul
     Tensor.__neg__ = _cython_mod.tensor_neg

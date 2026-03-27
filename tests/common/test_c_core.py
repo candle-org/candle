@@ -967,3 +967,30 @@ class TestTensorConversionMethodProviders:
             m = x.mps()
             assert m.device.type == "mps"
             assert m.dtype == x.dtype
+
+class TestTensorIndexingMethodProviders:
+    """Indexing Tensor methods should be served from the Cython tensor API layer."""
+
+    def test_indexing_methods_are_bound_from_tensor_api(self):
+        import candle as torch
+
+        expected = {
+            "__getitem__",
+            "__setitem__",
+        }
+        actual = {
+            name
+            for name in expected
+            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+        }
+        assert actual == expected
+
+    def test_tensor_api_bound_indexing_methods_preserve_behavior(self):
+        import candle as torch
+
+        x = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        assert x[0, 1].item() == 1.0
+        assert x[:, 1].shape == (2,)
+
+        x[0, 1] = 99.0
+        assert x[0, 1].item() == 99.0
