@@ -52,56 +52,80 @@ def tensor(data, *, dtype=None, device=None, requires_grad=False):
     return tensor_dispatch(data, dtype=dtype, device=device, requires_grad=requires_grad)
 
 
-def zeros(*shape, dtype=None, device=None, memory_format=None):
+def zeros(*shape, dtype=None, device=None, memory_format=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
-    return zeros_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
+    out = zeros_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
+    if requires_grad:
+        out.requires_grad_(True)
+    return out
 
 
-def ones(*shape, dtype=None, device=None, memory_format=None):
+def ones(*shape, dtype=None, device=None, memory_format=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
-    return ones_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
+    out = ones_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
+    if requires_grad:
+        out.requires_grad_(True)
+    return out
 
 
-def empty(*shape, dtype=None, device=None, memory_format=None):
+def empty(*shape, dtype=None, device=None, memory_format=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
-    return empty_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
+    out = empty_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
+    if requires_grad:
+        out.requires_grad_(True)
+    return out
 
 
-def arange(start, end=None, step=1, dtype=None, device=None):
+def arange(start, end=None, step=1, dtype=None, device=None, requires_grad=False):
     if dtype is None:
         args = [start] + ([end] if end is not None else []) + [step]
         if all(isinstance(a, int) for a in args):
             dtype = int64
         else:
             dtype = _get_default_dtype()
-    return arange_dispatch(start, end=end, step=step, dtype=dtype, device=device)
+    out = arange_dispatch(start, end=end, step=step, dtype=dtype, device=device)
+    if requires_grad:
+        out.requires_grad_(True)
+    return out
 
 
-def linspace(start, end, steps, dtype=None, device=None):
+def linspace(start, end, steps, dtype=None, device=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
-    return linspace_dispatch(start, end, steps, dtype=dtype, device=device)
+    out = linspace_dispatch(start, end, steps, dtype=dtype, device=device)
+    if requires_grad:
+        out.requires_grad_(True)
+    return out
 
 
-def full(*args, dtype=None, device=None):
+def full(*args, dtype=None, device=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
-    return full_dispatch(*args, dtype=dtype, device=device)
+    out = full_dispatch(*args, dtype=dtype, device=device)
+    if requires_grad:
+        out.requires_grad_(True)
+    return out
 
 
-def logspace(start, end, steps, dtype=None, device=None):
+def logspace(start, end, steps, dtype=None, device=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
-    return logspace_dispatch(start, end, steps, dtype=dtype, device=device)
+    out = logspace_dispatch(start, end, steps, dtype=dtype, device=device)
+    if requires_grad:
+        out.requires_grad_(True)
+    return out
 
 
 def eye(n, m=None, dtype=None, device=None, out=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
-    return eye_dispatch(n, m, dtype=dtype, device=device, out=out)
+    result = eye_dispatch(n, m, dtype=dtype, device=device, out=out)
+    if requires_grad:
+        result.requires_grad_(True)
+    return result
 
 
 def range(start, end, step=1, dtype=None, device=None):
