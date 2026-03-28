@@ -18,6 +18,15 @@ from ._functional import randperm as randperm_dispatch
 from ._functional import normal as normal_dispatch
 
 
+def _apply_requires_grad(out, requires_grad):
+    if not requires_grad:
+        return out
+    if not getattr(out.dtype, "is_floating_point", False):
+        raise RuntimeError("only Tensors of floating point dtype can require gradients")
+    out.requires_grad_(True)
+    return out
+
+
 def _infer_creation_dtype(data):
     if isinstance(data, (np.ndarray, np.generic)):
         if data.dtype == np.bool_:
@@ -56,27 +65,21 @@ def zeros(*shape, dtype=None, device=None, memory_format=None, requires_grad=Fal
     if dtype is None:
         dtype = _get_default_dtype()
     out = zeros_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
-    if requires_grad:
-        out.requires_grad_(True)
-    return out
+    return _apply_requires_grad(out, requires_grad)
 
 
 def ones(*shape, dtype=None, device=None, memory_format=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
     out = ones_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
-    if requires_grad:
-        out.requires_grad_(True)
-    return out
+    return _apply_requires_grad(out, requires_grad)
 
 
 def empty(*shape, dtype=None, device=None, memory_format=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
     out = empty_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
-    if requires_grad:
-        out.requires_grad_(True)
-    return out
+    return _apply_requires_grad(out, requires_grad)
 
 
 def arange(start, end=None, step=1, dtype=None, device=None, requires_grad=False):
@@ -87,45 +90,35 @@ def arange(start, end=None, step=1, dtype=None, device=None, requires_grad=False
         else:
             dtype = _get_default_dtype()
     out = arange_dispatch(start, end=end, step=step, dtype=dtype, device=device)
-    if requires_grad:
-        out.requires_grad_(True)
-    return out
+    return _apply_requires_grad(out, requires_grad)
 
 
 def linspace(start, end, steps, dtype=None, device=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
     out = linspace_dispatch(start, end, steps, dtype=dtype, device=device)
-    if requires_grad:
-        out.requires_grad_(True)
-    return out
+    return _apply_requires_grad(out, requires_grad)
 
 
 def full(*args, dtype=None, device=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
     out = full_dispatch(*args, dtype=dtype, device=device)
-    if requires_grad:
-        out.requires_grad_(True)
-    return out
+    return _apply_requires_grad(out, requires_grad)
 
 
 def logspace(start, end, steps, dtype=None, device=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
     out = logspace_dispatch(start, end, steps, dtype=dtype, device=device)
-    if requires_grad:
-        out.requires_grad_(True)
-    return out
+    return _apply_requires_grad(out, requires_grad)
 
 
 def eye(n, m=None, dtype=None, device=None, out=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
     result = eye_dispatch(n, m, dtype=dtype, device=device, out=out)
-    if requires_grad:
-        result.requires_grad_(True)
-    return result
+    return _apply_requires_grad(result, requires_grad)
 
 
 def range(start, end, step=1, dtype=None, device=None):
