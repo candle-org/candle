@@ -1936,7 +1936,9 @@ def tensor_any_method(self, dim=None, keepdim=False):
 
 def tensor_sum_method(self, dim=None, keepdim=False, *, dtype=None):
     _ensure_dispatch_ref()
-    return _dispatch_fn("sum", self.device.type, self, dim=dim, keepdim=keepdim, dtype=dtype)
+    if dtype is not None:
+        return _dispatch_fn("sum", self.device.type, self, dim=dim, keepdim=keepdim, dtype=dtype)
+    return _dispatch_fn("sum", self.device.type, self, dim=dim, keepdim=keepdim)
 
 
 def tensor_prod_method(self, dim=None, keepdim=False):
