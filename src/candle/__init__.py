@@ -410,6 +410,7 @@ from . import special
 from . import testing
 from . import hub
 from . import utils
+from . import version
 from ._random import (
     manual_seed, seed, initial_seed, get_rng_state, set_rng_state,
     Generator, default_generator,
