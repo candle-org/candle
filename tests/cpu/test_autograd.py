@@ -1,3 +1,4 @@
+import numpy as np
 import candle as torch
 
 
@@ -74,3 +75,63 @@ def test_autograd_batched_matmul_backward_shape_safe():
 
     assert a.grad is not None
     assert b.grad is not None
+
+
+def test_autograd_matmul_vector_matrix_backward_shape_and_values():
+    x = torch.tensor([1.0, -2.0, 3.0])
+    w = torch.tensor(
+        [
+            [0.5, 1.0],
+            [-1.5, 2.0],
+            [3.0, -0.5],
+        ]
+    )
+    x.requires_grad = True
+    w.requires_grad = True
+
+    y = torch.matmul(x, w)
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert w.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([1.5, 0.5, 2.5], dtype=np.float32))
+    np.testing.assert_allclose(
+        w.grad.numpy(),
+        np.array(
+            [
+                [1.0, 1.0],
+                [-2.0, -2.0],
+                [3.0, 3.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+
+def test_autograd_matmul_matrix_vector_backward_shape_and_values():
+    a = torch.tensor(
+        [
+            [1.0, 2.0, -1.0],
+            [0.0, -3.0, 4.0],
+        ]
+    )
+    x = torch.tensor([2.0, -1.0, 0.5])
+    a.requires_grad = True
+    x.requires_grad = True
+
+    y = torch.matmul(a, x)
+    y.sum().backward()
+
+    assert a.grad is not None
+    assert x.grad is not None
+    np.testing.assert_allclose(
+        a.grad.numpy(),
+        np.array(
+            [
+                [2.0, -1.0, 0.5],
+                [2.0, -1.0, 0.5],
+            ],
+            dtype=np.float32,
+        ),
+    )
+    np.testing.assert_allclose(x.grad.numpy(), np.array([1.0, -1.0, 3.0], dtype=np.float32))

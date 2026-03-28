@@ -1,5 +1,5 @@
 from tools.autograd.load_derivatives import load_derivatives
-from tools.autograd.gen_functions import _gen_one_node
+from tools.autograd.gen_functions import _HEADER, _gen_one_node
 
 
 def _node_src(func_name: str) -> str:
@@ -38,3 +38,10 @@ def test_cat_backward_uses_local_helper_without_undefined_tensor_list_name():
     assert '_cat_backward_helper(' in src
     assert 'to_args_sizes_symint' not in src
     assert 'to_args_scalartypes' not in src
+
+
+def test_generated_header_matmul_helper_has_vector_safe_paths():
+    assert 'len(other.shape) == 1' in _HEADER
+    assert 'len(self_.shape) == 1' in _HEADER
+    assert 'redispatch("unsqueeze", keyset, grad, -1)' in _HEADER
+    assert 'redispatch("unsqueeze", keyset, grad, -2)' in _HEADER

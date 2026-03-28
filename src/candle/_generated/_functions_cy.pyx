@@ -119,8 +119,39 @@ def _div_tensor_other_backward_helper(grad, self_, other, *extra_and_keyset):
 
 
 def _matmul_backward_helper(grad, self_, other, grad_input_mask, keyset):
-    grad_self = _reduce_grad(_redispatch("matmul", keyset, grad, _redispatch("transpose", keyset, other, -1, -2)), self_.shape) if grad_input_mask[0] else None
-    grad_other = _reduce_grad(_redispatch("matmul", keyset, _redispatch("transpose", keyset, self_, -1, -2), grad), other.shape) if grad_input_mask[1] else None
+    grad_self = None
+    grad_other = None
+
+    if grad_input_mask[0]:
+        if len(other.shape) == 1:
+            if len(self_.shape) == 1:
+                grad_self_raw = _redispatch("mul", keyset, grad, other)
+            else:
+                grad_self_raw = _redispatch(
+                    "matmul",
+                    keyset,
+                    _redispatch("unsqueeze", keyset, grad, -1),
+                    _redispatch("unsqueeze", keyset, other, 0),
+                )
+        else:
+            grad_self_raw = _redispatch("matmul", keyset, grad, _redispatch("transpose", keyset, other, -1, -2))
+        grad_self = _reduce_grad(grad_self_raw, self_.shape)
+
+    if grad_input_mask[1]:
+        if len(self_.shape) == 1:
+            if len(other.shape) == 1:
+                grad_other_raw = _redispatch("mul", keyset, grad, self_)
+            else:
+                grad_other_raw = _redispatch(
+                    "matmul",
+                    keyset,
+                    _redispatch("unsqueeze", keyset, self_, -1),
+                    _redispatch("unsqueeze", keyset, grad, -2),
+                )
+        else:
+            grad_other_raw = _redispatch("matmul", keyset, _redispatch("transpose", keyset, self_, -1, -2), grad)
+        grad_other = _reduce_grad(grad_other_raw, other.shape)
+
     return grad_self, grad_other
 
 
