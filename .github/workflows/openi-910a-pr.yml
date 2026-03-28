@@ -97,13 +97,27 @@ jobs:
     needs: suite-start
     runs-on: ${{ fromJson(needs.suite-start.outputs.runner-label) }}
     timeout-minutes: 60
+    env:
+      http_proxy: ""
+      https_proxy: ""
+      ftp_proxy: ""
+      no_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      FTP_PROXY: ""
+      NO_PROXY: ""
     defaults:
       run:
         shell: bash -l {0}
     steps:
-      - name: Use pre-cloned repo
+      - name: Inspect runner proxy state
         run: |
-          cp -a /home/ma-user/work/candle-openi-ci/repo/. "$GITHUB_WORKSPACE"
+          env | sort | grep -i proxy || true
+          git config --global --get-regexp 'http\..*proxy' || true
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: Build candle
         run: |
           source /home/ma-user/anaconda3/etc/profile.d/conda.sh
@@ -225,13 +239,27 @@ jobs:
     needs: dist4-start
     runs-on: ${{ fromJson(needs.dist4-start.outputs.runner-label) }}
     timeout-minutes: 90
+    env:
+      http_proxy: ""
+      https_proxy: ""
+      ftp_proxy: ""
+      no_proxy: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      FTP_PROXY: ""
+      NO_PROXY: ""
     defaults:
       run:
         shell: bash -l {0}
     steps:
-      - name: Use pre-cloned repo
+      - name: Inspect runner proxy state
         run: |
-          cp -a /home/ma-user/work/candle-openi-ci/repo/. "$GITHUB_WORKSPACE"
+          env | sort | grep -i proxy || true
+          git config --global --get-regexp 'http\..*proxy' || true
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: Build candle
         run: |
           source /home/ma-user/anaconda3/etc/profile.d/conda.sh

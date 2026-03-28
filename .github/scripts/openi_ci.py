@@ -927,17 +927,8 @@ def _handle_start_runner(args: argparse.Namespace) -> int:
 
     runner_dir = "/home/ma-user/work/actions-runner"
     repo_url = f"https://github.com/{args.repo}"
-    ref = getattr(args, "ref", "")
     label = args.label
-
-    clone_script = ""
-    if ref:
-        remote_repo = f"{REMOTE_WORKDIR}/repo"
-        clone_script = _build_remote_prepare_script(
-            repo_url=repo_url, ref=ref, remote_repo=remote_repo
-        ) + "\n"
-
-    script = f"""{clone_script}set -euo pipefail
+    script = f"""set -euo pipefail
 for key in $(env | cut -d= -f1 | grep -i proxy || true); do
   unset "$key"
 done
@@ -1051,7 +1042,6 @@ def _build_parser() -> argparse.ArgumentParser:
     start_runner = subparsers.add_parser("start-runner", help="Register and start GitHub Actions self-hosted runner on OpenI task")
     start_runner.add_argument("--label", required=True, help="Runner label, e.g. openi-suite-<run_id>")
     start_runner.add_argument("--repo", required=True, help="GitHub repo in owner/repo format")
-    start_runner.add_argument("--ref", required=False, default="", help="Git ref to pre-clone onto the OpenI machine before starting the runner")
 
     wait_runner = subparsers.add_parser("wait-runner", help="Wait until self-hosted runner with given label is online")
     wait_runner.add_argument("--label", required=True)
