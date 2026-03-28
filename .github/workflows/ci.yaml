@@ -1086,3 +1086,158 @@ jobs:
         gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
       env:
         GH_TOKEN: ${{ github.token }}
+
+  # ── OpenI 910A (remote, 4-card shared task) ──────────────────────
+
+  openi-910a-setup:
+    name: OpenI 910A Setup
+    needs: [detect-changes, pylint-check]
+    if: >
+      !cancelled() &&
+      needs.detect-changes.outputs.run-npu-tests == 'true' &&
+      (needs.pylint-check.result == 'success' || needs.pylint-check.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install orchestrator deps
+        run: pip install requests websocket-client
+      - name: Ensure OpenI task
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: |
+          python .github/scripts/openi_ci.py ensure-task \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
+            --ref "${{ github.event.pull_request.head.sha || github.sha }}" \
+            --image-id "${{ secrets.OPENI_IMAGE_ID }}" \
+            --image-name "${{ secrets.OPENI_IMAGE_NAME }}" \
+            --spec-id "340" \
+            --cluster "C2Net" \
+            --compute-source "NPU" \
+            --has-internet "2" \
+            --reuse-timeout-minutes "210"
+      - name: Wait for task
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: python .github/scripts/openi_ci.py wait-task
+      - name: Prepare remote
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: |
+          python .github/scripts/openi_ci.py prepare-remote \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
+            --ref "${{ github.event.pull_request.head.sha || github.sha }}"
+      - name: Upload task state
+        uses: actions/upload-artifact@v4
+        with:
+          name: openi-910a-state
+          path: .artifacts/openi-910a/
+          retention-days: 1
+
+  openi-910a-suite:
+    name: OpenI NPU 910A Suite (cards 2,3)
+    needs: [openi-910a-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests websocket-client
+      - uses: actions/download-artifact@v4
+        with:
+          name: openi-910a-state
+          path: .artifacts/openi-910a/
+      - name: Run 910A suite
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: python .github/scripts/openi_ci.py run-910a-suite --visible-devices 2,3
+      - name: Fetch artifacts
+        if: always()
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: python .github/scripts/openi_ci.py fetch-artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openi-910a-suite-results
+          path: .artifacts/openi-910a/remote/
+
+  openi-910a-dist-2card:
+    name: OpenI 910A Distributed 2-Card (cards 0,1)
+    needs: [openi-910a-setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests websocket-client
+      - uses: actions/download-artifact@v4
+        with:
+          name: openi-910a-state
+          path: .artifacts/openi-910a/
+      - name: Run 2-card distributed tests
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: python .github/scripts/openi_ci.py run-910a-dist --card-count 2 --visible-devices 0,1
+      - name: Fetch artifacts
+        if: always()
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: python .github/scripts/openi_ci.py fetch-artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openi-910a-dist-2card-results
+          path: .artifacts/openi-910a/remote/
+
+  openi-910a-dist-4card:
+    name: OpenI 910A HCCL 4-Card (cards 0-3)
+    needs: [openi-910a-suite, openi-910a-dist-2card]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests websocket-client
+      - uses: actions/download-artifact@v4
+        with:
+          name: openi-910a-state
+          path: .artifacts/openi-910a/
+      - name: Run 4-card HCCL tests
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: python .github/scripts/openi_ci.py run-910a-dist --card-count 4 --visible-devices 0,1,2,3
+      - name: Fetch artifacts
+        if: always()
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: python .github/scripts/openi_ci.py fetch-artifacts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openi-910a-dist-4card-results
+          path: .artifacts/openi-910a/remote/
+      - name: Cleanup task
+        if: always()
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: python .github/scripts/openi_ci.py cleanup-task

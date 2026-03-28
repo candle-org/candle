@@ -125,3 +125,30 @@ def test_cleanup_step_always_runs(workflow):
             assert step.get("if") == "always()"
             return
     pytest.fail("Expected cleanup-task step guarded by if: always()")
+
+
+REQUIRED_OPENI_JOBS = [
+    "openi-910a-setup",
+    "openi-910a-suite",
+    "openi-910a-dist-2card",
+    "openi-910a-dist-4card",
+]
+
+
+def test_ci_yaml_has_openi_910a_jobs():
+    import pathlib, yaml
+    ci_path = pathlib.Path(__file__).resolve().parents[2] / ".github/workflows/ci.yaml"
+    workflow = yaml.safe_load(ci_path.read_text(encoding="utf-8"))
+    jobs = workflow.get("jobs") or {}
+    missing = [j for j in REQUIRED_OPENI_JOBS if j not in jobs]
+    assert not missing, f"Missing OpenI jobs in ci.yaml: {missing}"
+
+
+def test_openi_910a_dist_4card_needs_suite_and_dist_2card():
+    import pathlib, yaml
+    ci_path = pathlib.Path(__file__).resolve().parents[2] / ".github/workflows/ci.yaml"
+    workflow = yaml.safe_load(ci_path.read_text(encoding="utf-8"))
+    job = workflow.get("jobs", {}).get("openi-910a-dist-4card", {})
+    needs = job.get("needs", [])
+    assert "openi-910a-suite" in needs
+    assert "openi-910a-dist-2card" in needs
