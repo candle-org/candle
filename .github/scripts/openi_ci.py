@@ -27,7 +27,17 @@ LOGIN_RSA_PUBLIC_KEY = (
     "YFe7IeOlwDH9mLqbMDzcLjFHphXNb2rRUii+PFJovdL9ys8utCDkWTSnP2G2x1RZ\n"
     "xUfxfQqoYkMaAEio0QIDAQAB\n"
 )
-ARTIFACT_ROOT = Path(__file__).resolve().parents[2] / ".artifacts" / "openi-910a"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_BASE_ARTIFACT_DIR = "openi-910a"
+
+
+def _resolve_artifact_root() -> Path:
+    suffix = os.environ.get("OPENI_ARTIFACT_SUFFIX", "")
+    name = f"{_BASE_ARTIFACT_DIR}-{suffix}" if suffix else _BASE_ARTIFACT_DIR
+    return _REPO_ROOT / ".artifacts" / name
+
+
+ARTIFACT_ROOT = _resolve_artifact_root()
 REMOTE_ARTIFACTS = ARTIFACT_ROOT / "remote"
 REMOTE_WORKDIR = "/home/ma-user/work/candle-openi-ci"
 DEFAULT_WAIT_TIMEOUT_SECONDS = 600
@@ -245,6 +255,10 @@ def _save_json_state(name: str, payload: dict) -> Path:
 
 def _load_json_state(name: str) -> dict:
     path = _state_path(name)
+    if not path.exists():
+        base_path = _REPO_ROOT / ".artifacts" / _BASE_ARTIFACT_DIR / f"{name}.json"
+        if base_path.exists():
+            path = base_path
     return json.loads(path.read_text(encoding="utf-8"))
 
 

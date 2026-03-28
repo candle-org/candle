@@ -1155,22 +1155,33 @@ jobs:
         with:
           name: openi-910a-state
           path: .artifacts/openi-910a/
+      - name: Prepare remote (own kernel)
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_ARTIFACT_SUFFIX: suite
+        run: |
+          python .github/scripts/openi_ci.py prepare-remote \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
+            --ref "${{ github.event.pull_request.head.sha || github.sha }}"
       - name: Run 910A suite
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_ARTIFACT_SUFFIX: suite
         run: python .github/scripts/openi_ci.py run-910a-suite --visible-devices 2,3
       - name: Fetch artifacts
         if: always()
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_ARTIFACT_SUFFIX: suite
         run: python .github/scripts/openi_ci.py fetch-artifacts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: openi-910a-suite-results
-          path: .artifacts/openi-910a/remote/
+          path: .artifacts/openi-910a-suite/remote/
 
   openi-910a-dist-2card:
     name: OpenI 910A Distributed 2-Card (cards 0,1)
@@ -1187,22 +1198,33 @@ jobs:
         with:
           name: openi-910a-state
           path: .artifacts/openi-910a/
+      - name: Prepare remote (own kernel)
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_ARTIFACT_SUFFIX: dist-2card
+        run: |
+          python .github/scripts/openi_ci.py prepare-remote \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
+            --ref "${{ github.event.pull_request.head.sha || github.sha }}"
       - name: Run 2-card distributed tests
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_ARTIFACT_SUFFIX: dist-2card
         run: python .github/scripts/openi_ci.py run-910a-dist --card-count 2 --visible-devices 0,1
       - name: Fetch artifacts
         if: always()
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_ARTIFACT_SUFFIX: dist-2card
         run: python .github/scripts/openi_ci.py fetch-artifacts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: openi-910a-dist-2card-results
-          path: .artifacts/openi-910a/remote/
+          path: .artifacts/openi-910a-dist-2card/remote/
 
   openi-910a-dist-4card:
     name: OpenI 910A HCCL 4-Card (cards 0-3)
@@ -1219,22 +1241,33 @@ jobs:
         with:
           name: openi-910a-state
           path: .artifacts/openi-910a/
+      - name: Prepare remote (own kernel)
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_ARTIFACT_SUFFIX: dist-4card
+        run: |
+          python .github/scripts/openi_ci.py prepare-remote \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
+            --ref "${{ github.event.pull_request.head.sha || github.sha }}"
       - name: Run 4-card HCCL tests
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_ARTIFACT_SUFFIX: dist-4card
         run: python .github/scripts/openi_ci.py run-910a-dist --card-count 4 --visible-devices 0,1,2,3
       - name: Fetch artifacts
         if: always()
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_ARTIFACT_SUFFIX: dist-4card
         run: python .github/scripts/openi_ci.py fetch-artifacts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: openi-910a-dist-4card-results
-          path: .artifacts/openi-910a/remote/
+          path: .artifacts/openi-910a-dist-4card/remote/
       - name: Cleanup task
         if: always()
         env:

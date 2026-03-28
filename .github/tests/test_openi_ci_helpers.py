@@ -1044,3 +1044,31 @@ def test_run_910a_dist_subcommand_registered(openi_ci_module):
     args = parser.parse_args(["run-910a-dist", "--card-count", "2", "--visible-devices", "0,1"])
     assert args.card_count == 2
     assert args.visible_devices == "0,1"
+
+
+def test_resolve_artifact_root_default(openi_ci_module, monkeypatch):
+    monkeypatch.delenv("OPENI_ARTIFACT_SUFFIX", raising=False)
+    root = openi_ci_module._resolve_artifact_root()
+    assert root.name == "openi-910a"
+
+
+def test_resolve_artifact_root_with_suffix(openi_ci_module, monkeypatch):
+    monkeypatch.setenv("OPENI_ARTIFACT_SUFFIX", "suite")
+    root = openi_ci_module._resolve_artifact_root()
+    assert root.name == "openi-910a-suite"
+
+
+def test_load_json_state_falls_back_to_base_dir(openi_ci_module, tmp_path, monkeypatch):
+    base_dir = tmp_path / ".artifacts" / "openi-910a"
+    base_dir.mkdir(parents=True)
+    (base_dir / "task.json").write_text('{"id": 123}', encoding="utf-8")
+
+    suffixed_dir = tmp_path / ".artifacts" / "openi-910a-suite"
+    suffixed_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", suffixed_dir)
+    monkeypatch.setattr(openi_ci_module, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(openi_ci_module, "_BASE_ARTIFACT_DIR", "openi-910a")
+
+    result = openi_ci_module._load_json_state("task")
+    assert result["id"] == 123
