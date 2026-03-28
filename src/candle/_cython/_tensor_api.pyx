@@ -29,6 +29,8 @@ cdef object _functional_sub_fn = None
 cdef object _functional_expand_fn = None
 cdef object _functional_expand_copy_fn = None
 cdef object _functional_sum_to_size_fn = None
+cdef object _functional_squeeze_fn = None
+cdef object _functional_unsqueeze_fn = None
 cdef object _cy_make_view_tensor_fn = None
 cdef object _cy_make_tensor_from_storage_fn = None
 cdef object _HookHandle_cls = None
@@ -109,6 +111,14 @@ cdef inline void _ensure_functional_sum_to_size_ref():
     if _functional_sum_to_size_fn is None:
         from candle._functional import sum_to_size as _fsum_to_size
         _functional_sum_to_size_fn = _fsum_to_size
+
+
+cdef inline void _ensure_functional_squeeze_ref():
+    global _functional_squeeze_fn, _functional_unsqueeze_fn
+    if _functional_squeeze_fn is None:
+        from candle._functional import squeeze as _fsqueeze, unsqueeze as _funsqueeze
+        _functional_squeeze_fn = _fsqueeze
+        _functional_unsqueeze_fn = _funsqueeze
 
 
 cdef inline void _ensure_view_factory_ref():
@@ -2327,13 +2337,13 @@ def tensor_fmod_method(self, other):
 
 
 def tensor_squeeze_method(self, dim=None):
-    _ensure_dispatch_ref()
-    return _dispatch_fn("squeeze", self.device.type, self, dim)
+    _ensure_functional_squeeze_ref()
+    return _functional_squeeze_fn(self, dim)
 
 
 def tensor_unsqueeze_method(self, dim):
-    _ensure_dispatch_ref()
-    return _dispatch_fn("unsqueeze", self.device.type, self, dim)
+    _ensure_functional_squeeze_ref()
+    return _functional_unsqueeze_fn(self, dim)
 
 
 def tensor_argmax_method(self, dim=None, keepdim=False):
