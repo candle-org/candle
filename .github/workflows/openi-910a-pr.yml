@@ -43,7 +43,7 @@ jobs:
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
         run: |
           python .github/scripts/openi_ci.py ensure-task \
-            --repo-url "${{ github.event.pull_request.head.repo.clone_url }}" \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
             --ref "${{ github.event.pull_request.head.sha }}" \
             --image-id "${{ secrets.OPENI_IMAGE_ID }}" \
             --image-name "${{ secrets.OPENI_IMAGE_NAME }}" \
@@ -63,7 +63,7 @@ jobs:
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
         run: |
           python .github/scripts/openi_ci.py prepare-remote \
-            --repo-url "${{ github.event.pull_request.head.repo.clone_url }}" \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
             --ref "${{ github.event.pull_request.head.sha }}"
       - name: Upload task state
         uses: actions/upload-artifact@v4
@@ -96,7 +96,7 @@ jobs:
           OPENI_ARTIFACT_SUFFIX: suite
         run: |
           python .github/scripts/openi_ci.py prepare-remote \
-            --repo-url "${{ github.event.pull_request.head.repo.clone_url }}" \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
             --ref "${{ github.event.pull_request.head.sha }}"
       - name: Run 910A suite
         env:
@@ -141,7 +141,7 @@ jobs:
           OPENI_ARTIFACT_SUFFIX: dist-2card
         run: |
           python .github/scripts/openi_ci.py prepare-remote \
-            --repo-url "${{ github.event.pull_request.head.repo.clone_url }}" \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
             --ref "${{ github.event.pull_request.head.sha }}"
       - name: Run 2-card distributed tests
         env:
@@ -186,7 +186,7 @@ jobs:
           OPENI_ARTIFACT_SUFFIX: dist-4card
         run: |
           python .github/scripts/openi_ci.py prepare-remote \
-            --repo-url "${{ github.event.pull_request.head.repo.clone_url }}" \
+            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
             --ref "${{ github.event.pull_request.head.sha }}"
       - name: Run 4-card HCCL tests
         env:
