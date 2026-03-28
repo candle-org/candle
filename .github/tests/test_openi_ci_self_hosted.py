@@ -15,6 +15,24 @@ class DummySession:
     pass
 
 
+def test_runner_api_token_prefers_openi_runner_token(monkeypatch):
+    monkeypatch.setenv("OPENI_RUNNER_TOKEN", "runner-token")
+    monkeypatch.setenv("GITHUB_TOKEN", "github-token")
+
+    token = openi_ci._get_runner_api_token()
+
+    assert token == "runner-token"
+
+
+def test_runner_api_token_falls_back_to_github_token(monkeypatch):
+    monkeypatch.delenv("OPENI_RUNNER_TOKEN", raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", "github-token")
+
+    token = openi_ci._get_runner_api_token()
+
+    assert token == "github-token"
+
+
 def test_ensure_task_by_id_restarts_stopped_task(monkeypatch, tmp_path):
     monkeypatch.setattr(openi_ci, "ARTIFACT_ROOT", tmp_path)
     monkeypatch.setattr(openi_ci, "REMOTE_ARTIFACTS", tmp_path / "remote")
@@ -87,7 +105,9 @@ def test_cleanup_task_can_stop_by_explicit_task_id(monkeypatch, tmp_path):
 
     monkeypatch.setattr(openi_ci, "_api_call", fake_api_call)
 
-    result = openi_ci._handle_cleanup_task(argparse.Namespace(task_id="789", spec_id=None, cluster=None, compute_source=None, image_id="", image_name=""))
+    result = openi_ci._handle_cleanup_task(
+        argparse.Namespace(task_id="789", spec_id=None, cluster=None, compute_source=None, image_id="", image_name="")
+    )
 
     assert result == 0
     assert calls == [("post", "/api/v1/ai_task/stop?id=789")]
@@ -161,7 +181,9 @@ def test_cleanup_task_prefers_saved_task_when_no_explicit_id(monkeypatch, tmp_pa
 
     monkeypatch.setattr(openi_ci, "_api_call", fake_api_call)
 
-    result = openi_ci._handle_cleanup_task(argparse.Namespace(task_id="", spec_id=None, cluster=None, compute_source=None, image_id="", image_name=""))
+    result = openi_ci._handle_cleanup_task(
+        argparse.Namespace(task_id="", spec_id=None, cluster=None, compute_source=None, image_id="", image_name="")
+    )
 
     assert result == 0
     assert calls == [("post", "/api/v1/ai_task/stop?id=456")]
@@ -181,12 +203,12 @@ def test_cleanup_task_returns_when_no_state_and_no_task_id(monkeypatch, tmp_path
 
     monkeypatch.setattr(openi_ci, "_api_call", fake_api_call)
 
-    result = openi_ci._handle_cleanup_task(argparse.Namespace(task_id="", spec_id=None, cluster=None, compute_source=None, image_id="", image_name=""))
+    result = openi_ci._handle_cleanup_task(
+        argparse.Namespace(task_id="", spec_id=None, cluster=None, compute_source=None, image_id="", image_name="")
+    )
 
     assert result == 0
     assert called["value"] is False
-
-
 
 
 def test_cleanup_task_waits_until_task_stops(monkeypatch, tmp_path):
@@ -223,4 +245,3 @@ def test_cleanup_task_waits_until_task_stops(monkeypatch, tmp_path):
         ("get", "/api/v1/ai_task/brief?id=789"),
         ("get", "/api/v1/ai_task/brief?id=789"),
     ]
-

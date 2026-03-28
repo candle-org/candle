@@ -73,6 +73,7 @@ jobs:
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_RUNNER_TOKEN: ${{ secrets.OPENI_RUNNER_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           LABEL="openi-suite-${{ github.run_id }}"
@@ -82,6 +83,7 @@ jobs:
           echo "runner-label=[\"self-hosted\",\"openi-npu\",\"$LABEL\"]" >> "$GITHUB_OUTPUT"
       - name: Wait for runner online
         env:
+          OPENI_RUNNER_TOKEN: ${{ secrets.OPENI_RUNNER_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python .github/scripts/openi_ci.py wait-runner \
@@ -199,6 +201,7 @@ jobs:
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          OPENI_RUNNER_TOKEN: ${{ secrets.OPENI_RUNNER_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           LABEL="openi-dist4-${{ github.run_id }}"
@@ -208,6 +211,7 @@ jobs:
           echo "runner-label=[\"self-hosted\",\"openi-npu\",\"$LABEL\"]" >> "$GITHUB_OUTPUT"
       - name: Wait for runner online
         env:
+          OPENI_RUNNER_TOKEN: ${{ secrets.OPENI_RUNNER_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python .github/scripts/openi_ci.py wait-runner \

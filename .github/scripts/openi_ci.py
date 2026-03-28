@@ -99,6 +99,15 @@ class OpenITaskError(RuntimeError):
     """Raised when a task enters a terminal failure state."""
 
 
+def _get_runner_api_token() -> str:
+    token = os.environ.get("OPENI_RUNNER_TOKEN", "") or os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        raise RuntimeError(
+            "OPENI_RUNNER_TOKEN or GITHUB_TOKEN environment variable is required for runner APIs"
+        )
+    return token
+
+
 class OpenIJupyterClient:
     """Minimal Jupyter client implementation for kernel, execution, and file download."""
 
@@ -886,9 +895,7 @@ def _handle_cleanup_task(args: argparse.Namespace) -> int:
 
 def _handle_start_runner(args: argparse.Namespace) -> int:
     """Register and start an ephemeral GitHub Actions runner on the OpenI task."""
-    github_token = os.environ.get("GITHUB_TOKEN", "")
-    if not github_token:
-        raise RuntimeError("GITHUB_TOKEN environment variable is required for start-runner")
+    github_token = _get_runner_api_token()
 
     # Obtain a runner registration token from GitHub
     gh = requests.Session()
@@ -946,9 +953,7 @@ echo "Runner started with label: {label}"
 
 def _handle_wait_runner(args: argparse.Namespace) -> int:
     """Poll GitHub API until the runner with given label is online."""
-    github_token = os.environ.get("GITHUB_TOKEN", "")
-    if not github_token:
-        raise RuntimeError("GITHUB_TOKEN environment variable is required for wait-runner")
+    github_token = _get_runner_api_token()
 
     gh = requests.Session()
     gh.headers.update({
