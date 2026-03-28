@@ -1243,10 +1243,14 @@ class Tensor(_TensorBase):
     def hardtanh(self, min_val=-1.0, max_val=1.0):
         return hardtanh_dispatch(self, min_val, max_val)
 
-    def min(self, other):
+    def min(self, other=None):
+        if other is None:
+            return amin_dispatch(self)
         return min_dispatch(self, other)
 
-    def max(self, other):
+    def max(self, other=None):
+        if other is None:
+            return amax_dispatch(self)
         return max_dispatch(self, other)
 
     def amin(self, dim=None, keepdim=False):
