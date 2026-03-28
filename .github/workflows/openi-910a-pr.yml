@@ -22,7 +22,7 @@ on:
 
 permissions:
   contents: read
-  administration: write
+  actions: write
 
 concurrency:
   group: openi-910a-npu
