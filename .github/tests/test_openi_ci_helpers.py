@@ -325,8 +325,9 @@ def test_ensure_task_creates_when_no_prior_task_state(openi_ci_module, tmp_path,
     monkeypatch.setattr(openi_ci_module, "ARTIFACT_ROOT", tmp_path / ".artifacts" / "openi-910a")
     monkeypatch.setattr(openi_ci_module, "_load_session_config", lambda: {"cookie": "c", "csrf": "x", "source": "env"})
 
+    # my_list returns empty → falls through to create
     fake_session = _FakeSession([
-        {"code": 0, "data": {"id": 111, "status": "WAITING"}},
+        {"code": 0, "data": {"tasks": []}},  # my_list: no existing tasks
     ])
     monkeypatch.setattr(openi_ci_module, "_make_requests_session", lambda session_cfg: fake_session)
 
@@ -354,7 +355,8 @@ def test_ensure_task_creates_when_no_prior_task_state(openi_ci_module, tmp_path,
     assert saved["status"] == "WAITING"
     assert saved["repo_url"] == "https://github.com/candle-org/candle.git"
     assert saved["ref"] == "main"
-    assert fake_session.calls == []
+    assert len(fake_session.calls) == 1  # only my_list was called
+    assert "my_list" in fake_session.calls[0][1]
 
 
 

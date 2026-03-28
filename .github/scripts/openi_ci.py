@@ -309,6 +309,7 @@ rm -rf {remote_repo}
 git -c http.proxy= -c https.proxy= clone {repo_url} {remote_repo}
 cd {remote_repo}
 git -c http.proxy= -c https.proxy= fetch --all --tags
+git -c http.proxy= -c https.proxy= fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*' 2>/dev/null || true
 git checkout {ref}
 env | sort > remote_env.txt
 npu-smi info > npu-smi.txt 2>&1 || true
