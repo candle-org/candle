@@ -411,7 +411,7 @@ cdef inline void _pta_buf_append_tensor(
     const int64_t* shape, const int64_t* stride, int ndim,
     int32_t dtype_code, int64_t storage_offset,
     void* data_ptr) noexcept nogil:
-    cdef char sep = ','
+    cdef char sep = b','
     cdef int64_t storage_dim
 
     _pta_buf_append(buf, offset, shape, ndim * sizeof(int64_t))
