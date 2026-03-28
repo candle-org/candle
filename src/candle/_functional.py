@@ -103,7 +103,12 @@ def _py_matmul(*args, **kwargs):
     r = _handle_torch_function(_py_matmul, args, kwargs)
     if r is not NotImplemented:
         return r
-    return dispatch("matmul", None, *args, **kwargs)
+    out = kwargs.pop("out", None)
+    result = dispatch("matmul", None, *args, **kwargs)
+    if out is not None:
+        out.copy_(result)
+        return out
+    return result
 
 
 def _py_relu(*args, **kwargs):
