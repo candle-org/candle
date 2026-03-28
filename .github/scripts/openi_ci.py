@@ -755,6 +755,7 @@ def _handle_prepare_remote(args: argparse.Namespace) -> int:
     )
     prepare_result = client.execute_shell(prepare_command, timeout=600)
     if prepare_result.get("exit_code", 0) != 0:
+        print(prepare_result.get("output", ""), flush=True)
         raise OpenITaskError(
             f"Remote prepare failed with exit code {prepare_result.get('exit_code', 1)}"
         )
