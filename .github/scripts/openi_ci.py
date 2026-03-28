@@ -27,7 +27,17 @@ LOGIN_RSA_PUBLIC_KEY = (
     "YFe7IeOlwDH9mLqbMDzcLjFHphXNb2rRUii+PFJovdL9ys8utCDkWTSnP2G2x1RZ\n"
     "xUfxfQqoYkMaAEio0QIDAQAB\n"
 )
-ARTIFACT_ROOT = Path(__file__).resolve().parents[2] / ".artifacts" / "openi-910a"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_BASE_ARTIFACT_DIR = "openi-910a"
+
+
+def _resolve_artifact_root() -> Path:
+    suffix = os.environ.get("OPENI_ARTIFACT_SUFFIX", "")
+    name = f"{_BASE_ARTIFACT_DIR}-{suffix}" if suffix else _BASE_ARTIFACT_DIR
+    return _REPO_ROOT / ".artifacts" / name
+
+
+ARTIFACT_ROOT = _resolve_artifact_root()
 REMOTE_ARTIFACTS = ARTIFACT_ROOT / "remote"
 REMOTE_WORKDIR = "/home/ma-user/work/candle-openi-ci"
 DEFAULT_WAIT_TIMEOUT_SECONDS = 600
@@ -245,6 +255,10 @@ def _save_json_state(name: str, payload: dict) -> Path:
 
 def _load_json_state(name: str) -> dict:
     path = _state_path(name)
+    if not path.exists():
+        base_path = _REPO_ROOT / ".artifacts" / _BASE_ARTIFACT_DIR / f"{name}.json"
+        if base_path.exists():
+            path = base_path
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -350,6 +364,82 @@ Path('summary.json').write_text('{{}}', encoding='utf-8')
 PY
 {PYTEST_910A_COMMAND} --junitxml junit.xml > pytest.log 2>&1
 """
+
+
+def _build_remote_run_dist_script(remote_repo: str, card_count: int, visible_devices: str) -> str:
+    env_dir = "/home/ma-user/work/.conda/envs/candle-py311"
+    if card_count == 2:
+        k_filter = (
+            "not all_to_all_single_async_unequal_multicard "
+            "and not all_to_all_single_invalid_split_pairing_multicard "
+            "and not all_to_all_single_split_numel_validation_multicard "
+            "and not test_ddp"
+        )
+        hccl_tests = (
+            "'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py"
+            "::test_hccl_all_to_all_single_async_unequal_multicard[2-29715]' "
+            "'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py"
+            "::test_hccl_all_to_all_single_invalid_split_pairing_multicard[2-29715]' "
+            "'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py"
+            "::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-2-29716]' "
+            "'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py"
+            "::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-2-29716]'"
+        )
+    else:
+        k_filter = "not test_ddp"
+        hccl_tests = (
+            "'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py"
+            "::test_hccl_all_to_all_single_async_unequal_multicard[4-29724]' "
+            "'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py"
+            "::test_hccl_all_to_all_single_invalid_split_pairing_multicard[4-29725]' "
+            "'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py"
+            "::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-4-29726]' "
+            "'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py"
+            "::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-4-29726]'"
+        )
+    return f"""set -euo pipefail
+export ASCEND_RT_VISIBLE_DEVICES={visible_devices}
+export ASCEND_VISIBLE_DEVICES={visible_devices}
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+export PYTHONNOUSERSITE=1
+cd {remote_repo}
+for key in $(env | cut -d= -f1 | grep -i proxy || true); do
+  unset "$key"
+done
+CONDA_SH="/home/ma-user/anaconda3/etc/profile.d/conda.sh"
+if [ ! -f "$CONDA_SH" ]; then
+  echo "conda.sh not found" >&2
+  exit 98
+fi
+source "$CONDA_SH"
+conda activate {env_dir}
+python -m pytest tests/distributed/ -v --tb=short -k "{k_filter}" > dist.log 2>&1
+HCCL_LOG=hccl.log
+python -m pytest \\
+  {hccl_tests} \\
+  -v -rs --tb=short > "$HCCL_LOG" 2>&1
+if grep -q 'SKIPPED' "$HCCL_LOG"; then
+  echo "ERROR: SKIPPED tests found in HCCL log" >&2
+  exit 1
+fi
+"""
+
+
+def _handle_run_910a_dist(args: argparse.Namespace) -> int:
+    client = _load_kernel_client()
+    run_state = _load_json_state("run")
+    script = _build_remote_run_dist_script(
+        _build_remote_absolute_repo_path(),
+        card_count=args.card_count,
+        visible_devices=args.visible_devices,
+    )
+    command = _remote_exec_cmd(script)
+    result = client.execute_shell(command, timeout=1800)
+    run_state.update({"exit_code": result.get("exit_code", 0), "output": result.get("output", "")})
+    _save_json_state("run", run_state)
+    if run_state["exit_code"] != 0:
+        raise OpenITaskError(f"Remote dist suite failed with exit code {run_state['exit_code']}")
+    return 0
 
 
 def _extract_login_form(html: str) -> tuple[dict, dict[str, dict]]:
@@ -757,6 +847,10 @@ def _build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--ref", required=True)
 
     subparsers.add_parser("run-910a-suite", help="Run remote 910A suite")
+
+    dist = subparsers.add_parser("run-910a-dist", help="Run remote 910A distributed tests")
+    dist.add_argument("--card-count", required=True, type=int, choices=[2, 4])
+    dist.add_argument("--visible-devices", required=True)
     subparsers.add_parser("fetch-artifacts", help="Fetch remote artifacts")
 
     cleanup = subparsers.add_parser("cleanup-task", help="Cleanup remote task")
@@ -776,6 +870,7 @@ def main(argv: list[str] | None = None) -> int:
         "wait-task": _handle_wait_task,
         "prepare-remote": _handle_prepare_remote,
         "run-910a-suite": _handle_run_910a_suite,
+        "run-910a-dist": _handle_run_910a_dist,
         "fetch-artifacts": _handle_fetch_artifacts,
         "cleanup-task": _handle_cleanup_task,
         "login-wechat": _not_implemented,
