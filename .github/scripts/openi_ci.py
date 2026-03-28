@@ -603,9 +603,12 @@ def _save_task_with_context(task: dict, args: argparse.Namespace) -> None:
 def _task_matches_request(task: dict, args: argparse.Namespace) -> bool:
     saved_spec = task.get("spec_id")
     spec_id_match = str(saved_spec) == str(args.spec_id) if saved_spec is not None else True
-    return (
+    image_match = (
         task.get("image_id") == args.image_id
         and task.get("image_name") == args.image_name
+    ) if args.image_id else True
+    return (
+        image_match
         and task.get("cluster") == args.cluster
         and task.get("compute_source") == args.compute_source
         and spec_id_match
@@ -646,11 +649,16 @@ def _handle_create_task(args: argparse.Namespace) -> int:
 
 def _handle_ensure_task(args: argparse.Namespace) -> int:
     task_path = _state_path("task")
-    if not task_path.exists():
-        return _handle_create_task(args)
-
     session_cfg = _load_session_config()
     session = _make_requests_session(session_cfg)
+    if not task_path.exists():
+        discovered_task = _find_matching_task_in_my_list(session, args)
+        if discovered_task is not None:
+            _save_task_with_context(discovered_task, args)
+            # Fall through to reuse/restart logic below
+        else:
+            return _handle_create_task(args)
+
     existing_task = _load_json_state("task")
     try:
         response = _api_call(session, "get", f"/api/v1/ai_task/brief?id={existing_task['id']}")
