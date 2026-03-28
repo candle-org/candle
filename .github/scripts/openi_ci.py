@@ -923,6 +923,7 @@ def _handle_start_runner(args: argparse.Namespace) -> int:
     lab_url = response["data"]["url"]
     base_url, token = _parse_jupyter_url(lab_url)
     client = OpenIJupyterClient(base_url=base_url, token=token, session=session)
+    client.create_kernel()
 
     runner_dir = "/home/ma-user/work/actions-runner"
     repo_url = f"https://github.com/{args.repo}"

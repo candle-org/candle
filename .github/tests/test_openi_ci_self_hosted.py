@@ -247,7 +247,65 @@ def test_cleanup_task_returns_when_no_state_and_no_task_id(monkeypatch, tmp_path
     assert called["value"] is False
 
 
-def test_cleanup_task_waits_until_task_stops(monkeypatch, tmp_path):
+
+
+def test_start_runner_creates_kernel_before_execute(monkeypatch, tmp_path):
+    monkeypatch.setattr(openi_ci, "ARTIFACT_ROOT", tmp_path)
+    monkeypatch.setattr(openi_ci, "REMOTE_ARTIFACTS", tmp_path / "remote")
+    monkeypatch.setattr(openi_ci, "_get_runner_api_token", lambda: "runner-token")
+    monkeypatch.setattr(openi_ci, "_load_session_config", lambda: {"cookie": "", "csrf": ""})
+    monkeypatch.setattr(openi_ci, "_make_requests_session", lambda _cfg: DummySession())
+    openi_ci._save_json_state("task", {"id": 321})
+
+    class FakeResp:
+        def __init__(self):
+            self.status_code = 200
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"token": "reg-token"}
+
+    post_calls = []
+
+    class FakeGHSession:
+        def __init__(self):
+            self.headers = {}
+        def post(self, url, timeout=30):
+            post_calls.append((url, timeout, dict(self.headers)))
+            return FakeResp()
+
+    kernel_created = {"called": False}
+    executed = {"called": False}
+
+    class FakeClient:
+        def __init__(self, base_url, token, session=None):
+            self.base_url = base_url
+            self.token = token
+            self.session = session
+        def create_kernel(self):
+            kernel_created["called"] = True
+            return "kid"
+        def execute_shell(self, command, timeout=120):
+            assert kernel_created["called"] is True
+            executed["called"] = True
+            return {"exit_code": 0, "output": "ok"}
+
+    def fake_api_call(_session, method, path, **_kwargs):
+        assert method == "get"
+        assert path == "/api/v1/ai_task/debug_url?id=321&file="
+        return {"data": {"url": "https://example.com/lab?token=abc"}}
+
+    monkeypatch.setattr(openi_ci.requests, "Session", FakeGHSession)
+    monkeypatch.setattr(openi_ci, "OpenIJupyterClient", FakeClient)
+    monkeypatch.setattr(openi_ci, "_api_call", fake_api_call)
+
+    result = openi_ci._handle_start_runner(argparse.Namespace(label="lbl", repo="owner/repo"))
+
+    assert result == 0
+    assert kernel_created["called"] is True
+    assert executed["called"] is True
+    assert post_calls[0][0] == "https://api.github.com/repos/owner/repo/actions/runners/registration-token"
+
     monkeypatch.setattr(openi_ci, "ARTIFACT_ROOT", tmp_path)
     monkeypatch.setattr(openi_ci, "REMOTE_ARTIFACTS", tmp_path / "remote")
     monkeypatch.setattr(openi_ci, "_load_session_config", lambda: {"cookie": "", "csrf": ""})
