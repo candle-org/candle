@@ -106,7 +106,10 @@ def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     shape = tuple(shape)
     from ..._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
-    arr = rng.randn(*shape).astype(to_numpy_dtype(dtype))
+    arr = rng.randn(*shape)
+    if not shape:
+        arr = np.array(arr)
+    arr = arr.astype(to_numpy_dtype(dtype))
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = _contiguous_stride(shape)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
@@ -118,7 +121,10 @@ def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_form
     shape = tuple(shape)
     from ..._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
-    arr = rng.random_sample(shape).astype(to_numpy_dtype(dtype))
+    arr = rng.random_sample(shape)
+    if not shape:
+        arr = np.array(arr)
+    arr = arr.astype(to_numpy_dtype(dtype))
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = _contiguous_stride(shape)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
