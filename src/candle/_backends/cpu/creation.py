@@ -108,6 +108,7 @@ def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = rng.randn(*shape)
     if not shape:
+        # numpy RandomState.randn() returns a Python float for empty shape.
         arr = np.array(arr)
     arr = arr.astype(to_numpy_dtype(dtype))
     storage = typed_storage_from_numpy(arr, dtype, device=device)
@@ -123,6 +124,7 @@ def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_form
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = rng.random_sample(shape)
     if not shape:
+        # numpy RandomState.random_sample(()) returns a scalar for empty shape.
         arr = np.array(arr)
     arr = arr.astype(to_numpy_dtype(dtype))
     storage = typed_storage_from_numpy(arr, dtype, device=device)
