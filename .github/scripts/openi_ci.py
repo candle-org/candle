@@ -681,6 +681,10 @@ def _handle_ensure_task_by_id(args: argparse.Namespace) -> int:
     _save_json_state("task", task)
     if status in reusable:
         return 0
+    if status == "STOPPING":
+        _wait_task_stopped(session, task.get("id", task_id))
+        _handle_restart_task(args)
+        return 0
     if status in restartable:
         _handle_restart_task(args)
         return 0
