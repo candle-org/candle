@@ -834,6 +834,22 @@ def _handle_fetch_artifacts(args: argparse.Namespace) -> int:
     return 0
 
 
+def _wait_task_stopped(session: requests.Session, task_id: str | int, timeout: int = 300) -> None:
+    """Poll until task reaches STOPPED/STOP, or timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            brief = _api_call(session, "get", f"/api/v1/ai_task/brief?id={task_id}")["data"]
+            status = brief.get("status", "")
+            print(f"  task {task_id} status: {status}", flush=True)
+            if status in {"STOPPED", "STOP"}:
+                return
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"  warning: poll task {task_id} failed: {exc}")
+        time.sleep(10)
+    print(f"Warning: task {task_id} did not reach STOPPED within {timeout}s")
+
+
 def _handle_cleanup_task(args: argparse.Namespace) -> int:
     task_id = getattr(args, "task_id", "")
     if not task_id:
@@ -855,12 +871,16 @@ def _handle_cleanup_task(args: argparse.Namespace) -> int:
         if matched is None:
             print(f"Warning: stop task {task_id} failed and no matching replacement task was found")
             return 0
+        task_id = matched["id"]
         try:
-            _api_call(session, "post", f"/api/v1/ai_task/stop?id={matched['id']}")
+            _api_call(session, "post", f"/api/v1/ai_task/stop?id={task_id}")
         except Exception as inner_exc:  # pylint: disable=broad-except
-            print(f"Warning: stop fallback task {matched['id']} failed: {inner_exc}")
+            print(f"Warning: stop fallback task {task_id} failed: {inner_exc}")
+            return 0
     except Exception as exc:  # pylint: disable=broad-except
         print(f"Warning: stop task {task_id} failed: {exc}")
+        return 0
+    _wait_task_stopped(session, task_id)
     return 0
 
 

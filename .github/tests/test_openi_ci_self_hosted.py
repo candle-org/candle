@@ -56,6 +56,7 @@ def test_cleanup_task_only_stops_not_deletes(monkeypatch, tmp_path):
     monkeypatch.setattr(openi_ci, "_load_session_config", lambda: {"cookie": "", "csrf": ""})
     monkeypatch.setattr(openi_ci, "_make_requests_session", lambda _cfg: DummySession())
     openi_ci._save_json_state("task", {"id": 456})
+    monkeypatch.setattr(openi_ci, "_wait_task_stopped", lambda *_args, **_kwargs: None)
 
     calls = []
 
@@ -76,6 +77,7 @@ def test_cleanup_task_can_stop_by_explicit_task_id(monkeypatch, tmp_path):
     monkeypatch.setattr(openi_ci, "REMOTE_ARTIFACTS", tmp_path / "remote")
     monkeypatch.setattr(openi_ci, "_load_session_config", lambda: {"cookie": "", "csrf": ""})
     monkeypatch.setattr(openi_ci, "_make_requests_session", lambda _cfg: DummySession())
+    monkeypatch.setattr(openi_ci, "_wait_task_stopped", lambda *_args, **_kwargs: None)
 
     calls = []
 
@@ -120,6 +122,7 @@ def test_cleanup_task_falls_back_to_my_list_on_403(monkeypatch, tmp_path):
     monkeypatch.setattr(openi_ci, "REMOTE_ARTIFACTS", tmp_path / "remote")
     monkeypatch.setattr(openi_ci, "_load_session_config", lambda: {"cookie": "", "csrf": ""})
     monkeypatch.setattr(openi_ci, "_make_requests_session", lambda _cfg: DummySession())
+    monkeypatch.setattr(openi_ci, "_wait_task_stopped", lambda *_args, **_kwargs: None)
 
     calls = []
 
@@ -147,6 +150,7 @@ def test_cleanup_task_prefers_saved_task_when_no_explicit_id(monkeypatch, tmp_pa
     monkeypatch.setattr(openi_ci, "REMOTE_ARTIFACTS", tmp_path / "remote")
     monkeypatch.setattr(openi_ci, "_load_session_config", lambda: {"cookie": "", "csrf": ""})
     monkeypatch.setattr(openi_ci, "_make_requests_session", lambda _cfg: DummySession())
+    monkeypatch.setattr(openi_ci, "_wait_task_stopped", lambda *_args, **_kwargs: None)
     openi_ci._save_json_state("task", {"id": 456})
 
     calls = []
@@ -183,22 +187,40 @@ def test_cleanup_task_returns_when_no_state_and_no_task_id(monkeypatch, tmp_path
     assert called["value"] is False
 
 
-def test_cleanup_task_only_stops_not_deletes_via_saved_state(monkeypatch, tmp_path):
+
+
+def test_cleanup_task_waits_until_task_stops(monkeypatch, tmp_path):
     monkeypatch.setattr(openi_ci, "ARTIFACT_ROOT", tmp_path)
     monkeypatch.setattr(openi_ci, "REMOTE_ARTIFACTS", tmp_path / "remote")
     monkeypatch.setattr(openi_ci, "_load_session_config", lambda: {"cookie": "", "csrf": ""})
     monkeypatch.setattr(openi_ci, "_make_requests_session", lambda _cfg: DummySession())
-    openi_ci._save_json_state("task", {"id": 456})
+    monkeypatch.setattr(openi_ci.time, "sleep", lambda _n: None)
 
     calls = []
+    statuses = iter([
+        {"data": {}},
+        {"data": {"status": "STOPPING"}},
+        {"data": {"status": "STOPPED"}},
+    ])
 
     def fake_api_call(_session, method, path, **_kwargs):
         calls.append((method, path))
-        return {"data": {}}
+        if method == "post":
+            return next(statuses)
+        if path == "/api/v1/ai_task/brief?id=789":
+            return next(statuses)
+        raise AssertionError((method, path))
 
     monkeypatch.setattr(openi_ci, "_api_call", fake_api_call)
 
-    result = openi_ci._handle_cleanup_task(argparse.Namespace(task_id="", spec_id=None, cluster=None, compute_source=None, image_id="", image_name=""))
+    result = openi_ci._handle_cleanup_task(
+        argparse.Namespace(task_id="789", spec_id=None, cluster=None, compute_source=None, image_id="", image_name="")
+    )
 
     assert result == 0
-    assert calls == [("post", "/api/v1/ai_task/stop?id=456")]
+    assert calls == [
+        ("post", "/api/v1/ai_task/stop?id=789"),
+        ("get", "/api/v1/ai_task/brief?id=789"),
+        ("get", "/api/v1/ai_task/brief?id=789"),
+    ]
+
