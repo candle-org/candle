@@ -1243,15 +1243,21 @@ class Tensor(_TensorBase):
     def hardtanh(self, min_val=-1.0, max_val=1.0):
         return hardtanh_dispatch(self, min_val, max_val)
 
-    def min(self, other=None):
-        if other is None:
+    def min(self, dim=None, keepdim=False):
+        from ._dispatch.dispatcher import dispatch
+        if dim is None:
             return amin_dispatch(self)
-        return min_dispatch(self, other)
+        if isinstance(dim, Tensor):
+            return min_dispatch(self, dim)
+        return dispatch("min", self.device.type, self, dim, keepdim)
 
-    def max(self, other=None):
-        if other is None:
+    def max(self, dim=None, keepdim=False):
+        from ._dispatch.dispatcher import dispatch
+        if dim is None:
             return amax_dispatch(self)
-        return max_dispatch(self, other)
+        if isinstance(dim, Tensor):
+            return max_dispatch(self, dim)
+        return dispatch("max", self.device.type, self, dim, keepdim)
 
     def amin(self, dim=None, keepdim=False):
         return amin_dispatch(self, dim=dim, keepdim=keepdim)
