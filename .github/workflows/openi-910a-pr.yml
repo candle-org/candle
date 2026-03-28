@@ -1,5 +1,11 @@
 name: OpenI 910A (PR)
 
+env:
+  OPENI_SUITE_TASK_ID: ${{ vars.OPENI_SUITE_TASK_ID }}
+  OPENI_DIST4_TASK_ID: ${{ vars.OPENI_DIST4_TASK_ID }}
+  OPENI_IMAGE_ID: ${{ vars.OPENI_IMAGE_ID }}
+  OPENI_IMAGE_NAME: ${{ vars.OPENI_IMAGE_NAME }}
+
 on:
   pull_request_target:
     branches: [main]
@@ -16,112 +22,121 @@ on:
 
 permissions:
   contents: read
+  administration: write
 
 concurrency:
-  group: openi-910a-pr-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  group: openi-910a-npu
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  openi-910a-setup:
-    name: OpenI 910A Setup
+  suite-start:
+    name: Suite - Start
     runs-on: ubuntu-latest
     environment: openi-npu
     timeout-minutes: 30
+    env:
+      OPENI_ARTIFACT_SUFFIX: suite
+    outputs:
+      runner-label: ${{ steps.start-runner.outputs.runner-label }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Always checkout the base repo's scripts, not the fork's
           ref: ${{ github.event.pull_request.base.sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - name: Install orchestrator deps
         run: pip install requests websocket-client
-      - name: Ensure OpenI task
+      - name: Ensure OpenI suite task
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
         run: |
           python .github/scripts/openi_ci.py ensure-task \
-            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
-            --ref "${{ github.event.pull_request.head.sha }}" \
-            --image-id "${{ secrets.OPENI_IMAGE_ID }}" \
-            --image-name "${{ secrets.OPENI_IMAGE_NAME }}" \
-            --spec-id "340" \
+            --task-id "$OPENI_SUITE_TASK_ID" \
+            --spec-id "328" \
             --cluster "C2Net" \
             --compute-source "NPU" \
-            --has-internet "2" \
-            --reuse-timeout-minutes "210"
+            --image-id "$OPENI_IMAGE_ID" \
+            --image-name "$OPENI_IMAGE_NAME"
       - name: Wait for task
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
         run: python .github/scripts/openi_ci.py wait-task
-      - name: Prepare remote
+      - name: Start self-hosted runner
+        id: start-runner
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python .github/scripts/openi_ci.py prepare-remote \
-            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
-            --ref "${{ github.event.pull_request.head.sha }}"
-      - name: Upload task state
-        uses: actions/upload-artifact@v4
-        with:
-          name: openi-910a-state
-          path: .artifacts/openi-910a/
-          retention-days: 1
+          LABEL="openi-suite-${{ github.run_id }}"
+          python .github/scripts/openi_ci.py start-runner \
+            --label "$LABEL" \
+            --repo "${{ github.repository }}"
+          echo "runner-label=[\"self-hosted\",\"openi-npu\",\"$LABEL\"]" >> "$GITHUB_OUTPUT"
+      - name: Wait for runner online
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python .github/scripts/openi_ci.py wait-runner \
+            --label "openi-suite-${{ github.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --timeout 300
 
-  openi-910a-suite:
-    name: OpenI NPU 910A Suite (cards 2,3)
-    needs: [openi-910a-setup]
-    runs-on: ubuntu-latest
+  suite-run:
+    name: Suite - Run (1-card)
+    needs: suite-start
+    runs-on: ${{ fromJson(needs.suite-start.outputs.runner-label) }}
     timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash -l {0}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install requests websocket-client
-      - uses: actions/download-artifact@v4
-        with:
-          name: openi-910a-state
-          path: .artifacts/openi-910a/
-      - name: Prepare remote (own kernel)
-        env:
-          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
-          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
-          OPENI_ARTIFACT_SUFFIX: suite
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Build candle
         run: |
-          python .github/scripts/openi_ci.py prepare-remote \
-            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
-            --ref "${{ github.event.pull_request.head.sha }}"
-      - name: Run 910A suite
-        env:
-          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
-          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
-          OPENI_ARTIFACT_SUFFIX: suite
-        run: python .github/scripts/openi_ci.py run-910a-suite --visible-devices 2,3
-      - name: Fetch artifacts
-        if: always()
-        env:
-          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
-          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
-          OPENI_ARTIFACT_SUFFIX: suite
-        run: python .github/scripts/openi_ci.py fetch-artifacts
+          source /home/ma-user/anaconda3/etc/profile.d/conda.sh
+          conda activate /home/ma-user/work/.conda/envs/candle-py311
+          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
+          python setup.py build_ext --inplace
+          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
+      - name: Run suite tests
+        run: |
+          source /home/ma-user/anaconda3/etc/profile.d/conda.sh
+          conda activate /home/ma-user/work/.conda/envs/candle-py311
+          export ASCEND_RT_VISIBLE_DEVICES=0
+          export ASCEND_VISIBLE_DEVICES=0
+          export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+          python -m pytest tests/npu/ -v --tb=short \
+            --ignore=tests/npu/test_pipeline_npu_bench_smoke.py \
+            --ignore=tests/npu/910b/ \
+            --ignore=tests/npu/310b/ \
+            --ignore=tests/npu/310p/ \
+            --junitxml junit.xml 2>&1 | tee pytest.log
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: openi-910a-suite-results
-          path: .artifacts/openi-910a-suite/remote/
+          path: |
+            pytest.log
+            junit.xml
+          retention-days: 7
 
-  openi-910a-dist-2card:
-    name: OpenI 910A Distributed 2-Card (cards 0,1)
-    needs: [openi-910a-setup]
+  suite-stop:
+    name: Suite - Stop
+    needs: [suite-start, suite-run]
+    if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -130,43 +145,29 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install requests websocket-client
-      - uses: actions/download-artifact@v4
-        with:
-          name: openi-910a-state
-          path: .artifacts/openi-910a/
-      - name: Prepare remote (own kernel)
+      - name: Stop suite task
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
-          OPENI_ARTIFACT_SUFFIX: dist-2card
         run: |
-          python .github/scripts/openi_ci.py prepare-remote \
-            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
-            --ref "${{ github.event.pull_request.head.sha }}"
-      - name: Run 2-card distributed tests
-        env:
-          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
-          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
-          OPENI_ARTIFACT_SUFFIX: dist-2card
-        run: python .github/scripts/openi_ci.py run-910a-dist --card-count 2 --visible-devices 0,1
-      - name: Fetch artifacts
-        if: always()
-        env:
-          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
-          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
-          OPENI_ARTIFACT_SUFFIX: dist-2card
-        run: python .github/scripts/openi_ci.py fetch-artifacts
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: openi-910a-dist-2card-results
-          path: .artifacts/openi-910a-dist-2card/remote/
+          python .github/scripts/openi_ci.py cleanup-task \
+            --task-id "$OPENI_SUITE_TASK_ID" \
+            --spec-id "328" \
+            --cluster "C2Net" \
+            --compute-source "NPU" \
+            --image-id "$OPENI_IMAGE_ID" \
+            --image-name "$OPENI_IMAGE_NAME"
 
-  openi-910a-dist-4card:
-    name: OpenI 910A HCCL 4-Card (cards 0-3)
-    needs: [openi-910a-suite, openi-910a-dist-2card]
+  dist4-start:
+    name: Dist 4-card - Start
+    needs: suite-stop
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    environment: openi-npu
+    timeout-minutes: 30
+    env:
+      OPENI_ARTIFACT_SUFFIX: dist-4card
+    outputs:
+      runner-label: ${{ steps.start-runner.outputs.runner-label }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -174,41 +175,124 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install requests websocket-client
-      - uses: actions/download-artifact@v4
-        with:
-          name: openi-910a-state
-          path: .artifacts/openi-910a/
-      - name: Prepare remote (own kernel)
+      - name: Install orchestrator deps
+        run: pip install requests websocket-client
+      - name: Ensure OpenI dist-4card task
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
-          OPENI_ARTIFACT_SUFFIX: dist-4card
         run: |
-          python .github/scripts/openi_ci.py prepare-remote \
-            --repo-url "${{ github.server_url }}/${{ github.repository }}.git" \
-            --ref "${{ github.event.pull_request.head.sha }}"
+          python .github/scripts/openi_ci.py ensure-task \
+            --task-id "$OPENI_DIST4_TASK_ID" \
+            --spec-id "340" \
+            --cluster "C2Net" \
+            --compute-source "NPU" \
+            --image-id "$OPENI_IMAGE_ID" \
+            --image-name "$OPENI_IMAGE_NAME"
+      - name: Wait for task
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+        run: python .github/scripts/openi_ci.py wait-task
+      - name: Start self-hosted runner
+        id: start-runner
+        env:
+          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
+          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          LABEL="openi-dist4-${{ github.run_id }}"
+          python .github/scripts/openi_ci.py start-runner \
+            --label "$LABEL" \
+            --repo "${{ github.repository }}"
+          echo "runner-label=[\"self-hosted\",\"openi-npu\",\"$LABEL\"]" >> "$GITHUB_OUTPUT"
+      - name: Wait for runner online
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python .github/scripts/openi_ci.py wait-runner \
+            --label "openi-dist4-${{ github.run_id }}" \
+            --repo "${{ github.repository }}" \
+            --timeout 300
+
+  dist4-run:
+    name: Dist 4-card - Run
+    needs: dist4-start
+    runs-on: ${{ fromJson(needs.dist4-start.outputs.runner-label) }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Build candle
+        run: |
+          source /home/ma-user/anaconda3/etc/profile.d/conda.sh
+          conda activate /home/ma-user/work/.conda/envs/candle-py311
+          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
+          python setup.py build_ext --inplace
+          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
+      - name: Run distributed tests
+        run: |
+          source /home/ma-user/anaconda3/etc/profile.d/conda.sh
+          conda activate /home/ma-user/work/.conda/envs/candle-py311
+          export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3
+          export ASCEND_VISIBLE_DEVICES=0,1,2,3
+          export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+          python -m pytest tests/distributed/ -v --tb=short \
+            -k 'not test_ddp' 2>&1 | tee dist.log
       - name: Run 4-card HCCL tests
-        env:
-          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
-          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
-          OPENI_ARTIFACT_SUFFIX: dist-4card
-        run: python .github/scripts/openi_ci.py run-910a-dist --card-count 4 --visible-devices 0,1,2,3
-      - name: Fetch artifacts
-        if: always()
-        env:
-          OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
-          OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
-          OPENI_ARTIFACT_SUFFIX: dist-4card
-        run: python .github/scripts/openi_ci.py fetch-artifacts
+        run: |
+          source /home/ma-user/anaconda3/etc/profile.d/conda.sh
+          conda activate /home/ma-user/work/.conda/envs/candle-py311
+          export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3
+          export ASCEND_VISIBLE_DEVICES=0,1,2,3
+          export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+          python -m pytest \
+            'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[4-29724]' \
+            'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py::test_hccl_all_to_all_single_invalid_split_pairing_multicard[4-29725]' \
+            'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-4-29726]' \
+            'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-4-29726]' \
+            -v -rs --tb=short 2>&1 | tee hccl.log
+          if grep -q 'SKIPPED' hccl.log; then
+            echo 'ERROR: SKIPPED tests found in HCCL log' >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: openi-910a-dist-4card-results
-          path: .artifacts/openi-910a-dist-4card/remote/
-      - name: Cleanup task
-        if: always()
+          name: openi-910a-dist4-results
+          path: |
+            dist.log
+            hccl.log
+          retention-days: 7
+
+  dist4-stop:
+    name: Dist 4-card - Stop
+    needs: [dist4-start, dist4-run]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests websocket-client
+      - name: Stop dist-4card task
         env:
           OPENI_USER_NAME: ${{ secrets.OPENI_USER_NAME }}
           OPENI_USER_PASSWORD: ${{ secrets.OPENI_USER_PASSWORD }}
-        run: python .github/scripts/openi_ci.py cleanup-task
+        run: |
+          python .github/scripts/openi_ci.py cleanup-task \
+            --task-id "$OPENI_DIST4_TASK_ID" \
+            --spec-id "340" \
+            --cluster "C2Net" \
+            --compute-source "NPU" \
+            --image-id "$OPENI_IMAGE_ID" \
+            --image-name "$OPENI_IMAGE_NAME"
