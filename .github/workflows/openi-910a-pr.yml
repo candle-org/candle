@@ -149,6 +149,7 @@ jobs:
             /home/ma-user/work/.conda/envs/candle-py311
             /home/ma-user/work/.conda/pkgs
             /home/ma-user/.cache/pip
+            /home/ma-user/work/.cache/ccache
           key: openi-conda-${{ runner.os }}-py311-${{ hashFiles('requirements/**', 'pyproject.toml', 'setup.py') }}
           restore-keys: |
             openi-conda-${{ runner.os }}-py311-
@@ -170,11 +171,19 @@ jobs:
             mkdir -p /home/ma-user/work/.conda/envs
             conda create -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" python=3.11
           fi
+          conda install -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" ccache
           PY="$ENV_DIR/bin/python"
           PIP="$ENV_DIR/bin/pip"
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
+          export CCACHE_DIR=/home/ma-user/work/.cache/ccache
+          export CCACHE_MAXSIZE=10G
+          mkdir -p "$CCACHE_DIR"
+          export CC='ccache gcc'
+          export CXX='ccache g++'
+          ccache --show-stats || true
           $PY setup.py build_ext --inplace
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
+          ccache --show-stats || true
       - name: Run suite tests
         run: |
           ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
@@ -356,6 +365,7 @@ jobs:
             /home/ma-user/work/.conda/envs/candle-py311
             /home/ma-user/work/.conda/pkgs
             /home/ma-user/.cache/pip
+            /home/ma-user/work/.cache/ccache
           key: openi-conda-${{ runner.os }}-py311-${{ hashFiles('requirements/**', 'pyproject.toml', 'setup.py') }}
           restore-keys: |
             openi-conda-${{ runner.os }}-py311-
@@ -377,11 +387,19 @@ jobs:
             mkdir -p /home/ma-user/work/.conda/envs
             conda create -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" python=3.11
           fi
+          conda install -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" ccache
           PY="$ENV_DIR/bin/python"
           PIP="$ENV_DIR/bin/pip"
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
+          export CCACHE_DIR=/home/ma-user/work/.cache/ccache
+          export CCACHE_MAXSIZE=10G
+          mkdir -p "$CCACHE_DIR"
+          export CC='ccache gcc'
+          export CXX='ccache g++'
+          ccache --show-stats || true
           $PY setup.py build_ext --inplace
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
+          ccache --show-stats || true
       - name: Run distributed tests
         run: |
           ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
