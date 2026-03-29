@@ -109,16 +109,6 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-      - name: Inspect runner proxy state
-        run: |
-          echo '=== env proxy vars ==='
-          env | sort | grep -i proxy || echo '(none)'
-          echo '=== git global proxy config ==='
-          git config --global --get-regexp 'http\..*proxy' || echo '(none)'
-          echo '=== git system proxy config ==='
-          git config --system --get-regexp 'http\..*proxy' 2>/dev/null || echo '(none)'
-          echo '=== /home/ma-user/.gitconfig ==='
-          cat /home/ma-user/.gitconfig 2>/dev/null || echo '(no file)'
       - uses: actions/checkout@v4
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
@@ -256,16 +246,6 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
-      - name: Inspect runner proxy state
-        run: |
-          echo '=== env proxy vars ==='
-          env | sort | grep -i proxy || echo '(none)'
-          echo '=== git global proxy config ==='
-          git config --global --get-regexp 'http\..*proxy' || echo '(none)'
-          echo '=== git system proxy config ==='
-          git config --system --get-regexp 'http\..*proxy' 2>/dev/null || echo '(none)'
-          echo '=== /home/ma-user/.gitconfig ==='
-          cat /home/ma-user/.gitconfig 2>/dev/null || echo '(no file)'
       - uses: actions/checkout@v4
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
