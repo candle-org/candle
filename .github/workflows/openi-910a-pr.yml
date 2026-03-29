@@ -106,11 +106,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - name: Build candle
         run: |
-          source /home/ma-user/anaconda3/etc/profile.d/conda.sh
-          conda activate /home/ma-user/work/.conda/envs/candle-py311
-          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
-          python setup.py build_ext --inplace
-          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
+          PY=/home/ma-user/work/.conda/envs/candle-py311/bin/python
+          PIP=/home/ma-user/work/.conda/envs/candle-py311/bin/pip
+          $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
+          $PY setup.py build_ext --inplace
+          $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
       - name: Run suite tests
         run: |
           source /home/ma-user/anaconda3/etc/profile.d/conda.sh
@@ -234,11 +234,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - name: Build candle
         run: |
-          source /home/ma-user/anaconda3/etc/profile.d/conda.sh
-          conda activate /home/ma-user/work/.conda/envs/candle-py311
-          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
-          python setup.py build_ext --inplace
-          pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
+          PY=/home/ma-user/work/.conda/envs/candle-py311/bin/python
+          PIP=/home/ma-user/work/.conda/envs/candle-py311/bin/pip
+          $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
+          $PY setup.py build_ext --inplace
+          $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
       - name: Run distributed tests
         run: |
           source /home/ma-user/anaconda3/etc/profile.d/conda.sh
