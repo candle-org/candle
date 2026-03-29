@@ -43,6 +43,10 @@ jobs:
     outputs:
       runner-label: ${{ steps.start-runner.outputs.runner-label }}
     steps:
+      - name: Clear git proxy config
+        run: |
+          git config --global --unset-all http.proxy || true
+          git config --global --unset-all https.proxy || true
       - name: Inspect runner proxy state
         run: |
           echo '=== env proxy vars ==='
@@ -110,6 +114,10 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
+      - name: Clear git proxy config
+        run: |
+          git config --global --unset-all http.proxy || true
+          git config --global --unset-all https.proxy || true
       - name: Inspect runner proxy state
         run: |
           echo '=== env proxy vars ==='
@@ -160,6 +168,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Clear git proxy config
+        run: |
+          git config --global --unset-all http.proxy || true
+          git config --global --unset-all https.proxy || true
       - name: Inspect runner proxy state
         run: |
           echo '=== env proxy vars ==='
@@ -201,6 +213,10 @@ jobs:
     outputs:
       runner-label: ${{ steps.start-runner.outputs.runner-label }}
     steps:
+      - name: Clear git proxy config
+        run: |
+          git config --global --unset-all http.proxy || true
+          git config --global --unset-all https.proxy || true
       - name: Inspect runner proxy state
         run: |
           echo '=== env proxy vars ==='
@@ -268,6 +284,10 @@ jobs:
       run:
         shell: bash -l {0}
     steps:
+      - name: Clear git proxy config
+        run: |
+          git config --global --unset-all http.proxy || true
+          git config --global --unset-all https.proxy || true
       - name: Inspect runner proxy state
         run: |
           echo '=== env proxy vars ==='
@@ -331,6 +351,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Clear git proxy config
+        run: |
+          git config --global --unset-all http.proxy || true
+          git config --global --unset-all https.proxy || true
       - name: Inspect runner proxy state
         run: |
           echo '=== env proxy vars ==='
