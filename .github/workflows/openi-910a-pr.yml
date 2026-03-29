@@ -96,15 +96,6 @@ jobs:
     needs: suite-start
     runs-on: ${{ fromJson(needs.suite-start.outputs.runner-label) }}
     timeout-minutes: 60
-    env:
-      http_proxy: ""
-      https_proxy: ""
-      ftp_proxy: ""
-      no_proxy: ""
-      HTTP_PROXY: ""
-      HTTPS_PROXY: ""
-      FTP_PROXY: ""
-      NO_PROXY: ""
     defaults:
       run:
         shell: bash -l {0}
@@ -233,15 +224,6 @@ jobs:
     needs: dist4-start
     runs-on: ${{ fromJson(needs.dist4-start.outputs.runner-label) }}
     timeout-minutes: 90
-    env:
-      http_proxy: ""
-      https_proxy: ""
-      ftp_proxy: ""
-      no_proxy: ""
-      HTTP_PROXY: ""
-      HTTPS_PROXY: ""
-      FTP_PROXY: ""
-      NO_PROXY: ""
     defaults:
       run:
         shell: bash -l {0}
