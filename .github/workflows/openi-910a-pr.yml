@@ -134,19 +134,27 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - name: Build candle
         run: |
-          PY=/home/ma-user/work/.conda/envs/candle-py311/bin/python
-          PIP=/home/ma-user/work/.conda/envs/candle-py311/bin/pip
+          CONDA_SH=/home/ma-user/anaconda3/etc/profile.d/conda.sh
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          source "$CONDA_SH"
+          if [ ! -x "$ENV_DIR/bin/python" ]; then
+            mkdir -p /home/ma-user/work/.conda/envs
+            conda create -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" python=3.11
+          fi
+          PY="$ENV_DIR/bin/python"
+          PIP="$ENV_DIR/bin/pip"
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
           $PY setup.py build_ext --inplace
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
       - name: Run suite tests
         run: |
-          source /home/ma-user/anaconda3/etc/profile.d/conda.sh
-          conda activate /home/ma-user/work/.conda/envs/candle-py311
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          PY="$ENV_DIR/bin/python"
+          export PATH="$ENV_DIR/bin:$PATH"
           export ASCEND_RT_VISIBLE_DEVICES=0
           export ASCEND_VISIBLE_DEVICES=0
           export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-          python -m pytest tests/npu/ -v --tb=short \
+          $PY -m pytest tests/npu/ -v --tb=short \
             --ignore=tests/npu/test_pipeline_npu_bench_smoke.py \
             --ignore=tests/npu/910b/ \
             --ignore=tests/npu/310b/ \
@@ -304,28 +312,37 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
       - name: Build candle
         run: |
-          PY=/home/ma-user/work/.conda/envs/candle-py311/bin/python
-          PIP=/home/ma-user/work/.conda/envs/candle-py311/bin/pip
+          CONDA_SH=/home/ma-user/anaconda3/etc/profile.d/conda.sh
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          source "$CONDA_SH"
+          if [ ! -x "$ENV_DIR/bin/python" ]; then
+            mkdir -p /home/ma-user/work/.conda/envs
+            conda create -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" python=3.11
+          fi
+          PY="$ENV_DIR/bin/python"
+          PIP="$ENV_DIR/bin/pip"
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
           $PY setup.py build_ext --inplace
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
       - name: Run distributed tests
         run: |
-          source /home/ma-user/anaconda3/etc/profile.d/conda.sh
-          conda activate /home/ma-user/work/.conda/envs/candle-py311
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          PY="$ENV_DIR/bin/python"
+          export PATH="$ENV_DIR/bin:$PATH"
           export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3
           export ASCEND_VISIBLE_DEVICES=0,1,2,3
           export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-          python -m pytest tests/distributed/ -v --tb=short \
+          $PY -m pytest tests/distributed/ -v --tb=short \
             -k 'not test_ddp' 2>&1 | tee dist.log
       - name: Run 4-card HCCL tests
         run: |
-          source /home/ma-user/anaconda3/etc/profile.d/conda.sh
-          conda activate /home/ma-user/work/.conda/envs/candle-py311
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          PY="$ENV_DIR/bin/python"
+          export PATH="$ENV_DIR/bin:$PATH"
           export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3
           export ASCEND_VISIBLE_DEVICES=0,1,2,3
           export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-          python -m pytest \
+          $PY -m pytest \
             'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[4-29724]' \
             'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py::test_hccl_all_to_all_single_invalid_split_pairing_multicard[4-29725]' \
             'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-4-29726]' \
