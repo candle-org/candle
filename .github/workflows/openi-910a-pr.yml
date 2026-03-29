@@ -129,9 +129,20 @@ jobs:
           echo '=== /home/ma-user/.gitconfig ==='
           cat /home/ma-user/.gitconfig 2>/dev/null || echo '(no file)'
       - uses: actions/checkout@v4
+        id: checkout-primary
+        continue-on-error: true
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
+          clean: false
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        if: steps.checkout-primary.outcome == 'failure'
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          clean: false
+          fetch-depth: 0
       - uses: actions/cache@v4
         with:
           path: |
@@ -325,9 +336,20 @@ jobs:
           echo '=== /home/ma-user/.gitconfig ==='
           cat /home/ma-user/.gitconfig 2>/dev/null || echo '(no file)'
       - uses: actions/checkout@v4
+        id: checkout-primary
+        continue-on-error: true
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
+          clean: false
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        if: steps.checkout-primary.outcome == 'failure'
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          clean: false
+          fetch-depth: 0
       - uses: actions/cache@v4
         with:
           path: |
