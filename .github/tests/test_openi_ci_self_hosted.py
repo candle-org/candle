@@ -15,6 +15,20 @@ class DummySession:
     pass
 
 
+def test_parser_does_not_expose_legacy_openi_commands():
+    parser = openi_ci._build_parser()
+    subparsers_action = next(
+        action for action in parser._actions  # pylint: disable=protected-access
+        if getattr(action, "choices", None)
+    )
+    commands = set(subparsers_action.choices.keys())
+
+    assert "prepare-remote" not in commands
+    assert "run-910a-suite" not in commands
+    assert "run-910a-dist" not in commands
+    assert "fetch-artifacts" not in commands
+
+
 def test_runner_api_token_prefers_openi_runner_token(monkeypatch):
     monkeypatch.setenv("OPENI_RUNNER_TOKEN", "runner-token")
     monkeypatch.setenv("GITHUB_TOKEN", "github-token")
