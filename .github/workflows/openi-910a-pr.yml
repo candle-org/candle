@@ -79,8 +79,7 @@ jobs:
           LABEL="openi-suite-${{ github.run_id }}"
           python .github/scripts/openi_ci.py start-runner \
             --label "$LABEL" \
-            --repo "${{ github.repository }}" \
-            --ref "${{ github.event.pull_request.head.sha }}"
+            --repo "${{ github.repository }}"
           echo "runner-label=[\"self-hosted\",\"openi-npu\",\"$LABEL\"]" >> "$GITHUB_OUTPUT"
       - name: Wait for runner online
         env:
@@ -97,23 +96,10 @@ jobs:
     needs: suite-start
     runs-on: ${{ fromJson(needs.suite-start.outputs.runner-label) }}
     timeout-minutes: 60
-    env:
-      http_proxy: ""
-      https_proxy: ""
-      ftp_proxy: ""
-      no_proxy: ""
-      HTTP_PROXY: ""
-      HTTPS_PROXY: ""
-      FTP_PROXY: ""
-      NO_PROXY: ""
     defaults:
       run:
         shell: bash -l {0}
     steps:
-      - name: Inspect runner proxy state
-        run: |
-          env | sort | grep -i proxy || true
-          git config --global --get-regexp 'http\..*proxy' || true
       - uses: actions/checkout@v4
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
@@ -221,8 +207,7 @@ jobs:
           LABEL="openi-dist4-${{ github.run_id }}"
           python .github/scripts/openi_ci.py start-runner \
             --label "$LABEL" \
-            --repo "${{ github.repository }}" \
-            --ref "${{ github.event.pull_request.head.sha }}"
+            --repo "${{ github.repository }}"
           echo "runner-label=[\"self-hosted\",\"openi-npu\",\"$LABEL\"]" >> "$GITHUB_OUTPUT"
       - name: Wait for runner online
         env:
@@ -239,23 +224,10 @@ jobs:
     needs: dist4-start
     runs-on: ${{ fromJson(needs.dist4-start.outputs.runner-label) }}
     timeout-minutes: 90
-    env:
-      http_proxy: ""
-      https_proxy: ""
-      ftp_proxy: ""
-      no_proxy: ""
-      HTTP_PROXY: ""
-      HTTPS_PROXY: ""
-      FTP_PROXY: ""
-      NO_PROXY: ""
     defaults:
       run:
         shell: bash -l {0}
     steps:
-      - name: Inspect runner proxy state
-        run: |
-          env | sort | grep -i proxy || true
-          git config --global --get-regexp 'http\..*proxy' || true
       - uses: actions/checkout@v4
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
