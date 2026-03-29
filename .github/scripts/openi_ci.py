@@ -287,171 +287,6 @@ def _remote_exec_cmd(payload: str) -> list[str]:
     return ["bash", "-lc", payload]
 
 
-def _build_jupyter_repo_path() -> str:
-    return "candle-openi-ci/repo"
-
-
-def _build_remote_absolute_repo_path() -> str:
-    return f"{REMOTE_WORKDIR}/repo"
-
-
-def _build_remote_artifact_manifest(remote_repo: str) -> dict:
-    return {name: f"{remote_repo}/{name}" for name in REMOTE_ARTIFACT_NAMES}
-
-
-def _clear_local_remote_artifacts() -> None:
-    if REMOTE_ARTIFACTS.exists():
-        shutil.rmtree(REMOTE_ARTIFACTS)
-
-
-def _build_remote_prepare_script(*, repo_url: str, ref: str, remote_repo: str) -> str:
-    return f"""set -euo pipefail
-for key in $(env | cut -d= -f1 | grep -i proxy || true); do
-  unset "$key"
-done
-unset http_proxy https_proxy ftp_proxy no_proxy
-unset HTTP_PROXY HTTPS_PROXY FTP_PROXY NO_PROXY
-export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-export PYTHONNOUSERSITE=1
-mkdir -p {REMOTE_WORKDIR}
-rm -rf {remote_repo}
-git -c http.proxy= -c https.proxy= clone {repo_url} {remote_repo}
-cd {remote_repo}
-git -c http.proxy= -c https.proxy= fetch --all --tags
-git -c http.proxy= -c https.proxy= fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*' 2>/dev/null || true
-git checkout {ref}
-env | sort > remote_env.txt
-npu-smi info > npu-smi.txt 2>&1 || true
-"""
-
-
-def _build_remote_test_script(*, repo_url: str, ref: str) -> str:
-    remote_repo = f"{REMOTE_WORKDIR}/repo"
-    return f"""{_build_remote_prepare_script(repo_url=repo_url, ref=ref, remote_repo=remote_repo)}
-python setup.py build_ext --inplace > build.log 2>&1
-: > pytest.log
-: > junit.xml
-: > summary.json
-python - <<'PY'
-from pathlib import Path
-Path('summary.json').write_text('{{}}', encoding='utf-8')
-PY
-{PYTEST_910A_COMMAND} --junitxml junit.xml > pytest.log 2>&1
-"""
-
-
-def _build_remote_run_suite_script(remote_repo: str) -> str:
-    env_dir = "/home/ma-user/work/.conda/envs/candle-py311"
-    return f"""set -euo pipefail
-export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-export PYTHONNOUSERSITE=1
-cd {remote_repo}
-for key in $(env | cut -d= -f1 | grep -i proxy || true); do
-  unset "$key"
-done
-CONDA_SH="/home/ma-user/anaconda3/etc/profile.d/conda.sh"
-if [ ! -f "$CONDA_SH" ]; then
-  echo "conda.sh not found" >&2
-  exit 98
-fi
-source "$CONDA_SH"
-if [ -x "{env_dir}/bin/python" ]; then
-  : > build.log
-else
-  mkdir -p /home/ma-user/work/.conda/envs
-  conda create -y --override-channels -c {DOMESTIC_CONDA_FORGE_CHANNEL} -p {env_dir} python=3.11 > build.log 2>&1
-fi
-conda activate {env_dir}
-python -m pip install -i {DOMESTIC_PIP_INDEX} -r requirements/requirements-test.txt >> build.log 2>&1
-python -m pip install -i {DOMESTIC_PIP_INDEX} Cython >> build.log 2>&1
-python setup.py build_ext --inplace >> build.log 2>&1
-: > pytest.log
-: > junit.xml
-: > summary.json
-python - <<'PY'
-from pathlib import Path
-Path('summary.json').write_text('{{}}', encoding='utf-8')
-PY
-{PYTEST_910A_COMMAND} --junitxml junit.xml > pytest.log 2>&1
-"""
-
-
-def _build_remote_run_dist_script(remote_repo: str, card_count: int, visible_devices: str) -> str:
-    env_dir = "/home/ma-user/work/.conda/envs/candle-py311"
-    if card_count == 2:
-        k_filter = (
-            "not all_to_all_single_async_unequal_multicard "
-            "and not all_to_all_single_invalid_split_pairing_multicard "
-            "and not all_to_all_single_split_numel_validation_multicard "
-            "and not test_ddp"
-        )
-        hccl_tests = (
-            "'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py"
-            "::test_hccl_all_to_all_single_async_unequal_multicard[2-29715]' "
-            "'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py"
-            "::test_hccl_all_to_all_single_invalid_split_pairing_multicard[2-29715]' "
-            "'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py"
-            "::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-2-29716]' "
-            "'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py"
-            "::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-2-29716]'"
-        )
-    else:
-        k_filter = "not test_ddp"
-        hccl_tests = (
-            "'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py"
-            "::test_hccl_all_to_all_single_async_unequal_multicard[4-29724]' "
-            "'tests/distributed/test_hccl_all_to_all_single_invalid_splits_multicard.py"
-            "::test_hccl_all_to_all_single_invalid_split_pairing_multicard[4-29725]' "
-            "'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py"
-            "::test_hccl_all_to_all_single_split_numel_validation_multicard[input_sum_mismatch-4-29726]' "
-            "'tests/distributed/test_hccl_all_to_all_single_split_numel_validation_multicard.py"
-            "::test_hccl_all_to_all_single_split_numel_validation_multicard[output_sum_mismatch-4-29726]'"
-        )
-    return f"""set -euo pipefail
-export ASCEND_RT_VISIBLE_DEVICES={visible_devices}
-export ASCEND_VISIBLE_DEVICES={visible_devices}
-export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-export PYTHONNOUSERSITE=1
-cd {remote_repo}
-for key in $(env | cut -d= -f1 | grep -i proxy || true); do
-  unset "$key"
-done
-CONDA_SH="/home/ma-user/anaconda3/etc/profile.d/conda.sh"
-if [ ! -f "$CONDA_SH" ]; then
-  echo "conda.sh not found" >&2
-  exit 98
-fi
-source "$CONDA_SH"
-conda activate {env_dir}
-python -m pytest tests/distributed/ -v --tb=short -k "{k_filter}" > dist.log 2>&1
-HCCL_LOG=hccl.log
-python -m pytest \\
-  {hccl_tests} \\
-  -v -rs --tb=short > "$HCCL_LOG" 2>&1
-if grep -q 'SKIPPED' "$HCCL_LOG"; then
-  echo "ERROR: SKIPPED tests found in HCCL log" >&2
-  exit 1
-fi
-"""
-
-
-def _handle_run_910a_dist(args: argparse.Namespace) -> int:
-    client = _load_kernel_client()
-    run_state = _load_json_state("run")
-    script = _build_remote_run_dist_script(
-        _build_remote_absolute_repo_path(),
-        card_count=args.card_count,
-        visible_devices=args.visible_devices,
-    )
-    command = _remote_exec_cmd(script)
-    result = client.execute_shell(command, timeout=1800)
-    run_state.update({"exit_code": result.get("exit_code", 0), "output": result.get("output", "")})
-    _save_json_state("run", run_state)
-    if run_state["exit_code"] != 0:
-        raise OpenITaskError(f"Remote dist suite failed with exit code {run_state['exit_code']}")
-    return 0
-
-
 def _extract_login_form(html: str) -> tuple[dict, dict[str, dict]]:
     parser = _LoginFormParser()
     parser.feed(html)
@@ -594,15 +429,6 @@ def _bool_arg(value: str | None) -> bool:
     if value is None:
         return False
     return str(value).lower() in {"1", "true", "yes", "on"}
-
-
-def _load_kernel_client() -> OpenIJupyterClient:
-    kernel_state = _load_json_state("kernel")
-    return OpenIJupyterClient(
-        base_url=kernel_state["base_url"],
-        token=kernel_state["token"],
-        kernel_id=kernel_state.get("kernel_id"),
-    )
 
 
 def _save_task_with_context(task: dict, args: argparse.Namespace) -> None:
@@ -783,70 +609,6 @@ def _handle_wait_task(args: argparse.Namespace) -> int:
     raise OpenITaskError(f"Task {task_id} did not reach RUNNING within {DEFAULT_WAIT_TIMEOUT_SECONDS}s")
 
 
-def _handle_prepare_remote(args: argparse.Namespace) -> int:
-    _clear_local_remote_artifacts()
-    session_cfg = _load_session_config()
-    session = _make_requests_session(session_cfg)
-    task = _load_json_state("task")
-    response = _api_call(session, "get", f"/api/v1/ai_task/debug_url?id={task['id']}&file=")
-    lab_url = response["data"]["url"]
-    base_url, token = _parse_jupyter_url(lab_url)
-    client = OpenIJupyterClient(base_url=base_url, token=token, session=session)
-    kernel_id = client.create_kernel()
-    absolute_repo = _build_remote_absolute_repo_path()
-    jupyter_repo = _build_jupyter_repo_path()
-    prepare_command = _remote_exec_cmd(
-        _build_remote_prepare_script(repo_url=args.repo_url, ref=args.ref, remote_repo=absolute_repo)
-    )
-    prepare_result = client.execute_shell(prepare_command, timeout=600)
-    if prepare_result.get("exit_code", 0) != 0:
-        raise OpenITaskError(
-            f"Remote prepare failed with exit code {prepare_result.get('exit_code', 1)}"
-        )
-    _save_json_state(
-        "kernel",
-        {"base_url": base_url, "token": token, "kernel_id": kernel_id, "task_id": task["id"]},
-    )
-    _save_json_state(
-        "run",
-        {
-            "repo_url": args.repo_url,
-            "ref": args.ref,
-            "remote_repo": jupyter_repo,
-            "remote_artifacts": _build_remote_artifact_manifest(jupyter_repo),
-        },
-    )
-    return 0
-
-
-def _handle_run_910a_suite(args: argparse.Namespace) -> int:
-    client = _load_kernel_client()
-    run_state = _load_json_state("run")
-    command = _remote_exec_cmd(_build_remote_run_suite_script(_build_remote_absolute_repo_path()))
-    result = client.execute_shell(command, timeout=600)
-    run_state.update({"exit_code": result.get("exit_code", 0), "output": result.get("output", "")})
-    _save_json_state("run", run_state)
-    if run_state["exit_code"] != 0:
-        raise OpenITaskError(f"Remote suite failed with exit code {run_state['exit_code']}")
-    return 0
-
-
-def _handle_fetch_artifacts(args: argparse.Namespace) -> int:
-    _ensure_artifact_root()
-    client = _load_kernel_client()
-    run_state = _load_json_state("run")
-    manifest = run_state.get("remote_artifacts") or _build_remote_artifact_manifest(run_state["remote_repo"])
-    for artifact_name, remote_path in manifest.items():
-        try:
-            client.download_file(remote_path, REMOTE_ARTIFACTS / artifact_name)
-        except requests.exceptions.HTTPError as exc:
-            response = getattr(exc, "response", None)
-            if response is not None and response.status_code == 404:
-                continue
-            raise
-    return 0
-
-
 def _wait_task_stopped(session: requests.Session, task_id: str | int, timeout: int = 300) -> None:
     """Poll until task reaches STOPPED/STOP, or timeout."""
     deadline = time.time() + timeout
@@ -947,7 +709,7 @@ set +x
   --unattended
 set -x
 unset _RUNNER_TOKEN
-nohup ./run.sh > runner.log 2>&1 &
+nohup env -u http_proxy -u https_proxy -u ftp_proxy -u no_proxy -u HTTP_PROXY -u HTTPS_PROXY -u FTP_PROXY -u NO_PROXY ./run.sh > runner.log 2>&1 &
 echo "Runner started with label: {label}"
 """
     result = client.execute_shell(["bash", "-lc", script], timeout=120)
@@ -1019,17 +781,6 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("restart-task", help="Stop current task and restart it")
     subparsers.add_parser("wait-task", help="Wait for OpenI task to run")
 
-    prepare = subparsers.add_parser("prepare-remote", help="Prepare remote checkout")
-    prepare.add_argument("--repo-url", required=True)
-    prepare.add_argument("--ref", required=True)
-
-    subparsers.add_parser("run-910a-suite", help="Run remote 910A suite")
-
-    dist = subparsers.add_parser("run-910a-dist", help="Run remote 910A distributed tests")
-    dist.add_argument("--card-count", required=True, type=int, choices=[2, 4])
-    dist.add_argument("--visible-devices", required=True)
-    subparsers.add_parser("fetch-artifacts", help="Fetch remote artifacts")
-
     cleanup = subparsers.add_parser("cleanup-task", help="Stop OpenI task (keeps it for reuse)")
     cleanup.add_argument("--task-id", required=False, default="")
     cleanup.add_argument("--image-id", required=False, default="")
@@ -1060,10 +811,6 @@ def main(argv: list[str] | None = None) -> int:
         "ensure-task": _handle_ensure_task,
         "restart-task": _handle_restart_task,
         "wait-task": _handle_wait_task,
-        "prepare-remote": _handle_prepare_remote,
-        "run-910a-suite": _handle_run_910a_suite,
-        "run-910a-dist": _handle_run_910a_dist,
-        "fetch-artifacts": _handle_fetch_artifacts,
         "cleanup-task": _handle_cleanup_task,
         "start-runner": _handle_start_runner,
         "wait-runner": _handle_wait_runner,
