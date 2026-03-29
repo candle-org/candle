@@ -132,6 +132,24 @@ jobs:
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /home/ma-user/work/.conda/envs/candle-py311
+            /home/ma-user/work/.conda/pkgs
+            /home/ma-user/.cache/pip
+          key: openi-conda-${{ runner.os }}-py311-${{ hashFiles('requirements/**', 'pyproject.toml', 'setup.py') }}
+          restore-keys: |
+            openi-conda-${{ runner.os }}-py311-
+      - uses: actions/cache@v4
+        with:
+          path: |
+            build
+            src/candle/**/*.c
+            src/candle/**/*.cpp
+          key: openi-build-${{ runner.os }}-py311-${{ hashFiles('src/candle/**', 'setup.py', 'pyproject.toml') }}
+          restore-keys: |
+            openi-build-${{ runner.os }}-py311-
       - name: Build candle
         run: |
           CONDA_SH=/home/ma-user/anaconda3/etc/profile.d/conda.sh
@@ -310,6 +328,24 @@ jobs:
         with:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/cache@v4
+        with:
+          path: |
+            /home/ma-user/work/.conda/envs/candle-py311
+            /home/ma-user/work/.conda/pkgs
+            /home/ma-user/.cache/pip
+          key: openi-conda-${{ runner.os }}-py311-${{ hashFiles('requirements/**', 'pyproject.toml', 'setup.py') }}
+          restore-keys: |
+            openi-conda-${{ runner.os }}-py311-
+      - uses: actions/cache@v4
+        with:
+          path: |
+            build
+            src/candle/**/*.c
+            src/candle/**/*.cpp
+          key: openi-build-${{ runner.os }}-py311-${{ hashFiles('src/candle/**', 'setup.py', 'pyproject.toml') }}
+          restore-keys: |
+            openi-build-${{ runner.os }}-py311-
       - name: Build candle
         run: |
           CONDA_SH=/home/ma-user/anaconda3/etc/profile.d/conda.sh
