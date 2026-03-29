@@ -99,6 +99,15 @@ class OpenITaskError(RuntimeError):
     """Raised when a task enters a terminal failure state."""
 
 
+def _get_runner_api_token() -> str:
+    token = os.environ.get("OPENI_RUNNER_TOKEN", "") or os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        raise RuntimeError(
+            "OPENI_RUNNER_TOKEN or GITHUB_TOKEN environment variable is required for runner APIs"
+        )
+    return token
+
+
 class OpenIJupyterClient:
     """Minimal Jupyter client implementation for kernel, execution, and file download."""
 
@@ -648,7 +657,43 @@ def _handle_create_task(args: argparse.Namespace) -> int:
 
 
 
+def _handle_ensure_task_by_id(args: argparse.Namespace) -> int:
+    """Restart a specific task by ID; if the ID has drifted after restart, fall back to my_list matching."""
+    session_cfg = _load_session_config()
+    session = _make_requests_session(session_cfg)
+    task_id = args.task_id
+    try:
+        response = _api_call(session, "get", f"/api/v1/ai_task/brief?id={task_id}")
+        task = response["data"]
+    except requests.exceptions.HTTPError as exc:
+        response_obj = getattr(exc, "response", None)
+        if response_obj is None or response_obj.status_code != 403:
+            raise
+        task = _find_matching_task_in_my_list(session, args)
+        if task is None:
+            raise OpenITaskError(
+                f"Task {task_id} returned 403 (ID may have drifted after restart) "
+                "and no matching task was found in my_list"
+            ) from exc
+    status = task.get("status", "")
+    reusable = {"RUNNING", "WAITING", "CREATED"}
+    restartable = reusable | {"STOPPED", "STOP", "CREATED_FAILED"}
+    _save_json_state("task", task)
+    if status in reusable:
+        return 0
+    if status == "STOPPING":
+        _wait_task_stopped(session, task.get("id", task_id))
+        _handle_restart_task(args)
+        return 0
+    if status in restartable:
+        _handle_restart_task(args)
+        return 0
+    raise OpenITaskError(f"Task {task.get('id', task_id)} is in unexpected status: {status}")
+
+
 def _handle_ensure_task(args: argparse.Namespace) -> int:
+    if getattr(args, "task_id", ""):
+        return _handle_ensure_task_by_id(args)
     task_path = _state_path("task")
     session_cfg = _load_session_config()
     session = _make_requests_session(session_cfg)
@@ -802,19 +847,141 @@ def _handle_fetch_artifacts(args: argparse.Namespace) -> int:
     return 0
 
 
+def _wait_task_stopped(session: requests.Session, task_id: str | int, timeout: int = 300) -> None:
+    """Poll until task reaches STOPPED/STOP, or timeout."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            brief = _api_call(session, "get", f"/api/v1/ai_task/brief?id={task_id}")["data"]
+            status = brief.get("status", "")
+            print(f"  task {task_id} status: {status}", flush=True)
+            if status in {"STOPPED", "STOP"}:
+                return
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"  warning: poll task {task_id} failed: {exc}")
+        time.sleep(10)
+    print(f"Warning: task {task_id} did not reach STOPPED within {timeout}s")
+
+
 def _handle_cleanup_task(args: argparse.Namespace) -> int:
-    if _bool_arg(args.keep_task_on_failure):
-        return 0
-    task_path = _state_path("task")
-    if not task_path.exists():
-        return 0
-    task = _load_json_state("task")
-    task_id = task["id"]
+    task_id = getattr(args, "task_id", "")
+    if not task_id:
+        task_path = _state_path("task")
+        if not task_path.exists():
+            return 0
+        task = _load_json_state("task")
+        task_id = task["id"]
     session_cfg = _load_session_config()
     session = _make_requests_session(session_cfg)
-    _api_call(session, "post", f"/api/v1/ai_task/stop?id={task_id}")
-    _api_call(session, "post", f"/api/v1/ai_task/del?id={task_id}")
+    try:
+        _api_call(session, "post", f"/api/v1/ai_task/stop?id={task_id}")
+    except requests.exceptions.HTTPError as exc:
+        response_obj = getattr(exc, "response", None)
+        if response_obj is None or response_obj.status_code != 403:
+            print(f"Warning: stop task {task_id} failed: {exc}")
+            return 0
+        matched = _find_matching_task_in_my_list(session, args)
+        if matched is None:
+            print(f"Warning: stop task {task_id} failed and no matching replacement task was found")
+            return 0
+        task_id = matched["id"]
+        try:
+            _api_call(session, "post", f"/api/v1/ai_task/stop?id={task_id}")
+        except Exception as inner_exc:  # pylint: disable=broad-except
+            print(f"Warning: stop fallback task {task_id} failed: {inner_exc}")
+            return 0
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"Warning: stop task {task_id} failed: {exc}")
+        return 0
+    _wait_task_stopped(session, task_id)
     return 0
+
+
+def _handle_start_runner(args: argparse.Namespace) -> int:
+    """Register and start an ephemeral GitHub Actions runner on the OpenI task."""
+    github_token = _get_runner_api_token()
+
+    # Obtain a runner registration token from GitHub
+    gh = requests.Session()
+    gh.headers.update({
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    resp = gh.post(
+        f"https://api.github.com/repos/{args.repo}/actions/runners/registration-token",
+        timeout=30,
+    )
+    resp.raise_for_status()
+    reg_token = resp.json()["token"]
+
+    # Connect to OpenI Jupyter kernel
+    task = _load_json_state("task")
+    session_cfg = _load_session_config()
+    session = _make_requests_session(session_cfg)
+    response = _api_call(session, "get", f"/api/v1/ai_task/debug_url?id={task['id']}&file=")
+    lab_url = response["data"]["url"]
+    base_url, token = _parse_jupyter_url(lab_url)
+    client = OpenIJupyterClient(base_url=base_url, token=token, session=session)
+    client.create_kernel()
+
+    runner_dir = "/home/ma-user/work/actions-runner"
+    repo_url = f"https://github.com/{args.repo}"
+    label = args.label
+    script = f"""set -euo pipefail
+for key in $(env | cut -d= -f1 | grep -i proxy || true); do
+  unset "$key"
+done
+unset http_proxy https_proxy ftp_proxy no_proxy
+unset HTTP_PROXY HTTPS_PROXY FTP_PROXY NO_PROXY
+cd {runner_dir}
+rm -f .runner .credentials .credentials_rsaparams .env || true
+export _RUNNER_TOKEN={reg_token!r}
+set +x
+./config.sh \\
+  --url {repo_url} \\
+  --token "$_RUNNER_TOKEN" \\
+  --labels 'self-hosted,openi-npu,{label}' \\
+  --name 'openi-{label}' \\
+  --ephemeral \\
+  --unattended
+set -x
+unset _RUNNER_TOKEN
+nohup ./run.sh > runner.log 2>&1 &
+echo "Runner started with label: {label}"
+"""
+    result = client.execute_shell(["bash", "-lc", script], timeout=120)
+    if result.get("exit_code", 0) != 0:
+        raise OpenITaskError(f"start-runner failed: {result.get('output', '')}")
+    return 0
+
+
+def _handle_wait_runner(args: argparse.Namespace) -> int:
+    """Poll GitHub API until the runner with given label is online."""
+    github_token = _get_runner_api_token()
+
+    gh = requests.Session()
+    gh.headers.update({
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    deadline = time.time() + args.timeout
+    while time.time() < deadline:
+        resp = gh.get(
+            f"https://api.github.com/repos/{args.repo}/actions/runners",
+            params={"per_page": 100},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        runners = resp.json().get("runners", [])
+        for runner in runners:
+            runner_labels = {lbl["name"] for lbl in runner.get("labels", [])}
+            if args.label in runner_labels and runner.get("status") == "online":
+                print(f"Runner with label '{args.label}' is online (id={runner['id']})")
+                return 0
+        time.sleep(5)
+    raise OpenITaskError(f"Runner with label '{args.label}' did not come online within {args.timeout}s")
 
 
 def _not_implemented(_: argparse.Namespace) -> int:
@@ -837,14 +1004,15 @@ def _build_parser() -> argparse.ArgumentParser:
     create.add_argument("--keep-task-on-failure", required=False)
 
     ensure = subparsers.add_parser("ensure-task", help="Create, reuse, or restart OpenI task")
-    ensure.add_argument("--repo-url", required=True)
-    ensure.add_argument("--ref", required=True)
-    ensure.add_argument("--image-id", required=True)
-    ensure.add_argument("--image-name", required=True)
-    ensure.add_argument("--spec-id", required=True)
-    ensure.add_argument("--cluster", required=True)
-    ensure.add_argument("--compute-source", required=True)
-    ensure.add_argument("--has-internet", required=True)
+    ensure.add_argument("--task-id", required=False, default="", help="Directly operate on a specific task ID (restart if stopped)")
+    ensure.add_argument("--repo-url", required=False)
+    ensure.add_argument("--ref", required=False)
+    ensure.add_argument("--image-id", required=False, default="")
+    ensure.add_argument("--image-name", required=False, default="")
+    ensure.add_argument("--spec-id", required=False)
+    ensure.add_argument("--cluster", required=False)
+    ensure.add_argument("--compute-source", required=False)
+    ensure.add_argument("--has-internet", required=False)
     ensure.add_argument("--reuse-timeout-minutes", required=False, default="210")
     ensure.add_argument("--keep-task-on-failure", required=False)
 
@@ -862,8 +1030,23 @@ def _build_parser() -> argparse.ArgumentParser:
     dist.add_argument("--visible-devices", required=True)
     subparsers.add_parser("fetch-artifacts", help="Fetch remote artifacts")
 
-    cleanup = subparsers.add_parser("cleanup-task", help="Cleanup remote task")
+    cleanup = subparsers.add_parser("cleanup-task", help="Stop OpenI task (keeps it for reuse)")
+    cleanup.add_argument("--task-id", required=False, default="")
+    cleanup.add_argument("--image-id", required=False, default="")
+    cleanup.add_argument("--image-name", required=False, default="")
+    cleanup.add_argument("--spec-id", required=False)
+    cleanup.add_argument("--cluster", required=False)
+    cleanup.add_argument("--compute-source", required=False)
     cleanup.add_argument("--keep-task-on-failure", required=False)
+
+    start_runner = subparsers.add_parser("start-runner", help="Register and start GitHub Actions self-hosted runner on OpenI task")
+    start_runner.add_argument("--label", required=True, help="Runner label, e.g. openi-suite-<run_id>")
+    start_runner.add_argument("--repo", required=True, help="GitHub repo in owner/repo format")
+
+    wait_runner = subparsers.add_parser("wait-runner", help="Wait until self-hosted runner with given label is online")
+    wait_runner.add_argument("--label", required=True)
+    wait_runner.add_argument("--repo", required=True)
+    wait_runner.add_argument("--timeout", required=False, type=int, default=300)
 
     subparsers.add_parser("login-wechat", help="Login locally via WeChat")
     return parser
@@ -882,6 +1065,8 @@ def main(argv: list[str] | None = None) -> int:
         "run-910a-dist": _handle_run_910a_dist,
         "fetch-artifacts": _handle_fetch_artifacts,
         "cleanup-task": _handle_cleanup_task,
+        "start-runner": _handle_start_runner,
+        "wait-runner": _handle_wait_runner,
         "login-wechat": _not_implemented,
     }
     return handlers[args.command](args)
