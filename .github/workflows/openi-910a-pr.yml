@@ -171,6 +171,7 @@ jobs:
             conda create -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" python=3.11
           fi
           conda install -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" ccache
+          export PATH="$ENV_DIR/bin:$PATH"
           PY="$ENV_DIR/bin/python"
           PIP="$ENV_DIR/bin/pip"
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements/requirements-test.txt
@@ -387,6 +388,7 @@ jobs:
             conda create -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" python=3.11
           fi
           conda install -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" ccache
+          export PATH="$ENV_DIR/bin:$PATH"
           PY="$ENV_DIR/bin/python"
           PIP="$ENV_DIR/bin/pip"
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements/requirements-test.txt
@@ -405,8 +407,6 @@ jobs:
           ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
           PY="$ENV_DIR/bin/python"
           export PATH="$ENV_DIR/bin:$PATH"
-          export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3
-          export ASCEND_VISIBLE_DEVICES=0,1,2,3
           export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
           $PY -m pytest tests/distributed/ -v --tb=short \
             -k 'not test_ddp' 2>&1 | tee dist.log
@@ -415,8 +415,6 @@ jobs:
           ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
           PY="$ENV_DIR/bin/python"
           export PATH="$ENV_DIR/bin:$PATH"
-          export ASCEND_RT_VISIBLE_DEVICES=0,1,2,3
-          export ASCEND_VISIBLE_DEVICES=0,1,2,3
           export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
           $PY -m pytest \
             'tests/distributed/test_hccl_all_to_all_single_async_unequal_multicard.py::test_hccl_all_to_all_single_async_unequal_multicard[4-29724]' \
