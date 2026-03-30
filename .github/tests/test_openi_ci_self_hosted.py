@@ -29,7 +29,39 @@ def test_parser_does_not_expose_legacy_openi_commands():
     assert "fetch-artifacts" not in commands
 
 
-def test_runner_api_token_prefers_openi_runner_token(monkeypatch):
+
+
+def test_find_matching_task_in_my_list_uses_task_detail_spec_id_when_my_list_lacks_spec(monkeypatch):
+    session = DummySession()
+
+    tasks_payload = {
+        "data": {
+            "tasks": [
+                {"task": {"id": 11, "cluster": "C2Net", "compute_source": "NPU", "image_id": "img", "image_name": "image", "start_time": 200}},
+                {"task": {"id": 22, "cluster": "C2Net", "compute_source": "NPU", "image_id": "img", "image_name": "image", "start_time": 100}},
+            ]
+        }
+    }
+
+    details = {
+        "/api/v1/ai_task?id=11": {"data": {"task": {"spec": {"id": 328}}}},
+        "/api/v1/ai_task?id=22": {"data": {"task": {"spec": {"id": 340}}}},
+    }
+
+    def fake_api_call(_session, method, path, **_kwargs):
+        assert method == "get"
+        if path == "/api/v1/ai_task/my_list":
+            return tasks_payload
+        return details[path]
+
+    monkeypatch.setattr(openi_ci, "_api_call", fake_api_call)
+
+    args = argparse.Namespace(spec_id="340", cluster="C2Net", compute_source="NPU", image_id="img", image_name="image")
+    task = openi_ci._find_matching_task_in_my_list(session, args)
+
+    assert task is not None
+    assert task["id"] == 22
+
     monkeypatch.setenv("OPENI_RUNNER_TOKEN", "runner-token")
     monkeypatch.setenv("GITHUB_TOKEN", "github-token")
 
