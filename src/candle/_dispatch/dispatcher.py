@@ -1,4 +1,5 @@
 import inspect
+import functools
 import numpy as np
 
 from .registry import registry
@@ -49,6 +50,7 @@ def _pop_dispatch_context():
         stack.pop()
 
 
+@functools.lru_cache(maxsize=None)
 def _accepts_device(func):
     try:
         sig = inspect.signature(func)
