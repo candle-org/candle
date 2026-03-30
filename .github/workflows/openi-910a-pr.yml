@@ -174,6 +174,7 @@ jobs:
           conda install -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" ccache
           PY="$ENV_DIR/bin/python"
           PIP="$ENV_DIR/bin/pip"
+          $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements/requirements-test.txt
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
           export CCACHE_DIR=/home/ma-user/work/.cache/ccache
           export CCACHE_MAXSIZE=10G
@@ -390,6 +391,7 @@ jobs:
           conda install -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" ccache
           PY="$ENV_DIR/bin/python"
           PIP="$ENV_DIR/bin/pip"
+          $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements/requirements-test.txt
           $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
           export CCACHE_DIR=/home/ma-user/work/.cache/ccache
           export CCACHE_MAXSIZE=10G
