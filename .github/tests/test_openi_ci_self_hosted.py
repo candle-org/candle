@@ -2,13 +2,21 @@ import argparse
 import importlib.util
 from pathlib import Path
 
+import yaml
 
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PR_WORKFLOW_PATH = REPO_ROOT / ".github/workflows/openi-910a-pr.yml"
 SPEC = importlib.util.spec_from_file_location(
     "openi_ci",
     str(Path(__file__).resolve().parents[1] / "scripts" / "openi_ci.py"),
 )
 openi_ci = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(openi_ci)
+
+
+def _load_pr_workflow():
+    return yaml.safe_load(PR_WORKFLOW_PATH.read_text(encoding="utf-8"))
 
 
 class DummySession:
@@ -27,6 +35,26 @@ def test_parser_does_not_expose_legacy_openi_commands():
     assert "run-910a-suite" not in commands
     assert "run-910a-dist" not in commands
     assert "fetch-artifacts" not in commands
+
+
+def test_pr_workflow_build_steps_add_env_bin_to_path_before_ccache():
+    workflow = _load_pr_workflow()
+    jobs = workflow["jobs"]
+
+    for job_name in ("suite-run", "dist4-run"):
+        build_step = next(step for step in jobs[job_name]["steps"] if step.get("name") == "Build candle")
+        run = build_step["run"]
+        assert 'export PATH="$ENV_DIR/bin:$PATH"' in run, f"{job_name} Build candle must export ENV_DIR/bin into PATH"
+
+
+def test_pr_workflow_dist4_steps_do_not_pin_visible_device_ids():
+    workflow = _load_pr_workflow()
+    steps = workflow["jobs"]["dist4-run"]["steps"]
+
+    for step_name in ("Run distributed tests", "Run 4-card HCCL tests"):
+        run = next(step["run"] for step in steps if step.get("name") == step_name)
+        assert "ASCEND_RT_VISIBLE_DEVICES" not in run, f"{step_name} should not hardcode ASCEND_RT_VISIBLE_DEVICES"
+        assert "ASCEND_VISIBLE_DEVICES" not in run, f"{step_name} should not hardcode ASCEND_VISIBLE_DEVICES"
 
 
 
