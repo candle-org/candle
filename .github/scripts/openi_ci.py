@@ -464,7 +464,23 @@ def _find_matching_task_in_my_list(session: requests.Session, args: argparse.Nam
                 tasks.append(item)
     elif isinstance(data, list):
         tasks = data
-    candidates = [task for task in tasks if _task_matches_request(task, args)]
+
+    candidates = []
+    for task in tasks:
+        enriched_task = task
+        if getattr(args, "spec_id", None) is not None and task.get("spec_id") is None and task.get("id") is not None:
+            try:
+                detail = _api_call(session, "get", f"/api/v1/ai_task?id={task['id']}").get("data", {})
+                detailed_task = detail.get("task") if isinstance(detail, dict) else None
+                if isinstance(detailed_task, dict):
+                    spec = detailed_task.get("spec") or {}
+                    if spec.get("id") is not None:
+                        enriched_task = dict(task)
+                        enriched_task["spec_id"] = str(spec["id"])
+            except Exception:  # pylint: disable=broad-except
+                pass
+        if _task_matches_request(enriched_task, args):
+            candidates.append(enriched_task)
     if not candidates:
         return None
     candidates.sort(key=lambda task: (int(task.get("start_time") or 0), int(task.get("id") or 0)), reverse=True)
