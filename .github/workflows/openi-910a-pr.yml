@@ -36,7 +36,6 @@ jobs:
   suite-start:
     name: Suite - Start
     runs-on: ubuntu-latest
-    environment: openi-npu
     timeout-minutes: 30
     env:
       OPENI_ARTIFACT_SUFFIX: suite
@@ -253,7 +252,6 @@ jobs:
     name: Dist 4-card - Start
     needs: suite-stop
     runs-on: ubuntu-latest
-    environment: openi-npu
     timeout-minutes: 30
     env:
       OPENI_ARTIFACT_SUFFIX: dist-4card
