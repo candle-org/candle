@@ -156,7 +156,7 @@ See each subdirectory's README for usage.
 - [ ] **Step 6: Verify transformers compat still works**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   env USE_CANDLE=1 python compat/transformers/run.py --model bert \
   --json-report /tmp/tf-verify.json --tb=line
 python compat/transformers/run.py --summarize /tmp/tf-verify.json
@@ -871,16 +871,16 @@ git commit -m "feat: add candle.testing._internal.common_device_type (instantiat
 - [ ] **Step 1: Clone pytorch and setup**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   pip install -r compat/pytorch/requirements.txt
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python compat/pytorch/run.py --setup-only
 ```
 
 - [ ] **Step 2: Run test_tensor.py smoke test**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   env USE_CANDLE=1 python compat/pytorch/run.py \
   --file test_tensor.py \
   --json-report /tmp/pytorch-smoke.json \

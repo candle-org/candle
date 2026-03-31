@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Migrate the mindtorch_v2 codebase from the mindnlp repository to the standalone candle repository, renaming all references from `mindtorch_v2` to `candle`, and setting up CI/CD, tests, and packaging.
+**Goal:** Migrate the mindtorch_v2 codebase from the legacy source repository to the standalone candle repository, renaming all references from `mindtorch_v2` to `candle`, and setting up CI/CD, tests, and packaging.
 
 **Architecture:** The candle repository will be a standalone Python package with `src/candle/` layout. All internal references to `mindtorch_v2` will be replaced with `candle`. GitHub Actions will provide pylint checks, unit testing, and wheel releases. The torch proxy system will be preserved for transparent PyTorch compatibility.
 
@@ -12,8 +12,8 @@
 
 ## Source Analysis
 
-- **Source code:** `/Users/lvyufeng/Projects/mindnlp/src/mindtorch_v2/` (384 files)
-- **Tests:** `/Users/lvyufeng/Projects/mindnlp/tests/mindtorch_v2/` (306 files)
+- **Source code:** `/path/to/legacy-repo/src/mindtorch_v2/` (384 files)
+- **Tests:** `/path/to/legacy-repo/tests/mindtorch_v2/` (306 files)
 - **Target:** `/Users/lvyufeng/Projects/candle/` (empty repo, MIT license)
 - **References to rename:** 192 files, ~584 occurrences of `mindtorch_v2`
 - **Also rename:** `MINDTORCH_TEST_FORCE_CPU_ONLY` → `CANDLE_TEST_FORCE_CPU_ONLY`
@@ -23,12 +23,12 @@
 ### Task 1: Copy Source Code to Candle Repository
 
 **Files:**
-- Copy: `mindnlp/src/mindtorch_v2/**` → `candle/src/candle/**`
+- Copy: `legacy-repo/src/mindtorch_v2/**` → `candle/src/candle/**`
 
 **Step 1: Copy the source tree**
 
 ```bash
-cp -r /Users/lvyufeng/Projects/mindnlp/src/mindtorch_v2/ /Users/lvyufeng/Projects/candle/src/candle/
+cp -r /path/to/legacy-repo/src/mindtorch_v2/ /Users/lvyufeng/Projects/candle/src/candle/
 ```
 
 **Step 2: Remove `__pycache__` directories**
@@ -58,12 +58,12 @@ git commit -m "feat: copy mindtorch_v2 source code as candle base"
 ### Task 2: Copy Tests to Candle Repository
 
 **Files:**
-- Copy: `mindnlp/tests/mindtorch_v2/**` → `candle/tests/`
+- Copy: `legacy-repo/tests/mindtorch_v2/**` → `candle/tests/`
 
 **Step 1: Copy the test tree**
 
 ```bash
-cp -r /Users/lvyufeng/Projects/mindnlp/tests/mindtorch_v2/ /Users/lvyufeng/Projects/candle/tests/
+cp -r /path/to/legacy-repo/tests/mindtorch_v2/ /Users/lvyufeng/Projects/candle/tests/
 ```
 
 **Step 2: Remove `__pycache__` directories**
@@ -323,11 +323,11 @@ git commit -m "feat: add pytest configuration"
 **Files:**
 - Create: `candle/.github/pylint.conf`
 
-**Step 1: Copy pylint.conf from mindnlp**
+**Step 1: Copy pylint.conf from the legacy repository**
 
 ```bash
 mkdir -p /Users/lvyufeng/Projects/candle/.github
-cp /Users/lvyufeng/Projects/mindnlp/.github/pylint.conf /Users/lvyufeng/Projects/candle/.github/pylint.conf
+cp /path/to/legacy-repo/.github/pylint.conf /Users/lvyufeng/Projects/candle/.github/pylint.conf
 ```
 
 **Step 2: Commit**
@@ -498,7 +498,7 @@ git commit -m "feat: add GitHub Actions release workflow"
 
 **Step 1: Create run_test.py**
 
-Adapt from `mindnlp/tests/run_test_v2.py`, replacing all `mindtorch_v2` references with `candle`:
+Adapt from `legacy-repo/tests/run_test_v2.py`, replacing all `mindtorch_v2` references with `candle`:
 
 - Line 34: `from candle._torch_proxy import install` (if torch_proxy exists)
 - Line 39: docstrings referencing `candle` instead of `mindtorch_v2`
@@ -591,14 +591,14 @@ git commit -m "chore: final cleanup and verification"
 
 ## Summary of Changes
 
-| Component | Source (mindnlp) | Target (candle) |
+| Component | Source (legacy repo) | Target (candle) |
 |-----------|-----------------|-----------------|
 | Source code | `src/mindtorch_v2/` | `src/candle/` |
 | Tests | `tests/mindtorch_v2/` | `tests/` |
 | Package name | `mindtorch_v2` | `candle` |
 | CI workflow | `.github/workflows/ci_pipeline.yaml` | `.github/workflows/ci.yaml` |
 | Release workflow | `.github/workflows/make_wheel_releases.yml` | `.github/workflows/release.yaml` |
-| Setup | `setup.py` (shared with mindnlp) | `pyproject.toml` (standalone) |
+| Setup | `setup.py` (shared in the legacy repo) | `pyproject.toml` (standalone) |
 | Pylint config | `.github/pylint.conf` | `.github/pylint.conf` |
 | Test runner | `tests/run_test_v2.py` | `tests/run_test.py` |
 | Env var | `MINDTORCH_TEST_FORCE_CPU_ONLY` | `CANDLE_TEST_FORCE_CPU_ONLY` |

@@ -606,7 +606,7 @@ git commit -m "docs(github): add AI issue templates"
 ## Test plan
 
 - [ ] Not run (explain why)
-- [ ] `source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest ...`
+- [ ] `source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest ...`
 - [ ] `pylint src/candle/ --rcfile=.github/pylint.conf`
 
 ## Checklist
@@ -643,7 +643,7 @@ git commit -m "docs(github): add AI issue templates"
 ### Commands run
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest ...
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest ...
 pylint src/candle/ --rcfile=.github/pylint.conf
 ```
 
