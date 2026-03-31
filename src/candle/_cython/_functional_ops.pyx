@@ -318,20 +318,22 @@ def div(a, b, *, rounding_mode=None):
     return _dispatch_fn("true_divide", None, a, b)
 
 
-def matmul(a, b):
+def matmul(a, b, *, out=None):
     """Fast matmul: skip __torch_function__ when both args are base Tensor."""
     cdef object r
+    cdef object kwargs
 
     _ensure_originals()
 
     if _is_base_tensor(a) and _is_base_tensor(b):
-        return _dispatch_fn("matmul", None, a, b)
+        return _dispatch_fn("matmul", None, a, b, out=out)
 
-    r = _handle_torch_function(_py_matmul_fn, (a, b), {})
+    kwargs = {"out": out} if out is not None else {}
+    r = _handle_torch_function(_py_matmul_fn, (a, b), kwargs)
     if r is not NotImplemented:
         return r
 
-    return _dispatch_fn("matmul", None, a, b)
+    return _dispatch_fn("matmul", None, a, b, out=out)
 
 
 def relu(a):

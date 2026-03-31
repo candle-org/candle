@@ -182,6 +182,7 @@ def register_schemas():
         },
     )
 
+    _register_binary_ops(("mul",))
     registry.register_schema("matmul", "matmul(Tensor input, Tensor other, *, Tensor? out=None) -> Tensor")
     registry.register_error_overrides(
         "matmul",
