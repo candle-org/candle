@@ -63,7 +63,7 @@ def test_compiled_variable_type_surface_matches_generated_safe_registration_subs
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/contract/test_generated_registration_coverage.py -v --tb=short
 ```
 
@@ -143,7 +143,7 @@ This is a placeholder red test you will strengthen immediately after inventory l
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/contract/test_generated_registration_coverage.py -k "manual_wrapper" -v --tb=short
 ```
 
@@ -177,7 +177,7 @@ Do the same for `diff`. If you cannot safely express it in the current generator
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m tools.autograd.gen_autograd
 ```
 
@@ -194,7 +194,7 @@ Update the placeholder so it checks that every “manual” wrapper is either:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/contract/test_generated_registration_coverage.py -v --tb=short
 ```
 
@@ -239,7 +239,7 @@ def test_registration_generic_aliases_have_backing_wrapper_symbols():
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/contract/test_generated_registration_coverage.py -k "generic_aliases_have_backing_wrapper_symbols" -v --tb=short
 ```
 
@@ -268,7 +268,7 @@ If a generic alias is semantically ambiguous, then `gen_registration.py` should 
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m tools.autograd.gen_autograd
 ```
 
@@ -312,7 +312,7 @@ def test_registration_splits_compiled_safe_and_python_legacy_sections():
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/contract/test_generated_registration_coverage.py -k "splits_compiled_safe_and_python_legacy_sections" -v --tb=short
 ```
 
@@ -357,7 +357,7 @@ The generated-safe/legacy split should be data-driven from the inventory created
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m tools.autograd.gen_autograd
 ```
 
@@ -383,9 +383,9 @@ def test_sum_to_size_post_registration_still_resolves_with_compiled_modules_pres
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/contract/test_generated_registration_coverage.py -v --tb=short
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/cpu/test_declarative_autograd.py -k "registration_imports_when_compiled_variable_type_is_present or sum_to_size_post_registration_still_resolves" -v --tb=short
 ```
 
@@ -427,7 +427,7 @@ def test_registration_keeps_python_fallback_for_legacy_ops():
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/cpu/test_declarative_autograd.py -k "prefers_compiled_generated_variable_type_for_generated_safe_ops or keeps_python_fallback_for_legacy_ops" -v --tb=short
 ```
 
@@ -438,7 +438,7 @@ Expected:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python setup.py build_ext --inplace
 ```
 
@@ -449,7 +449,7 @@ Expected:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/cpu/test_declarative_autograd.py -k "generated_cython or registration or generated_package" -v --tb=short
 ```
 
@@ -474,7 +474,7 @@ git commit -m "test: verify compiled generated registration split"
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python setup.py build_ext --inplace
 ```
 
@@ -484,7 +484,7 @@ Expected: success.
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/contract/test_generated_registration_coverage.py -v --tb=short
 ```
 
@@ -494,7 +494,7 @@ Expected: PASS.
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/cpu/test_declarative_autograd.py -v --tb=short
 ```
 
@@ -504,7 +504,7 @@ Expected: no new import-time or registration-time failures.
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   pylint src/candle/ --rcfile=.github/pylint.conf
 ```
 

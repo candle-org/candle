@@ -14,14 +14,14 @@ test suite with candle as the torch backend.
 - **Config**: `compat/pytorch/tests.yaml` (test tiers), `compat/pytorch/xfail.yaml` (known failures)
 - **Patches**: `compat/pytorch/conftest.py` (version spoof, module stubs, etc.)
 - **Source code**: `src/candle/`
-- **Conda env**: `mindnlp` (`source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp ...`)
+- **Conda env**: `candle` (`source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle ...`)
 
 ## Workflow
 
 ### Step 1: Run Tests
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   env USE_CANDLE=1 python compat/pytorch/run.py --tier TIER \
   --json-report /tmp/pt-report.json -v --tb=short
 ```
@@ -29,7 +29,7 @@ source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
 Or for a single file:
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   env USE_CANDLE=1 python compat/pytorch/run.py --file FILE \
   --json-report /tmp/pt-report.json -v --tb=short
 ```

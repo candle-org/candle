@@ -12,7 +12,7 @@
 
 **Test command:**
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/ -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/ -v --tb=short -x
 ```
 
 ---
@@ -122,7 +122,7 @@ def test_hook_removal():
 **Step 2: Run tests to verify they fail**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_module_hooks.py -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_module_hooks.py -v --tb=short -x
 ```
 
 Expected: `test_forward_pre_hook_prepend` FAILS (prepend ignored, order is `["first", "prepended"]`).
@@ -195,7 +195,7 @@ def __call__(self, *args, **kwargs):
 **Step 4: Run tests to verify they pass**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_module_hooks.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_module_hooks.py -v --tb=short
 ```
 
 Expected: ALL PASS
@@ -203,7 +203,7 @@ Expected: ALL PASS
 **Step 5: Run existing tests to verify no regression**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/ tests/contract/ -v --tb=short -x 2>&1 | tail -30
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/ tests/contract/ -v --tb=short -x 2>&1 | tail -30
 ```
 
 Expected: No new failures. Existing hooks use the old format (just `hook`, not tuple), so the `isinstance(hook_entry, tuple)` check provides backward compatibility.
@@ -338,7 +338,7 @@ def test_plain_tensors_skip_torch_function():
 **Step 2: Run tests to verify they fail**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_torch_function.py -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_torch_function.py -v --tb=short -x
 ```
 
 Expected: FAIL — `__torch_function__` not called because `_functional.py` doesn't check for it yet.
@@ -440,7 +440,7 @@ For MVP, add the check to `add` and `matmul` first to prove the mechanism works.
 **Step 5: Run tests**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_torch_function.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_torch_function.py -v --tb=short
 ```
 
 Expected: ALL PASS
@@ -448,7 +448,7 @@ Expected: ALL PASS
 **Step 6: Run existing tests for regression**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/ tests/contract/ -v --tb=short -x 2>&1 | tail -30
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/ tests/contract/ -v --tb=short -x 2>&1 | tail -30
 ```
 
 Expected: No new failures (`_has_torch_function` fast-returns `False` for plain Tensors).
@@ -546,7 +546,7 @@ def test_plain_tensors_unaffected():
 **Step 2: Run tests to verify they fail**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_torch_dispatch.py -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_torch_dispatch.py -v --tb=short -x
 ```
 
 Expected: FAIL — no `__torch_dispatch__` mechanism exists yet.
@@ -642,7 +642,7 @@ def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
 **Step 7: Run tests**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_torch_dispatch.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_torch_dispatch.py -v --tb=short
 ```
 
 Expected: ALL PASS
@@ -650,7 +650,7 @@ Expected: ALL PASS
 **Step 8: Run full test suite for regression**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/ tests/contract/ -v --tb=short -x 2>&1 | tail -30
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/ tests/contract/ -v --tb=short -x 2>&1 | tail -30
 ```
 
 Expected: No new failures. The `Python` key is only added when subclass tensors are detected, so plain tensor operations are unaffected. Key reorder only affects priority when the `Python` key is present.
@@ -724,7 +724,7 @@ def test_shard_repr():
 **Step 2: Run to verify failure**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_placement.py -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_placement.py -v --tb=short -x
 ```
 
 **Step 3: Implement placement types**
@@ -795,7 +795,7 @@ Note: `DTensor` will be added to the import in Task 6.
 **Step 5: Run tests**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_placement.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_placement.py -v --tb=short
 ```
 
 **Step 6: Commit**
@@ -849,7 +849,7 @@ def test_device_mesh_size():
 **Step 2: Run to verify failure**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_device_mesh.py -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_device_mesh.py -v --tb=short -x
 ```
 
 **Step 3: Implement DeviceMesh**
@@ -930,7 +930,7 @@ def init_device_mesh(device_type, mesh_shape, *, mesh_dim_names=None):
 **Step 4: Run tests**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_device_mesh.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_device_mesh.py -v --tb=short
 ```
 
 **Step 5: Commit**
@@ -1044,7 +1044,7 @@ def test_dtensor_sharded_blocks_compute():
 **Step 2: Run to verify failure**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_dtensor.py -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_dtensor.py -v --tb=short -x
 ```
 
 **Step 3: Implement DTensor**
@@ -1226,7 +1226,7 @@ __all__ = ["DTensor", "DTensorSpec", "TensorMeta", "Placement", "Shard", "Replic
 **Step 5: Run tests**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_dtensor.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_dtensor.py -v --tb=short
 ```
 
 **Step 6: Commit**
@@ -1341,7 +1341,7 @@ def test_fsdp_param_group_lifecycle():
 **Step 2: Run to verify failure**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_fsdp_param.py -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_fsdp_param.py -v --tb=short -x
 ```
 
 **Step 3: Create the FSDP directory structure**
@@ -1563,7 +1563,7 @@ Create `src/candle/distributed/_composable/fsdp/__init__.py`:
 **Step 8: Run tests**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_fsdp_param.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_fsdp_param.py -v --tb=short
 ```
 
 **Step 9: Commit**
@@ -1653,7 +1653,7 @@ def test_fsdp_state_post_forward_reshards():
 **Step 2: Run to verify failure**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_fsdp_state.py -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_fsdp_state.py -v --tb=short -x
 ```
 
 **Step 3: Implement FSDPState**
@@ -1770,7 +1770,7 @@ def _extract_tensors_from_output(output):
 **Step 4: Run tests**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_fsdp_state.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_fsdp_state.py -v --tb=short
 ```
 
 **Step 5: Commit**
@@ -1899,7 +1899,7 @@ def test_fully_shard_excludes_child_params():
 **Step 2: Run to verify failure**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_fully_shard.py -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_fully_shard.py -v --tb=short -x
 ```
 
 **Step 3: Implement `fully_shard()` and FSDPModule**
@@ -2061,13 +2061,13 @@ from .fsdp import fully_shard, FSDPModule
 **Step 5: Run tests**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_fully_shard.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_fully_shard.py -v --tb=short
 ```
 
 **Step 6: Run full test suite**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/ tests/contract/ -v --tb=short -x 2>&1 | tail -30
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/ tests/contract/ -v --tb=short -x 2>&1 | tail -30
 ```
 
 **Step 7: Commit**
@@ -2192,7 +2192,7 @@ def test_fsdp_params_are_dtensor_between_iterations():
 **Step 2: Run integration tests**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_fsdp_integration.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_fsdp_integration.py -v --tb=short
 ```
 
 **Step 3: Debug and fix any issues**
@@ -2206,7 +2206,7 @@ If tests fail, investigate and fix. Common issues:
 **Step 4: Run full CPU test suite**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/ tests/contract/ -v --tb=short -x 2>&1 | tail -30
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/ tests/contract/ -v --tb=short -x 2>&1 | tail -30
 ```
 
 **Step 5: Commit**
@@ -2292,7 +2292,7 @@ def test_fsdp2_gloo_forward_backward():
 **Step 2: Run multi-process test**
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_fsdp2_gloo.py -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_fsdp2_gloo.py -v --tb=short -x
 ```
 
 **Step 3: Debug and fix issues**

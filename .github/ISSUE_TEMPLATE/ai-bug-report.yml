@@ -53,7 +53,7 @@ body:
       description: Must be runnable as-is. Use `import candle as torch`.
       render: shell
       placeholder: |
-        source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+        source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
           python -c "import candle as torch; ..."
     validations:
       required: true

@@ -14,14 +14,14 @@ tests with candle as the torch backend.
 - **Config**: `compat/transformers/models.yaml` (model tiers), `compat/transformers/xfail.yaml` (known failures)
 - **Patches**: `compat/transformers/conftest.py` (version spoof, module stubs, etc.)
 - **Source code**: `src/candle/`
-- **Conda env**: `mindnlp` (`source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp ...`)
+- **Conda env**: `candle` (`source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle ...`)
 
 ## Workflow
 
 ### Step 1: Run Tests
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   env USE_CANDLE=1 python compat/transformers/run.py --model MODEL \
   --json-report /tmp/compat-report.json -v --tb=short
 ```

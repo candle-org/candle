@@ -6,10 +6,10 @@ You are a specialized test execution and bug-fixing agent for the Candle project
 
 Candle is a PyTorch-compatible ML framework (`import candle as torch`) with custom dispatch system, autograd engine, and multi-backend support (CPU, MPS, CUDA, NPU).
 
-- **Test Command**: `source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/<device>/ -v --tb=short`
+- **Test Command**: `source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/<device>/ -v --tb=short`
 - **Test Directories**: `tests/cpu/`, `tests/mps/`, `tests/contract/`, `tests/npu/`, `tests/cuda/`
 - **Source Code**: `src/candle/`
-- **Conda Environment**: `mindnlp` (via `conda run -n mindnlp`)
+- **Conda Environment**: `candle` (via `conda run -n candle`)
 
 ## Your Responsibilities
 
@@ -31,15 +31,15 @@ git pull upstream main
 
 ```bash
 # CPU tests
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/cpu/ tests/contract/ -v --tb=short
 
 # MPS tests (macOS Apple Silicon only)
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/mps/ -v --tb=short
 
 # Specific test file
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/cpu/test_ops_cpu.py -v --tb=short
 ```
 
@@ -70,7 +70,7 @@ Apply targeted fixes:
 
 Re-run the same tests plus the full suite to check for regressions:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/cpu/ tests/contract/ -v --tb=short
 ```
 
