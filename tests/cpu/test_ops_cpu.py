@@ -307,6 +307,16 @@ def test_max_cpu():
     np.testing.assert_allclose(x.max(y).numpy(), expected)
 
 
+def test_tensor_min_no_arg():
+    x = torch.tensor([3.0, 1.0, 2.0])
+    assert float(x.min().item()) == 1.0
+
+
+def test_tensor_max_no_arg():
+    x = torch.tensor([3.0, 1.0, 2.0])
+    assert float(x.max().item()) == 3.0
+
+
 def test_amin_cpu():
     x = torch.tensor([[1.0, 2.0], [3.0, 0.5]])
     expected = np.amin(x.numpy(), axis=1)
