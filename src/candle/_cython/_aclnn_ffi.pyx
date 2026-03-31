@@ -1020,6 +1020,8 @@ def tensor_scalar_op_with_alpha(
                         NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1099,6 +1101,8 @@ def tensor_scalar_op_no_alpha(
                         NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1174,6 +1178,8 @@ def unary_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1328,6 +1334,8 @@ def reduce_sum_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1484,6 +1492,8 @@ def arg_reduce_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
+                _release_executor_cleanup(<uintptr_t>executor)
+                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
