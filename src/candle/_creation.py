@@ -21,8 +21,8 @@ from ._functional import normal as normal_dispatch
 def _apply_requires_grad(out, requires_grad):
     if not requires_grad:
         return out
-    if not getattr(out.dtype, "is_floating_point", False):
-        raise RuntimeError("only Tensors of floating point dtype can require gradients")
+    if not (out.dtype.is_floating_point or out.dtype.is_complex):
+        raise RuntimeError("Only Tensors of floating point and complex dtype can require gradients")
     out.requires_grad_(True)
     return out
 
