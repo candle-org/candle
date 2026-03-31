@@ -448,6 +448,10 @@ def any_(a, dim=None, keepdim=False):
         raise ValueError("NPU any expects NPU tensors")
     from .comparison import gt
 
+    # Workaround: repeated native bool-reduction checks can accumulate false
+    # positives on 910B during index validation; use the stable composite below.
+    # TODO: re-enable the previous native bool-reduction chain when CANN fixes
+    # repeated 910B bool reduction state corruption.
     return gt(count_nonzero(a, dim=dim, keepdim=keepdim), 0)
 
 
