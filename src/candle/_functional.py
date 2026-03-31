@@ -96,7 +96,12 @@ def _py_mul(*args, **kwargs):
     r = _handle_torch_function(_py_mul, args, kwargs)
     if r is not NotImplemented:
         return r
-    return dispatch("mul", None, *args, **kwargs)
+    out = kwargs.pop("out", None)
+    result = dispatch("mul", None, *args, **kwargs)
+    if out is not None:
+        out.copy_(result)
+        return out
+    return result
 
 
 def _py_matmul(*args, **kwargs):
@@ -213,7 +218,7 @@ def _py_matmul_wrapper(*args, **kwargs):
 add = _add_impl
 transpose = _transpose_impl
 reshape = _reshape_impl
-mul = _mul_impl
+mul = _py_mul
 matmul = _matmul_impl
 
 
