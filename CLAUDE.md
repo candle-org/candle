@@ -46,7 +46,7 @@ candle/
 
 ## Environment
 
-- **Conda**: `source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp ...`
+- **Conda**: `source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle ...`
 - **Platform**: macOS Apple Silicon (Darwin), local MPS hardware available
 - **Python**: 3.11
 
@@ -184,11 +184,11 @@ Do NOT open a PR if pylint fails. Fix all issues first.
 
 ```bash
 # CPU + contract tests (always required for src/candle/ changes)
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/cpu/ tests/contract/ -v --tb=short
 
 # MPS tests (required on macOS Apple Silicon when src/candle/ changes)
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/mps/ -v --tb=short
 ```
 
@@ -242,11 +242,11 @@ CI is a safety net, NOT a substitute for local testing. Do NOT push untested cod
 
 ```bash
 # CPU tests
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/cpu/ tests/contract/ -v --tb=short
 
 # MPS tests (macOS Apple Silicon only)
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
   python -m pytest tests/mps/ -v --tb=short
 ```
 
@@ -288,7 +288,7 @@ source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp \
 
 ## Troubleshooting
 
-- **Tests not running**: Ensure conda env is activated (`conda run -n mindnlp`)
+- **Tests not running**: Ensure conda env is activated (`conda run -n candle`)
 - **MPS tests skipped locally**: Verify `pyobjc-framework-Metal` is installed
 - **MPS tests skipped on CI**: Check that `requirements-test-mps.txt` includes `pyobjc-framework-Metal`
 - **Git push fails**: Check push access, uncommitted changes, branch existence on remote

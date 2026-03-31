@@ -82,7 +82,7 @@ Suggested test names:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_work_async.py tests/distributed/test_ddp_async_overlap.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_work_async.py tests/distributed/test_ddp_async_overlap.py -v --tb=short
 ```
 
 Expected:
@@ -143,7 +143,7 @@ Do not delete the Python fallback. Make it clearly secondary and keep import fal
 Run:
 ```bash
 python setup.py build_ext --inplace
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_work_async.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_work_async.py -v --tb=short
 ```
 
 Expected:
@@ -192,7 +192,7 @@ The hot path must be Cython. At minimum:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_work_async.py tests/distributed/test_ddp_async_overlap.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_work_async.py tests/distributed/test_ddp_async_overlap.py -v --tb=short
 ```
 
 Expected:
@@ -239,7 +239,7 @@ Keep Python responsible only for module-level orchestration and hook registratio
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_ddp_async_overlap.py tests/distributed/test_ddp_bucket_fastpath.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_ddp_async_overlap.py tests/distributed/test_ddp_bucket_fastpath.py -v --tb=short
 ```
 
 Expected:
@@ -281,8 +281,8 @@ Document these as explicit success criteria in the benchmark script header:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python benchmarks/distributed_ddp_overlap.py
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_ddp_async_overlap.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python benchmarks/distributed_ddp_overlap.py
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_ddp_async_overlap.py -v --tb=short
 ```
 
 Expected:
@@ -327,7 +327,7 @@ Replace hard-fail exports with a deliberate public API decision.
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_fsdp_public_api.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_fsdp_public_api.py -v --tb=short
 ```
 
 Expected:
@@ -383,7 +383,7 @@ Move repeated per-parameter loops into Cython.
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_fsdp_public_api.py tests/distributed/test_fsdp_shard_fastpath.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_fsdp_public_api.py tests/distributed/test_fsdp_shard_fastpath.py -v --tb=short
 ```
 
 Expected:
@@ -419,7 +419,7 @@ Cover at least:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_fsdp_npu_integration.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_fsdp_npu_integration.py -v --tb=short
 ```
 
 Expected:
@@ -462,7 +462,7 @@ Make sure checkpoint planning understands:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_distributed_checkpoint.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_distributed_checkpoint.py -v --tb=short
 ```
 
 Expected:
@@ -503,7 +503,7 @@ Planner policy can stay Python. The repeated metadata and chunk math should move
 Run:
 ```bash
 python setup.py build_ext --inplace
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_distributed_checkpoint.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_distributed_checkpoint.py -v --tb=short
 ```
 
 Expected:
@@ -548,7 +548,7 @@ Cover:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cuda/test_nccl_collectives.py tests/cuda/test_cuda_stream_api.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cuda/test_nccl_collectives.py tests/cuda/test_cuda_stream_api.py -v --tb=short
 ```
 
 Expected:
@@ -601,7 +601,7 @@ Implement at least:
 Run:
 ```bash
 python setup.py build_ext --inplace
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cuda/test_nccl_collectives.py tests/cuda/test_cuda_stream_api.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cuda/test_nccl_collectives.py tests/cuda/test_cuda_stream_api.py -v --tb=short
 ```
 
 Expected:
@@ -648,7 +648,7 @@ Cover:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_dtensor_redistribute.py tests/distributed/test_tensor_parallel.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_dtensor_redistribute.py tests/distributed/test_tensor_parallel.py -v --tb=short
 ```
 
 Expected:
@@ -692,7 +692,7 @@ Python should choose the algorithm. Cython should do the repeated layout math an
 Run:
 ```bash
 python setup.py build_ext --inplace
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_dtensor_redistribute.py tests/distributed/test_tensor_parallel.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_dtensor_redistribute.py tests/distributed/test_tensor_parallel.py -v --tb=short
 ```
 
 Expected:
@@ -733,7 +733,7 @@ Do not add a full scheduler zoo. Start with:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/distributed/test_pipeline_parallel.py -v --tb=short
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/distributed/test_pipeline_parallel.py -v --tb=short
 ```
 
 Expected:
@@ -787,7 +787,7 @@ Examples:
 
 Run:
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest tests/cpu/test_threading_api.py tests/distributed -v --tb=short -x
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest tests/cpu/test_threading_api.py tests/distributed -v --tb=short -x
 ```
 
 Expected:
