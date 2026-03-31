@@ -1213,3 +1213,16 @@ def test_sum_dtype_accumulates_in_target_dtype_matches_torch_cpu():
 
     assert str(out.dtype) == str(tout.dtype)
     assert out.item() == tout.item() == 240
+
+
+def test_sum_full_reduction_shape():
+    x = torch.tensor([1.0, 2.0, 3.0])
+    s = x.sum()
+    assert s.shape == ()
+    assert float(s.item()) == 6.0
+
+
+def test_scalar_inplace_sub():
+    a = torch.randn(())
+    g = torch.tensor([2.0]).sum()
+    a -= 1e-6 * g

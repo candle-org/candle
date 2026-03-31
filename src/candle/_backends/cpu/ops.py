@@ -339,7 +339,11 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
             acc_dtype = np.int64
 
     out = arr.sum(axis=dim, keepdims=keepdim, dtype=acc_dtype)
-    out = np.ascontiguousarray(out.astype(to_numpy_dtype(out_dtype), copy=False))
+    if isinstance(out, np.generic):
+        out = np.array(out)
+    out = out.astype(to_numpy_dtype(out_dtype), copy=False)
+    if not (isinstance(out, np.ndarray) and out.ndim == 0):
+        out = np.ascontiguousarray(out)
     return _from_numpy(out, out_dtype, a.device)
 
 
