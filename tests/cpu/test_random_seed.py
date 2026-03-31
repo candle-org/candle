@@ -282,6 +282,20 @@ class TestCPUReproducibility:
         b = torch.rand(5, 5)
         np.testing.assert_array_equal(a.numpy(), b.numpy())
 
+    def test_randn_and_rand_scalar_shape(self):
+        x = torch.randn(())
+        y = torch.rand(())
+        assert x.shape == ()
+        assert y.shape == ()
+        assert np.asarray(x.numpy()).shape == ()
+        assert np.asarray(y.numpy()).shape == ()
+        assert x.dtype == torch.float32
+        assert y.dtype == torch.float32
+        assert np.isfinite(x.item())
+        assert np.isfinite(y.item())
+        assert 0.0 <= y.item() < 1.0
+
+
     def test_randint_reproducible(self):
         torch.manual_seed(42)
         a = torch.randint(0, 100, size=(5, 5))
