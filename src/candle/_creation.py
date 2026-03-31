@@ -131,18 +131,14 @@ def randn(*shape, dtype=None, device=None, memory_format=None, generator=None, r
     if dtype is None:
         dtype = _get_default_dtype()
     out = randn_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format, generator=generator)
-    if requires_grad:
-        out.requires_grad_(True)
-    return out
+    return _apply_requires_grad(out, requires_grad)
 
 
 def rand(*shape, dtype=None, device=None, memory_format=None, generator=None, requires_grad=False):
     if dtype is None:
         dtype = _get_default_dtype()
     out = rand_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format, generator=generator)
-    if requires_grad:
-        out.requires_grad_(True)
-    return out
+    return _apply_requires_grad(out, requires_grad)
 
 
 def randint(low, high=None, size=None, *, dtype=None, device=None, generator=None):

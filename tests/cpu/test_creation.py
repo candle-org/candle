@@ -71,3 +71,23 @@ def test_creation_requires_grad_rejects_integer_dtype_cpu():
 def test_creation_requires_grad_rejects_bool_dtype_cpu():
     with pytest.raises(RuntimeError, match="Only Tensors of floating point and complex dtype can require gradients"):
         torch.zeros((2, 3), dtype=torch.bool, requires_grad=True)
+
+
+def test_rand_creation_requires_grad_float_dtype_cpu():
+    x = torch.rand((2, 3), requires_grad=True)
+    assert x.requires_grad is True
+
+
+def test_randn_creation_requires_grad_float_dtype_cpu():
+    x = torch.randn((2, 3), requires_grad=True)
+    assert x.requires_grad is True
+
+
+def test_rand_creation_requires_grad_rejects_integer_dtype_cpu():
+    with pytest.raises(RuntimeError, match="Only Tensors of floating point and complex dtype can require gradients"):
+        torch.rand((2, 3), dtype=torch.int64, requires_grad=True)
+
+
+def test_randn_creation_requires_grad_rejects_bool_dtype_cpu():
+    with pytest.raises(RuntimeError, match="Only Tensors of floating point and complex dtype can require gradients"):
+        torch.randn((2, 3), dtype=torch.bool, requires_grad=True)
