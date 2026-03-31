@@ -147,6 +147,14 @@ class TestMulWrapper:
         # d(a*b)/da = b
         _allclose(a.grad, [4.0, 5.0])
 
+    def test_mul_out_writes_into_provided_tensor(self):
+        a = torch.ones(4, 4)
+        b = torch.ones(4, 4)
+        out = torch.zeros(4, 4)
+        result = torch.mul(a, b, out=out)
+        assert result is out
+        assert float(out.sum().item()) == 16.0
+
 
 # ===========================================================================
 # 3. matmul wrapper
