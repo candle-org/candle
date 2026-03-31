@@ -220,6 +220,17 @@ class TestImportHook:
         out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
         assert "OK" in out
 
+    def test_import_torch_custom_ops(self):
+        """Regression: torchvision meta registrations import torch._custom_ops."""
+        code = textwrap.dedent("""\
+            import importlib
+            mod = importlib.import_module("torch._custom_ops")
+            assert mod is not None
+            print("OK")
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
     def test_torch_hub_set_dir_updates_get_dir_without_warning(self):
         code = textwrap.dedent("""\
             import tempfile
