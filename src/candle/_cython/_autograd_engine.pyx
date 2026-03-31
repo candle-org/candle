@@ -167,7 +167,11 @@ cdef class _GraphTask:
         if self.create_graph and grad is not None:
             grad.requires_grad = True
         should_accumulate_into_grad = (
-            self.accumulate_grad and (self.inputs is None or id(tensor) in self.input_ids)
+            self.accumulate_grad and (
+                self.inputs is None
+                or id(tensor) in self.input_ids
+                or (tensor.grad_fn is not None and getattr(tensor, "_retain_grad", False))
+            )
         )
         if should_accumulate_into_grad:
             if tensor.grad_fn is None or getattr(tensor, "_retain_grad", False):
