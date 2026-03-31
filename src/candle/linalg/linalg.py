@@ -91,7 +91,7 @@ def lu_solve(LU, pivots, B, *, left=True, adjoint=False):
 
 def matmul(input, other, *, out=None):
     """Matrix product. Alias for torch.matmul."""
-    return dispatch("matmul", input.device.type, input, other)
+    return dispatch("matmul", input.device.type, input, other, out=out)
 
 
 def matrix_exp(input):

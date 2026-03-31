@@ -3,6 +3,7 @@
 import sys
 import os
 import math
+import types
 import numpy as np
 import pytest
 
@@ -195,6 +196,73 @@ class TestLinalgProperties:
         A = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
         I = torch.linalg.matrix_power(A, 0)
         np.testing.assert_allclose(I.numpy(), np.eye(2), atol=1e-5)
+
+
+def test_npu_matmul_out_preserves_user_output_tensor(monkeypatch):
+    import candle._backends.npu.ops.linalg as npu_linalg
+    from candle._backends.npu.ops._helpers import float_dtype
+    from candle._dtype import float16 as float16_dtype
+    from candle._dtype import float32 as float32_dtype
+
+    assert float_dtype == float32_dtype
+
+
+    class FakeTensor:
+        def __init__(self, name, dtype=float_dtype, shape=(2, 2), stride=(2, 1), device=None):
+            self.name = name
+            self.dtype = dtype
+            self.shape = shape
+            self.stride = stride
+            self.offset = 0
+            self.device = device or types.SimpleNamespace(type="npu", index=0)
+            self.copy_calls = []
+
+        def copy_(self, other):
+            self.copy_calls.append(other)
+            return self
+
+    class FakeStorage:
+        def data_ptr(self):
+            return 1234
+
+    runtime = types.SimpleNamespace(device_id=0, _contiguous_stride=lambda shape: (shape[1], 1), _alloc_device=lambda size, runtime=None: 5678)
+    stream = types.SimpleNamespace(stream=0)
+
+    a = FakeTensor("a")
+    b = FakeTensor("b")
+    user_out = FakeTensor("user_out")
+    wrapped = FakeTensor("wrapped", dtype=float16_dtype)
+    cast_result = FakeTensor("cast_result", dtype=float_dtype)
+    cast_input = FakeTensor("cast_input", dtype=float16_dtype)
+
+    monkeypatch.setattr(npu_linalg.npu_runtime, "get_runtime", lambda device_id=0: runtime)
+    monkeypatch.setattr(npu_linalg.npu_runtime, "_alloc_device", lambda size, runtime=None: 5678)
+    monkeypatch.setattr(npu_linalg.npu_state, "current_stream", lambda device_id=0: stream)
+    monkeypatch.setattr(npu_linalg, "_unwrap_storage", lambda tensor: FakeStorage())
+    monkeypatch.setattr(npu_linalg, "_dtype_itemsize", lambda dtype: 4)
+    monkeypatch.setattr(npu_linalg, "_matmul_out_shape", lambda a_shape, b_shape: (2, 2))
+    monkeypatch.setattr(npu_linalg, "_numel", lambda shape: 4)
+    monkeypatch.setattr(npu_linalg, "npu_typed_storage_from_ptr", lambda ptr, numel, dtype, device=None: object())
+    monkeypatch.setattr(npu_linalg, "_wrap_tensor", lambda storage, shape, stride: wrapped)
+    monkeypatch.setattr(npu_linalg, "_use_soc_fallback", lambda op_name: True)
+
+    def fake_cast_tensor_dtype(tensor, dst_dtype):
+        if dst_dtype == float16_dtype:
+            return cast_input
+        if dst_dtype == float_dtype:
+            return cast_result
+        raise AssertionError(f"unexpected dst_dtype: {dst_dtype}")
+
+    monkeypatch.setattr(npu_linalg, "_cast_tensor_dtype", fake_cast_tensor_dtype)
+    monkeypatch.setattr(npu_linalg.aclnn, "matmul", lambda *args, **kwargs: None)
+
+    result = npu_linalg.matmul(a, b, out=user_out)
+
+    assert result is user_out
+    assert user_out.copy_calls == [cast_result]
+    assert wrapped.copy_calls == []
+    assert cast_result.copy_calls == []
+    assert result.dtype == float_dtype
 
 
 class TestLinalgMisc:

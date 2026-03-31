@@ -273,8 +273,12 @@ def true_divide(a, b):
     return div(a, b)
 
 
-def matmul(a, b):
-    return _from_numpy(_to_numpy(a) @ _to_numpy(b), a.dtype, a.device)
+def matmul(a, b, out=None):
+    result = _from_numpy(_to_numpy(a) @ _to_numpy(b), a.dtype, a.device)
+    if out is not None:
+        out.copy_(result)
+        return out
+    return result
 
 
 def mm(a, b):
