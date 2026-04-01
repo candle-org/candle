@@ -285,10 +285,14 @@ def amin(a, dim=None, keepdim=False):
 
 
 def count_nonzero(a, dim=None, keepdim=False):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU count_nonzero expects NPU tensors")
+
+    if a.dtype == bool_dtype:
+        return _cast_tensor_dtype(sum_(a, dim=dim, keepdim=keepdim, dtype=int32_dtype), int64_dtype)
+
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
     if not (aclnn.eq_scalar_symbols_ok() and aclnn.logical_not_symbols_ok() and aclnn.cast_symbols_ok()):
         raise RuntimeError("aclnn eq_scalar/logical_not/cast not available")
     dims = _normalize_reduction_dims(dim, len(a.shape))
@@ -440,88 +444,15 @@ def all_(a, dim=None, keepdim=False):
 
 
 def any_(a, dim=None, keepdim=False):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU any expects NPU tensors")
-    if not (aclnn.eq_scalar_symbols_ok() and aclnn.logical_not_symbols_ok() and aclnn.cast_symbols_ok()):
-        raise RuntimeError("aclnn eq_scalar/logical_not/cast not available")
-    dims = _normalize_reduction_dims(dim, len(a.shape))
-    out_shape = _reduce_out_shape(a.shape, dims, keepdim)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
-    mask_ptr = npu_runtime._alloc_device(_numel(a.shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
-    aclnn.eq_scalar(
-        _unwrap_storage(a).data_ptr(),
-        0,
-        mask_ptr,
-        a.shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    aclnn.logical_not(
-        mask_ptr,
-        mask_ptr,
-        a.shape,
-        a.stride,
-        bool_dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    cast_ptr = npu_runtime._alloc_device(_numel(a.shape) * _dtype_itemsize(int32_dtype), runtime=runtime)
-    aclnn.cast(
-        mask_ptr,
-        cast_ptr,
-        a.shape,
-        a.stride,
-        bool_dtype,
-        int32_dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    count_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(int32_dtype), runtime=runtime)
-    dims_payload = {
-        "dims": dims,
-        "out_shape": out_shape,
-        "out_stride": out_stride,
-    }
-    aclnn.reduce_sum(
-        cast_ptr,
-        count_ptr,
-        a.shape,
-        a.stride,
-        int32_dtype,
-        dims_payload,
-        keepdim,
-        runtime,
-        stream=stream.stream,
-    )
-    aclnn.eq_scalar(
-        count_ptr,
-        0,
-        out_ptr,
-        out_shape,
-        out_stride,
-        int32_dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    aclnn.logical_not(
-        out_ptr,
-        out_ptr,
-        out_shape,
-        out_stride,
-        bool_dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    runtime.defer_free(mask_ptr)
-    runtime.defer_free(cast_ptr)
-    runtime.defer_free(count_ptr)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    from .comparison import gt
+
+    # Workaround: repeated native bool-reduction checks can accumulate false
+    # positives on 910B during index validation; use the stable composite below.
+    # TODO: re-enable the previous native bool-reduction chain when CANN fixes
+    # repeated 910B bool reduction state corruption.
+    return gt(count_nonzero(a, dim=dim, keepdim=keepdim), 0)
 
 
 def min_(a, b):
@@ -719,7 +650,7 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
     if dtype is not None:
         # Cast input to target dtype before summing
         from ...._dispatch.dispatcher import dispatch
-        a = dispatch("to", "npu", a, dtype)
+        a = dispatch("to", "npu", a, a.device, dtype=dtype)
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":

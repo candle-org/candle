@@ -52,6 +52,7 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | `einsum` | `aclnnEinsum` | 161002 | composite: matmul/permute/sum patterns | CANN 8.x |
 | `linspace` / `logspace` | `aclnnLinspace` | 161002 | composite: on-device `ones + cumsum + mul + add`; `logspace` builds from composite `linspace` | CANN 8.x |
 | `isinf` | `aclnnIsInf` | 161001 (unavailable) | composite: `~isfinite & ~isnan` | CANN 8.x |
+| `any` / bool `count_nonzero` during repeated index validation | repeated ACLNN bool reduction chain | repeated false positives on valid 910B bool masks during gather/im2col index checks | composite: `gt(count_nonzero(...), 0)` with bool `count_nonzero` routed through `sum(bool->int32)` then cast to int64 | CANN 8.x |
 | `im2col` | `aclnnIm2col` | 561103 | composite: unfold | CANN 8.x |
 
 ## 910A

@@ -170,6 +170,19 @@ def test_910b_im2col():
     np.testing.assert_allclose(got[0, :, 0], [0, 1, 4, 5], atol=1e-6)
 
 
+@pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
+def test_910b_im2col_index_validation_any_regression():
+    """Repeated any() checks on valid im2col indices must stay false on 910B."""
+    idx_np = np.array([0, 1, 4, 5, 8, 9, 12, 13], dtype=np.int64)
+    idx = torch.tensor(idx_np, device="npu", dtype=torch.int64)
+
+    for _ in range(16):
+        above = idx > 15
+        below = idx < 0
+        assert not bool(torch.any(above).to("cpu").numpy())
+        assert not bool(torch.any(below).to("cpu").numpy())
+
+
 # ---------------------------------------------------------------------------
 # Regression guard: ops_soc table completeness
 # ---------------------------------------------------------------------------
