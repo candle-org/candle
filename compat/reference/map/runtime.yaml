@@ -1,0 +1,28 @@
+- id: runtime.npu.stream_current_device
+  domain: runtime
+  priority: P0
+  hot_path: true
+  upstream:
+    torch:
+      semantic_owner: stream / current-device execution state
+      impl_tier: cpp_core
+      refs:
+        - c10/core/Stream.h
+    torch_npu:
+      semantic_owner: Ascend stream submission state
+      impl_tier: backend_bridge
+      refs:
+        - torch_npu/csrc
+  candle:
+    modules:
+      - src/candle/_backends/npu/runtime.py
+      - src/candle/_cython/_npu_ops.pyx
+    current_semantic_status: partial
+    current_impl_tier: python_plus_partial_cython
+    target_impl_tier: cython_core
+  verification:
+    tests:
+      - tests/npu/910b/test_910b_watchlist.py*
+    reports: []
+  gaps:
+    - stream and current-device state need explicit layered reporting on accelerator CI

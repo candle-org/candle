@@ -1,0 +1,27 @@
+sources:
+  pytorch:
+    path: compat/_pytorch
+    revision: v2.5.0
+    mirrors:
+      - https://gitee.com/mirrors/pytorch.git
+      - https://github.com/pytorch/pytorch.git
+    roles:
+      - semantic-baseline
+      - test-baseline
+      - impl-tier-baseline
+
+  torch_npu:
+    path: compat/_torch_npu
+    revision: v2.5.1-7.0.0
+    mirrors:
+      - https://github.com/Ascend/pytorch.git
+    roles:
+      - npu-semantic-baseline
+      - implementation-reference
+      - impl-tier-baseline
+
+policies:
+  detached_checkout: true
+  allow_local_dirty: false
+  offline_reuse: true
+  reports_dir: compat/reference/reports
