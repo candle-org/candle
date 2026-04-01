@@ -86,6 +86,10 @@ _ALLOWED_WEIGHTS_GLOBALS = {
 }
 
 
+def _rebuild_tensor(storage, storage_offset, size, stride):
+    return _rebuild_tensor_v2(storage, storage_offset, size, stride, False, OrderedDict())
+
+
 class _WeightsOnlyUnpickler(pickle.Unpickler):
     def find_class(self, mod_name, name):
         key = (mod_name, name)
@@ -97,8 +101,10 @@ class _WeightsOnlyUnpickler(pickle.Unpickler):
             return OrderedDict
         if name == "set" and mod_name in {"__builtin__", "builtins"}:
             return set
-        if mod_name == "torch._utils" and name in {"_rebuild_tensor_v2", "_rebuild_tensor"}:
+        if mod_name == "torch._utils" and name == "_rebuild_tensor_v2":
             return _rebuild_tensor_v2
+        if mod_name == "torch._utils" and name == "_rebuild_tensor":
+            return _rebuild_tensor
         if mod_name == "torch" and name in _STORAGE_NAME_TO_DTYPE:
             return globals()[name]
         raise pickle.UnpicklingError(f"weights_only unsupported global {mod_name}.{name}")
@@ -106,8 +112,10 @@ class _WeightsOnlyUnpickler(pickle.Unpickler):
 
 class _LegacyBridgeUnpickler(pickle.Unpickler):
     def find_class(self, mod_name, name):
-        if mod_name == "torch._utils" and name in {"_rebuild_tensor_v2", "_rebuild_tensor"}:
+        if mod_name == "torch._utils" and name == "_rebuild_tensor_v2":
             return _rebuild_tensor_v2
+        if mod_name == "torch._utils" and name == "_rebuild_tensor":
+            return _rebuild_tensor
         if mod_name == "torch" and name in _STORAGE_NAME_TO_DTYPE:
             return globals()[name]
         if mod_name == "collections" and name == "OrderedDict":
@@ -406,8 +414,10 @@ def _storage_dtype_from_type(storage_type):
 
 class _TorchCompatUnpickler(pickle.Unpickler):
     def find_class(self, mod_name, name):
-        if mod_name == "torch._utils" and name in {"_rebuild_tensor_v2", "_rebuild_tensor"}:
+        if mod_name == "torch._utils" and name == "_rebuild_tensor_v2":
             return _rebuild_tensor_v2
+        if mod_name == "torch._utils" and name == "_rebuild_tensor":
+            return _rebuild_tensor
         if mod_name == "torch" and name in _STORAGE_NAME_TO_DTYPE:
             return globals()[name]
         if mod_name == "collections" and name == "OrderedDict":
