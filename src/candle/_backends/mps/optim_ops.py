@@ -11,12 +11,18 @@ from ..._storage import mps_typed_storage_from_numpy
 
 
 def _to_numpy(t):
-    return t._numpy_view()
+    storage_base = t.storage().data.ravel()
+    itemsize = storage_base.itemsize
+    strides = tuple(s * itemsize for s in t.stride)
+    return np.lib.stride_tricks.as_strided(
+        storage_base[t.offset:], shape=t.shape, strides=strides
+    )
 
 
 def _write_back(t, arr):
     """Write numpy array back into a Tensor's storage."""
-    t.storage()._data[:] = arr
+    storage_data = t.storage()._data
+    storage_data[:] = np.asarray(arr).reshape(storage_data.shape)
 
 
 def _sgd_step(param, grad, buf, lr, momentum, dampening, weight_decay, nesterov, maximize):
