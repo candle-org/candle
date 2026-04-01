@@ -4,11 +4,12 @@ Run PyTorch's own test suite against candle to measure API compatibility.
 
 ## How it works
 
-1. `run.py` shallow-clones PyTorch at a pinned tag (`v2.5.0`) into `_pytorch/`
-2. A bridge `conftest.py` is generated inside `_pytorch/test/` that loads xfail rules
-3. Candle's `.pth` + meta path finder handles `import torch` -> `import candle` aliasing
-4. pytest runs the selected test files with `--confcutdir` and `--continue-on-collection-errors`
-5. Results are collected as JSON and summarized as a human-readable table
+1. `compat/reference/sync.py` ensures a shared pinned PyTorch checkout exists at `compat/_pytorch/`
+2. `compat/pytorch/run.py` reuses that canonical checkout instead of cloning its own private copy
+3. A bridge `conftest.py` is generated inside `compat/_pytorch/test/` to load xfail rules
+4. Candle's `.pth` + meta path finder handles `import torch` -> `import candle` aliasing
+5. pytest runs the selected test files with `--confcutdir` and `--continue-on-collection-errors`
+6. Results are collected as JSON and summarized as a human-readable table
 
 ## Prerequisites
 
@@ -47,6 +48,13 @@ python compat/pytorch/run.py --file test_tensor.py -k "test_add"
 
 ```bash
 python compat/pytorch/run.py --setup-only
+```
+
+### Sync the shared checkout only
+
+```bash
+python compat/pytorch/run.py --sync-only
+python compat/pytorch/run.py --sync-only --offline
 ```
 
 ### Gate only (run pass_gate tests from xfail.yaml)
@@ -114,6 +122,8 @@ compat/pytorch/
   requirements.txt    # pip dependencies
   test-and-report.sh  # shell wrapper for CI/agents
   README.md           # this file
-  _pytorch/           # (gitignored) cloned PyTorch repo
   _reports/           # (gitignored) JSON test reports
+
+compat/
+  _pytorch/           # (gitignored) shared PyTorch checkout reused by compat/pytorch/run.py
 ```

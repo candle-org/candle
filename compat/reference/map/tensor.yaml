@@ -1,0 +1,56 @@
+- id: tensor.detach.version_sharing
+  domain: tensor
+  priority: P0
+  hot_path: true
+  upstream:
+    torch:
+      semantic_owner: TensorImpl invariants
+      impl_tier: cpp_core
+      refs:
+        - c10/core/TensorImpl.h
+    torch_npu:
+      semantic_owner: inherits torch core semantics
+      impl_tier: python_bridge
+      refs: []
+  candle:
+    modules:
+      - src/candle/_tensor.py
+      - src/candle/_cython/_tensor_impl.pyx
+    current_semantic_status: partial
+    current_impl_tier: python_plus_partial_cython
+    target_impl_tier: cython_core
+  verification:
+    tests:
+      - tests/contract/test_tensor_alias_version_contract.py*
+    reports: []
+  gaps:
+    - detach must share version state with the source tensor
+
+- id: tensor.view.inplace_alias_visibility
+  domain: tensor
+  priority: P0
+  hot_path: true
+  upstream:
+    torch:
+      semantic_owner: view aliasing invariants
+      impl_tier: cpp_core
+      refs:
+        - c10/core/TensorImpl.h
+    torch_npu:
+      semantic_owner: inherits torch view semantics
+      impl_tier: python_bridge
+      refs: []
+  candle:
+    modules:
+      - src/candle/_tensor.py
+      - src/candle/_backends/common/view.py
+    current_semantic_status: partial
+    current_impl_tier: python_plus_partial_cython
+    target_impl_tier: cython_core
+  verification:
+    tests:
+      - tests/contract/test_inplace_view_rules.py*
+      - tests/contract/test_tensor_alias_version_contract.py*unary_inplace*
+    reports: []
+  gaps:
+    - existing aliases must observe true in-place mutations

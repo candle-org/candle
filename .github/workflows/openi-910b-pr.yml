@@ -1,0 +1,119 @@
+name: OpenI 910B Layered CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'compat/reference/**'
+      - 'compat/pytorch/**'
+      - 'tests/npu/**'
+      - '.github/workflows/openi-910b-pr.yml'
+      - 'src/candle/**'
+      - 'requirements/**'
+      - 'setup.py'
+      - 'pyproject.toml'
+
+jobs:
+  run-910b:
+    runs-on:
+      - self-hosted
+      - openi-npu
+      - openi-910b
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -l {0}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build candle
+        run: |
+          CONDA_SH=/home/ma-user/anaconda3/etc/profile.d/conda.sh
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          source "$CONDA_SH"
+          if [ ! -x "$ENV_DIR/bin/python" ]; then
+            mkdir -p /home/ma-user/work/.conda/envs
+            conda create -y --override-channels -c https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/conda-forge -p "$ENV_DIR" python=3.11
+          fi
+          export PATH="$ENV_DIR/bin:$PATH"
+          PY="$ENV_DIR/bin/python"
+          PIP="$ENV_DIR/bin/pip"
+          $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements/requirements-test.txt
+          $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple Cython
+          $PY setup.py build_ext --inplace
+          $PIP install -i https://pypi.tuna.tsinghua.edu.cn/simple -e . --no-build-isolation
+      - name: Prepare report directories
+        run: mkdir -p compat/reference/reports/910b
+      - name: Sync reference sources
+        run: |
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          PY="$ENV_DIR/bin/python"
+          $PY compat/reference/sync.py --source pytorch --json > compat/reference/reports/910b/pytorch-sync.json || true
+          $PY compat/reference/sync.py --source torch_npu --json > compat/reference/reports/910b/torch-npu-sync.json || true
+      - name: Capture environment summary
+        run: |
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          PY="$ENV_DIR/bin/python"
+          $PY - <<'PY'
+          import json
+          import os
+          import platform
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          result = subprocess.run(["bash", "-lc", "npu-smi info"], capture_output=True, text=True, check=False)
+          payload = {
+              "python": sys.version.split()[0],
+              "platform": platform.platform(),
+              "ascend_visible_devices": os.environ.get("ASCEND_VISIBLE_DEVICES"),
+              "ascend_rt_visible_devices": os.environ.get("ASCEND_RT_VISIBLE_DEVICES"),
+              "npu_smi_rc": result.returncode,
+              "npu_smi_excerpt": result.stdout.splitlines()[:20],
+          }
+          out = Path("compat/reference/reports/910b/env-summary.json")
+          out.parent.mkdir(parents=True, exist_ok=True)
+          out.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+          PY
+      - name: Run 910B mechanism suite
+        run: |
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          PY="$ENV_DIR/bin/python"
+          export PATH="$ENV_DIR/bin:$PATH"
+          export ASCEND_VISIBLE_DEVICES=0
+          export ASCEND_RT_VISIBLE_DEVICES=0
+          export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+          $PY -m pytest tests/npu/910b/test_910b_watchlist.py -v --tb=short \
+            --junitxml compat/reference/reports/910b/mechanism.xml 2>&1 | tee compat/reference/reports/910b/mechanism.log
+      - name: Run 910B workload suite
+        run: |
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          PY="$ENV_DIR/bin/python"
+          export PATH="$ENV_DIR/bin:$PATH"
+          export ASCEND_VISIBLE_DEVICES=0
+          export ASCEND_RT_VISIBLE_DEVICES=0
+          export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
+          $PY -m pytest \
+            tests/npu/test_npu_golden_training_loop.py \
+            tests/npu/test_npu_training_checkpoint_continuity.py \
+            tests/npu/test_no_cpu_fallback_npu.py \
+            -v --tb=short \
+            --junitxml compat/reference/reports/910b/workload.xml 2>&1 | tee compat/reference/reports/910b/workload.log
+      - name: Write layered 910B reports
+        run: |
+          ENV_DIR=/home/ma-user/work/.conda/envs/candle-py311
+          export PATH="$ENV_DIR/bin:$PATH"
+          python compat/reference/diff.py npu-report \
+            --map-dir compat/reference/map \
+            --env-json compat/reference/reports/910b/env-summary.json \
+            --mechanism-junit compat/reference/reports/910b/mechanism.xml \
+            --workload-junit compat/reference/reports/910b/workload.xml \
+            --output-dir compat/reference/reports/910b
+          test -f compat/reference/reports/910b/mechanism-regressions.json
+          test -f compat/reference/reports/910b/workload-regressions.json
+          cat compat/reference/reports/910b/latest-summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openi-910b-layered-reports
+          path: compat/reference/reports/910b/
+          retention-days: 7

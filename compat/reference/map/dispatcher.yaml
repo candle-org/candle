@@ -1,0 +1,27 @@
+- id: dispatcher.inplace_schema_version_bump
+  domain: dispatcher
+  priority: P0
+  hot_path: true
+  upstream:
+    torch:
+      semantic_owner: schema + mutation dispatch invariants
+      impl_tier: cpp_core
+      refs:
+        - aten/src/ATen/core/dispatch
+    torch_npu:
+      semantic_owner: inherits torch dispatcher mutation rules
+      impl_tier: backend_bridge
+      refs: []
+  candle:
+    modules:
+      - src/candle/_dispatch/schemas.py
+      - src/candle/_dispatch/dispatcher.py
+    current_semantic_status: partial
+    current_impl_tier: python_plus_partial_cython
+    target_impl_tier: cython_core
+  verification:
+    tests:
+      - tests/contract/test_tensor_alias_version_contract.py*setitem*
+    reports: []
+  gaps:
+    - mutating ops must consistently bump the shared version counter

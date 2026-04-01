@@ -17,6 +17,7 @@ on:
     paths:
       - "src/candle/**"
       - "compat/pytorch/**"
+      - "compat/reference/**"
 
 jobs:
   pr-gate:
@@ -29,6 +30,14 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -e . && pip install -r compat/pytorch/requirements.txt
+      - run: python compat/reference/sync.py --source pytorch
+      - run: python compat/reference/scan.py --output compat/reference/reports/source-status.json
+      - run: |
+          python compat/reference/diff.py summary \
+            --map-dir compat/reference/map \
+            --source-status compat/reference/reports/source-status.json \
+            --json-out compat/reference/reports/gap-summary.json \
+            --md-out compat/reference/reports/module-diff.md
       - run: USE_CANDLE=1 python compat/pytorch/run.py --tier mechanism:1 --gate-only --tb=short
 
   nightly:
@@ -41,6 +50,14 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -e . && pip install -r compat/pytorch/requirements.txt
+      - run: python compat/reference/sync.py --source pytorch
+      - run: python compat/reference/scan.py --output compat/reference/reports/source-status.json
+      - run: |
+          python compat/reference/diff.py summary \
+            --map-dir compat/reference/map \
+            --source-status compat/reference/reports/source-status.json \
+            --json-out compat/reference/reports/gap-summary.json \
+            --md-out compat/reference/reports/module-diff.md
       - run: |
           TIER="${{ github.event.inputs.tier || 'mechanism:1' }}"
           FILE="${{ github.event.inputs.file || '' }}"
@@ -52,6 +69,10 @@ jobs:
         if: always()
         with:
           name: pytorch-compat-report
-          path: "compat/pytorch/_reports/"
+          path: |
+            compat/pytorch/_reports/
+            compat/reference/reports/
       - if: always()
-        run: python compat/pytorch/run.py --summarize compat/pytorch/_reports/report.json >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          python compat/pytorch/run.py --summarize compat/pytorch/_reports/report.json >> "$GITHUB_STEP_SUMMARY"
+          [ -f compat/reference/reports/module-diff.md ] && cat compat/reference/reports/module-diff.md >> "$GITHUB_STEP_SUMMARY"

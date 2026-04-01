@@ -1,0 +1,55 @@
+- id: autograd.function.mark_dirty
+  domain: autograd
+  priority: P0
+  hot_path: true
+  upstream:
+    torch:
+      semantic_owner: custom Function mutation invariants
+      impl_tier: cpp_core
+      refs:
+        - torch/csrc/autograd/custom_function.cpp
+    torch_npu:
+      semantic_owner: inherits torch autograd mutation rules
+      impl_tier: python_bridge
+      refs: []
+  candle:
+    modules:
+      - src/candle/_cython/_autograd_function.pyx
+      - src/candle/_cython/_autograd_engine.pyx
+    current_semantic_status: partial
+    current_impl_tier: python_plus_partial_cython
+    target_impl_tier: cython_core
+  verification:
+    tests:
+      - tests/cpu/test_autograd_function.py*version_check*
+    reports: []
+  gaps:
+    - mark_dirty must invalidate saved tensor version checks correctly
+
+- id: autograd.function.output_slots
+  domain: autograd
+  priority: P0
+  hot_path: true
+  upstream:
+    torch:
+      semantic_owner: custom Function output-slot routing
+      impl_tier: cpp_core
+      refs:
+        - torch/csrc/autograd/custom_function.cpp
+    torch_npu:
+      semantic_owner: inherits torch autograd slot routing
+      impl_tier: python_bridge
+      refs: []
+  candle:
+    modules:
+      - src/candle/_cython/_autograd_function.pyx
+      - src/candle/_cython/_autograd_node.pyx
+    current_semantic_status: partial
+    current_impl_tier: python_plus_partial_cython
+    target_impl_tier: cython_core
+  verification:
+    tests:
+      - tests/cpu/test_autograd_function.py*DuplicateOutput*
+    reports: []
+  gaps:
+    - duplicate outputs must route gradients back to the same input slot correctly
