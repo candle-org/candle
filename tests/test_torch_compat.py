@@ -305,6 +305,29 @@ class TestImportHook:
         out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
         assert "OK" in out
 
+    def test_torch_frombuffer_accepts_bytearray_with_offset(self):
+        """Torchvision MNIST loaders use torch.frombuffer on raw IDX bytes."""
+        code = textwrap.dedent("""\
+            import torch
+            t = torch.frombuffer(bytearray(range(8)), dtype=torch.uint8, offset=4)
+            assert t.tolist() == [4, 5, 6, 7]
+            print("OK")
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
+    def test_torch_frombuffer_supports_multibyte_dtype_and_view(self):
+        """Torchvision MNIST uses frombuffer result with shape reinterpretation."""
+        code = textwrap.dedent("""\
+            import torch
+            raw = bytearray([1, 0, 2, 0, 3, 0, 4, 0])
+            t = torch.frombuffer(raw, dtype=torch.int16)
+            assert t.view(2, 2).tolist() == [[1, 2], [3, 4]]
+            print("OK")
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
     def test_torch_zeros(self):
         """Functional: actually create a tensor through the redirected import."""
         code = textwrap.dedent("""\

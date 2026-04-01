@@ -1,5 +1,6 @@
 import numpy as np
 from ._dtype import float32, int64
+from ._dtype import to_numpy_dtype
 from ._dtype import bool as bool_dtype
 from ._functional import tensor as tensor_dispatch
 from ._functional import zeros as zeros_dispatch
@@ -164,6 +165,13 @@ def from_numpy(ndarray):
     }
     dt = _numpy_to_dtype.get(ndarray.dtype.type, float32)
     return tensor_dispatch(ndarray, dtype=dt)
+
+
+def frombuffer(buffer, *, dtype, count=-1, offset=0, requires_grad=False):
+    np_dtype = to_numpy_dtype(dtype)
+    arr = np.frombuffer(buffer, dtype=np_dtype, count=count, offset=offset).copy()
+    out = tensor_dispatch(arr, dtype=dtype, device=None, requires_grad=requires_grad)
+    return out
 
 
 def as_tensor(data, dtype=None, device=None):
