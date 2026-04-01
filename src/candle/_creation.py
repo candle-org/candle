@@ -182,5 +182,37 @@ def as_tensor(data, dtype=None, device=None):
     return tensor_dispatch(data, dtype=dtype, device=device)
 
 
+def asarray(obj, *, dtype=None, device=None, copy=None, requires_grad=False):
+    from ._tensor import Tensor
+
+    if isinstance(obj, Tensor):
+        result = obj
+        if dtype is not None or device is not None:
+            result = result.to(device=device, dtype=dtype)
+        if copy:
+            result = result.clone()
+        elif copy is None and result is obj and (dtype is not None or device is not None):
+            pass  # already handled by .to() which copies when needed
+        return _apply_requires_grad(result, requires_grad)
+
+    if isinstance(obj, np.ndarray):
+        if dtype is None:
+            dtype = _infer_creation_dtype(obj)
+        if dtype is None:
+            from . import get_default_dtype
+            dtype = get_default_dtype()
+        result = tensor_dispatch(obj, dtype=dtype, device=device)
+        return _apply_requires_grad(result, requires_grad)
+
+    # lists, tuples, scalars
+    if dtype is None:
+        dtype = _infer_creation_dtype(obj)
+    if dtype is None:
+        from . import get_default_dtype
+        dtype = get_default_dtype()
+    result = tensor_dispatch(obj, dtype=dtype, device=device)
+    return _apply_requires_grad(result, requires_grad)
+
+
 def normal(mean, std, size=None, *, generator=None, out=None):
     return normal_dispatch(mean, std, size=size, generator=generator, out=out)
