@@ -305,6 +305,19 @@ class TestImportHook:
         out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
         assert "OK" in out
 
+    def test_torch_frombuffer_shares_memory_with_writable_buffer(self):
+        """torch.frombuffer must alias the original writable buffer."""
+        code = textwrap.dedent("""\
+            import torch
+            raw = bytearray([1, 2, 3, 4])
+            t = torch.frombuffer(raw, dtype=torch.uint8)
+            raw[1] = 99
+            assert t.tolist() == [1, 99, 3, 4]
+            print("OK")
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
     def test_torch_frombuffer_accepts_bytearray_with_offset(self):
         """Torchvision MNIST loaders use torch.frombuffer on raw IDX bytes."""
         code = textwrap.dedent("""\
