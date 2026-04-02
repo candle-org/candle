@@ -29,7 +29,12 @@ def add(a, b):
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
     if _HAS_FAST_ADD:
-        return _fast_add_impl(a, b)
+        try:
+            from candle.profiler.profiler import is_profiler_enabled
+            if not is_profiler_enabled():
+                return _fast_add_impl(a, b)
+        except Exception:
+            return _fast_add_impl(a, b)
     return _binary_op(a, b, aclnn.add, "add")
 
 
