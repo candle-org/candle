@@ -90,7 +90,7 @@ BoolTensor = Tensor
 ComplexFloatTensor = Tensor
 ComplexDoubleTensor = Tensor
 Size = tuple
-from ._creation import tensor, zeros, ones, empty, arange, linspace, full, logspace, eye, range, randn, rand, randint, randperm, from_numpy, as_tensor, normal, asarray
+from ._creation import tensor, zeros, ones, empty, arange, linspace, full, logspace, eye, range, randn, rand, randint, randperm, from_numpy, as_tensor, normal
 from ._functional import zeros_like
 from ._functional import ones_like, empty_like, full_like, randn_like, rand_like, randint_like
 from ._storage import UntypedStorage, TypedStorage
@@ -660,7 +660,6 @@ __all__ = [
     "randperm",
     "from_numpy",
     "as_tensor",
-    "asarray",
     # Batch 1 ops
     "narrow",
     "flatten",

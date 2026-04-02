@@ -91,29 +91,3 @@ def test_rand_creation_requires_grad_rejects_integer_dtype_cpu():
 def test_randn_creation_requires_grad_rejects_bool_dtype_cpu():
     with pytest.raises(RuntimeError, match="Only Tensors of floating point and complex dtype can require gradients"):
         torch.randn((2, 3), dtype=torch.bool, requires_grad=True)
-
-
-def test_asarray_from_list():
-    t = torch.asarray([1.0, 2.0, 3.0])
-    assert t.shape == (3,)
-    np.testing.assert_allclose(t.numpy(), [1.0, 2.0, 3.0])
-
-
-def test_asarray_from_numpy():
-    arr = np.array([4.0, 5.0, 6.0], dtype=np.float32)
-    t = torch.asarray(arr)
-    assert t.dtype == torch.float32
-    np.testing.assert_allclose(t.numpy(), arr)
-
-
-def test_asarray_from_tensor():
-    original = torch.tensor([7.0, 8.0, 9.0])
-    t = torch.asarray(original)
-    assert t.shape == original.shape
-    np.testing.assert_allclose(t.numpy(), original.numpy())
-
-
-def test_asarray_with_dtype():
-    t = torch.asarray([1, 2, 3], dtype=torch.float32)
-    assert t.dtype == torch.float32
-    np.testing.assert_allclose(t.numpy(), [1.0, 2.0, 3.0])
