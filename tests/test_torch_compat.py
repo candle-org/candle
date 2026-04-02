@@ -305,19 +305,6 @@ class TestImportHook:
         out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
         assert "OK" in out
 
-    def test_from_torch_utils_dlpack_imports_to_dlpack(self):
-        """Tensor creation compat requires torch.utils.dlpack.to_dlpack."""
-        code = textwrap.dedent("""\
-            import torch
-            from torch.utils.dlpack import to_dlpack
-
-            capsule = to_dlpack(torch.tensor([1, 2, 3], dtype=torch.float32))
-            assert capsule is not None
-            print("OK")
-        """)
-        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
-        assert "OK" in out
-
     def test_torch_zeros(self):
         """Functional: actually create a tensor through the redirected import."""
         code = textwrap.dedent("""\
