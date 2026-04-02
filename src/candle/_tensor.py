@@ -298,6 +298,12 @@ class Tensor(_TensorBase):
         """
         return self._storage.untyped_storage()
 
+    def data_ptr(self):
+        """Return the address of the first element of this tensor."""
+        storage = self._storage.untyped_storage()
+        base = storage.data_ptr()
+        return base + self.offset * self.dtype.itemsize
+
     @property
     def ndim(self):
         return self._ndim
