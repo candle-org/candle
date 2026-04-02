@@ -113,3 +113,48 @@ def test_view_setitem_bumps_shared_version_counter_once():
     assert v._version_counter.value == before_view + 1
     assert x.tolist() == [[10.0, 2.0], [3.0, 4.0]]
     assert v.tolist() == [10.0, 2.0, 3.0, 4.0]
+
+
+def test_set_bumps_version_counter_once():
+    x = torch.tensor([0.0, 1.0, 2.0, 3.0])
+    before = x._version_counter.value
+
+    out = x.set_(x.storage(), 1, (2,), (1,))
+
+    assert out is x
+    assert x._version_counter.value == before + 1
+    assert x.tolist() == [1.0, 2.0]
+
+
+def test_set_on_view_bumps_shared_version_counter_once():
+    x = torch.tensor([0.0, 1.0, 2.0, 3.0])
+    v = x[1:]
+    before_base = x._version_counter.value
+    before_view = v._version_counter.value
+
+    out = v.set_(x.storage(), 0, (2,), (1,))
+
+    assert out is v
+    assert x._version_counter.value == before_base + 1
+    assert v._version_counter.value == before_view + 1
+    assert v.tolist() == [0.0, 1.0]
+    assert v._base is x
+
+
+def test_set_on_leaf_requires_grad_errors():
+    x = torch.tensor([1.0, 2.0, 3.0], requires_grad=True)
+    with pytest.raises(
+        RuntimeError,
+        match=r"a leaf Variable that requires grad is being used in an in-place operation.",
+    ):
+        x.set_(x.storage(), 1, (2,), (1,))
+
+
+def test_set_on_view_of_leaf_errors():
+    x = torch.tensor([1.0, 2.0, 3.0], requires_grad=True)
+    v = x[1:]
+    with pytest.raises(
+        RuntimeError,
+        match=r"a view of a leaf Variable that requires grad is being used in an in-place operation.",
+    ):
+        v.set_(x.storage(), 0, (2,), (1,))
