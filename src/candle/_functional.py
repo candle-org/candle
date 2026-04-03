@@ -218,8 +218,14 @@ def _py_matmul_wrapper(*args, **kwargs):
 add = _add_impl
 transpose = _transpose_impl
 reshape = _reshape_impl
-mul = _py_mul
 matmul = _matmul_impl
+
+
+def mul(*args, **kwargs):
+    """Dispatch mul through Cython fast path unless out= is given."""
+    if kwargs.get("out") is not None:
+        return _py_mul(*args, **kwargs)
+    return _mul_impl(*args, **kwargs)
 
 
 def _py_relu_wrapper(*args, **kwargs):

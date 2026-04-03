@@ -103,6 +103,42 @@ _op_cache = {}
 cdef dict _executor_cleanup = {}
 
 # ---------------------------------------------------------------------------
+# Pending executor CANN-destroy list.
+# Executors are created by GetWorkspaceSize and must eventually be returned
+# to the CANN pool via aclDestroyAclOpExecutor.  Destroying them immediately
+# after Execute segfaults (async kernel still references the executor).
+# Instead, we collect handles here and destroy them in bulk once the stream
+# has been synchronised (safe because all async work has completed).
+# ---------------------------------------------------------------------------
+
+cdef list _pending_executor_destroys = []
+
+
+def _defer_cann_executor_destroy(uintptr_t handle):
+    """Record an executor handle for later aclDestroyAclOpExecutor."""
+    if handle != 0:
+        _pending_executor_destroys.append(int(handle))
+
+
+def flush_pending_executor_destroys():
+    """Destroy all pending executors via aclDestroyAclOpExecutor.
+
+    MUST only be called after the NPU stream is synchronised so that
+    no async kernel still references any of these executors.
+    """
+    global _pending_executor_destroys
+    if not _pending_executor_destroys:
+        return
+    cdef list batch = _pending_executor_destroys
+    _pending_executor_destroys = []
+    cdef uintptr_t h
+    for h_int in batch:
+        h = <uintptr_t>h_int
+        if h != 0 and _fn_destroy_executor != NULL:
+            with nogil:
+                _fn_destroy_executor(<void*>h)
+
+# ---------------------------------------------------------------------------
 # Tensor descriptor cache — reuse aclTensor handles for input tensors
 # ---------------------------------------------------------------------------
 
@@ -639,8 +675,8 @@ def destroy_executor(uintptr_t handle):
     if handle == 0:
         return 0
     # torch_npu never calls aclDestroyAclOpExecutor — the CANN runtime
-    # manages executor lifetime internally.  Only clean up the associated
-    # tensor/scalar/array handles that Candle created.
+    # manages executor lifetime internally via PTA cache.  Only clean up
+    # the associated tensor/scalar/array handles that Candle created.
     _release_executor_cleanup(handle)
     return 0
 
