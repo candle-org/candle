@@ -82,6 +82,15 @@ class TestExpandCopy:
         expected = np.array([[1, 1, 1, 1], [2, 2, 2, 2], [3, 3, 3, 3]], dtype=np.float32)
         np.testing.assert_allclose(y.to("cpu").numpy(), expected)
 
+    def test_after_nansum_still_copies_correctly(self):
+        values = torch.tensor([1.0, float("nan"), 3.0, float("nan"), 5.0], device="npu")
+        np.testing.assert_allclose(torch.nansum(values).to("cpu").numpy(), np.array(9.0, dtype=np.float32))
+
+        x = torch.tensor([[1.0], [2.0], [3.0]], device="npu")
+        y = x.expand_copy(3, 4)
+        expected = np.array([[1, 1, 1, 1], [2, 2, 2, 2], [3, 3, 3, 3]], dtype=np.float32)
+        np.testing.assert_allclose(y.to("cpu").numpy(), expected)
+
 
 # ---------------------------------------------------------------------------
 # slice / slice_copy / slice_scatter

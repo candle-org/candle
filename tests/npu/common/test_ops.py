@@ -188,6 +188,16 @@ def test_npu_isfinite_isinf_isnan_signbit():
     assert np.array_equal(signbit.to("cpu").numpy(), np.signbit(data))
 
 
+def test_npu_isnan_repeated_calls_stay_correct():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    data = np.array([1.0, np.nan, 3.0, np.nan, 5.0], dtype=np.float32)
+    x = torch.tensor(data, device="npu", dtype=torch.float32)
+    expected = np.isnan(data)
+    for _ in range(64):
+        assert np.array_equal(torch.isnan(x).to("cpu").numpy(), expected)
+
+
 def test_npu_amin_amax():
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
