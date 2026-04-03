@@ -103,6 +103,22 @@ def test_profiler_npu_event_device_type():
     assert any(event["device_type"] == "NPU" for event in prof.events())
 
 
+@pytest.mark.skipif(not torch.npu.is_available(), reason="NPU not available")
+def test_profiler_npu_event_does_not_corrupt_following_functionalize_view_writeback():
+    x = torch.ones((2, 2), device="npu")
+
+    with torch.profiler.profile() as prof:
+        _ = x + x
+
+    assert any(event["device_type"] == "NPU" for event in prof.events())
+
+    base = torch.tensor([1.0, 2.0, 3.0, 4.0], device="npu")
+    view = base.view((2, 2))
+    with torch.functionalize():
+        view.add_(torch.ones((2, 2), device="npu"))
+    assert base.to("cpu").storage().data.tolist() == [2.0, 3.0, 4.0, 5.0]
+
+
 def test_profiler_rejects_unknown_activity():
     with pytest.raises(ValueError):
         torch.profiler.profile(activities=["TPU"])

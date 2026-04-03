@@ -2163,14 +2163,30 @@ def tensor_hardtanh_method(self, min_val=-1.0, max_val=1.0):
     return _dispatch_fn("hardtanh", self.device.type, self, min_val, max_val)
 
 
-def tensor_min_method(self, other):
+def tensor_min_method(self, dim=None, keepdim=False):
+    cdef object amin_dispatch_fn, min_dispatch_fn
+    _ensure_base()
     _ensure_dispatch_ref()
-    return _dispatch_fn("min", self.device.type, self, other)
+    if dim is None:
+        from candle._functional import amin as amin_dispatch
+        return amin_dispatch(self)
+    if isinstance(dim, _BaseTensor):
+        from candle._functional import min as min_dispatch
+        return min_dispatch(self, dim)
+    return _dispatch_fn("min", self.device.type, self, dim, keepdim)
 
 
-def tensor_max_method(self, other):
+def tensor_max_method(self, dim=None, keepdim=False):
+    cdef object amax_dispatch_fn, max_dispatch_fn
+    _ensure_base()
     _ensure_dispatch_ref()
-    return _dispatch_fn("max", self.device.type, self, other)
+    if dim is None:
+        from candle._functional import amax as amax_dispatch
+        return amax_dispatch(self)
+    if isinstance(dim, _BaseTensor):
+        from candle._functional import max as max_dispatch
+        return max_dispatch(self, dim)
+    return _dispatch_fn("max", self.device.type, self, dim, keepdim)
 
 
 def tensor_amin_method(self, dim=None, keepdim=False):

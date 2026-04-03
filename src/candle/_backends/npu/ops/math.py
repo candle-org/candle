@@ -29,7 +29,12 @@ def add(a, b):
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
     if _HAS_FAST_ADD:
-        return _fast_add_impl(a, b)
+        try:
+            from candle.profiler.profiler import is_profiler_enabled
+            if not is_profiler_enabled():
+                return _fast_add_impl(a, b)
+        except Exception:
+            return _fast_add_impl(a, b)
     return _binary_op(a, b, aclnn.add, "add")
 
 
@@ -287,67 +292,19 @@ def isinf(a):
 
 
 def isnan(a):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
+    from .comparison import ne
+
     if a.device.type != "npu":
         raise ValueError("NPU isnan expects NPU tensors")
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_size = _numel(out_shape) * _dtype_itemsize(bool_dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
     if not a.dtype.is_floating_point:
-        aclnn.logical_not(
-            _unwrap_storage(isfinite(a)).data_ptr(),
-            out_ptr,
-            out_shape,
-            out_stride,
-            bool_dtype,
-            runtime,
-            stream=stream.stream,
-        )
+        runtime = npu_runtime.get_runtime((a.device.index or 0))
+        out_shape = a.shape
+        out_stride = npu_runtime._contiguous_stride(out_shape)
+        out_size = _numel(out_shape) * _dtype_itemsize(bool_dtype)
+        out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
         out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
         return _wrap_tensor(out_storage, out_shape, out_stride)
-    if not (aclnn.logical_not_symbols_ok() and aclnn.logical_and_symbols_ok()):
-        raise RuntimeError("aclnn logical ops missing for isnan")
-    finite = isfinite(a)
-    recip = pow(a, -1.0)
-    recip_finite = isfinite(recip)
-    tmp_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    aclnn.logical_not(
-        _unwrap_storage(finite).data_ptr(),
-        tmp_ptr,
-        out_shape,
-        out_stride,
-        bool_dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    aclnn.logical_not(
-        _unwrap_storage(recip_finite).data_ptr(),
-        out_ptr,
-        out_shape,
-        out_stride,
-        bool_dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    aclnn.logical_and(
-        tmp_ptr,
-        out_ptr,
-        out_ptr,
-        out_shape,
-        out_stride,
-        out_shape,
-        out_stride,
-        out_shape,
-        out_stride,
-        bool_dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    runtime.defer_free(tmp_ptr)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    return ne(a, a)
 
 
 def isposinf(a):

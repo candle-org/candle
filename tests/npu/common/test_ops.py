@@ -188,6 +188,16 @@ def test_npu_isfinite_isinf_isnan_signbit():
     assert np.array_equal(signbit.to("cpu").numpy(), np.signbit(data))
 
 
+def test_npu_isnan_repeated_calls_stay_correct():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    data = np.array([1.0, np.nan, 3.0, np.nan, 5.0], dtype=np.float32)
+    x = torch.tensor(data, device="npu", dtype=torch.float32)
+    expected = np.isnan(data)
+    for _ in range(64):
+        assert np.array_equal(torch.isnan(x).to("cpu").numpy(), expected)
+
+
 def test_npu_amin_amax():
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
@@ -334,6 +344,9 @@ def test_npu_elementwise_batch2(dtype):
     assert np.allclose(torch.logaddexp(x, y).to("cpu").numpy(), np.logaddexp(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
     assert np.allclose(torch.logaddexp2(x, y).to("cpu").numpy(), np.logaddexp2(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
     assert np.allclose(torch.hypot(x, y).to("cpu").numpy(), np.hypot(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
+
+    # Flush executor pool mid-test to prevent CANN pool exhaustion
+    torch.npu.synchronize()
 
     assert np.allclose(torch.remainder(x, y).to("cpu").numpy(), np.remainder(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
     assert np.allclose(torch.fmod(x, y).to("cpu").numpy(), np.fmod(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)

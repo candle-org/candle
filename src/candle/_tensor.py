@@ -2212,8 +2212,6 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.as_strided_copy = _cython_mod.tensor_as_strided_copy_method
     Tensor.as_strided_scatter = _cython_mod.tensor_as_strided_scatter_method
     Tensor.multinomial = _cython_mod.tensor_multinomial_method
-    Tensor.min = _python_tensor_min
-    Tensor.max = _python_tensor_max
     Tensor.ndim = property(_cython_mod.tensor_ndim_fget)
     Tensor.T = property(_cython_mod.tensor_T_fget)
     Tensor.is_floating_point = _cython_mod.tensor_is_floating_point

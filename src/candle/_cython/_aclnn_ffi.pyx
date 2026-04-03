@@ -103,6 +103,42 @@ _op_cache = {}
 cdef dict _executor_cleanup = {}
 
 # ---------------------------------------------------------------------------
+# Pending executor CANN-destroy list.
+# Executors are created by GetWorkspaceSize and must eventually be returned
+# to the CANN pool via aclDestroyAclOpExecutor.  Destroying them immediately
+# after Execute segfaults (async kernel still references the executor).
+# Instead, we collect handles here and destroy them in bulk once the stream
+# has been synchronised (safe because all async work has completed).
+# ---------------------------------------------------------------------------
+
+cdef list _pending_executor_destroys = []
+
+
+def _defer_cann_executor_destroy(uintptr_t handle):
+    """Record an executor handle for later aclDestroyAclOpExecutor."""
+    if handle != 0:
+        _pending_executor_destroys.append(int(handle))
+
+
+def flush_pending_executor_destroys():
+    """Destroy all pending executors via aclDestroyAclOpExecutor.
+
+    MUST only be called after the NPU stream is synchronised so that
+    no async kernel still references any of these executors.
+    """
+    global _pending_executor_destroys
+    if not _pending_executor_destroys:
+        return
+    cdef list batch = _pending_executor_destroys
+    _pending_executor_destroys = []
+    cdef uintptr_t h
+    for h_int in batch:
+        h = <uintptr_t>h_int
+        if h != 0 and _fn_destroy_executor != NULL:
+            with nogil:
+                _fn_destroy_executor(<void*>h)
+
+# ---------------------------------------------------------------------------
 # Tensor descriptor cache — reuse aclTensor handles for input tensors
 # ---------------------------------------------------------------------------
 
@@ -638,11 +674,11 @@ def destroy_int_array(uintptr_t handle):
 def destroy_executor(uintptr_t handle):
     if handle == 0:
         return 0
-    cdef int32_t ret
-    with nogil:
-        ret = _fn_destroy_executor(<void*>handle)
+    # torch_npu never calls aclDestroyAclOpExecutor — the CANN runtime
+    # manages executor lifetime internally via PTA cache.  Only clean up
+    # the associated tensor/scalar/array handles that Candle created.
     _release_executor_cleanup(handle)
-    return ret
+    return 0
 
 # ---------------------------------------------------------------------------
 # Op symbol resolution
@@ -802,24 +838,27 @@ def binary_op_with_alpha(
     cdef uint64_t ws_size = 0
     cdef void* executor = NULL
     cdef int32_t ret
+    cdef list cleanup_list
 
-    # Input tensors: use descriptor cache (skips aclCreateTensor on cache hit)
-    self_t = <void*><uintptr_t>_tensor_desc_cache.get_or_create(
-        <int64_t>self_ptr,
-        tuple(self_shape[:self_ndim]), tuple(self_stride[:self_ndim]),
-        dtype_code, fmt)
-    other_t = <void*><uintptr_t>_tensor_desc_cache.get_or_create(
-        <int64_t>other_ptr,
-        tuple(other_shape[:other_ndim]), tuple(other_stride[:other_ndim]),
-        dtype_code, fmt)
-    # Output tensor: always create fresh (new device ptr each op)
+    # torch_npu alignment: create ALL tensor handles fresh per-op.
+    # torch_npu's ConvertTypes creates new aclTensor* each call and
+    # ReleaseConvertTypes destroys them all after Execute.
     with nogil:
+        self_t = _fast_create_tensor(
+            s_shape, s_stride, <uint64_t>self_ndim,
+            dtype_code, fmt, <void*>self_ptr)
+        other_t = _fast_create_tensor(
+            o_shape, o_stride, <uint64_t>other_ndim,
+            dtype_code, fmt, <void*>other_ptr)
         out_t = _fast_create_tensor(
             r_shape, r_stride, <uint64_t>out_ndim,
             dtype_code, fmt, <void*>out_ptr)
 
     if self_t == NULL or other_t == NULL or out_t == NULL:
-        if out_t != NULL: _fast_destroy_tensor(out_t)
+        with nogil:
+            if self_t != NULL: _fast_destroy_tensor(self_t)
+            if other_t != NULL: _fast_destroy_tensor(other_t)
+            if out_t != NULL: _fast_destroy_tensor(out_t)
         raise RuntimeError("aclCreateTensor returned null")
 
     try:
@@ -830,11 +869,18 @@ def binary_op_with_alpha(
                 &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
-        # Only out_t goes into executor cleanup — self_t and other_t are owned by cache
-        _register_executor_cleanup(
-            <uintptr_t>executor,
-            ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
-        )
+        # torch_npu alignment: register ALL tensor handles for cleanup
+        # (matching ReleaseConvertTypes which destroys everything after Execute)
+        cleanup_list = []
+        if self_t != NULL:
+            cleanup_list.append(('t', <uintptr_t>self_t))
+        if other_t != NULL:
+            cleanup_list.append(('t', <uintptr_t>other_t))
+        if out_t != NULL:
+            cleanup_list.append(('t', <uintptr_t>out_t))
+        _register_executor_cleanup(<uintptr_t>executor, cleanup_list)
+        self_t = NULL
+        other_t = NULL
         out_t = NULL
 
         # Fast path: no workspace needed, execute immediately
@@ -855,6 +901,10 @@ def binary_op_with_alpha(
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if other_t != NULL:
+                _fast_destroy_tensor(other_t)
             if out_t != NULL:
                 _fast_destroy_tensor(out_t)
 
@@ -898,24 +948,25 @@ def binary_op_no_alpha(
     cdef uint64_t ws_size = 0
     cdef void* executor = NULL
     cdef int32_t ret
+    cdef list cleanup_list_na
 
-    # Input tensors: use descriptor cache (skips aclCreateTensor on cache hit)
-    self_t = <void*><uintptr_t>_tensor_desc_cache.get_or_create(
-        <int64_t>self_ptr,
-        tuple(self_shape[:self_ndim]), tuple(self_stride[:self_ndim]),
-        dtype_code, fmt)
-    other_t = <void*><uintptr_t>_tensor_desc_cache.get_or_create(
-        <int64_t>other_ptr,
-        tuple(other_shape[:other_ndim]), tuple(other_stride[:other_ndim]),
-        dtype_code, fmt)
-    # Output tensor: always create fresh (new device ptr each op)
+    # torch_npu alignment: create ALL tensor handles fresh per-op.
     with nogil:
+        self_t = _fast_create_tensor(
+            s_shape, s_stride, <uint64_t>self_ndim,
+            dtype_code, fmt, <void*>self_ptr)
+        other_t = _fast_create_tensor(
+            o_shape, o_stride, <uint64_t>other_ndim,
+            dtype_code, fmt, <void*>other_ptr)
         out_t = _fast_create_tensor(
             r_shape, r_stride, <uint64_t>out_ndim,
             dtype_code, fmt, <void*>out_ptr)
 
     if self_t == NULL or other_t == NULL or out_t == NULL:
-        if out_t != NULL: _fast_destroy_tensor(out_t)
+        with nogil:
+            if self_t != NULL: _fast_destroy_tensor(self_t)
+            if other_t != NULL: _fast_destroy_tensor(other_t)
+            if out_t != NULL: _fast_destroy_tensor(out_t)
         raise RuntimeError("aclCreateTensor returned null")
 
     try:
@@ -926,11 +977,17 @@ def binary_op_no_alpha(
                 &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
-        # Only out_t goes into executor cleanup — self_t and other_t are owned by cache
-        _register_executor_cleanup(
-            <uintptr_t>executor,
-            ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
-        )
+        # torch_npu alignment: register ALL tensor handles for cleanup
+        cleanup_list_na = []
+        if self_t != NULL:
+            cleanup_list_na.append(('t', <uintptr_t>self_t))
+        if other_t != NULL:
+            cleanup_list_na.append(('t', <uintptr_t>other_t))
+        if out_t != NULL:
+            cleanup_list_na.append(('t', <uintptr_t>out_t))
+        _register_executor_cleanup(<uintptr_t>executor, cleanup_list_na)
+        self_t = NULL
+        other_t = NULL
         out_t = NULL
 
         if ws_size == 0:
@@ -950,6 +1007,10 @@ def binary_op_no_alpha(
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if other_t != NULL:
+                _fast_destroy_tensor(other_t)
             if out_t != NULL:
                 _fast_destroy_tensor(out_t)
 

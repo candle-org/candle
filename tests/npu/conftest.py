@@ -11,6 +11,25 @@ def npu_device():
     return torch.device("npu:0")
 
 
+@pytest.fixture(autouse=True)
+def _npu_sync_between_tests():
+    """Synchronize after every NPU test to flush deferred ACLNN executors.
+
+    The CANN runtime has a limited executor pool.  Without flushing between
+    tests, deferred executors accumulate and eventually exhaust the pool,
+    causing non-deterministic failures late in the test suite.
+    """
+    yield
+    try:
+        import candle as torch
+        if torch.npu.is_available():
+            torch.npu.synchronize()
+            from candle._backends.npu import aclnn
+            aclnn.flush_deferred_executors()
+    except Exception:  # pylint: disable=broad-except
+        pass
+
+
 _SOC_DIRS = ("910a", "910b", "310b", "310p")
 
 
