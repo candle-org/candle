@@ -72,6 +72,87 @@ class UntypedStorage:
             device = Device(device)
         self.device = device
 
+    def __repr__(self):
+        if self.device.type == "cpu":
+            values = [f" {item}" for item in self.buffer().tolist()]
+            body = "\n".join(values) if values else " "
+            return (
+                f"{body}\n"
+                f"[torch.storage.UntypedStorage(device={self.device.type}) of size {self.nbytes()}]"
+            )
+        return object.__repr__(self)
+
+    def __len__(self):
+        return self.nbytes()
+
+    def __iter__(self):
+        if self.device.type == "cpu":
+            return iter(self.buffer().tolist())
+        raise RuntimeError("storage has no CPU data")
+
+    def __getitem__(self, index):
+        if self.device.type == "cpu":
+            if isinstance(index, bool):
+                raise TypeError("can't index a torch.UntypedStorage with bool")
+            if isinstance(index, np.integer):
+                index = int(index)
+            elif isinstance(index, np.generic):
+                raise TypeError(
+                    f"can't index a torch.UntypedStorage with numpy.{type(index).__name__}"
+                )
+            if isinstance(index, np.ndarray):
+                raise TypeError("can't index a torch.UntypedStorage with numpy.ndarray")
+            if isinstance(index, float):
+                raise TypeError("can't index a torch.UntypedStorage with float")
+            if isinstance(index, str):
+                raise TypeError("can't index a torch.UntypedStorage with str")
+            if isinstance(index, bytes):
+                raise TypeError("can't index a torch.UntypedStorage with bytes")
+            if isinstance(index, bytearray):
+                raise TypeError("can't index a torch.UntypedStorage with bytearray")
+            if isinstance(index, memoryview):
+                raise TypeError("can't index a torch.UntypedStorage with memoryview")
+            if isinstance(index, list):
+                raise TypeError("can't index a torch.UntypedStorage with list")
+            if isinstance(index, tuple):
+                raise TypeError("can't index a torch.UntypedStorage with tuple")
+            from ._tensor import Tensor
+            if isinstance(index, Tensor):
+                raise TypeError("can't index a torch.UntypedStorage with Tensor")
+            if index is None:
+                raise TypeError("can't index a torch.UntypedStorage with NoneType")
+            if index is Ellipsis:
+                raise TypeError("can't index a torch.UntypedStorage with ellipsis")
+            if isinstance(index, slice):
+                return _CPUUntypedStorage(self.buffer()[index], filename=None, shared=self._shared, device=self.device)
+            try:
+                return self.buffer()[index].item()
+            except IndexError as exc:
+                err_index = index
+                if isinstance(index, int) and index < 0:
+                    err_index = index + self.nbytes()
+                raise IndexError(f"index {err_index} out of range for storage of size {self.nbytes()}") from exc
+        raise RuntimeError("storage has no CPU data")
+
+    def __setitem__(self, index, value):
+        if self.device.type == "cpu":
+            from ._tensor import Tensor
+
+            if isinstance(index, np.integer):
+                index = int(index)
+            elif (
+                isinstance(index, (bool, list, tuple, np.generic, np.ndarray, Tensor, float, str, bytes, bytearray, memoryview))
+                or index is None
+                or index is Ellipsis
+            ):
+                raise SystemError("error return without exception set")
+            try:
+                self.buffer()[index] = value
+            except IndexError as exc:
+                raise RuntimeError("out of bounds") from exc
+            return
+        raise RuntimeError("storage has no CPU data")
+
     def nbytes(self):
         raise NotImplementedError
 
@@ -447,6 +528,204 @@ class TypedStorage:
     @property
     def device(self):
         return self._untyped.device
+
+    def __repr__(self):
+        if self.device.type in ("cpu", "mps"):
+            values = [f" {item}" for item in self._data.tolist()]
+            body = "\n".join(values) if values else " "
+            return (
+                f"{body}\n"
+                f"[torch.storage.TypedStorage(dtype=torch.{self.dtype.name}, device={self.device.type}) of size {self._size}]"
+            )
+        return object.__repr__(self)
+
+    def __len__(self):
+        return self._size
+
+    def __iter__(self):
+        if self.device.type == "cpu":
+            return iter(self._data.tolist())
+        if self.device.type == "mps":
+            return iter(self._data.tolist())
+        raise RuntimeError("storage has no CPU data")
+
+    def __getitem__(self, index):
+        from ._tensor import Tensor
+
+        if isinstance(index, bool):
+            raise TypeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'bool'>"
+            )
+        if isinstance(index, np.generic):
+            raise RuntimeError(
+                f"can't index a <class 'torch.storage.TypedStorage'> with <class 'numpy.{type(index).__name__}'>"
+            )
+        if isinstance(index, float):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'float'>"
+            )
+        if isinstance(index, complex):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'complex'>"
+            )
+        if isinstance(index, str):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'str'>"
+            )
+        if isinstance(index, bytes):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'bytes'>"
+            )
+        if isinstance(index, bytearray):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'bytearray'>"
+            )
+        if isinstance(index, memoryview):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'memoryview'>"
+            )
+        if isinstance(index, range):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'range'>"
+            )
+        index_type = type(index)
+        if (
+            index_type.__module__.startswith("torch")
+            and index_type.__name__ == "Tensor"
+        ):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'torch.Tensor'>"
+            )
+        if isinstance(index, Tensor):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'torch.Tensor'>"
+            )
+        if isinstance(index, list):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'list'>"
+            )
+        if isinstance(index, tuple):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'tuple'>"
+            )
+        if isinstance(index, np.ndarray):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'numpy.ndarray'>"
+            )
+        if index is None:
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'NoneType'>"
+            )
+        if index is Ellipsis:
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'ellipsis'>"
+            )
+        if isinstance(index, slice):
+            raise RuntimeError("slices are only supported in UntypedStorage.__getitem__")
+        if self.device.type == "cpu":
+            try:
+                return self._data[index].item()
+            except IndexError as exc:
+                raise IndexError(f"index {index} out of range for storage of size {self._size}") from exc
+        if self.device.type == "mps":
+            try:
+                return self._data[index].item()
+            except IndexError as exc:
+                raise IndexError(f"index {index} out of range for storage of size {self._size}") from exc
+        raise RuntimeError("storage has no CPU data")
+
+    def __setitem__(self, index, value):
+        from ._tensor import Tensor
+
+        if isinstance(index, np.generic):
+            raise RuntimeError(
+                f"can't index a <class 'torch.storage.TypedStorage'> with <class 'numpy.{type(index).__name__}'>"
+            )
+        if isinstance(index, float):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'float'>"
+            )
+        if isinstance(index, complex):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'complex'>"
+            )
+        if isinstance(index, str):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'str'>"
+            )
+        if isinstance(index, bytes):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'bytes'>"
+            )
+        if isinstance(index, bytearray):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'bytearray'>"
+            )
+        if isinstance(index, memoryview):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'memoryview'>"
+            )
+        if isinstance(index, range):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'range'>"
+            )
+        index_type = type(index)
+        if (
+            index_type.__module__.startswith("torch")
+            and index_type.__name__ == "Tensor"
+        ):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'torch.Tensor'>"
+            )
+        if isinstance(index, Tensor):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'torch.Tensor'>"
+            )
+        if isinstance(index, list):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'list'>"
+            )
+        if isinstance(index, tuple):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'tuple'>"
+            )
+        if isinstance(index, np.ndarray):
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'numpy.ndarray'>"
+            )
+        if index is None:
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'NoneType'>"
+            )
+        if isinstance(index, slice):
+            if self.device.type == "cpu":
+                self._data[index] = value
+                return
+            if self.device.type == "mps":
+                self._data[index] = value
+                return
+            raise RuntimeError("storage has no CPU data")
+        if index is Ellipsis:
+            raise RuntimeError(
+                "can't index a <class 'torch.storage.TypedStorage'> with <class 'ellipsis'>"
+            )
+        if self.device.type == "cpu":
+            try:
+                self._data[index] = value
+            except IndexError as exc:
+                raise IndexError(
+                    f"index {index} is out of bounds for dimension 0 with size {self._size}"
+                ) from exc
+            return
+        if self.device.type == "mps":
+            try:
+                self._data[index] = value
+            except IndexError as exc:
+                raise IndexError(
+                    f"index {index} is out of bounds for dimension 0 with size {self._size}"
+                ) from exc
+            return
+        raise RuntimeError("storage has no CPU data")
 
     def size(self):
         return self._size

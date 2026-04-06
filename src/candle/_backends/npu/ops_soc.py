@@ -31,6 +31,7 @@ _FALLBACK_OPS = {
         "mv",               # aclnnMv on 910A only supports float16; float32 inputs are cast
         "normal_",          # aclnnInplaceNormal can segfault on 910A during NPU randn/dropout paths; use on-device Box-Muller composite
         "repeat_interleave_tensor",  # aclnnRepeatInterleave* tensor-repeats poisons later ops on 910A
+        "sinc",             # aclnnSinc direct path returns 561000 on 910A; use on-device sin(pi*x)/(pi*x)
     }),
     "910b": frozenset({
         # torch_npu: CPU fallback; candle: on-device composite

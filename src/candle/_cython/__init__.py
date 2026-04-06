@@ -188,6 +188,7 @@ try:
         tensor_clone,
         tensor_detach,
         tensor_dim,
+        tensor_flatten,
         tensor_iadd,
         tensor_imul,
         tensor_matmul,

@@ -96,7 +96,29 @@ cdef inline void _flush_pending(object tensor):
             pipe.flush()
 
 
-def tensor_add(self, other):
+cdef inline object _annotate_transpose_view(object source, object view):
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+
+    source_view_meta = getattr(source, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if source._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    view._view_meta = {
+        "op": "transpose",
+        "shape": tuple(view.shape),
+        "stride": tuple(view.stride),
+        "offset": int(view.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return view
     _ensure_functional_refs()
     return _add_fn(self, other)
 
@@ -230,6 +252,57 @@ def tensor_relu(self):
     return _relu_fn(self)
 
 
+def tensor_flatten(self, start_dim=0, end_dim=-1):
+    cdef object ndim
+    cdef object start
+    cdef object end
+    cdef object flattened
+    cdef object d
+    cdef object new_shape
+    cdef object v
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+
+    ndim = len(self.shape)
+    if ndim == 0:
+        return self.cy_view((1,))
+
+    start = start_dim if start_dim >= 0 else start_dim + ndim
+    end = end_dim if end_dim >= 0 else end_dim + ndim
+    if start < 0 or start >= ndim:
+        raise IndexError("Dimension out of range")
+    if end < 0 or end >= ndim:
+        raise IndexError("Dimension out of range")
+    if start > end:
+        raise RuntimeError("flatten() has invalid args: start_dim cannot come after end_dim")
+
+    flattened = 1
+    for d in self.shape[start:end + 1]:
+        flattened *= d
+    new_shape = self.shape[:start] + (flattened,) + self.shape[end + 1:]
+
+    v = self.cy_view(tuple(new_shape))
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    v._view_meta = {
+        "op": "flatten",
+        "shape": tuple(v.shape),
+        "stride": tuple(v.stride),
+        "offset": int(v.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return v
+
+
 def tensor_reshape(self, *shape):
     if not shape:
         raise TypeError("reshape() missing shape arguments")
@@ -240,21 +313,105 @@ def tensor_reshape(self, *shape):
 
 
 def tensor_transpose(self, dim0, dim1):
-    _ensure_functional_refs()
-    return _transpose_dispatch_fn(self, dim0, dim1)
+    cdef object v
+
+    if self.requires_grad:
+        from candle._dispatch import dispatch
+        return dispatch("transpose", self.device.type, self, dim0, dim1)
+    v = self.cy_transpose(dim0, dim1)
+    return _annotate_transpose_view(self, v)
 
 
 def tensor_view(self, *shape):
+    cdef object v
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object infer_idx
+    cdef object known_size
+    cdef object shape_list
+    cdef object idx
+    cdef object dim
+    cdef object size
+    cdef object new_size
+
     if not shape:
         raise TypeError(
             "view() received an invalid combination of arguments - got (), but expected one of:\n"
             " * (torch.dtype dtype)\n"
             " * (tuple of ints size)\n"
         )
-    if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
-        shape = shape[0]
-    _ensure_functional_refs()
-    return _view_dispatch_fn(self, shape)
+    if len(shape) == 1:
+        if isinstance(shape[0], (tuple, list)):
+            shape = tuple(shape[0])
+        else:
+            shape = (shape[0],)
+    else:
+        shape = tuple(shape)
+
+    if not self.is_contiguous():
+        raise RuntimeError(
+            "view size is not compatible with input tensor's size and stride "
+            "(at least one dimension spans across two contiguous subspaces). "
+            "Use .reshape(...) instead."
+        )
+
+    size = 1
+    for dim in self.shape:
+        size *= dim
+
+    infer_idx = None
+    known_size = 1
+    shape_list = list(shape)
+    for idx, dim in enumerate(shape_list):
+        if dim == -1:
+            if infer_idx is not None:
+                raise RuntimeError("only one dimension can be inferred")
+            infer_idx = idx
+            continue
+        known_size *= dim
+
+    if infer_idx is not None:
+        if known_size == 0 or size % known_size != 0:
+            raise RuntimeError(f"shape '{list(shape)}' is invalid for input of size {size}")
+        shape_list[infer_idx] = size // known_size
+
+    shape = tuple(shape_list)
+    new_size = 1
+    for dim in shape:
+        new_size *= dim
+    if size != new_size:
+        raise ValueError("view size mismatch")
+
+    if self.requires_grad:
+        from candle._dispatch import dispatch
+        return dispatch("view", self.device.type, self, shape)
+
+    v = self.cy_view(shape)
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    v._view_meta = {
+        "op": "view",
+        "shape": tuple(v.shape),
+        "stride": tuple(v.stride),
+        "offset": int(v.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    from candle.autograd import forward_ad
+    level = forward_ad._current_level()
+    if level >= 0:
+        tangent = forward_ad.get_tangent(self, level)
+        if tangent is not None:
+            v._fw_set(level, tangent.view(shape))
+    return v
 
 
 def tensor_size(self, dim=None):

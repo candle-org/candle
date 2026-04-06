@@ -1,4 +1,29 @@
 """Miscellaneous element-wise operations for NPU."""
+try:
+    from candle._cython._npu_ops import (
+        fast_where as _fast_where_impl,
+        fast_lerp_tensor as _fast_lerp_tensor_impl,
+        fast_lerp_scalar as _fast_lerp_scalar_impl,
+        fast_addcmul as _fast_addcmul_impl,
+        fast_addcdiv as _fast_addcdiv_impl,
+    )  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_WHERE = True
+    _HAS_FAST_LERP_TENSOR = True
+    _HAS_FAST_LERP_SCALAR = True
+    _HAS_FAST_ADDCMUL = True
+    _HAS_FAST_ADDCDIV = True
+except ImportError:
+    _fast_where_impl = None  # type: ignore[assignment]
+    _fast_lerp_tensor_impl = None  # type: ignore[assignment]
+    _fast_lerp_scalar_impl = None  # type: ignore[assignment]
+    _fast_addcmul_impl = None  # type: ignore[assignment]
+    _fast_addcdiv_impl = None  # type: ignore[assignment]
+    _HAS_FAST_WHERE = False
+    _HAS_FAST_LERP_TENSOR = False
+    _HAS_FAST_LERP_SCALAR = False
+    _HAS_FAST_ADDCMUL = False
+    _HAS_FAST_ADDCDIV = False
+
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
     _broadcast_shape, _broadcast_shape_checked,
@@ -50,6 +75,9 @@ def where(cond, x, y):
         one_minus = sub(_scalar_to_npu_tensor(1.0, cond_f), cond_f)
         return add(mul(cond_f, x), mul(one_minus, y))
 
+    if _HAS_FAST_WHERE:
+        return _fast_where_impl(cond, x, y)
+
     if not aclnn.s_where_symbols_ok():
         raise RuntimeError("aclnnSWhere symbols not available")
 
@@ -90,6 +118,11 @@ def lerp(a, b, weight):
         scaled = mul(delta, weight)
         return add(a, scaled)
 
+    if hasattr(weight, "shape") and _HAS_FAST_LERP_TENSOR:
+        return _fast_lerp_tensor_impl(a, b, weight)
+    if not hasattr(weight, "shape") and _HAS_FAST_LERP_SCALAR:
+        return _fast_lerp_scalar_impl(a, b, float(weight))
+
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     a_storage = _unwrap_storage(a)
@@ -124,6 +157,11 @@ def lerp(a, b, weight):
 
 
 def addcmul(a, b, c, value=1.0):
+    if hasattr(value, "shape"):
+        value = float(_to_numpy(value))
+    if _HAS_FAST_ADDCMUL:
+        return _fast_addcmul_impl(a, b, c, float(value))
+
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     a_storage = _unwrap_storage(a)
@@ -133,8 +171,6 @@ def addcmul(a, b, c, value=1.0):
     out_stride = npu_runtime._contiguous_stride(out_shape)
     out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    if hasattr(value, "shape"):
-        value = float(_to_numpy(value))
     aclnn.addcmul(
         a_storage.data_ptr(), b_storage.data_ptr(), c_storage.data_ptr(), out_ptr,
         a.shape, a.stride, b.shape, b.stride,
@@ -146,6 +182,11 @@ def addcmul(a, b, c, value=1.0):
 
 
 def addcdiv(a, b, c, value=1.0):
+    if hasattr(value, "shape"):
+        value = float(_to_numpy(value))
+    if _HAS_FAST_ADDCDIV:
+        return _fast_addcdiv_impl(a, b, c, float(value))
+
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     a_storage = _unwrap_storage(a)
@@ -155,8 +196,6 @@ def addcdiv(a, b, c, value=1.0):
     out_stride = npu_runtime._contiguous_stride(out_shape)
     out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    if hasattr(value, "shape"):
-        value = float(_to_numpy(value))
     aclnn.addcdiv(
         a_storage.data_ptr(), b_storage.data_ptr(), c_storage.data_ptr(), out_ptr,
         a.shape, a.stride, b.shape, b.stride,
@@ -218,74 +257,18 @@ def clamp(a, min_val=None, max_val=None):
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
     storage = _unwrap_storage(a)
     if hasattr(min_val, "shape") and hasattr(max_val, "shape"):
-        out_shape = _broadcast_shape(a.shape, min_val.shape)
-        out_shape = _broadcast_shape(out_shape, max_val.shape)
-        out_stride = npu_runtime._contiguous_stride(out_shape)
-        out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-        out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-        aclnn.clamp_tensor(
-            storage.data_ptr(),
-            _unwrap_storage(min_val).data_ptr(),
-            _unwrap_storage(max_val).data_ptr(),
-            out_ptr,
-            a.shape,
-            a.stride,
-            min_val.shape,
-            min_val.stride,
-            max_val.shape,
-            max_val.stride,
-            out_shape,
-            out_stride,
-            a.dtype,
-            runtime,
-            stream=stream.stream,
-        )
+        from .reduce import maximum, minimum
+        return minimum(maximum(a, min_val), max_val)
     elif hasattr(min_val, "shape"):
-        out_shape = _broadcast_shape(a.shape, min_val.shape)
-        out_stride = npu_runtime._contiguous_stride(out_shape)
-        out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-        out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-        aclnn.clamp_min_tensor(
-            storage.data_ptr(),
-            _unwrap_storage(min_val).data_ptr(),
-            out_ptr,
-            a.shape,
-            a.stride,
-            min_val.shape,
-            min_val.stride,
-            out_shape,
-            out_stride,
-            a.dtype,
-            runtime,
-            stream=stream.stream,
-        )
+        temp_tensor = clamp_min(a, min_val)
         if max_val is not None:
-            temp_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
-            temp_tensor = _wrap_tensor(temp_storage, out_shape, out_stride)
             return clamp_max(temp_tensor, max_val)
+        return temp_tensor
     elif hasattr(max_val, "shape"):
-        out_shape = _broadcast_shape(a.shape, max_val.shape)
-        out_stride = npu_runtime._contiguous_stride(out_shape)
-        out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-        out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-        aclnn.clamp_max_tensor(
-            storage.data_ptr(),
-            _unwrap_storage(max_val).data_ptr(),
-            out_ptr,
-            a.shape,
-            a.stride,
-            max_val.shape,
-            max_val.stride,
-            out_shape,
-            out_stride,
-            a.dtype,
-            runtime,
-            stream=stream.stream,
-        )
+        temp_tensor = clamp_max(a, max_val)
         if min_val is not None:
-            temp_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
-            temp_tensor = _wrap_tensor(temp_storage, out_shape, out_stride)
             return clamp_min(temp_tensor, min_val)
+        return temp_tensor
     else:
         aclnn.clamp_scalar(
             storage.data_ptr(),
@@ -309,24 +292,8 @@ def clamp_min(a, min_val):
         raise ValueError("NPU clamp_min expects NPU tensors")
     storage = _unwrap_storage(a)
     if hasattr(min_val, "shape"):
-        out_shape = _broadcast_shape(a.shape, min_val.shape)
-        out_stride = npu_runtime._contiguous_stride(out_shape)
-        out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-        out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-        aclnn.clamp_min_tensor(
-            storage.data_ptr(),
-            _unwrap_storage(min_val).data_ptr(),
-            out_ptr,
-            a.shape,
-            a.stride,
-            min_val.shape,
-            min_val.stride,
-            out_shape,
-            out_stride,
-            a.dtype,
-            runtime,
-            stream=stream.stream,
-        )
+        from .reduce import maximum
+        return maximum(a, min_val)
     else:
         out_shape = a.shape
         out_stride = npu_runtime._contiguous_stride(out_shape)
@@ -353,24 +320,8 @@ def clamp_max(a, max_val):
         raise ValueError("NPU clamp_max expects NPU tensors")
     storage = _unwrap_storage(a)
     if hasattr(max_val, "shape"):
-        out_shape = _broadcast_shape(a.shape, max_val.shape)
-        out_stride = npu_runtime._contiguous_stride(out_shape)
-        out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-        out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-        aclnn.clamp_max_tensor(
-            storage.data_ptr(),
-            _unwrap_storage(max_val).data_ptr(),
-            out_ptr,
-            a.shape,
-            a.stride,
-            max_val.shape,
-            max_val.stride,
-            out_shape,
-            out_stride,
-            a.dtype,
-            runtime,
-            stream=stream.stream,
-        )
+        from .reduce import minimum
+        return minimum(a, max_val)
     else:
         out_shape = a.shape
         out_stride = npu_runtime._contiguous_stride(out_shape)

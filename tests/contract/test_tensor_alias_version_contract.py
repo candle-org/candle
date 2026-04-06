@@ -18,6 +18,19 @@ def test_detach_shares_version_counter_with_source():
     assert base._version_counter.value == before_base + 1
 
 
+def test_as_strided_view_shares_version_counter_with_source():
+    base = torch.tensor([0.0, 1.0, 2.0, 3.0], requires_grad=True)
+    view = base.as_strided((2, 2), (2, 1))
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
 def test_unary_inplace_preserves_view_aliasing():
     x = torch.tensor([[-1.0, 2.0], [-3.0, 4.0]])
     v = x.view((4,))
@@ -83,6 +96,97 @@ def test_bitwise_inplace_preserves_view_aliasing(method_name, lhs, rhs, expected
     assert out is x
     assert v.tolist() == expected
 
+
+
+def test_diagonal_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.diagonal()
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_movedim_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.movedim(0, 1)
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_moveaxis_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.moveaxis(0, 1)
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_expand_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0]], requires_grad=True)
+    view = base.expand((3, 2))
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_broadcast_to_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0]], requires_grad=True)
+    view = torch.broadcast_to(base, (3, 2))
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_split_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.split(1, dim=0)[0]
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_chunk_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.chunk(2, dim=0)[0]
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
 
 
 # Guards the Python __setitem__ entry point; the direct dispatch path is covered

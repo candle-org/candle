@@ -254,6 +254,77 @@ class TestTensorDTypeCaching:
         assert t._dtype_code == 5
 
 
+class TestNpuOpsCimports:
+    """Regression tests for Cython cimports in _npu_ops."""
+
+    def test_npu_ops_cimports_storage_impl(self):
+        from pathlib import Path
+
+        npu_ops_pyx = Path(__file__).resolve().parents[2] / "src/candle/_cython/_npu_ops.pyx"
+        text = npu_ops_pyx.read_text(encoding="utf-8")
+        assert "from candle._cython._storage_impl cimport StorageImpl" in text
+
+
+class TestIntegration:
+    """End-to-end: StorageImpl + TensorImpl + view ops together."""
+
+    def test_storage_impl_in_tensor_impl(self):
+        from candle._cython._tensor_impl import TensorImpl
+        from candle._cython._storage_impl import StorageImpl
+        from candle._device import device
+        from candle._dtype import float32
+
+        arr = np.ones((3, 4), dtype=np.float32)
+        storage = StorageImpl.from_numpy(arr.ravel())
+        t = TensorImpl.__new__(TensorImpl)
+        t._storage = storage
+        _init_tensor_impl(t, (3, 4), (4, 1), device("cpu"), float32)
+        t._c_offset = 0
+        t.grad_fn = None
+        t.grad = None
+        t._base = None
+        t._version_value = 0
+        t._vc_proxy = None
+        t._view_meta = None
+        t._pending = False
+        t._retain_grad = False
+        t._backward_hooks = None
+
+        assert t.numel() == 12
+        assert t.dim() == 2
+        assert t.shape == (3, 4)
+        assert storage.data_ptr() == arr.ctypes.data
+
+    def test_view_chain_all_share_storage(self):
+        from candle._cython._tensor_impl import TensorImpl
+        from candle._cython._storage_impl import StorageImpl
+        from candle._device import device
+        from candle._dtype import float32
+
+        arr = np.arange(24, dtype=np.float32)
+        storage = StorageImpl.from_numpy(arr)
+        t = TensorImpl.__new__(TensorImpl)
+        t._storage = storage
+        _init_tensor_impl(t, (2, 3, 4), (12, 4, 1), device("cpu"), float32)
+        t._c_offset = 0
+        t.grad_fn = None
+        t.grad = None
+        t._base = None
+        t._version_value = 0
+        t._vc_proxy = None
+        t._view_meta = None
+        t._pending = False
+        t._retain_grad = False
+        t._backward_hooks = None
+
+        v1 = t.cy_view((6, 4))
+        v2 = v1.cy_transpose(0, 1)
+        assert v1._storage is storage
+        assert v2._storage is storage
+        assert v2._base is t
+        assert v2.shape == (4, 6)
+
+
 class TestBuildIsolation:
     """Regression tests for editable install / build isolation issues."""
 

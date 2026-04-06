@@ -59,15 +59,7 @@ def zero_(a):
     if a.device.type != "npu":
         raise ValueError("NPU zero_ expects NPU tensors")
 
-    a_storage = _unwrap_storage(a)
-    aclnn.inplace_zero(
-        a_storage.data_ptr(),
-        a.shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
+    fill_(a, 0.0)
     return a
 
 
@@ -337,19 +329,22 @@ def geometric_(a, p, generator=None):
 
 
 def fill_(a, value):
-    """In-place fill using aclnnInplaceFillScalar."""
+    """In-place fill using scalar tensor copy-back."""
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU fill_ expects NPU tensors")
 
-    a_storage = _unwrap_storage(a)
-    aclnn.inplace_fill_scalar(
-        a_storage.data_ptr(),
+    src = _scalar_to_npu_tensor(float(value), a)
+    aclnn.inplace_copy(
+        _unwrap_storage(a).data_ptr(),
+        _unwrap_storage(src).data_ptr(),
         a.shape,
         a.stride,
         a.dtype,
-        float(value),
+        src.shape,
+        src.stride,
+        src.dtype,
         runtime,
         stream=stream.stream,
     )
@@ -405,24 +400,30 @@ def copy_(a, src):
 
 def erfinv_(a):
     """In-place erfinv using aclnnErfinv."""
+    from candle._cython._npu_ops import fast_erfinv_ as _fast_erfinv_impl  # pylint: disable=import-error,no-name-in-module
+    return _fast_erfinv_impl(a)
+
+
+def reciprocal_(a):
+    """In-place reciprocal: output written back to a's storage."""
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
-        raise ValueError("NPU erfinv_ expects NPU tensors")
+        raise ValueError("NPU reciprocal_ expects NPU tensors")
 
-    a_storage = _unwrap_storage(a)
-    # erfinv: output to same storage for in-place
-    aclnn.erfinv(
-        a_storage.data_ptr(),
-        a_storage.data_ptr(),
+    from .math import pow as pow_op
+
+    out = pow_op(a, -1.0)
+    aclnn.inplace_copy(
+        _unwrap_storage(a).data_ptr(),
+        _unwrap_storage(out).data_ptr(),
         a.shape,
         a.stride,
         a.dtype,
+        out.shape,
+        out.stride,
+        out.dtype,
         runtime,
         stream=stream.stream,
     )
     return a
-
-
-def reciprocal_(a):
-    return _unary_op(a, aclnn.reciprocal, "reciprocal")

@@ -12,7 +12,7 @@ from ._device import _default_device, device as Device
 from ._dtype import float32, float16, float64, bfloat16, int8, int16, int32, int64, uint8
 from ._dtype import bool as dtype_bool
 from ._dtype import to_numpy_dtype
-from ._functional import add, mul, matmul, relu, sum, mean as mean_dispatch, std as std_dispatch, true_divide as true_divide_dispatch, repeat as repeat_dispatch, chunk as chunk_dispatch, split as split_dispatch, abs as abs_dispatch, neg as neg_dispatch
+from ._functional import add, mul, matmul, relu, sum, mean as mean_dispatch, std as std_dispatch, true_divide as true_divide_dispatch, repeat as repeat_dispatch, chunk as chunk_dispatch, split as split_dispatch, vsplit as vsplit_dispatch, hsplit as hsplit_dispatch, dsplit as dsplit_dispatch, unbind as unbind_dispatch, abs as abs_dispatch, neg as neg_dispatch
 from ._functional import sub as sub_dispatch, div as div_dispatch
 from ._functional import exp as exp_dispatch, log as log_dispatch, sqrt as sqrt_dispatch
 from ._functional import sin as sin_dispatch, cos as cos_dispatch, tan as tan_dispatch
@@ -71,6 +71,7 @@ from ._functional import as_strided_ as as_strided__dispatch
 from ._functional import as_strided_copy as as_strided_copy_dispatch
 from ._functional import as_strided_scatter as as_strided_scatter_dispatch
 from ._functional import tile as tile_dispatch, flip as flip_dispatch, roll as roll_dispatch, rot90 as rot90_dispatch
+from ._functional import movedim as movedim_dispatch, moveaxis as moveaxis_dispatch, diagonal as diagonal_dispatch
 from ._functional import reciprocal as reciprocal_dispatch, addmm as addmm_dispatch
 from ._functional import log1p as log1p_dispatch, expm1 as expm1_dispatch
 from .autograd.engine import backward as _backward
@@ -302,7 +303,10 @@ class Tensor(_TensorBase):
             raise TypeError("reshape() missing shape arguments")
         if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
             shape = tuple(shape[0])
-        return reshape_dispatch(self, shape)
+        if not self.requires_grad:
+            return reshape_dispatch(self, shape)
+        from ._dispatch import dispatch
+        return dispatch("reshape", self.device.type, self, shape)
 
     def view(self, *shape):
         if not shape:
@@ -311,11 +315,82 @@ class Tensor(_TensorBase):
                 " * (torch.dtype dtype)\n"
                 " * (tuple of ints size)\n"
             )
-        if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
-            shape = shape[0]
-        return view_dispatch(self, shape)
+        if len(shape) == 1:
+            if isinstance(shape[0], (tuple, list)):
+                shape = tuple(shape[0])
+            else:
+                shape = (shape[0],)
+        else:
+            shape = tuple(shape)
+
+        if not self.is_contiguous():
+            raise RuntimeError(
+                "view size is not compatible with input tensor's size and stride "
+                "(at least one dimension spans across two contiguous subspaces). "
+                "Use .reshape(...) instead."
+            )
+
+        size = 1
+        for dim in self.shape:
+            size *= dim
+
+        infer_idx = None
+        known_size = 1
+        shape_list = list(shape)
+        for idx, dim in enumerate(shape_list):
+            if dim == -1:
+                if infer_idx is not None:
+                    raise RuntimeError("only one dimension can be inferred")
+                infer_idx = idx
+                continue
+            known_size *= dim
+
+        if infer_idx is not None:
+            if known_size == 0 or size % known_size != 0:
+                raise RuntimeError(f"shape '{list(shape)}' is invalid for input of size {size}")
+            shape_list[infer_idx] = size // known_size
+
+        shape = tuple(shape_list)
+        new_size = 1
+        for dim in shape:
+            new_size *= dim
+        if size != new_size:
+            raise ValueError("view size mismatch")
+
+        if self.requires_grad:
+            from ._dispatch import dispatch
+            return dispatch("view", self.device.type, self, shape)
+
+        view = self.cy_view(shape)
+        source_view_meta = getattr(self, "_view_meta", None) or {}
+        from candle.autograd.grad_mode import current_creation_mode
+        creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+        creation_kind = source_view_meta.get("creation_kind")
+        if creation_mode is not None:
+            if self._is_view():
+                creation_kind = "view_of_view"
+            else:
+                creation_kind = "view"
+        view._view_meta = {
+            "op": "view",
+            "shape": tuple(view.shape),
+            "stride": tuple(view.stride),
+            "offset": int(view.offset),
+            "creation_mode": creation_mode,
+            "creation_kind": creation_kind,
+        }
+        from candle.autograd import forward_ad
+        level = forward_ad._current_level()
+        if level >= 0:
+            tangent = forward_ad.get_tangent(self, level)
+            if tangent is not None:
+                view._fw_set(level, tangent.view(shape))
+        return view
 
     def flatten(self, start_dim=0, end_dim=-1):
+        if self.requires_grad:
+            from ._dispatch import dispatch
+            return dispatch("flatten", self.device.type, self, start_dim, end_dim)
         ndim = len(self.shape)
         if ndim == 0:
             return self.reshape((1,))
@@ -336,8 +411,32 @@ class Tensor(_TensorBase):
         new_shape = self.shape[:start_dim] + (flattened,) + self.shape[end_dim + 1:]
         return self.reshape(new_shape)
 
+    def _transpose_view(self, dim0, dim1):
+        view = self.cy_transpose(dim0, dim1)
+        source_view_meta = getattr(self, "_view_meta", None) or {}
+        from candle.autograd.grad_mode import current_creation_mode
+        creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+        creation_kind = source_view_meta.get("creation_kind")
+        if creation_mode is not None:
+            if self._is_view():
+                creation_kind = "view_of_view"
+            else:
+                creation_kind = "view"
+        view._view_meta = {
+            "op": "transpose",
+            "shape": tuple(view.shape),
+            "stride": tuple(view.stride),
+            "offset": int(view.offset),
+            "creation_mode": creation_mode,
+            "creation_kind": creation_kind,
+        }
+        return view
+
     def transpose(self, dim0, dim1):
-        return transpose_dispatch(self, dim0, dim1)
+        if self.requires_grad:
+            from ._dispatch import dispatch
+            return dispatch("transpose", self.device.type, self, dim0, dim1)
+        return self._transpose_view(dim0, dim1)
 
     def transpose_(self, dim0, dim1):
         ndim = len(self.shape)
@@ -357,7 +456,10 @@ class Tensor(_TensorBase):
             raise RuntimeError(f"t() expects a tensor with <= 2 dimensions, but self is {len(self.shape)}D")
         if len(self.shape) < 2:
             return self
-        return self.transpose(0, 1)
+        if self.requires_grad:
+            from ._dispatch import dispatch
+            return dispatch("transpose", self.device.type, self, 0, 1)
+        return self._transpose_view(0, 1)
 
     def t_(self):
         """In-place transpose for 2D tensors."""
@@ -366,11 +468,24 @@ class Tensor(_TensorBase):
         self._check_inplace()
         if len(self.shape) < 2:
             return self
-        return self.transpose_(0, 1)
+        shape = list(self.shape)
+        stride = list(self.stride)
+        shape[0], shape[1] = shape[1], shape[0]
+        stride[0], stride[1] = stride[1], stride[0]
+        self.shape = tuple(shape)
+        self.stride = _StrideTuple(tuple(stride))
+        return self
 
     @property
     def T(self):
-        return self.t()
+        if len(self.shape) > 2:
+            raise RuntimeError(f"t() expects a tensor with <= 2 dimensions, but self is {len(self.shape)}D")
+        if len(self.shape) < 2:
+            return self
+        if self.requires_grad:
+            from ._dispatch import dispatch
+            return dispatch("transpose", self.device.type, self, 0, 1)
+        return self._transpose_view(0, 1)
 
     def view_as(self, other):
         """Reshape this tensor to the same shape as other."""
@@ -413,8 +528,7 @@ class Tensor(_TensorBase):
     def as_strided(self, size, stride, storage_offset=None):
         """Create a view of the tensor with given size, stride, and storage_offset."""
         offset = storage_offset if storage_offset is not None else self.offset
-        return Tensor(self._storage, tuple(size), tuple(stride), offset=offset,
-                      requires_grad=self.requires_grad)
+        return self.cy_as_strided(tuple(size), tuple(stride), offset)
 
     def _ones_like(self):
         if self.device.type == "meta":
@@ -1483,7 +1597,7 @@ class Tensor(_TensorBase):
         return self.to(other.dtype)
 
     def reshape_as(self, other):
-        return self.reshape(other.shape)
+        return self.cy_view(other.shape)
 
     def new_full(self, size, fill_value, *, dtype=None, device=None, requires_grad=False):
         from ._creation import full
@@ -1695,51 +1809,67 @@ class Tensor(_TensorBase):
 
     def movedim(self, source, destination):
         """Move dimensions to new positions."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("movedim", self.device.type, self, source, destination)
+        return movedim_dispatch(self, source, destination)
 
     def moveaxis(self, source, destination):
         """Alias for movedim."""
-        return self.movedim(source, destination)
+        return moveaxis_dispatch(self, source, destination)
 
     def swapdims(self, dim0, dim1):
         """Swap two dimensions (alias for transpose with positional args)."""
-        return self.transpose(dim0, dim1)
+        return self.cy_transpose(dim0, dim1)
 
     def swapdims_(self, dim0, dim1):
-        return self.transpose_(dim0, dim1)
+        ndim = len(self.shape)
+        d0 = dim0 if dim0 >= 0 else dim0 + ndim
+        d1 = dim1 if dim1 >= 0 else dim1 + ndim
+        if d0 < 0 or d0 >= ndim or d1 < 0 or d1 >= ndim:
+            raise IndexError("Dimension out of range")
+        shape = list(self.shape)
+        stride = list(self.stride)
+        shape[d0], shape[d1] = shape[d1], shape[d0]
+        stride[d0], stride[d1] = stride[d1], stride[d0]
+        self.shape = tuple(shape)
+        self.stride = _StrideTuple(tuple(stride))
+        return self
 
     def swapaxes(self, axis0, axis1):
         """Alias for swapdims."""
-        return self.swapdims(axis0, axis1)
+        return self.cy_transpose(axis0, axis1)
 
     def swapaxes_(self, axis0, axis1):
-        return self.swapdims_(axis0, axis1)
+        ndim = len(self.shape)
+        d0 = axis0 if axis0 >= 0 else axis0 + ndim
+        d1 = axis1 if axis1 >= 0 else axis1 + ndim
+        if d0 < 0 or d0 >= ndim or d1 < 0 or d1 >= ndim:
+            raise IndexError("Dimension out of range")
+        shape = list(self.shape)
+        stride = list(self.stride)
+        shape[d0], shape[d1] = shape[d1], shape[d0]
+        stride[d0], stride[d1] = stride[d1], stride[d0]
+        self.shape = tuple(shape)
+        self.stride = _StrideTuple(tuple(stride))
+        return self
 
     def diagonal(self, offset=0, dim1=0, dim2=1):
         """Returns partial view of input with the diagonal elements of input."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("diagonal", self.device.type, self, offset, dim1, dim2)
+        return diagonal_dispatch(self, offset, dim1, dim2)
 
     def unbind(self, dim=0):
         """Remove a tensor dimension, returning a tuple of all slices along dim."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("unbind", self.device.type, self, dim)
+        return unbind_dispatch(self, dim=dim)
 
     def vsplit(self, split_size_or_sections):
         """Split a tensor into multiple sub-tensors vertically (row-wise)."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("vsplit", self.device.type, self, split_size_or_sections)
+        return vsplit_dispatch(self, split_size_or_sections)
 
     def hsplit(self, split_size_or_sections):
         """Split a tensor into multiple sub-tensors horizontally (column-wise)."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("hsplit", self.device.type, self, split_size_or_sections)
+        return hsplit_dispatch(self, split_size_or_sections)
 
     def dsplit(self, split_size_or_sections):
         """Split a tensor into multiple sub-tensors along the third axis."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("dsplit", self.device.type, self, split_size_or_sections)
+        return dsplit_dispatch(self, split_size_or_sections)
 
     def take_along_dim(self, indices, dim):
         """Take values along an axis at the given indices."""
@@ -1844,7 +1974,6 @@ if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
     Tensor.to = _cython_mod.tensor_to
     Tensor.backward = _cython_mod.tensor_backward
     Tensor.relu = _cython_mod.tensor_relu
-    Tensor.reshape = _cython_mod.tensor_reshape
     Tensor.transpose = _cython_mod.tensor_transpose
     Tensor.view = _cython_mod.tensor_view
     Tensor.size = _cython_mod.tensor_size

@@ -23,43 +23,34 @@ from .shape import contiguous, index_select
 
 
 def special_digamma(a):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    s = _unwrap_storage(a)
-    out_ptr = npu_runtime._alloc_device(s.nbytes, runtime=runtime)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(a.shape), a.dtype, device=a.device)
-    aclnn.digamma(s.data_ptr(), out_ptr, a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    return _wrap_tensor(out_storage, a.shape, a.stride)
+    from candle._cython._npu_ops import fast_digamma as _fast_digamma_impl  # pylint: disable=import-error,no-name-in-module
+    return _fast_digamma_impl(a)
 
 
 def special_erfinv(a):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    s = _unwrap_storage(a)
-    out_ptr = npu_runtime._alloc_device(s.nbytes, runtime=runtime)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(a.shape), a.dtype, device=a.device)
-    aclnn.erfinv(s.data_ptr(), out_ptr, a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    return _wrap_tensor(out_storage, a.shape, a.stride)
+    from candle._cython._npu_ops import fast_erfinv as _fast_erfinv_impl  # pylint: disable=import-error,no-name-in-module
+    return _fast_erfinv_impl(a)
 
 
 def special_gammaln(a):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    s = _unwrap_storage(a)
-    out_ptr = npu_runtime._alloc_device(s.nbytes, runtime=runtime)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(a.shape), a.dtype, device=a.device)
-    aclnn.lgamma(s.data_ptr(), out_ptr, a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    return _wrap_tensor(out_storage, a.shape, a.stride)
+    from candle._cython._npu_ops import fast_lgamma as _fast_lgamma_impl  # pylint: disable=import-error,no-name-in-module
+    return _fast_lgamma_impl(a)
 
 
 def special_sinc(a):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    s = _unwrap_storage(a)
-    out_ptr = npu_runtime._alloc_device(s.nbytes, runtime=runtime)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(a.shape), a.dtype, device=a.device)
-    aclnn.sinc(s.data_ptr(), out_ptr, a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    return _wrap_tensor(out_storage, a.shape, a.stride)
+    if _use_soc_fallback("sinc"):
+        import math
+
+        # TODO: re-enable native kernel when CANN fixes aclnnSinc 561000 on 910A.
+        pi_a = mul(a, _scalar_to_npu_tensor(math.pi, a))
+        numer = sin(pi_a)
+        denom = pi_a
+        ones = _scalar_to_npu_tensor(1.0, a)
+        zero = _scalar_to_npu_tensor(0.0, a)
+        return where(eq(a, zero), ones, div(numer, denom))
+
+    from candle._cython._npu_ops import fast_sinc as _fast_sinc_impl  # pylint: disable=import-error,no-name-in-module
+    return _fast_sinc_impl(a)
 
 
 def special_entr_op(a):

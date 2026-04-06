@@ -836,34 +836,22 @@ def cartesian_prod(*tensors):
 
 
 def chunk(a, chunks, dim=0):
-    arr = _to_numpy(a)
-    if dim < 0:
-        dim += arr.ndim
-    dim_size = arr.shape[dim]
+    d = dim if dim >= 0 else dim + a.dim()
+    dim_size = a.shape[d]
     if chunks <= 0:
         raise ValueError("chunks must be > 0")
     actual_chunks = min(chunks, dim_size) if dim_size > 0 else chunks
     if actual_chunks == 0:
         return tuple()
     chunk_size = (dim_size + actual_chunks - 1) // actual_chunks
-    outputs = []
-    for i in range(actual_chunks):
-        start = i * chunk_size
-        end = min(start + chunk_size, dim_size)
-        if start >= end:
-            break
-        slices = [slice(None)] * arr.ndim
-        slices[dim] = slice(start, end)
-        out = np.ascontiguousarray(arr[tuple(slices)])
-        outputs.append(_from_numpy(out, a.dtype, a.device))
-    return tuple(outputs)
+    return split(a, chunk_size, dim=d)
 
 
 def split(a, split_size_or_sections, dim=0):
-    arr = _to_numpy(a)
-    if dim < 0:
-        dim += arr.ndim
-    dim_size = arr.shape[dim]
+    from ..._backends.common import view as view_backend
+
+    d = dim if dim >= 0 else dim + a.dim()
+    dim_size = a.shape[d]
     outputs = []
     if isinstance(split_size_or_sections, int):
         if split_size_or_sections <= 0:
@@ -871,22 +859,19 @@ def split(a, split_size_or_sections, dim=0):
         step = split_size_or_sections
         for start in range(0, dim_size, step):
             end = min(start + step, dim_size)
-            slices = [slice(None)] * arr.ndim
-            slices[dim] = slice(start, end)
-            out = np.ascontiguousarray(arr[tuple(slices)])
-            outputs.append(_from_numpy(out, a.dtype, a.device))
+            outputs.append(
+                view_backend.narrow(a, d, start, end - start, creation_kind="multi_view")
+            )
     else:
         sizes = list(split_size_or_sections)
         if sum(sizes) != dim_size:
             raise ValueError("split sections must sum to dim size")
         start = 0
         for size in sizes:
-            end = start + size
-            slices = [slice(None)] * arr.ndim
-            slices[dim] = slice(start, end)
-            out = np.ascontiguousarray(arr[tuple(slices)])
-            outputs.append(_from_numpy(out, a.dtype, a.device))
-            start = end
+            outputs.append(
+                view_backend.narrow(a, d, start, size, creation_kind="multi_view")
+            )
+            start += size
     return tuple(outputs)
 
 
@@ -2157,7 +2142,8 @@ def select(a, dim, index):
 
 
 def expand(a, sizes):
-    from ..._tensor import Tensor
+    from ..._backends.common import view as view_backend
+
     sizes = tuple(sizes)
     ndiff = len(sizes) - a.dim()
     if ndiff < 0:
@@ -2180,7 +2166,8 @@ def expand(a, sizes):
             raise RuntimeError(
                 f"expand: size {sz} not compatible with dim size {src_shape[i]}"
             )
-    return Tensor(a.storage(), tuple(out_shape), tuple(out_stride), a.offset)
+    base = view_backend._get_base(a)
+    return view_backend._make_view(base, tuple(out_shape), tuple(out_stride), a.offset, "expand", source=a)
 
 
 def sum_to_size(a, size):
@@ -3043,21 +3030,57 @@ def unflatten(a, dim, sizes):
 
 
 def broadcast_to(a, shape):
-    arr = _to_numpy(a)
-    out = np.broadcast_to(arr, shape)
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    return expand(a, shape)
 
 
 def movedim(a, source, destination):
-    arr = _to_numpy(a)
-    out = np.moveaxis(arr, source, destination)
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    from ..._backends.common import view as view_backend
+
+    ndim = len(a.shape)
+    if isinstance(source, int):
+        source = (source,)
+    if isinstance(destination, int):
+        destination = (destination,)
+    source = tuple(s % ndim for s in source)
+    destination = tuple(d % ndim for d in destination)
+
+    order = [n for n in range(ndim) if n not in source]
+    dst_order = sorted(range(len(destination)), key=lambda i: destination[i])
+    for dst_idx in dst_order:
+        order.insert(destination[dst_idx], source[dst_idx])
+
+    shape = [a.shape[d] for d in order]
+    stride = [a.stride[d] for d in order]
+    base = view_backend._get_base(a)
+    return view_backend._make_view(base, tuple(shape), tuple(stride), a.offset, "movedim", source=a)
 
 
 def diagonal(a, offset=0, dim1=0, dim2=1):
-    arr = _to_numpy(a)
-    out = np.diagonal(arr, offset=offset, axis1=dim1, axis2=dim2)
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    from ..._backends.common import view as view_backend
+
+    ndim = len(a.shape)
+    d1 = dim1 if dim1 >= 0 else dim1 + ndim
+    d2 = dim2 if dim2 >= 0 else dim2 + ndim
+
+    shape = list(a.shape)
+    stride = list(a.stride)
+    size1 = shape[d1]
+    size2 = shape[d2]
+
+    if offset >= 0:
+        diag_len = max(0, min(size1, size2 - offset))
+        base_offset = a.offset + offset * stride[d2]
+    else:
+        diag_len = max(0, min(size1 + offset, size2))
+        base_offset = a.offset + (-offset) * stride[d1]
+
+    out_shape = [shape[i] for i in range(ndim) if i not in (d1, d2)]
+    out_stride = [stride[i] for i in range(ndim) if i not in (d1, d2)]
+    out_shape.append(diag_len)
+    out_stride.append(stride[d1] + stride[d2])
+
+    base = view_backend._get_base(a)
+    return view_backend._make_view(base, tuple(out_shape), tuple(out_stride), base_offset, "diagonal", source=a)
 
 
 # ---------------------------------------------------------------------------

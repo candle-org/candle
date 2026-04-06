@@ -10,6 +10,18 @@ from libc.stdint cimport int64_t
 
 import candle._dtype as _dtype_mod
 
+
+class _StrideTuple(tuple):
+    """Tuple subclass that also supports torch-style stride() calls."""
+
+    def __call__(self, dim=None):
+        if dim is None:
+            return tuple(self)
+        if dim < 0:
+            dim += len(self)
+        return self[dim]
+
+
 DEF MAX_NDIM = 64
 
 # Dispatch key bit values (must match keys.py DispatchKey enum)
@@ -51,7 +63,7 @@ cdef class TensorImpl:
         cdef int i
         for i in range(n):
             self._c_stride[i] = <int64_t>stride[i]
-        self._stride_tuple = stride
+        self._stride_tuple = _StrideTuple(stride)
 
     cdef inline void _set_device_from_obj(self, object dev):
         """Cache device object and extract type_code/index, compute dispatch keys."""
@@ -152,7 +164,7 @@ cdef class TensorImpl:
 
     @stride.setter
     def stride(self, value):
-        self._stride_tuple = value
+        self._stride_tuple = _StrideTuple(value)
         cdef int n = len(value)
         cdef int i
         for i in range(n):
@@ -440,12 +452,13 @@ cdef class TensorImpl:
         cdef int64_t new_numel = 1
         cdef int i
         cdef int new_ndim = len(new_shape)
+        cdef object tensor_type = type(self)
         for i in range(new_ndim):
             new_numel *= <int64_t>new_shape[i]
         if new_numel != self._c_numel:
             raise RuntimeError(
                 f"shape '{new_shape}' is invalid for input of size {self._c_numel}")
-        cdef TensorImpl v = TensorImpl.__new__(TensorImpl)
+        cdef TensorImpl v = <TensorImpl>tensor_type.__new__(tensor_type)
         v._storage = self._storage
         v._set_shape(new_shape)
         cdef list strides = [0] * new_ndim
@@ -476,7 +489,8 @@ cdef class TensorImpl:
         return v
 
     cpdef object cy_as_strided(self, tuple size, tuple stride, int64_t storage_offset):
-        cdef TensorImpl v = TensorImpl.__new__(TensorImpl)
+        cdef object tensor_type = type(self)
+        cdef TensorImpl v = <TensorImpl>tensor_type.__new__(tensor_type)
         v._storage = self._storage
         v._set_shape(size)
         v._set_stride(stride)
