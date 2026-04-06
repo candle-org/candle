@@ -255,6 +255,17 @@ def test_npu_split_stack_family():
     np.testing.assert_allclose(out[1].to("cpu").numpy(), np.array([3.0, 4.0]))
 
 
+def test_npu_view_to_cpu_preserves_offset_window():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    x = torch.tensor([1.0, 2.0, 3.0, 4.0], device="npu")
+    view = torch.chunk(x, 2)[1]
+
+    assert view.offset != 0
+    np.testing.assert_allclose(view.to("cpu").numpy(), np.array([3.0, 4.0]))
+
+
 def test_npu_hstack():
     if not torch.npu.is_available():
         pytest.skip("NPU not available")

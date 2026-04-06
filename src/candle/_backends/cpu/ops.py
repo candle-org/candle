@@ -334,7 +334,9 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
             acc_dtype = np.int64
 
     out = arr.sum(axis=dim, keepdims=keepdim, dtype=acc_dtype)
-    out = np.ascontiguousarray(out.astype(to_numpy_dtype(out_dtype), copy=False))
+    out = out.astype(to_numpy_dtype(out_dtype), copy=False)
+    if hasattr(out, "flags") and not out.flags['C_CONTIGUOUS']:
+        out = np.ascontiguousarray(out)
     return _from_numpy(out, out_dtype, a.device)
 
 
@@ -2494,7 +2496,10 @@ def norm_(a, p=2, dim=None, keepdim=False):
             out = np.full([1] * arr.ndim, out)
     from ..._dtype import float32 as f32
     out_dtype = a.dtype if a.dtype.is_floating_point else f32
-    return _from_numpy(np.ascontiguousarray(np.atleast_1d(out).astype(to_numpy_dtype(out_dtype), copy=False)), out_dtype, a.device)
+    out = out.astype(to_numpy_dtype(out_dtype), copy=False)
+    if hasattr(out, "flags") and not out.flags['C_CONTIGUOUS']:
+        out = np.ascontiguousarray(out)
+    return _from_numpy(out, out_dtype, a.device)
 
 
 def prod_(a, dim=None, keepdim=False):

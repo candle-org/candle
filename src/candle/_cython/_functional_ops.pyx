@@ -248,9 +248,11 @@ def add(a=None, b=None, *, alpha=1, out=None):
     return _dispatch_fn("add", None, a, b)
 
 
-def mul(a, b):
+def mul(a, b, *, out=None):
     """Fast mul: skip __torch_function__ when both args are base Tensor."""
     cdef object r
+    cdef object result
+    cdef object kwargs
 
     _ensure_originals()
 
@@ -258,14 +260,29 @@ def mul(a, b):
         if _is_npu_tensor_pair(a, b):
             _ensure_npu_refs()
             if _npu_fast_ok(a, b) and not _profiler_active():
-                return _npu_mul_fn(a, b)
-        return _dispatch_fn("mul", None, a, b)
+                result = _npu_mul_fn(a, b)
+                if out is not None:
+                    out.copy_(result)
+                    return out
+                return result
+        result = _dispatch_fn("mul", None, a, b)
+        if out is not None:
+            out.copy_(result)
+            return out
+        return result
 
-    r = _handle_torch_function(_py_mul_fn, (a, b), {})
+    kwargs = {}
+    if out is not None:
+        kwargs["out"] = out
+    r = _handle_torch_function(_py_mul_fn, (a, b), kwargs)
     if r is not NotImplemented:
         return r
 
-    return _dispatch_fn("mul", None, a, b)
+    result = _dispatch_fn("mul", None, a, b)
+    if out is not None:
+        out.copy_(result)
+        return out
+    return result
 
 
 def sub(a, b, *, alpha=1):
@@ -320,20 +337,33 @@ def div(a, b, *, rounding_mode=None):
     return _dispatch_fn("true_divide", None, a, b)
 
 
-def matmul(a, b):
+def matmul(a, b, *, out=None):
     """Fast matmul: skip __torch_function__ when both args are base Tensor."""
     cdef object r
+    cdef object result
+    cdef object kwargs
 
     _ensure_originals()
 
     if _is_base_tensor(a) and _is_base_tensor(b):
-        return _dispatch_fn("matmul", None, a, b)
+        result = _dispatch_fn("matmul", None, a, b)
+        if out is not None:
+            out.copy_(result)
+            return out
+        return result
 
-    r = _handle_torch_function(_py_matmul_fn, (a, b), {})
+    kwargs = {}
+    if out is not None:
+        kwargs["out"] = out
+    r = _handle_torch_function(_py_matmul_fn, (a, b), kwargs)
     if r is not NotImplemented:
         return r
 
-    return _dispatch_fn("matmul", None, a, b)
+    result = _dispatch_fn("matmul", None, a, b)
+    if out is not None:
+        out.copy_(result)
+        return out
+    return result
 
 
 def relu(a):

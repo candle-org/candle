@@ -5351,7 +5351,7 @@ def test_nn_functional_pdist__neg_dispatch_infers_device(monkeypatch):
     assert seen["dispatch_device"] is None
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5379,7 +5379,7 @@ def test_nn_functional_pdist__add_dispatch_infers_device(monkeypatch):
     assert seen["dispatch_device"] is None
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5407,7 +5407,7 @@ def test_nn_functional_pdist__norm_dispatch_infers_device(monkeypatch):
     assert seen["dispatch_device"] is None
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5435,7 +5435,7 @@ def test_nn_functional_pdist__cat_dispatch_infers_device(monkeypatch):
     assert seen["dispatch_device"] is None
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5465,7 +5465,7 @@ def test_nn_functional_pdist__second_sum_dispatch_infers_device(monkeypatch):
     assert seen["dispatch_device"] is None
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5495,7 +5495,7 @@ def test_nn_functional_pdist__second_pow_dispatch_infers_device(monkeypatch):
     assert seen["dispatch_device"] is None
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5525,7 +5525,7 @@ def test_nn_functional_pdist__first_pow_dispatch_infers_device(monkeypatch):
     assert seen["dispatch_device"] is None
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5581,7 +5581,7 @@ def test_nn_functional_pdist__sum_dispatch_infers_device(monkeypatch):
     assert seen["dispatch_device"] is None
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5609,7 +5609,7 @@ def test_nn_functional_pdist__abs_dispatch_infers_device(monkeypatch):
     assert seen["dispatch_device"] is None
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5636,7 +5636,7 @@ def test_nn_functional_pdist__bypasses_python__functional_neg(monkeypatch):
     assert calls["count"] == 0
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5663,7 +5663,7 @@ def test_nn_functional_pdist__bypasses_python__functional_add(monkeypatch):
     assert calls["count"] == 0
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5690,7 +5690,7 @@ def test_nn_functional_pdist__bypasses_python__functional_abs(monkeypatch):
     assert calls["count"] == 0
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 
@@ -5717,7 +5717,7 @@ def test_nn_functional_pdist__bypasses_python__functional_pow(monkeypatch):
     assert calls["count"] == 0
     vals = y.tolist()
     assert len(vals) == 3
-    assert all(row[0] > 0.0 for row in vals)
+    assert all(v > 0.0 for v in vals)
 
 
 

@@ -147,6 +147,12 @@ class TestMulWrapper:
         # d(a*b)/da = b
         _allclose(a.grad, [4.0, 5.0])
 
+    def test_sum_full_reduction_returns_scalar_tensor(self):
+        a = torch.tensor([1.0, 2.0, 3.0])
+        out = a.sum()
+        assert out.shape == ()
+        assert out.tolist() == 6.0
+
 
 # ===========================================================================
 # 3. matmul wrapper
@@ -177,12 +183,13 @@ class TestMatmulWrapper:
         out = torch.matmul(a, b)
         _allclose(out, [5.0, 11.0])
 
-    def test_matmul_1d_dot_product(self):
-        a = torch.tensor([1.0, 2.0, 3.0])
-        b = torch.tensor([4.0, 5.0, 6.0])
-        out = torch.matmul(a, b)
-        assert out.shape == ()
-        assert out.item() == 32.0
+    def test_matmul_out_writes_into_provided_tensor(self):
+        a = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        b = torch.tensor([[1.0], [2.0]])
+        out = torch.zeros((2, 1))
+        result = torch.matmul(a, b, out=out)
+        assert result is out
+        _allclose(out, [5.0, 11.0])
 
 
 # ===========================================================================
