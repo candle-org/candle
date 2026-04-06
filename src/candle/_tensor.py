@@ -525,6 +525,50 @@ class Tensor(_TensorBase):
             t = empty(size, dtype=dt, device=dev)
             return t
 
+    def set_(self, typed_storage, storage_offset, size, stride):
+        from ._storage import TypedStorage
+
+        if not isinstance(typed_storage, TypedStorage):
+            raise TypeError("set_() currently only supports TypedStorage input")
+        if not isinstance(storage_offset, int) or storage_offset < 0:
+            raise RuntimeError("storage_offset must be a non-negative integer")
+        if not isinstance(size, (tuple, list)) or not isinstance(stride, (tuple, list)):
+            raise RuntimeError("size and stride must be tuple-like")
+        if len(size) != len(stride):
+            raise RuntimeError("size and stride must have the same length")
+        if any(not isinstance(dim, int) for dim in size):
+            raise RuntimeError("size values must be integers")
+        if any(not isinstance(step, int) for step in stride):
+            raise RuntimeError("stride values must be integers")
+        if any(dim < 0 for dim in size):
+            raise RuntimeError("size values must be non-negative")
+        if any(step < 0 for step in stride):
+            raise RuntimeError("stride values must be non-negative")
+
+        size = tuple(size)
+        stride = tuple(stride)
+        device = getattr(typed_storage, "device", None)
+        dtype = getattr(typed_storage, "dtype", None)
+        if device is None or dtype is None:
+            raise RuntimeError("typed_storage must have device and dtype")
+
+        if not any(dim == 0 for dim in size):
+            max_index = storage_offset
+            for dim, step in zip(size, stride):
+                max_index += (dim - 1) * step
+            if max_index >= typed_storage.size():
+                raise RuntimeError("set_() view exceeds storage bounds")
+
+        self._check_inplace()
+        self._storage = typed_storage
+        self.shape = size
+        self.stride = _StrideTuple(stride)
+        self.offset = int(storage_offset)
+        self._set_device_from_storage(device)
+        self._set_dtype_from_storage(dtype)
+        self._bump_version()
+        return self
+
     def as_strided(self, size, stride, storage_offset=None):
         """Create a view of the tensor with given size, stride, and storage_offset."""
         offset = storage_offset if storage_offset is not None else self.offset

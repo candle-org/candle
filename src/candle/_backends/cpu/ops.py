@@ -1864,6 +1864,8 @@ def _expand_ellipsis(keys, ndim):
 
 
 def _basic_getitem_view(tensor, key):
+    from ..._backends.common import view as view_backend
+
     keys = list(key) if isinstance(key, tuple) else [key]
     keys = _expand_ellipsis(keys, tensor.dim())
 
@@ -1914,7 +1916,8 @@ def _basic_getitem_view(tensor, key):
     if any(s < 0 for s in out_stride):
         return None
 
-    return Tensor(tensor.storage(), tuple(out_shape), tuple(out_stride), out_offset)
+    base = view_backend._get_base(tensor)
+    return view_backend._make_view(base, tuple(out_shape), tuple(out_stride), out_offset, "basic_slice", source=tensor)
 
 
 def getitem(tensor, key):
