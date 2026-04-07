@@ -241,6 +241,28 @@ class TestViewOps:
 
 
 
+class TestTensorBootstrapExports:
+    """_cython package should re-export tensor bootstrap helpers needed by Tensor import."""
+
+    def test_cython_package_exports_tensor_bootstrap_helpers(self):
+        import candle._cython as cython_mod
+
+        for name in (
+            "tensor_set_device_from_storage",
+            "tensor_set_dtype_from_storage",
+            "tensor_set_data",
+            "tensor_delattr",
+            "tensor_fw_get",
+            "tensor_fw_set",
+            "tensor_fw_clear",
+            "tensor_fw_has",
+            "tensor_untyped_storage",
+            "tensor_record_stream",
+            "tensor_is_pinned",
+        ):
+            assert hasattr(cython_mod, name)
+
+
 class TestTensorDTypeCaching:
     """Regression tests for Tensor dtype metadata cached from storage."""
 

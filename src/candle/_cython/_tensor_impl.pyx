@@ -531,6 +531,113 @@ cdef class TensorImpl:
         new_stride[dim0], new_stride[dim1] = new_stride[dim1], new_stride[dim0]
         return self.cy_as_strided(tuple(new_shape), tuple(new_stride), self._c_offset)
 
+# -------------------------------------------------------------------
+# Module-level tensor factory functions
+# -------------------------------------------------------------------
+
+cpdef void cy_init_tensor_fields(
+    TensorImpl t,
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset,
+    bint requires_grad,
+    object grad,
+    object grad_fn,
+    object base,
+    object view_meta,
+    bint pending,
+    bint retain_grad,
+    object backward_hooks,
+    int64_t version_value,
+    object vc_proxy,
+):
+    t._storage = storage
+    t._set_shape(shape)
+    t._set_stride(stride)
+    t._c_offset = offset
+    t.requires_grad = requires_grad
+    t.grad = grad
+    t.grad_fn = grad_fn
+    t._base = base
+    t._view_meta = view_meta
+    t._pending = pending
+    t._retain_grad = retain_grad
+    t._backward_hooks = backward_hooks
+    t._version_value = version_value
+    t._vc_proxy = vc_proxy
+    t._output_nr = 0
+
+    cdef object dev = getattr(storage, "device", None)
+    if dev is not None:
+        t._set_device_from_obj(dev)
+    cdef object dtype = getattr(storage, "dtype", None)
+    if dtype is not None:
+        t._set_dtype_from_obj(dtype)
+    t._recompute_dispatch_keys()
+
+
+cpdef object cy_make_tensor_from_storage(
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset=0,
+    bint requires_grad=False,
+):
+    from candle._tensor import Tensor
+
+    cdef TensorImpl t = Tensor.__new__(Tensor)
+    cy_init_tensor_fields(
+        t,
+        storage,
+        shape,
+        stride,
+        offset,
+        requires_grad,
+        None,
+        None,
+        None,
+        None,
+        False,
+        False,
+        None,
+        0,
+        None,
+    )
+    return t
+
+
+cpdef object cy_make_view_tensor(
+    object base,
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset=0,
+):
+    from candle._tensor import Tensor
+
+    cdef TensorImpl b = <TensorImpl>base
+    cdef object root = b._base if b._base is not None else base
+    cdef TensorImpl t = Tensor.__new__(Tensor)
+    cy_init_tensor_fields(
+        t,
+        storage,
+        shape,
+        tuple(stride),
+        offset,
+        b.requires_grad,
+        None,
+        b.grad_fn,
+        root,
+        None,
+        False,
+        False,
+        None,
+        (<TensorImpl>root)._version_value,
+        None,
+    )
+    return t
+
 
 # -------------------------------------------------------------------
 # VersionCounter proxy — lightweight wrapper around TensorImpl._version_value
