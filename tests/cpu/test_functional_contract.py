@@ -191,6 +191,14 @@ class TestMatmulWrapper:
         assert result is out
         _allclose(out, [5.0, 11.0])
 
+    def test_matmul_out_writes_into_provided_tensor(self):
+        a = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        b = torch.tensor([[1.0], [2.0]])
+        out = torch.zeros((2, 1))
+        result = torch.matmul(a, b, out=out)
+        assert result is out
+        _allclose(out, [5.0, 11.0])
+
 
 # ===========================================================================
 # 4. relu wrapper

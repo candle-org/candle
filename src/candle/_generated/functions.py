@@ -114,8 +114,39 @@ def _div_tensor_other_backward_helper(grad, self_, other, *extra_and_keyset):
 
 
 def _matmul_backward_helper(grad, self_, other, grad_input_mask, keyset):
-    grad_self = reduce_grad(redispatch("matmul", keyset, grad, redispatch("transpose", keyset, other, -1, -2)), self_.shape) if grad_input_mask[0] else None
-    grad_other = reduce_grad(redispatch("matmul", keyset, redispatch("transpose", keyset, self_, -1, -2), grad), other.shape) if grad_input_mask[1] else None
+    grad_self = None
+    grad_other = None
+
+    if grad_input_mask[0]:
+        if len(other.shape) == 1:
+            if len(self_.shape) == 1:
+                grad_self_raw = redispatch("mul", keyset, grad, other)
+            else:
+                grad_self_raw = redispatch(
+                    "matmul",
+                    keyset,
+                    redispatch("unsqueeze", keyset, grad, -1),
+                    redispatch("unsqueeze", keyset, other, 0),
+                )
+        else:
+            grad_self_raw = redispatch("matmul", keyset, grad, redispatch("transpose", keyset, other, -1, -2))
+        grad_self = reduce_grad(grad_self_raw, self_.shape)
+
+    if grad_input_mask[1]:
+        if len(self_.shape) == 1:
+            if len(other.shape) == 1:
+                grad_other_raw = redispatch("mul", keyset, grad, self_)
+            else:
+                grad_other_raw = redispatch(
+                    "matmul",
+                    keyset,
+                    redispatch("unsqueeze", keyset, self_, -1),
+                    redispatch("unsqueeze", keyset, grad, -2),
+                )
+        else:
+            grad_other_raw = redispatch("matmul", keyset, redispatch("transpose", keyset, self_, -1, -2), grad)
+        grad_other = reduce_grad(grad_other_raw, other.shape)
+
     return grad_self, grad_other
 
 
@@ -2375,8 +2406,8 @@ class MatmulBackward0(Node):
         from .._dispatch.dispatcher import current_dispatch_keyset
         keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
         _saved = self.saved_tensors()
-        other = _saved[self._saved_other_idx]
-        self_ = _saved[self._saved_self_idx]
+        other = _saved[self._saved_other_idx] if self._saved_other_idx is not None else None
+        self_ = _saved[self._saved_self_idx] if self._saved_self_idx is not None else None
         grad_input_mask = [True, True]
         with _grad_context(keyset):
             grad_self, grad_other = _matmul_backward_helper(grad, self_, other, grad_input_mask, keyset)

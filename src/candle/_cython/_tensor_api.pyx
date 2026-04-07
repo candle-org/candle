@@ -754,6 +754,59 @@ def tensor_as_strided(self, size, stride, storage_offset=None):
     return _cy_make_view_tensor_fn(self, self._storage, tuple(size), tuple(stride), offset)
 
 
+def tensor_is_contiguous(self, memory_format=None):
+    cdef tuple expected
+    expected = _contiguous_stride_tuple(self.shape)
+    return self.stride == expected
+
+
+def tensor_contiguous(self, memory_format=None):
+    if self.is_contiguous(memory_format=memory_format):
+        return self
+    _ensure_dispatch_ref()
+    return _dispatch_fn("contiguous", self.device.type, self)
+
+
+def tensor_flatten(self, start_dim=0, end_dim=-1):
+    cdef Py_ssize_t ndim = len(self.shape)
+    cdef Py_ssize_t i
+    cdef Py_ssize_t flattened = 1
+    cdef tuple new_shape
+
+    if ndim == 0:
+        return self.reshape((1,))
+    if start_dim < 0:
+        start_dim += ndim
+    if end_dim < 0:
+        end_dim += ndim
+    if start_dim < 0 or start_dim >= ndim:
+        raise IndexError("Dimension out of range")
+    if end_dim < 0 or end_dim >= ndim:
+        raise IndexError("Dimension out of range")
+    if start_dim > end_dim:
+        raise RuntimeError("flatten() has invalid args: start_dim cannot come after end_dim")
+
+    for i in range(start_dim, end_dim + 1):
+        flattened *= self.shape[i]
+    new_shape = self.shape[:start_dim] + (flattened,) + self.shape[end_dim + 1:]
+    return self.reshape(new_shape)
+
+
+def tensor_t(self):
+    cdef Py_ssize_t ndim = len(self.shape)
+    if ndim > 2:
+        raise RuntimeError(f"t() expects a tensor with <= 2 dimensions, but self is {ndim}D")
+    if ndim < 2:
+        return self
+    return self.transpose(0, 1)
+
+
+def tensor_as_strided(self, size, stride, storage_offset=None):
+    cdef object offset = storage_offset if storage_offset is not None else self.offset
+    _ensure_view_factory_ref()
+    return _cy_make_view_tensor_fn(self, self._storage, tuple(size), tuple(stride), offset)
+
+
 def tensor_size(self, dim=None):
     cdef Py_ssize_t ndim
 

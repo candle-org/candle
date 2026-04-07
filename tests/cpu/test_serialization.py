@@ -100,6 +100,22 @@ def test_torch_legacy_save_then_candle_load_state_dict(tmp_path):
     _assert_state_dict_close(ref, loaded)
 
 
+class _FourArgRebuildTensor:
+    def __reduce__(self):
+        return (torch._utils._rebuild_tensor, (torch.FloatStorage([1.0, 2.0, 3.0, 4.0]), 0, (2, 2), (2, 1)))
+
+
+def test_torch_legacy_four_arg_rebuild_tensor_loads(tmp_path):
+    path = tmp_path / "torch_four_arg_legacy.pth"
+    torch.save(_FourArgRebuildTensor(), path, _use_new_zipfile_serialization=False)
+
+    loaded = mt.load(path)
+
+    assert isinstance(loaded, mt.Tensor)
+    assert tuple(loaded.shape) == (2, 2)
+    assert loaded.tolist() == [[1.0, 2.0], [3.0, 4.0]]
+
+
 def test_candle_save_then_torch_load_state_dict(tmp_path):
     model = nn.Linear(4, 3)
     state = model.state_dict()

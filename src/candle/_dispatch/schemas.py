@@ -182,7 +182,14 @@ def register_schemas():
         },
     )
 
-    _register_binary_ops(("mul", "matmul"))
+    _register_binary_ops(("mul",))
+    registry.register_schema("matmul", "matmul(Tensor input, Tensor other, *, Tensor? out=None) -> Tensor")
+    registry.register_error_overrides(
+        "matmul",
+        {
+            "missing": "{name}() received an invalid combination of arguments - got {got}, but expected (Tensor input, Tensor other, *, Tensor out = None)",
+        },
+    )
     _register_unary_ops(("relu",))
 
     registry.register_schema("sum", "sum(Tensor input, int[]? dim=None, bool keepdim=False, Dtype? dtype=None) -> Tensor")

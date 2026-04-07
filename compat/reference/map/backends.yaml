@@ -1,0 +1,28 @@
+- id: backends.npu.no_cpu_fallback
+  domain: backends
+  priority: P0
+  hot_path: true
+  upstream:
+    torch:
+      semantic_owner: device placement invariants
+      impl_tier: cpp_core
+      refs:
+        - c10/core/Device.h
+    torch_npu:
+      semantic_owner: device-only NPU execution
+      impl_tier: backend_bridge
+      refs:
+        - torch_npu/csrc
+  candle:
+    modules:
+      - src/candle/_backends/npu/ops.py
+      - src/candle/_backends/npu/aclnn.py
+    current_semantic_status: partial
+    current_impl_tier: python_plus_partial_cython
+    target_impl_tier: cython_plus_native_backend
+  verification:
+    tests:
+      - tests/npu/test_no_cpu_fallback_npu.py*
+    reports: []
+  gaps:
+    - all NPU execution paths must remain on-device without host round-trips

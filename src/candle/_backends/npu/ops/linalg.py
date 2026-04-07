@@ -21,7 +21,15 @@ from .reduce import sum_
 from .shape import contiguous, diag, diagonal_op, expand, index_select, split, tril, triu
 
 
-def matmul(a, b):
+def matmul(a, b, out=None):
+    user_out = out
+
+    def _return(result):
+        if user_out is not None:
+            user_out.copy_(result)
+            return user_out
+        return result
+
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu" or b.device.type != "npu":
@@ -121,15 +129,15 @@ def matmul(a, b):
             )
 
     storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape_comp), a.dtype, device=a.device)
-    out = _wrap_tensor(storage, out_shape_comp, out_stride)
+    result = _wrap_tensor(storage, out_shape_comp, out_stride)
     if out_shape_comp != out_shape:
         from ...common import view as view_backend
 
-        out = view_backend.reshape(out, out_shape)
+        result = view_backend.reshape(result, out_shape)
     # Cast result back to original dtype if we promoted for 310B float32 workaround.
     if _use_soc_fallback("matmul") and orig_dtype != a.dtype:
-        out = _cast_tensor_dtype(out, orig_dtype)
-    return out
+        result = _cast_tensor_dtype(result, orig_dtype)
+    return _return(result)
 
 
 def dot(a, b):

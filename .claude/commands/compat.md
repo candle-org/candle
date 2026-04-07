@@ -19,7 +19,7 @@ Run transformers compatibility tests against candle and report results.
 
 ```bash
 source ~/miniconda3/etc/profile.d/conda.sh && \
-conda run -n mindnlp env USE_CANDLE=1 \
+conda run -n candle env USE_CANDLE=1 \
   python compat/transformers/run.py $PARSED_ARGS \
   --json-report /tmp/compat-report.json \
   -v --tb=short

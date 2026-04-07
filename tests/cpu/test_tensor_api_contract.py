@@ -586,3 +586,78 @@ def test_size_and_dim_contracts():
     assert a.dim() == 2
     with pytest.raises(IndexError):
         a.size(2)
+
+
+# ===========================================================================
+# data_ptr
+# ===========================================================================
+def test_data_ptr_returns_int():
+    t = torch.tensor([1.0, 2.0, 3.0])
+    ptr = t.data_ptr()
+    assert isinstance(ptr, int)
+    assert ptr != 0
+
+
+def test_data_ptr_different_tensors():
+    a = torch.tensor([1.0, 2.0])
+    b = torch.tensor([3.0, 4.0])
+    assert a.data_ptr() != b.data_ptr()
+
+
+def test_data_ptr_view_shares_base():
+    a = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    b = a.view(4)
+    # view should share memory, so data_ptr could be the same
+    # (not strictly guaranteed to be equal if offset differs, but
+    # for a zero-offset view it should match)
+    assert b.data_ptr() == a.data_ptr()
+
+
+def test_set_rebinds_typed_storage_metadata():
+    source = torch.arange(6, dtype=torch.float32)
+    rebound = torch.tensor([], dtype=torch.float32)
+
+    out = rebound.set_(source.storage(), 1, (2,), (2,))
+
+    assert out is rebound
+    assert rebound.shape == (2,)
+    assert rebound.stride == (2,)
+    assert rebound.storage_offset() == 1
+
+
+def test_set_reads_rebound_logical_elements():
+    source = torch.arange(6, dtype=torch.float32)
+    rebound = torch.tensor([], dtype=torch.float32)
+
+    rebound.set_(source.storage(), 1, (2,), (2,))
+
+    assert rebound.tolist() == [1.0, 3.0]
+
+
+def test_set_rebound_tensor_aliases_underlying_storage():
+    source = torch.arange(6, dtype=torch.float32)
+    rebound = torch.tensor([], dtype=torch.float32)
+
+    rebound.set_(source.storage(), 1, (2,), (2,))
+    source[3] = 99.0
+
+    assert rebound.tolist() == [1.0, 99.0]
+
+
+def test_set_rejects_out_of_bounds_view():
+    source = torch.arange(6, dtype=torch.float32)
+    rebound = torch.tensor([], dtype=torch.float32)
+
+    with pytest.raises(RuntimeError):
+        rebound.set_(source.storage(), 5, (2,), (1,))
+
+
+def test_set_allows_empty_tensor_view_with_large_storage_offset():
+    source = torch.arange(6, dtype=torch.float32)
+    rebound = torch.tensor([], dtype=torch.float32)
+
+    rebound.set_(source.storage(), 1000, (0,), (1,))
+
+    assert rebound.shape == (0,)
+    assert rebound.storage_offset() == 1000
+    assert rebound.tolist() == []

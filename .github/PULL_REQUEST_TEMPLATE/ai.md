@@ -25,7 +25,7 @@
 <!-- Paste the exact commands you ran. Do not edit or abbreviate. -->
 
 ```bash
-source ~/miniconda3/etc/profile.d/conda.sh && conda run -n mindnlp python -m pytest ...
+source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle python -m pytest ...
 pylint src/candle/ --rcfile=.github/pylint.conf
 ```
 

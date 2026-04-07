@@ -3,7 +3,7 @@ import ctypes
 import struct
 import numpy as np
 
-from ._helpers import (
+from ._helpers import (  # pylint: disable=no-name-in-module
     _can_use_gpu, _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
     _alloc_output_buf, _metal_buf_to_bytes, _from_metal_buffer,
     _get_dispatcher, _dispatch_unary_gpu, _dispatch_unary_predicate_gpu,
@@ -21,7 +21,13 @@ from ._helpers import (
 from .math import mul, add, sub, abs as gpu_abs, sqrt as gpu_sqrt, pow as gpu_pow, div
 
 
-def matmul(a, b):
+def matmul(a, b, out=None):
+    def _return(result):
+        if out is not None:
+            out.copy_(result)
+            return out
+        return result
+
     # GPU path: MPSMatrixMultiplication for 2D contiguous float32/float16
     if (_can_use_gpu(a) and _can_use_gpu(b)
             and len(a.shape) == 2 and len(b.shape) == 2):
@@ -39,8 +45,8 @@ def matmul(a, b):
                     from ...._tensor import _compute_strides
                     out_shape = (M, N)
                     out_stride = _compute_strides(out_shape)
-                    return _from_metal_buffer(out_buf, out_shape, out_stride,
-                                             a.dtype, a.device)
+                    return _return(_from_metal_buffer(out_buf, out_shape, out_stride,
+                                             a.dtype, a.device))
     # GPU path: 3D batched matmul — loop GPU 2D matmul per batch, then stack
     if (_can_use_gpu(a) and _can_use_gpu(b)
             and len(a.shape) == 3 and len(b.shape) == 3):
@@ -51,7 +57,7 @@ def matmul(a, b):
             ai = select(a, 0, i)  # a[i] — 2D view
             bi = select(b, 0, i)  # b[i] — 2D view
             slices.append(matmul(ai, bi))
-        return gpu_stack(slices, dim=0)
+        return _return(gpu_stack(slices, dim=0))
     # CPU path (Accelerate BLAS or numpy)
     a_np = _to_numpy(a)
     b_np = _to_numpy(b)
@@ -59,7 +65,7 @@ def matmul(a, b):
         a_c = np.ascontiguousarray(a_np)
         b_c = np.ascontiguousarray(b_np)
         if _can_use_blas(a_c) and _can_use_blas(b_c):
-            return _from_numpy(_blas_gemm(a_c, b_c, a.dtype), a.dtype, a.device)
+            return _return(_from_numpy(_blas_gemm(a_c, b_c, a.dtype), a.dtype, a.device))
     if a_np.ndim == 3 and b_np.ndim == 3:
         a_c = np.ascontiguousarray(a_np)
         b_c = np.ascontiguousarray(b_np)
@@ -67,11 +73,11 @@ def matmul(a, b):
             batch = a_c.shape[0]
             M, K = a_c.shape[1], a_c.shape[2]
             N = b_c.shape[2]
-            out = np.empty((batch, M, N), dtype=a_c.dtype)
+            out_arr = np.empty((batch, M, N), dtype=a_c.dtype)
             for i in range(batch):
-                out[i] = _blas_gemm(a_c[i], b_c[i], a.dtype)
-            return _from_numpy(out, a.dtype, a.device)
-    return _from_numpy(a_np @ b_np, a.dtype, a.device)
+                out_arr[i] = _blas_gemm(a_c[i], b_c[i], a.dtype)
+            return _return(_from_numpy(out_arr, a.dtype, a.device))
+    return _return(_from_numpy(a_np @ b_np, a.dtype, a.device))
 
 def mm(a, b):
     return matmul(a, b)

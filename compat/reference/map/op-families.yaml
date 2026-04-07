@@ -1,0 +1,56 @@
+- id: op_family.indexing.bool_mask_validation
+  domain: op_family
+  priority: P0
+  hot_path: true
+  upstream:
+    torch:
+      semantic_owner: indexing and mask validation
+      impl_tier: cpp_core
+      refs:
+        - aten/src/ATen/native/TensorAdvancedIndexing.cpp
+    torch_npu:
+      semantic_owner: NPU mask and bounds validation
+      impl_tier: backend_bridge
+      refs:
+        - torch_npu/csrc
+  candle:
+    modules:
+      - src/candle/_backends/npu/ops.py
+    current_semantic_status: partial
+    current_impl_tier: python_plus_partial_cython
+    target_impl_tier: cython_plus_native_backend
+  verification:
+    tests:
+      - tests/npu/910b/test_910b_watchlist.py::test_910b_im2col_index_validation_any_regression
+    reports: []
+  gaps:
+    - repeated bool reductions must not create false-positive invalid-index reports on 910B
+
+- id: op_family.im2col.index_check
+  domain: op_family
+  priority: P0
+  hot_path: true
+  upstream:
+    torch:
+      semantic_owner: unfold / im2col kernel semantics
+      impl_tier: cpp_core
+      refs:
+        - aten/src/ATen/native/Im2Col.cpp
+    torch_npu:
+      semantic_owner: NPU unfold path
+      impl_tier: backend_bridge
+      refs:
+        - torch_npu/csrc
+  candle:
+    modules:
+      - src/candle/_backends/npu/ops.py
+    current_semantic_status: partial
+    current_impl_tier: python_plus_partial_cython
+    target_impl_tier: cython_plus_native_backend
+  verification:
+    tests:
+      - tests/npu/910b/test_910b_watchlist.py::test_910b_im2col
+      - tests/npu/910b/test_910b_watchlist.py::test_910b_im2col_index_validation_any_regression
+    reports: []
+  gaps:
+    - 910B im2col needs explicit reporting and mapping to the correct parity item

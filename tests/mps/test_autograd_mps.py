@@ -51,6 +51,70 @@ def test_matmul_backward_mps():
     assert b.grad is not None
 
 
+
+
+def test_matmul_vector_matrix_backward_mps():
+    x = torch.tensor([1.0, -2.0, 3.0], device="mps")
+    w = torch.tensor(
+        [
+            [0.5, 1.0],
+            [-1.5, 2.0],
+            [3.0, -0.5],
+        ],
+        device="mps",
+    )
+    x.requires_grad = True
+    w.requires_grad = True
+
+    y = torch.matmul(x, w)
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert w.grad is not None
+    np.testing.assert_allclose(x.grad.cpu().numpy(), np.array([1.5, 0.5, 2.5], dtype=np.float32))
+    np.testing.assert_allclose(
+        w.grad.cpu().numpy(),
+        np.array(
+            [
+                [1.0, 1.0],
+                [-2.0, -2.0],
+                [3.0, 3.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+
+def test_matmul_matrix_vector_backward_mps():
+    a = torch.tensor(
+        [
+            [1.0, 2.0, -1.0],
+            [0.0, -3.0, 4.0],
+        ],
+        device="mps",
+    )
+    x = torch.tensor([2.0, -1.0, 0.5], device="mps")
+    a.requires_grad = True
+    x.requires_grad = True
+
+    y = torch.matmul(a, x)
+    y.sum().backward()
+
+    assert a.grad is not None
+    assert x.grad is not None
+    np.testing.assert_allclose(
+        a.grad.cpu().numpy(),
+        np.array(
+            [
+                [2.0, -1.0, 0.5],
+                [2.0, -1.0, 0.5],
+            ],
+            dtype=np.float32,
+        ),
+    )
+    np.testing.assert_allclose(x.grad.cpu().numpy(), np.array([1.0, -1.0, 3.0], dtype=np.float32))
+
+
 def test_linear_backward_mps():
     from candle import nn
     layer = nn.Linear(2, 3).to("mps")

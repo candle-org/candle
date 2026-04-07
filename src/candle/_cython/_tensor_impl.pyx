@@ -38,6 +38,17 @@ DEF _DK_AUTOGRAD_META = 1 << 10
 DEF _DK_ADINPLACEORVIEW = 1 << 4
 DEF _DK_AUTOGRAD = 1 << 11
 
+cdef object _StrideTuple_cls = None
+
+cdef inline object _coerce_stride_tuple(object stride):
+    global _StrideTuple_cls
+    if _StrideTuple_cls is None:
+        from candle._tensor import _StrideTuple
+        _StrideTuple_cls = _StrideTuple
+    if isinstance(stride, _StrideTuple_cls):
+        return stride
+    return _StrideTuple_cls(stride)
+
 
 cdef class TensorImpl:
     """C-level base for Tensor. All hot fields are cdef-typed."""
@@ -59,6 +70,7 @@ cdef class TensorImpl:
         self._shape_tuple = shape
 
     cdef inline void _set_stride(self, object stride):
+        stride = _coerce_stride_tuple(stride)
         cdef int n = len(stride)
         cdef int i
         for i in range(n):

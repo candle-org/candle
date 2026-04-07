@@ -518,6 +518,7 @@ from . import distributed
 from . import onnx
 from . import futures
 from . import amp
+from . import accelerator
 from . import compiler
 from . import _dynamo
 from . import quasirandom
@@ -533,6 +534,9 @@ from . import linalg
 from . import fft
 from . import special
 from . import testing
+from . import hub
+from . import utils
+from . import version
 from ._random import (
     manual_seed, seed, initial_seed, get_rng_state, set_rng_state,
     Generator, default_generator,
@@ -815,6 +819,7 @@ __all__ = [
     "onnx",
     # amp
     "amp",
+    "accelerator",
     "is_autocast_enabled",
     "set_autocast_enabled",
     "get_autocast_dtype",

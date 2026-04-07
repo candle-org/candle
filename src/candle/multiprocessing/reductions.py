@@ -1,6 +1,7 @@
 from multiprocessing import reduction
 
 from .. import multiprocessing as _mt_mp
+from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from .._storage import _CPUUntypedStorage, TypedStorage
 from .._tensor import Tensor
 
@@ -64,7 +65,7 @@ def _rebuild_typed_storage_from_reduced_untyped(rebuild_untyped, args, dtype, si
 
 
 def _rebuild_tensor(storage, shape, stride, offset, requires_grad):
-    t = Tensor(storage, shape, stride, offset=offset, requires_grad=requires_grad)
+    t = cy_make_tensor_from_storage(storage, shape, stride, offset, requires_grad)
     if requires_grad:
         t.grad_fn = None
     return t

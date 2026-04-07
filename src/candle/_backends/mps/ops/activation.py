@@ -1,6 +1,6 @@
 import numpy as np
 
-from ._helpers import (
+from ._helpers import (  # pylint: disable=no-name-in-module
     _can_use_gpu, _empty_like, _unsupported_dtype,
     _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
     _alloc_output_buf, _metal_buf_to_bytes, _from_metal_buffer,

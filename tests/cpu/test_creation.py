@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import candle as torch
 
 
@@ -50,3 +51,43 @@ def test_full_cpu():
     x = torch.full((2, 3), 1.5)
     assert x.shape == (2, 3)
     assert x.numpy().tolist() == [[1.5, 1.5, 1.5], [1.5, 1.5, 1.5]]
+
+
+def test_creation_requires_grad_float_dtype_cpu():
+    x = torch.zeros((2, 3), requires_grad=True)
+    assert x.requires_grad is True
+
+
+def test_creation_requires_grad_complex_dtype_cpu():
+    x = torch.full((2,), 1.0 + 2.0j, dtype=torch.complex64, requires_grad=True)
+    assert x.requires_grad is True
+
+
+def test_creation_requires_grad_rejects_integer_dtype_cpu():
+    with pytest.raises(RuntimeError, match="Only Tensors of floating point and complex dtype can require gradients"):
+        torch.arange(0, 5, requires_grad=True)
+
+
+def test_creation_requires_grad_rejects_bool_dtype_cpu():
+    with pytest.raises(RuntimeError, match="Only Tensors of floating point and complex dtype can require gradients"):
+        torch.zeros((2, 3), dtype=torch.bool, requires_grad=True)
+
+
+def test_rand_creation_requires_grad_float_dtype_cpu():
+    x = torch.rand((2, 3), requires_grad=True)
+    assert x.requires_grad is True
+
+
+def test_randn_creation_requires_grad_float_dtype_cpu():
+    x = torch.randn((2, 3), requires_grad=True)
+    assert x.requires_grad is True
+
+
+def test_rand_creation_requires_grad_rejects_integer_dtype_cpu():
+    with pytest.raises(RuntimeError, match="Only Tensors of floating point and complex dtype can require gradients"):
+        torch.rand((2, 3), dtype=torch.int64, requires_grad=True)
+
+
+def test_randn_creation_requires_grad_rejects_bool_dtype_cpu():
+    with pytest.raises(RuntimeError, match="Only Tensors of floating point and complex dtype can require gradients"):
+        torch.randn((2, 3), dtype=torch.bool, requires_grad=True)

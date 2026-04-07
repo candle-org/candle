@@ -3,7 +3,7 @@ import ctypes
 import struct
 import numpy as np
 
-from ._helpers import (
+from ._helpers import (  # pylint: disable=no-name-in-module
     _can_use_gpu, _metal_buf, _kernel_suffix, _scalar_fmt, _itemsize,
     _alloc_output_buf, _metal_buf_to_bytes, _from_metal_buffer,
     _get_dispatcher, _dispatch_unary_gpu, _dispatch_unary_predicate_gpu,
@@ -18,6 +18,7 @@ from ._helpers import (
     mps_typed_storage_from_numpy, _MPSUntypedStorage, TypedStorage,
     _accel,
 )
+from ...._cython._tensor_impl import cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 
 def contiguous(a):
     if a.device.type != "mps":
@@ -763,7 +764,7 @@ def _basic_getitem_view(tensor, key):
     if any(s < 0 for s in out_stride):
         return None
 
-    return Tensor(tensor.storage(), tuple(out_shape), tuple(out_stride), out_offset)
+    return cy_make_view_tensor(tensor, tensor.storage(), tuple(out_shape), tuple(out_stride), out_offset)
 
 def getitem(tensor, key):
     norm_key = _normalize_index_key(key)
@@ -791,15 +792,13 @@ def setitem(tensor, key, value):
     return tensor
 
 def narrow(a, dim, start, length):
-    from ...._tensor import Tensor
     d = dim if dim >= 0 else dim + a.dim()
     new_shape = list(a.shape)
     new_shape[d] = int(length)
     new_offset = a.offset + int(start) * a.stride[d]
-    return Tensor(a.storage(), tuple(new_shape), a.stride, new_offset)
+    return cy_make_view_tensor(a, a.storage(), tuple(new_shape), a.stride, new_offset)
 
 def select(a, dim, index):
-    from ...._tensor import Tensor
     d = dim if dim >= 0 else dim + a.dim()
     idx = int(index)
     if idx < 0:
@@ -809,10 +808,9 @@ def select(a, dim, index):
     new_stride = list(a.stride)
     new_offset = a.offset + idx * a.stride[d]
     del new_stride[d]
-    return Tensor(a.storage(), tuple(new_shape), tuple(new_stride), new_offset)
+    return cy_make_view_tensor(a, a.storage(), tuple(new_shape), tuple(new_stride), new_offset)
 
 def expand(a, sizes):
-    from ...._tensor import Tensor
     sizes = tuple(sizes)
     ndiff = len(sizes) - a.dim()
     if ndiff < 0:
@@ -835,7 +833,7 @@ def expand(a, sizes):
             raise RuntimeError(
                 f"expand: size {sz} not compatible with dim size {src_shape[i]}"
             )
-    return Tensor(a.storage(), tuple(out_shape), tuple(out_stride), a.offset)
+    return cy_make_view_tensor(a, a.storage(), tuple(out_shape), tuple(out_stride), a.offset)
 
 def masked_fill(a, mask, value):
     # GPU path: a and mask are GPU+contiguous+same shape

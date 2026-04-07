@@ -4,7 +4,7 @@ import numpy as np
 
 from ..._dtype import to_numpy_dtype
 from ..._storage import mps_typed_storage_from_numpy
-from ..._tensor import Tensor
+from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 
 
 def _contiguous_stride(shape):
@@ -35,7 +35,7 @@ def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_for
     arr = np.array(data, dtype=to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    return Tensor(storage, arr.shape, stride, requires_grad=requires_grad)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, requires_grad)
 
 
 def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
@@ -45,7 +45,7 @@ def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     arr = np.zeros(shape, dtype=to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = _contiguous_stride(shape)
-    return Tensor(storage, shape, stride, requires_grad=requires_grad)
+    return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
 def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
@@ -55,7 +55,7 @@ def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_form
     arr = np.ones(shape, dtype=to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = _contiguous_stride(shape)
-    return Tensor(storage, shape, stride, requires_grad=requires_grad)
+    return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
 def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
@@ -65,7 +65,7 @@ def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     arr = np.empty(shape, dtype=to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = _contiguous_stride(shape)
-    return Tensor(storage, shape, stride, requires_grad=requires_grad)
+    return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
 def full_create(shape, fill_value, dtype=None, device=None):
@@ -73,28 +73,28 @@ def full_create(shape, fill_value, dtype=None, device=None):
     arr = np.full(shape, fill_value, dtype=to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = _contiguous_stride(shape)
-    return Tensor(storage, shape, stride)
+    return cy_make_tensor_from_storage(storage, shape, stride, 0, False)
 
 
 def arange_create(start, end, step=1, dtype=None, device=None):
     arr = np.arange(start, end, step, dtype=to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def linspace_create(start, end, steps, dtype=None, device=None):
     arr = np.linspace(start, end, steps, dtype=to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def logspace_create(start, end, steps, dtype=None, device=None):
     arr = np.logspace(start, end, steps, dtype=to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def eye_create(n, m=None, dtype=None, device=None, out=None):
@@ -107,14 +107,14 @@ def eye_create(n, m=None, dtype=None, device=None, out=None):
         return out
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def range_create(start, end, step=1, dtype=None, device=None):
     arr = np.arange(start, end + step, step, dtype=to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
-    return Tensor(storage, arr.shape, stride)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
@@ -145,7 +145,7 @@ def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     arr = rng.randn(*shape).astype(to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = _contiguous_stride(shape)
-    return Tensor(storage, shape, stride, requires_grad=requires_grad)
+    return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
 def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
@@ -176,7 +176,7 @@ def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_form
     arr = rng.random_sample(shape).astype(to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
     stride = _contiguous_stride(shape)
-    return Tensor(storage, shape, stride, requires_grad=requires_grad)
+    return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
 def randint_create(low, high=None, size=None, dtype=None, device=None, requires_grad=False, generator=None, **kwargs):
@@ -211,7 +211,7 @@ def randint_create(low, high=None, size=None, dtype=None, device=None, requires_
     arr = rng.randint(int(low), int(high), size=size).astype(np.int64)
     storage = mps_typed_storage_from_numpy(arr.ravel(), out_dtype, device=device)
     stride = _contiguous_stride(size)
-    return Tensor(storage, size, stride, requires_grad=requires_grad)
+    return cy_make_tensor_from_storage(storage, size, stride, 0, requires_grad)
 
 
 def randperm_create(n, dtype=None, device=None, requires_grad=False, generator=None, **kwargs):
@@ -235,8 +235,8 @@ def randperm_create(n, dtype=None, device=None, requires_grad=False, generator=N
         indices = np.argsort(float_arr).astype(to_numpy_dtype(out_dtype))
         storage = mps_typed_storage_from_numpy(indices, out_dtype, device=device)
         stride = _contiguous_stride(indices.shape)
-        return Tensor(storage, indices.shape, stride, requires_grad=requires_grad)
+        return cy_make_tensor_from_storage(storage, indices.shape, stride, 0, requires_grad)
     arr = np.array([], dtype=to_numpy_dtype(out_dtype))
     storage = mps_typed_storage_from_numpy(arr, out_dtype, device=device)
     stride = _contiguous_stride(arr.shape)
-    return Tensor(storage, arr.shape, stride, requires_grad=requires_grad)
+    return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, requires_grad)
