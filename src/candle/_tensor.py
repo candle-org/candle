@@ -1,5 +1,6 @@
 import numpy as np
 
+from ._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 from ._storage import (
     Storage,
     empty_cpu_typed_storage,
@@ -79,6 +80,7 @@ from .autograd.engine import backward as _backward
 # TensorImpl base class: compiled Cython extension required.
 from ._cython._tensor_impl import TensorImpl as _TensorBase  # pylint: disable=import-error,no-name-in-module
 from ._cython._tensor_impl import _VersionCounterProxy  # noqa: F401  # pylint: disable=import-error,no-name-in-module
+from ._cython._tensor_impl import cy_init_tensor_fields  # pylint: disable=import-error,no-name-in-module
 
 
 class _StrideTuple(tuple):
@@ -142,37 +144,73 @@ class _HookHandle:
 
 class Tensor(_TensorBase):
     def __init__(self, storage, shape, stride, offset=0, requires_grad=False):
-        self._storage = storage
-        self.shape = tuple(shape)
-        self.stride = _StrideTuple(stride)
-        self.offset = int(offset)
-        self.requires_grad = requires_grad
-        self.grad = None
-        self.grad_fn = None
-        self._pending = False
-        self._retain_grad = False
-        self._backward_hooks = None
-        self._version_value = 0
-        self._vc_proxy = None
-        self._base = None
-        self._view_meta = None
-        # Cache device/dtype from storage into TensorImpl C fields
-        dev = getattr(storage, "device", None)
-        if dev is not None:
-            self._set_device_from_storage(dev)
-        dtype = getattr(storage, "dtype", None)
-        if dtype is not None:
-            self._set_dtype_from_storage(dtype)
+        cy_init_tensor_fields(
+            self,
+            storage,
+            tuple(shape),
+            _StrideTuple(stride),
+            int(offset),
+            bool(requires_grad),
+            None,
+            None,
+            None,
+            None,
+            False,
+            False,
+            None,
+            0,
+            None,
+        )
 
     _DEVICE_MAP = {"cpu": 0, "npu": 1, "cuda": 2, "mps": 3, "meta": 4}
+    # Dispatch key bit values — must stay in sync with _tensor_impl.pyx
+    _DK_CPU  = 1 << 15
+    _DK_NPU  = 1 << 13
+    _DK_CUDA = 1 << 14
+    _DK_MPS  = 1 << 21
+    _DK_META = 1 << 12
+    _DK_ADINPLACEORVIEW   = 1 << 4
+    _DK_AUTOGRAD          = 1 << 11
+    _DK_AUTOGRAD_CPU      = 1 << 6
+    _DK_AUTOGRAD_NPU      = 1 << 7
+    _DK_AUTOGRAD_CUDA     = 1 << 8
+    _DK_AUTOGRAD_MPS      = 1 << 22
+    _DK_AUTOGRAD_META     = 1 << 10
 
     def _set_device_from_storage(self, dev):
-        """Cache device from storage into TensorImpl fields."""
+        """Cache device from storage into TensorImpl fields and recompute dispatch keys."""
         self._device_obj = dev
         dt = getattr(dev, "type", str(dev))
-        self._device_type = Tensor._DEVICE_MAP.get(dt, -1)
+        devt = Tensor._DEVICE_MAP.get(dt, -1)
+        self._device_type = devt
         idx = getattr(dev, "index", None)
         self._device_index = idx if idx is not None else -1
+        # Mirror _recompute_dispatch_keys from _tensor_impl.pyx
+        if devt == 0:
+            dk = Tensor._DK_CPU
+        elif devt == 1:
+            dk = Tensor._DK_NPU
+        elif devt == 2:
+            dk = Tensor._DK_CUDA
+        elif devt == 3:
+            dk = Tensor._DK_MPS
+        elif devt == 4:
+            dk = Tensor._DK_META
+        else:
+            dk = Tensor._DK_CPU
+        if self.requires_grad:
+            dk |= Tensor._DK_ADINPLACEORVIEW | Tensor._DK_AUTOGRAD
+            if devt == 0:
+                dk |= Tensor._DK_AUTOGRAD_CPU
+            elif devt == 1:
+                dk |= Tensor._DK_AUTOGRAD_NPU
+            elif devt == 2:
+                dk |= Tensor._DK_AUTOGRAD_CUDA
+            elif devt == 3:
+                dk |= Tensor._DK_AUTOGRAD_MPS
+            elif devt == 4:
+                dk |= Tensor._DK_AUTOGRAD_META
+        self._dispatch_keys = dk
 
     def _set_dtype_from_storage(self, dtype):
         """Cache dtype from storage into TensorImpl fields."""
@@ -260,6 +298,12 @@ class Tensor(_TensorBase):
         tensor.untyped_storage().nbytes() to determine storage size.
         """
         return self._storage.untyped_storage()
+
+    def data_ptr(self):
+        """Return the address of the first element of this tensor."""
+        storage = self._storage.untyped_storage()
+        base = storage.data_ptr()
+        return base + self.offset * self.dtype.itemsize
 
     @property
     def ndim(self):
@@ -519,7 +563,7 @@ class Tensor(_TensorBase):
                 numel *= s
             arr = np.empty(numel, dtype=to_numpy_dtype(dt))
             storage = typed_storage_from_numpy(arr, dt, device=dev)
-            return Tensor(storage, tuple(size), tuple(stride))
+            return cy_make_tensor_from_storage(storage, tuple(size), tuple(stride), 0, requires_grad)
         else:
             from ._creation import empty
             t = empty(size, dtype=dt, device=dev)
@@ -577,11 +621,11 @@ class Tensor(_TensorBase):
     def _ones_like(self):
         if self.device.type == "meta":
             storage = meta_typed_storage_from_shape(self.shape, self.dtype, device=self.device)
-            return Tensor(storage, self.shape, self.stride)
+            return cy_make_tensor_from_storage(storage, self.shape, self.stride, 0, False)
         arr = np.ones(self.shape, dtype=to_numpy_dtype(self.dtype))
         storage = typed_storage_from_numpy(arr, self.dtype, device=self.device if self.device.type == "cpu" else None)
         stride = tuple(np.array(arr.strides) // arr.itemsize)
-        tensor = Tensor(storage, arr.shape, stride)
+        tensor = cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
         if self.device.type != "cpu":
             return tensor.to(self.device)
         return tensor
@@ -632,7 +676,7 @@ class Tensor(_TensorBase):
         if self.is_pinned():
             return self
         storage = pinned_cpu_typed_storage_from_numpy(self._numpy_view(), self.dtype, device=self.device)
-        return Tensor(storage, self.shape, self.stride, self.offset, self.requires_grad)
+        return cy_make_tensor_from_storage(storage, self.shape, self.stride, self.offset, self.requires_grad)
 
     def is_pinned(self):
         return self._storage.is_pinned()
@@ -647,7 +691,7 @@ class Tensor(_TensorBase):
         return self
 
     def detach(self):
-        out = Tensor(self._storage, self.shape, self.stride, self.offset, requires_grad=False)
+        out = cy_make_tensor_from_storage(self._storage, self.shape, self.stride, self.offset, False)
         out.grad_fn = None
         out.grad = None
         out._pending = self._pending
@@ -663,10 +707,12 @@ class Tensor(_TensorBase):
     def register_hook(self, hook):
         if not callable(hook):
             raise TypeError("hook must be callable")
-        if self._backward_hooks is None:
-            self._backward_hooks = {}
-        handle = _HookHandle(self._backward_hooks)
-        self._backward_hooks[handle.id] = hook
+        hooks = getattr(self, "_backward_hooks", None)
+        if hooks is None:
+            hooks = {}
+            self._backward_hooks = hooks
+        handle = _HookHandle(hooks)
+        hooks[handle.id] = hook
         return handle
 
     def _is_view(self):
@@ -1077,7 +1123,7 @@ class Tensor(_TensorBase):
                 arr = arr.astype(target_np)
             storage = typed_storage_from_numpy(arr, dtype, device=self.device)
             stride = tuple(np.array(arr.strides) // arr.itemsize)
-            return Tensor(storage, arr.shape, stride)
+            return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
         elif self.device.type == "npu":
             from ._backends.npu.ops._helpers import _cast_tensor_dtype
             return _cast_tensor_dtype(self, dtype)
@@ -1097,10 +1143,10 @@ class Tensor(_TensorBase):
                 np.ascontiguousarray(arr), dtype, device=self.device
             )
             stride = tuple(np.array(arr.strides) // arr.itemsize) if arr.ndim > 0 else ()
-            return Tensor(storage, arr.shape, stride)
+            return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
         elif self.device.type == "meta":
             storage = meta_typed_storage_from_shape(self.shape, dtype, device=self.device)
-            return Tensor(storage, self.shape, _compute_strides(self.shape))
+            return cy_make_tensor_from_storage(storage, self.shape, _compute_strides(self.shape), 0, False)
         else:
             raise RuntimeError(
                 f"dtype conversion not yet supported on device {self.device.type}"
@@ -1362,11 +1408,21 @@ class Tensor(_TensorBase):
     def hardtanh(self, min_val=-1.0, max_val=1.0):
         return hardtanh_dispatch(self, min_val, max_val)
 
-    def min(self, other):
-        return min_dispatch(self, other)
+    def min(self, dim=None, keepdim=False):
+        from ._dispatch.dispatcher import dispatch
+        if dim is None:
+            return amin_dispatch(self)
+        if isinstance(dim, Tensor):
+            return min_dispatch(self, dim)
+        return dispatch("min", self.device.type, self, dim, keepdim)
 
-    def max(self, other):
-        return max_dispatch(self, other)
+    def max(self, dim=None, keepdim=False):
+        from ._dispatch.dispatcher import dispatch
+        if dim is None:
+            return amax_dispatch(self)
+        if isinstance(dim, Tensor):
+            return max_dispatch(self, dim)
+        return dispatch("max", self.device.type, self, dim, keepdim)
 
     def amin(self, dim=None, keepdim=False):
         return amin_dispatch(self, dim=dim, keepdim=keepdim)
@@ -2006,20 +2062,316 @@ class Tensor(_TensorBase):
 from . import _cython as _cython_mod
 
 if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
+    Tensor._set_device_from_storage = _cython_mod.tensor_set_device_from_storage
+    Tensor._set_dtype_from_storage = _cython_mod.tensor_set_dtype_from_storage
+    Tensor.data = property(Tensor.data.fget, _cython_mod.tensor_set_data)
+    Tensor.__delattr__ = _cython_mod.tensor_delattr
+    Tensor._fw_get = _cython_mod.tensor_fw_get
+    Tensor._fw_set = _cython_mod.tensor_fw_set
+    Tensor._fw_clear = _cython_mod.tensor_fw_clear
+    Tensor._fw_has = _cython_mod.tensor_fw_has
+    Tensor.untyped_storage = _cython_mod.tensor_untyped_storage
+    Tensor.record_stream = _cython_mod.tensor_record_stream
+    Tensor.is_pinned = _cython_mod.tensor_is_pinned
+
+    _python_tensor_min = Tensor.min
+    _python_tensor_max = Tensor.max
+
     Tensor.__add__ = _cython_mod.tensor_add
     Tensor.__sub__ = _cython_mod.tensor_sub
     Tensor.__mul__ = _cython_mod.tensor_mul
     Tensor.__matmul__ = _cython_mod.tensor_matmul
+    Tensor.__getitem__ = _cython_mod.tensor_getitem
+    Tensor.__setitem__ = _cython_mod.tensor_setitem
     Tensor.__iadd__ = _cython_mod.tensor_iadd
+    Tensor.__isub__ = _cython_mod.tensor_isub
     Tensor.__imul__ = _cython_mod.tensor_imul
+    Tensor.__itruediv__ = _cython_mod.tensor_itruediv
     Tensor.__neg__ = _cython_mod.tensor_neg
+    Tensor.neg = _cython_mod.tensor_neg
+
     Tensor.clone = _cython_mod.tensor_clone
     Tensor.detach = _cython_mod.tensor_detach
+    Tensor.detach_ = _cython_mod.tensor_detach_
     Tensor.to = _cython_mod.tensor_to
+    Tensor._to_dtype = _cython_mod.tensor_to_dtype
+    Tensor.cpu = _cython_mod.tensor_cpu
+    Tensor.npu = _cython_mod.tensor_npu
+    Tensor.mps = _cython_mod.tensor_mps
+    Tensor.cuda = _cython_mod.tensor_cuda
     Tensor.backward = _cython_mod.tensor_backward
     Tensor.relu = _cython_mod.tensor_relu
+    Tensor.is_contiguous = _cython_mod.tensor_is_contiguous
+    Tensor.contiguous = _cython_mod.tensor_contiguous
+    Tensor.reshape = _cython_mod.tensor_reshape
     Tensor.transpose = _cython_mod.tensor_transpose
     Tensor.view = _cython_mod.tensor_view
+    Tensor.flatten = _cython_mod.tensor_flatten
+    Tensor.t = _cython_mod.tensor_t
+    Tensor.as_strided = _cython_mod.tensor_as_strided
     Tensor.size = _cython_mod.tensor_size
     Tensor.dim = _cython_mod.tensor_dim
 
+    Tensor.retain_grad = _cython_mod.tensor_retain_grad
+    Tensor.requires_grad_ = _cython_mod.tensor_requires_grad_
+    Tensor.register_hook = _cython_mod.tensor_register_hook
+    Tensor._is_view = _cython_mod.tensor_is_view
+    Tensor._check_inplace = _cython_mod.tensor_check_inplace
+
+    Tensor.add_ = _cython_mod.tensor_add_
+    Tensor.mul_ = _cython_mod.tensor_mul_
+    Tensor.relu_ = _cython_mod.tensor_relu_
+    Tensor.zero_ = _cython_mod.tensor_zero_
+    Tensor.fill_ = _cython_mod.tensor_fill_
+    Tensor.copy_ = _cython_mod.tensor_copy_
+
+    Tensor.abs_ = _cython_mod.tensor_abs_
+    Tensor.neg_ = _cython_mod.tensor_neg_
+    Tensor.exp_ = _cython_mod.tensor_exp_
+    Tensor.log_ = _cython_mod.tensor_log_
+    Tensor.log2_ = _cython_mod.tensor_log2_
+    Tensor.log10_ = _cython_mod.tensor_log10_
+    Tensor.sqrt_ = _cython_mod.tensor_sqrt_
+    Tensor.sin_ = _cython_mod.tensor_sin_
+    Tensor.cos_ = _cython_mod.tensor_cos_
+    Tensor.tan_ = _cython_mod.tensor_tan_
+    Tensor.tanh_ = _cython_mod.tensor_tanh_
+    Tensor.sigmoid_ = _cython_mod.tensor_sigmoid_
+    Tensor.floor_ = _cython_mod.tensor_floor_
+    Tensor.ceil_ = _cython_mod.tensor_ceil_
+    Tensor.round_ = _cython_mod.tensor_round_
+    Tensor.trunc_ = _cython_mod.tensor_trunc_
+    Tensor.pow_ = _cython_mod.tensor_pow_
+    Tensor.reciprocal_ = _cython_mod.tensor_reciprocal_
+    Tensor.erfinv_ = _cython_mod.tensor_erfinv_
+
+    Tensor.sub_ = _cython_mod.tensor_sub_
+    Tensor.clamp_ = _cython_mod.tensor_clamp_
+    Tensor.uniform_ = _cython_mod.tensor_uniform_
+    Tensor.normal_ = _cython_mod.tensor_normal_
+    Tensor.random_ = _cython_mod.tensor_random_
+    Tensor.randint_ = _cython_mod.tensor_randint_
+    Tensor.bernoulli_ = _cython_mod.tensor_bernoulli_
+    Tensor.exponential_ = _cython_mod.tensor_exponential_
+    Tensor.log_normal_ = _cython_mod.tensor_log_normal_
+    Tensor.cauchy_ = _cython_mod.tensor_cauchy_
+    Tensor.geometric_ = _cython_mod.tensor_geometric_
+
+    Tensor.transpose_ = _cython_mod.tensor_transpose_
+    Tensor.t_ = _cython_mod.tensor_t_
+    Tensor.squeeze_ = _cython_mod.tensor_squeeze_
+    Tensor.unsqueeze_ = _cython_mod.tensor_unsqueeze_
+    Tensor.as_strided_ = _cython_mod.tensor_as_strided_
+    Tensor.swapdims_ = _cython_mod.tensor_swapdims_
+    Tensor.swapaxes_ = _cython_mod.tensor_swapaxes_
+
+    Tensor.scatter_add = _cython_mod.tensor_scatter_add
+    Tensor.index_fill = _cython_mod.tensor_index_fill
+    Tensor.index_copy = _cython_mod.tensor_index_copy
+    Tensor.index_add = _cython_mod.tensor_index_add
+    Tensor.put_ = _cython_mod.tensor_put_
+    Tensor.scatter_ = _cython_mod.tensor_scatter_
+    Tensor.scatter_add_ = _cython_mod.tensor_scatter_add_
+    Tensor.masked_fill_ = _cython_mod.tensor_masked_fill_
+    Tensor.masked_scatter_ = _cython_mod.tensor_masked_scatter_
+    Tensor.index_put_ = _cython_mod.tensor_index_put_
+    Tensor.index_copy_ = _cython_mod.tensor_index_copy_
+    Tensor.index_fill_ = _cython_mod.tensor_index_fill_
+    Tensor.index_add_ = _cython_mod.tensor_index_add_
+
+    Tensor.new_empty = _cython_mod.tensor_new_empty
+    Tensor.new_tensor = _cython_mod.tensor_new_tensor
+    Tensor.new_empty_strided = _cython_mod.tensor_new_empty_strided
+    Tensor._ones_like = _cython_mod.tensor_ones_like
+    Tensor.new_ones = _cython_mod.tensor_new_ones
+    Tensor.new_zeros = _cython_mod.tensor_new_zeros
+    Tensor.new_full = _cython_mod.tensor_new_full
+    Tensor.div_ = _cython_mod.tensor_div_
+    Tensor.unflatten = _cython_mod.tensor_unflatten
+    Tensor.bitwise_and_ = _cython_mod.tensor_bitwise_and_
+    Tensor.bitwise_or_ = _cython_mod.tensor_bitwise_or_
+    Tensor.bitwise_xor_ = _cython_mod.tensor_bitwise_xor_
+    Tensor.type = _cython_mod.tensor_type
+    Tensor.type_as = _cython_mod.tensor_type_as
+    Tensor.reshape_as = _cython_mod.tensor_reshape_as
+    Tensor.permute = _cython_mod.tensor_permute
+    Tensor.mean = _cython_mod.tensor_mean
+    Tensor.std = _cython_mod.tensor_std
+    Tensor.repeat = _cython_mod.tensor_repeat
+    Tensor.tile = _cython_mod.tensor_tile
+    Tensor.flip = _cython_mod.tensor_flip
+    Tensor.logsumexp = _cython_mod.tensor_logsumexp
+    Tensor.trace = _cython_mod.tensor_trace
+    Tensor.det = _cython_mod.tensor_det
+    Tensor.matrix_power = _cython_mod.tensor_matrix_power
+    Tensor.dist = _cython_mod.tensor_dist
+    Tensor.renorm = _cython_mod.tensor_renorm
+    Tensor.nansum = _cython_mod.tensor_nansum
+    Tensor.nanmean = _cython_mod.tensor_nanmean
+    Tensor.argwhere = _cython_mod.tensor_argwhere
+    Tensor.baddbmm = _cython_mod.tensor_baddbmm
+    Tensor.vsplit = _cython_mod.tensor_vsplit
+    Tensor.hsplit = _cython_mod.tensor_hsplit
+    Tensor.dsplit = _cython_mod.tensor_dsplit
+    Tensor.take_along_dim = _cython_mod.tensor_take_along_dim
+    Tensor.cummin = _cython_mod.tensor_cummin
+    Tensor.log1p = _cython_mod.tensor_log1p
+    Tensor.expm1 = _cython_mod.tensor_expm1
+    Tensor.lt = _cython_mod.tensor_lt
+    Tensor.le = _cython_mod.tensor_le
+    Tensor.gt = _cython_mod.tensor_gt
+    Tensor.ge = _cython_mod.tensor_ge
+    Tensor.abs = _cython_mod.tensor_abs
+    Tensor.exp = _cython_mod.tensor_exp
+    Tensor.log = _cython_mod.tensor_log
+    Tensor.sqrt = _cython_mod.tensor_sqrt
+    Tensor.sin = _cython_mod.tensor_sin
+    Tensor.cos = _cython_mod.tensor_cos
+    Tensor.tan = _cython_mod.tensor_tan
+    Tensor.tanh = _cython_mod.tensor_tanh
+    Tensor.sigmoid = _cython_mod.tensor_sigmoid
+    Tensor.floor = _cython_mod.tensor_floor
+    Tensor.ceil = _cython_mod.tensor_ceil
+    Tensor.round = _cython_mod.tensor_round
+    Tensor.trunc = _cython_mod.tensor_trunc
+    Tensor.frac = _cython_mod.tensor_frac
+    Tensor.log2 = _cython_mod.tensor_log2
+    Tensor.log10 = _cython_mod.tensor_log10
+    Tensor.exp2 = _cython_mod.tensor_exp2
+    Tensor.rsqrt = _cython_mod.tensor_rsqrt
+    Tensor.sign = _cython_mod.tensor_sign
+    Tensor.signbit = _cython_mod.tensor_signbit
+    Tensor.square = _cython_mod.tensor_square
+    Tensor.isnan = _cython_mod.tensor_isnan
+    Tensor.isinf = _cython_mod.tensor_isinf
+    Tensor.isfinite = _cython_mod.tensor_isfinite
+    Tensor.sinh = _cython_mod.tensor_sinh
+    Tensor.cosh = _cython_mod.tensor_cosh
+    Tensor.asinh = _cython_mod.tensor_asinh
+    Tensor.acosh = _cython_mod.tensor_acosh
+    Tensor.atanh = _cython_mod.tensor_atanh
+    Tensor.erf = _cython_mod.tensor_erf
+    Tensor.erfc = _cython_mod.tensor_erfc
+    Tensor.reciprocal = _cython_mod.tensor_reciprocal
+    Tensor.tril = _cython_mod.tensor_tril
+    Tensor.triu = _cython_mod.tensor_triu
+    Tensor.diag = _cython_mod.tensor_diag
+    Tensor.add = _cython_mod.tensor_add_method
+    Tensor.sub = _cython_mod.tensor_sub_method
+    Tensor.mul = _cython_mod.tensor_mul_method
+    Tensor.div = _cython_mod.tensor_div_method
+    Tensor.pow = _cython_mod.tensor_pow_method
+    Tensor.matmul = _cython_mod.tensor_matmul_method
+    Tensor.__rsub__ = _cython_mod.tensor_rsub
+    Tensor.__rmul__ = _cython_mod.tensor_rmul
+    Tensor.__truediv__ = _cython_mod.tensor_truediv
+    Tensor.__rtruediv__ = _cython_mod.tensor_rtruediv
+    Tensor.__pow__ = _cython_mod.tensor_pow_op
+    Tensor.__rpow__ = _cython_mod.tensor_rpow
+    Tensor.__floordiv__ = _cython_mod.tensor_floordiv
+    Tensor.__rfloordiv__ = _cython_mod.tensor_rfloordiv
+    Tensor.__mod__ = _cython_mod.tensor_mod
+    Tensor.__rmod__ = _cython_mod.tensor_rmod
+    Tensor.__rmatmul__ = _cython_mod.tensor_rmatmul
+    Tensor.__and__ = _cython_mod.tensor_and
+    Tensor.__or__ = _cython_mod.tensor_or
+    Tensor.__xor__ = _cython_mod.tensor_xor
+    Tensor.all = _cython_mod.tensor_all_method
+    Tensor.any = _cython_mod.tensor_any_method
+    Tensor.sum = _cython_mod.tensor_sum_method
+    Tensor.prod = _cython_mod.tensor_prod_method
+    Tensor.var = _cython_mod.tensor_var_method
+    Tensor.var_mean = _cython_mod.tensor_var_mean_method
+    Tensor.norm = _cython_mod.tensor_norm_method
+    Tensor.count_nonzero = _cython_mod.tensor_count_nonzero_method
+    Tensor.cumsum = _cython_mod.tensor_cumsum_method
+    Tensor.cumprod = _cython_mod.tensor_cumprod_method
+    Tensor.cummax = _cython_mod.tensor_cummax_method
+    Tensor.argsort = _cython_mod.tensor_argsort_method
+    Tensor.sort = _cython_mod.tensor_sort_method
+    Tensor.topk = _cython_mod.tensor_topk_method
+    Tensor.eq = _cython_mod.tensor_eq_method
+    Tensor.ne = _cython_mod.tensor_ne_method
+    Tensor.allclose = _cython_mod.tensor_allclose_method
+    Tensor.isclose = _cython_mod.tensor_isclose_method
+    Tensor.equal = _cython_mod.tensor_equal_method
+    Tensor.view_as = _cython_mod.tensor_view_as
+    Tensor.expand = _cython_mod.tensor_expand_method
+    Tensor.expand_as = _cython_mod.tensor_expand_as_method
+    Tensor.expand_copy = _cython_mod.tensor_expand_copy_method
+    Tensor.narrow = _cython_mod.tensor_narrow_method
+    Tensor.select = _cython_mod.tensor_select_method
+    Tensor.unfold = _cython_mod.tensor_unfold_method
+    Tensor.moveaxis = _cython_mod.tensor_moveaxis_method
+    Tensor.swapdims = _cython_mod.tensor_swapdims_method
+    Tensor.swapaxes = _cython_mod.tensor_swapaxes_method
+    Tensor.gather = _cython_mod.tensor_gather_method
+    Tensor.scatter = _cython_mod.tensor_scatter_method
+    Tensor.index_select = _cython_mod.tensor_index_select_method
+    Tensor.take = _cython_mod.tensor_take_method
+    Tensor.masked_fill = _cython_mod.tensor_masked_fill_method
+    Tensor.masked_select = _cython_mod.tensor_masked_select_method
+    Tensor.index_put = _cython_mod.tensor_index_put_method
+    Tensor.slice = _cython_mod.tensor_slice_method
+    Tensor.slice_copy = _cython_mod.tensor_slice_copy_method
+    Tensor.slice_scatter = _cython_mod.tensor_slice_scatter_method
+    Tensor.nonzero = _cython_mod.tensor_nonzero_method
+    Tensor.sum_to_size = _cython_mod.tensor_sum_to_size_method
+    Tensor.softplus = _cython_mod.tensor_softplus_method
+    Tensor.clamp = _cython_mod.tensor_clamp_method
+    Tensor.relu6 = _cython_mod.tensor_relu6_method
+    Tensor.hardtanh = _cython_mod.tensor_hardtanh_method
+    Tensor.min = _cython_mod.tensor_min_method
+    Tensor.max = _cython_mod.tensor_max_method
+    Tensor.amin = _cython_mod.tensor_amin_method
+    Tensor.amax = _cython_mod.tensor_amax_method
+    Tensor.addmm = _cython_mod.tensor_addmm_method
+    Tensor.bmm = _cython_mod.tensor_bmm_method
+    Tensor.mm = _cython_mod.tensor_mm_method
+    Tensor.chunk = _cython_mod.tensor_chunk_method
+    Tensor.split = _cython_mod.tensor_split_method
+    Tensor.roll = _cython_mod.tensor_roll_method
+    Tensor.rot90 = _cython_mod.tensor_rot90_method
+    Tensor.addcdiv = _cython_mod.tensor_addcdiv_method
+    Tensor.addcmul = _cython_mod.tensor_addcmul_method
+    Tensor.hypot = _cython_mod.tensor_hypot_method
+    Tensor.lerp = _cython_mod.tensor_lerp_method
+    Tensor.atan2 = _cython_mod.tensor_atan2_method
+    Tensor.asin = _cython_mod.tensor_asin_method
+    Tensor.acos = _cython_mod.tensor_acos_method
+    Tensor.atan = _cython_mod.tensor_atan_method
+    Tensor.as_strided_copy = _cython_mod.tensor_as_strided_copy_method
+    Tensor.as_strided_scatter = _cython_mod.tensor_as_strided_scatter_method
+    Tensor.multinomial = _cython_mod.tensor_multinomial_method
+    Tensor.ndim = property(_cython_mod.tensor_ndim_fget)
+    Tensor.T = property(_cython_mod.tensor_T_fget)
+    Tensor.is_floating_point = _cython_mod.tensor_is_floating_point
+    Tensor.is_complex = _cython_mod.tensor_is_complex
+    Tensor.clamp_min = _cython_mod.tensor_clamp_min_method
+    Tensor.clamp_max = _cython_mod.tensor_clamp_max_method
+    Tensor.fmin = _cython_mod.tensor_fmin_method
+    Tensor.fmax = _cython_mod.tensor_fmax_method
+    Tensor.where = _cython_mod.tensor_where_method
+    Tensor.logaddexp = _cython_mod.tensor_logaddexp_method
+    Tensor.logaddexp2 = _cython_mod.tensor_logaddexp2_method
+    Tensor.remainder = _cython_mod.tensor_remainder_method
+    Tensor.fmod = _cython_mod.tensor_fmod_method
+    Tensor.squeeze = _cython_mod.tensor_squeeze_method
+    Tensor.unsqueeze = _cython_mod.tensor_unsqueeze_method
+    Tensor.argmax = _cython_mod.tensor_argmax_method
+    Tensor.argmin = _cython_mod.tensor_argmin_method
+    Tensor.logical_and = _cython_mod.tensor_logical_and
+    Tensor.logical_or = _cython_mod.tensor_logical_or
+    Tensor.logical_xor = _cython_mod.tensor_logical_xor
+    Tensor.logical_not = _cython_mod.tensor_logical_not
+    Tensor.bitwise_and = _cython_mod.tensor_bitwise_and
+    Tensor.bitwise_or = _cython_mod.tensor_bitwise_or
+    Tensor.bitwise_xor = _cython_mod.tensor_bitwise_xor
+    Tensor.bitwise_not = _cython_mod.tensor_bitwise_not
+    Tensor.movedim = _cython_mod.tensor_movedim
+    Tensor.diagonal = _cython_mod.tensor_diagonal
+    Tensor.unbind = _cython_mod.tensor_unbind
+
+    Tensor.numpy = _cython_mod.tensor_numpy
+    Tensor._numpy_view = _cython_mod.tensor_numpy_view
+    Tensor.pin_memory = _cython_mod.tensor_pin_memory
