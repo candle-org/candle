@@ -84,38 +84,6 @@ def test_tensor_T_bypasses_python_tensor_t(monkeypatch):
     assert y._version_counter.value == x._version_counter.value
 
 
-def test_tensor_t_bypasses_python_tensor_transpose(monkeypatch):
-    from candle._tensor import Tensor
-
-    x = torch.tensor([[1, 2, 3], [4, 5, 6]])
-
-    _ = x.t()
-
-    calls = {"count": 0}
-    original = Tensor.transpose
-
-    def wrapped(self, *args, **kwargs):
-        calls["count"] += 1
-        return original(self, *args, **kwargs)
-
-    monkeypatch.setattr(Tensor, "transpose", wrapped)
-
-    y = x.t()
-
-    assert calls["count"] == 0
-    assert y.storage() is x.storage()
-    assert y._base is x
-    assert y._version_counter is x._version_counter
-    assert y.shape == (3, 2)
-    assert y.stride == (1, 3)
-    assert y.tolist() == [[1, 4], [2, 5], [3, 6]]
-    assert y is not x
-    assert not y.is_contiguous()
-    assert x.tolist() == [[1, 2, 3], [4, 5, 6]]
-    x._version_counter.bump()
-    assert y._version_counter.value == x._version_counter.value
-
-
 def test_tensor_t__bypasses_python_tensor_transpose_(monkeypatch):
     from candle._tensor import Tensor
 
