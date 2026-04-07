@@ -64,3 +64,4 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | `normal_` / NPU `randn` fill path | `aclnnInplaceNormal` | segmentation fault during native random fill on 910A (e.g. NPU dropout/randn tests) | composite: on-device Box-Muller path in `normal_`; keep native kernel guarded for future re-enable | CANN 8.x / 910A |
 | `repeat_interleave` (tensor repeats) | `aclnnRepeatInterleave` / `aclnnRepeatInterleaveWithDim` | cross-op state corruption after native execution | composite: on-device `cumsum + searchsorted + index_select` | CANN 8.3 RC1 / 910A |
 | `linspace` / `logspace` | `aclnnLinspace` | 161002 | composite: on-device `ones + cumsum + mul + add`; `logspace` builds from composite `linspace` | CANN 8.x / 910A |
+| `sinc` | `aclnnSinc` | 561000 | composite: `where(x == 0, 1, sin(pi*x)/(pi*x))`; keep native direct path guarded for future re-enable | CANN 8.x / 910A |

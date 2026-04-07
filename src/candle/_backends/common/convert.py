@@ -132,8 +132,13 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
 
         src_runtime = npu_runtime.get_runtime(a.device.index or 0)
         src_runtime.synchronize()
+        src_storage = a.storage()
         arr = npu_runtime._copy_npu_to_cpu(
-            a.storage().data_ptr(), a.storage().nbytes(), a.shape, a.dtype, runtime=src_runtime
+            src_storage.data_ptr(),
+            src_storage.nbytes(),
+            (src_storage.size(),),
+            a.dtype,
+            runtime=src_runtime,
         )
         dst_runtime = npu_runtime.get_runtime(dev.index or 0)
         ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=dst_runtime)
@@ -155,10 +160,11 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
             stream_obj = npu_state.current_stream(a.device.index or 0)
             event = stream_obj.record_event()
             stream = stream_obj
+        src_storage = a.storage()
         arr = npu_runtime._copy_npu_to_cpu(
-            a.storage().data_ptr(),
-            a.storage().nbytes(),
-            a.shape,
+            src_storage.data_ptr(),
+            src_storage.nbytes(),
+            (src_storage.size(),),
             a.dtype,
             runtime=runtime,
             non_blocking=do_non_blocking,

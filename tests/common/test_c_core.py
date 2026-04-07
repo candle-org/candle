@@ -78,6 +78,7 @@ class TestStorageImpl:
             pass  # acceptable on platforms where malloc(0) returns NULL
 
 
+
 def _init_tensor_impl(t, shape_tuple, stride_tuple, dev, dtype_obj):
     """Helper: set shape/stride/device/dtype on a raw TensorImpl from Python.
 
@@ -240,6 +241,28 @@ class TestViewOps:
 
 
 
+class TestTensorBootstrapExports:
+    """_cython package should re-export tensor bootstrap helpers needed by Tensor import."""
+
+    def test_cython_package_exports_tensor_bootstrap_helpers(self):
+        import candle._cython as cython_mod
+
+        for name in (
+            "tensor_set_device_from_storage",
+            "tensor_set_dtype_from_storage",
+            "tensor_set_data",
+            "tensor_delattr",
+            "tensor_fw_get",
+            "tensor_fw_set",
+            "tensor_fw_clear",
+            "tensor_fw_has",
+            "tensor_untyped_storage",
+            "tensor_record_stream",
+            "tensor_is_pinned",
+        ):
+            assert hasattr(cython_mod, name)
+
+
 class TestTensorDTypeCaching:
     """Regression tests for Tensor dtype metadata cached from storage."""
 
@@ -332,7 +355,6 @@ class TestTensorFactoryInvariants:
         assert t._base is None
         assert t._version_value == 0
 
-
     def test_cy_make_view_tensor_preserves_root_base_and_metadata(self):
         import candle as torch
         from candle._cython._tensor_impl import cy_make_view_tensor
@@ -345,7 +367,6 @@ class TestTensorFactoryInvariants:
         assert view.stride == (1, 4)
         assert view._dtype_code == base._dtype_code
         assert view._device_type == base._device_type
-
 
     def test_cy_make_npu_tensor_initializes_dtype_code_like_python_tensor(self):
         import candle as torch
@@ -365,7 +386,6 @@ class TestTensorFactoryInvariants:
         assert out._device_type == t._device_type
         assert out._dispatch_keys == t._dispatch_keys
 
-
     def test_wrap_tensor_and_scalar_tensor_share_dtype_metadata_contract(self):
         import candle as torch
         if not torch.npu.is_available():
@@ -376,6 +396,50 @@ class TestTensorFactoryInvariants:
         assert scalar_t._dtype_code == ref._dtype_code
         assert scalar_t._device_type == ref._device_type
         assert scalar_t.dtype == ref.dtype
+
+
+class TestNpuOpsCimports:
+    """Regression tests for Cython cimports in _npu_ops."""
+
+    def test_npu_ops_cimports_storage_impl(self):
+        from pathlib import Path
+
+        npu_ops_pyx = Path(__file__).resolve().parents[2] / "src/candle/_cython/_npu_ops.pyx"
+        text = npu_ops_pyx.read_text(encoding="utf-8")
+        assert "from candle._cython._storage_impl cimport StorageImpl" in text
+
+
+class TestIntegration:
+    """End-to-end: StorageImpl + TensorImpl + view ops together."""
+
+    def test_view_chain_all_share_storage(self):
+        from candle._cython._tensor_impl import TensorImpl
+        from candle._cython._storage_impl import StorageImpl
+        from candle._device import device
+        from candle._dtype import float32
+
+        arr = np.arange(24, dtype=np.float32)
+        storage = StorageImpl.from_numpy(arr)
+        t = TensorImpl.__new__(TensorImpl)
+        t._storage = storage
+        _init_tensor_impl(t, (2, 3, 4), (12, 4, 1), device("cpu"), float32)
+        t._c_offset = 0
+        t.grad_fn = None
+        t.grad = None
+        t._base = None
+        t._version_value = 0
+        t._vc_proxy = None
+        t._view_meta = None
+        t._pending = False
+        t._retain_grad = False
+        t._backward_hooks = None
+
+        v1 = t.cy_view((6, 4))
+        v2 = v1.cy_transpose(0, 1)
+        assert v1._storage is storage
+        assert v2._storage is storage
+        assert v2._base is t
+        assert v2.shape == (4, 6)
 
 
 class TestBuildIsolation:
@@ -391,6 +455,9 @@ class TestBuildIsolation:
     def test_setup_py_has_no_np_get_include_for_storage_impl(self):
         from pathlib import Path
 
+        setup_py = Path(__file__).resolve().parents[2] / "setup.py"
+        text = setup_py.read_text(encoding="utf-8")
+        assert "np.get_include()" not in text
 
 
 class TestTensorInitCompatibilityShell:
@@ -829,6 +896,15 @@ class TestCallableStrideContract:
         assert t.stride() == (3, 1)
         assert t.stride(0) == 3
         assert t.stride(1) == 1
+
+
+class TestTensorBinaryMethodProviders:
+    """Representative binary Tensor dunder methods should be served from the Cython tensor API layer."""
+
+    def test_add_is_bound_from_tensor_api(self):
+        import candle as torch
+
+        assert torch.Tensor.__add__.__module__ == "candle._cython._tensor_api"
 
 
 class TestTensorLayoutMethodProviders:
@@ -2537,4 +2613,3 @@ class TestFinalBatchProviders:
         assert m.T.shape == (2, 2)
         assert m.is_floating_point() is True
         assert m.is_complex() is False
-

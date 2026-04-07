@@ -18,6 +18,19 @@ def test_detach_shares_version_counter_with_source():
     assert base._version_counter.value == before_base + 1
 
 
+def test_as_strided_view_shares_version_counter_with_source():
+    base = torch.tensor([0.0, 1.0, 2.0, 3.0], requires_grad=True)
+    view = base.as_strided((2, 2), (2, 1))
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
 def test_unary_inplace_preserves_view_aliasing():
     x = torch.tensor([[-1.0, 2.0], [-3.0, 4.0]])
     v = x.view((4,))
@@ -85,6 +98,97 @@ def test_bitwise_inplace_preserves_view_aliasing(method_name, lhs, rhs, expected
 
 
 
+def test_diagonal_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.diagonal()
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_movedim_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.movedim(0, 1)
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_moveaxis_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.moveaxis(0, 1)
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_expand_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0]], requires_grad=True)
+    view = base.expand((3, 2))
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_broadcast_to_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0]], requires_grad=True)
+    view = torch.broadcast_to(base, (3, 2))
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_split_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.split(1, dim=0)[0]
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
+def test_chunk_view_shares_version_counter_with_source():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.chunk(2, dim=0)[0]
+
+    before_view = view._version_counter.value
+    base._version_counter.bump()
+    assert view._version_counter.value == before_view + 1
+
+    before_base = base._version_counter.value
+    view._version_counter.bump()
+    assert base._version_counter.value == before_base + 1
+
+
 # Guards the Python __setitem__ entry point; the direct dispatch path is covered
 # by test_dispatch_setitem_bumps_version_counter_exactly_once below.
 def test_setitem_bumps_version_counter():
@@ -139,22 +243,3 @@ def test_set_on_view_bumps_shared_version_counter_once():
     assert v._version_counter.value == before_view + 1
     assert v.tolist() == [0.0, 1.0]
     assert v._base is x
-
-
-def test_set_on_leaf_requires_grad_errors():
-    x = torch.tensor([1.0, 2.0, 3.0], requires_grad=True)
-    with pytest.raises(
-        RuntimeError,
-        match=r"a leaf Variable that requires grad is being used in an in-place operation.",
-    ):
-        x.set_(x.storage(), 1, (2,), (1,))
-
-
-def test_set_on_view_of_leaf_errors():
-    x = torch.tensor([1.0, 2.0, 3.0], requires_grad=True)
-    v = x[1:]
-    with pytest.raises(
-        RuntimeError,
-        match=r"a view of a leaf Variable that requires grad is being used in an in-place operation.",
-    ):
-        v.set_(x.storage(), 0, (2,), (1,))

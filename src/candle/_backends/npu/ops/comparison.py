@@ -1,5 +1,15 @@
 """Comparison, logical, and bitwise operations for NPU."""
 
+try:
+    from candle._cython._npu_ops import fast_logical_not as _fast_logical_not_impl, fast_bitwise_not as _fast_bitwise_not_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_LOGICAL_NOT = True
+    _HAS_FAST_BITWISE_NOT = True
+except ImportError:
+    _fast_logical_not_impl = None  # type: ignore[assignment]
+    _fast_bitwise_not_impl = None  # type: ignore[assignment]
+    _HAS_FAST_LOGICAL_NOT = False
+    _HAS_FAST_BITWISE_NOT = False
+
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
     _broadcast_shape, _numel, _dtype_itemsize, _use_soc_fallback,
@@ -13,125 +23,41 @@ from ._helpers import (
 def eq(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if not aclnn.eq_tensor_symbols_ok():
         raise RuntimeError("aclnnEqTensor symbols not available")
-    out_shape = _broadcast_shape(a.shape, b.shape)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
-    aclnn.eq_tensor(
-        _unwrap_storage(a).data_ptr(),
-        _unwrap_storage(b).data_ptr(),
-        out_ptr,
-        a.shape,
-        a.stride,
-        b.shape,
-        b.stride,
-        out_shape,
-        out_stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    return _binary_op(a, b, aclnn.eq_tensor, "eq")
 
 
 def ne(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if not aclnn.ne_tensor_symbols_ok():
         raise RuntimeError("aclnnNeTensor symbols not available")
-    out_shape = _broadcast_shape(a.shape, b.shape)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
-    aclnn.ne_tensor(
-        _unwrap_storage(a).data_ptr(),
-        _unwrap_storage(b).data_ptr(),
-        out_ptr,
-        a.shape,
-        a.stride,
-        b.shape,
-        b.stride,
-        out_shape,
-        out_stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    return _binary_op(a, b, aclnn.ne_tensor, "ne")
 
 
 def le(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    out_shape = _broadcast_shape(a.shape, b.shape)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
-    aclnn.le_tensor(
-        _unwrap_storage(a).data_ptr(), _unwrap_storage(b).data_ptr(), out_ptr,
-        a.shape, a.stride, b.shape, b.stride,
-        out_shape, out_stride, a.dtype, runtime, stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    return _binary_op(a, b, aclnn.le_tensor, "le")
 
 
 def lt(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    out_shape = _broadcast_shape(a.shape, b.shape)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
-    aclnn.lt_tensor(
-        _unwrap_storage(a).data_ptr(), _unwrap_storage(b).data_ptr(), out_ptr,
-        a.shape, a.stride, b.shape, b.stride,
-        out_shape, out_stride, a.dtype, runtime, stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    return _binary_op(a, b, aclnn.lt_tensor, "lt")
 
 
 def gt(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    out_shape = _broadcast_shape(a.shape, b.shape)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
-    aclnn.gt_tensor(
-        _unwrap_storage(a).data_ptr(), _unwrap_storage(b).data_ptr(), out_ptr,
-        a.shape, a.stride, b.shape, b.stride,
-        out_shape, out_stride, a.dtype, runtime, stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    return _binary_op(a, b, aclnn.gt_tensor, "gt")
 
 
 def ge(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    out_shape = _broadcast_shape(a.shape, b.shape)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
-    aclnn.ge_tensor(
-        _unwrap_storage(a).data_ptr(), _unwrap_storage(b).data_ptr(), out_ptr,
-        a.shape, a.stride, b.shape, b.stride,
-        out_shape, out_stride, a.dtype, runtime, stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    return _binary_op(a, b, aclnn.ge_tensor, "ge")
 
 
 def logical_and(a, b):
@@ -143,33 +69,23 @@ def logical_or(a, b):
 
 
 def logical_not(a):
+    if _HAS_FAST_LOGICAL_NOT:
+        return _fast_logical_not_impl(a)
     return _unary_op(a, aclnn.logical_not, "logical_not", out_dtype=bool_dtype)
 
 
 def logical_xor(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    out_shape = _broadcast_shape(a.shape, b.shape)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(bool_dtype), runtime=runtime)
-    aclnn.logical_xor(
-        _unwrap_storage(a).data_ptr(),
-        _unwrap_storage(b).data_ptr(),
-        out_ptr,
-        a.shape, a.stride, b.shape, b.stride,
-        out_shape, out_stride, a.dtype,
-        runtime, stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    return _binary_op(a, b, aclnn.logical_xor, "logical_xor")
 
 
 # Bitwise operations
 def bitwise_not(a):
     if not aclnn.bitwise_not_symbols_ok():
         raise RuntimeError("aclnnBitwiseNot symbols not available")
+    if _HAS_FAST_BITWISE_NOT:
+        return _fast_bitwise_not_impl(a)
     return _unary_op(a, aclnn.bitwise_not, "bitwise_not")
 
 

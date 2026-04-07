@@ -84,11 +84,23 @@ def _py_reshape(*args, **kwargs):
     return dispatch("reshape", device, *args, **kwargs)
 
 
+def _py_view(*args, **kwargs):
+    return dispatch("view", None, *args, **kwargs)
+
+
 def view_as_real(a):
+    try:
+        return _cy_view_as_real(a)
+    except NameError:
+        pass
     return dispatch("view_as_real", a.device.type, a)
 
 
 def view_as_complex(a):
+    try:
+        return _cy_view_as_complex(a)
+    except NameError:
+        pass
     return dispatch("view_as_complex", a.device.type, a)
 
 
@@ -147,6 +159,7 @@ _matmul_impl = _py_matmul
 _relu_impl = _py_relu
 _transpose_impl = _py_transpose
 _reshape_impl = _py_reshape
+_view_impl = _py_view
 _neg_impl = _py_neg
 
 try:
@@ -161,7 +174,28 @@ try:
         relu as _cy_relu,
         transpose as _cy_transpose,
         reshape as _cy_reshape,
+        view as _cy_view,
         neg as _cy_neg,
+        squeeze as _cy_squeeze,
+        unsqueeze as _cy_unsqueeze,
+        permute as _cy_permute,
+        narrow as _cy_narrow,
+        select as _cy_select,
+        expand as _cy_expand,
+        movedim as _cy_movedim,
+        diagonal as _cy_diagonal,
+        view_as_real as _cy_view_as_real,
+        view_as_complex as _cy_view_as_complex,
+        unfold as _cy_unfold,
+        unbind as _cy_unbind,
+        split as _cy_split,
+        chunk as _cy_chunk,
+        vsplit as _cy_vsplit,
+        hsplit as _cy_hsplit,
+        dsplit as _cy_dsplit,
+        unflatten as _cy_unflatten,
+        slice as _cy_slice,
+        flatten as _cy_flatten,
     )
 
     _has_torch_function_impl = _cy_has_torch_function
@@ -172,6 +206,7 @@ try:
     _relu_impl = _cy_relu
     _transpose_impl = _cy_transpose
     _reshape_impl = _cy_reshape
+    _view_impl = _cy_view
     _neg_impl = _cy_neg
     # Replace Python wrapper functions with Cython directly
     add = _cy_add
@@ -182,6 +217,7 @@ try:
     relu = _cy_relu
     transpose = _cy_transpose
     reshape = _cy_reshape
+    view = _cy_view
     neg = _cy_neg
 except ImportError:
     pass
@@ -815,22 +851,42 @@ def cartesian_prod(*tensors):
 
 
 def chunk(a, chunks, dim=0):
+    try:
+        return _cy_chunk(a, chunks, dim)
+    except NameError:
+        pass
     return dispatch("chunk", a.device.type, a, chunks, dim)
 
 
 def split(a, split_size_or_sections, dim=0):
+    try:
+        return _cy_split(a, split_size_or_sections, dim)
+    except NameError:
+        pass
     return dispatch("split", a.device.type, a, split_size_or_sections, dim)
 
 
 def vsplit(a, split_size_or_sections):
+    try:
+        return _cy_vsplit(a, split_size_or_sections)
+    except NameError:
+        pass
     return dispatch("vsplit", a.device.type, a, split_size_or_sections)
 
 
 def hsplit(a, split_size_or_sections):
+    try:
+        return _cy_hsplit(a, split_size_or_sections)
+    except NameError:
+        pass
     return dispatch("hsplit", a.device.type, a, split_size_or_sections)
 
 
 def dsplit(a, split_size_or_sections):
+    try:
+        return _cy_dsplit(a, split_size_or_sections)
+    except NameError:
+        pass
     return dispatch("dsplit", a.device.type, a, split_size_or_sections)
 
 
@@ -855,6 +911,10 @@ def scatter(a, dim, index, src):
 
 
 def unbind(a, dim=0):
+    try:
+        return _cy_unbind(a, dim)
+    except NameError:
+        pass
     return dispatch("unbind", a.device.type, a, dim)
 
 
@@ -928,7 +988,7 @@ def range(start, end, step=1, dtype=None, device=None):
 
 
 def view(*args, **kwargs):
-    return dispatch("view", None, *args, **kwargs)
+    return _view_impl(*args, **kwargs)
 
 
 def tensor(data, *, dtype=None, device=None, requires_grad=False):
@@ -1040,16 +1100,28 @@ def linalg_qr(a, mode='reduced'):
 # ---------------------------------------------------------------------------
 
 def narrow(a, dim, start, length):
+    try:
+        return _cy_narrow(a, dim, start, length)
+    except NameError:
+        pass
     return dispatch("narrow", a.device.type, a, dim, start, length)
 
 
 def select(a, dim, index):
+    try:
+        return _cy_select(a, dim, index)
+    except NameError:
+        pass
     return dispatch("select", a.device.type, a, dim, index)
 
 
 def expand(a, *sizes):
     if len(sizes) == 1 and isinstance(sizes[0], (tuple, list)):
         sizes = tuple(sizes[0])
+    try:
+        return _cy_expand(a, sizes)
+    except NameError:
+        pass
     return dispatch("expand", a.device.type, a, sizes)
 
 
@@ -1066,6 +1138,10 @@ def sum_to_size(a, *size):
 
 
 def slice(input, dim, start=0, end=9223372036854775807, step=1):
+    try:
+        return _cy_slice(input, dim, start, end, step)
+    except NameError:
+        pass
     return dispatch("slice", input.device.type, input, dim, start, end, step)
 
 
@@ -1147,23 +1223,43 @@ def masked_scatter_(a, mask, source):
 
 
 def unfold(a, dimension, size, step):
+    try:
+        return _cy_unfold(a, dimension, size, step)
+    except NameError:
+        pass
     return dispatch("unfold", a.device.type, a, dimension, size, step)
 
 
 def squeeze(a, dim=None):
     if dim is None:
+        try:
+            return _cy_squeeze(a, dim)
+        except NameError:
+            pass
         # Squeeze all size-1 dimensions without going through schema validation
         # which rejects None. The kernel in common/view.py handles dim=None.
         from ._backends.common.view import squeeze as _squeeze_impl
         return _squeeze_impl(a, dim)
+    try:
+        return _cy_squeeze(a, dim)
+    except NameError:
+        pass
     return dispatch("squeeze", a.device.type, a, dim)
 
 
 def unsqueeze(a, dim):
+    try:
+        return _cy_unsqueeze(a, dim)
+    except NameError:
+        pass
     return dispatch("unsqueeze", a.device.type, a, dim)
 
 
 def permute(a, dims):
+    try:
+        return _cy_permute(a, dims)
+    except NameError:
+        pass
     return dispatch("permute", a.device.type, a, dims)
 
 
@@ -1407,26 +1503,56 @@ def bitwise_right_shift(a, b):
 
 
 def flatten(a, start_dim=0, end_dim=-1):
+    try:
+        return _cy_flatten(a, start_dim, end_dim)
+    except NameError:
+        pass
     return dispatch("flatten", a.device.type, a, start_dim, end_dim)
 
 
 def unflatten(a, dim, sizes):
+    try:
+        return _cy_unflatten(a, dim, sizes)
+    except NameError:
+        pass
     return dispatch("unflatten", a.device.type, a, dim, sizes)
 
 
 def broadcast_to(a, shape):
+    try:
+        return _cy_expand(a, tuple(shape))
+    except NameError:
+        pass
     return dispatch("broadcast_to", a.device.type, a, shape)
 
 
 def movedim(a, source, destination):
+    from ._dispatch.pipeline import current_pipeline
+    if current_pipeline() is not None:
+        return dispatch("movedim", a.device.type, a, source, destination)
+    try:
+        return _cy_movedim(a, source, destination)
+    except NameError:
+        pass
     return dispatch("movedim", a.device.type, a, source, destination)
 
 
 def moveaxis(a, source, destination):
+    from ._dispatch.pipeline import current_pipeline
+    if current_pipeline() is not None:
+        return dispatch("moveaxis", a.device.type, a, source, destination)
+    try:
+        return _cy_movedim(a, source, destination)
+    except NameError:
+        pass
     return dispatch("moveaxis", a.device.type, a, source, destination)
 
 
 def diagonal(a, offset=0, dim1=0, dim2=1):
+    try:
+        return _cy_diagonal(a, offset, dim1, dim2)
+    except NameError:
+        pass
     return dispatch("diagonal", a.device.type, a, offset, dim1, dim2)
 
 

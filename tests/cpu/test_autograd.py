@@ -36,6 +36,21 @@ def test_autograd_getitem_backward_and_retain_grad():
     assert x.grad.tolist() == [2.0, 0.0, 0.0]
 
 
+def test_autograd_flatten_propagates_grad_to_base_tensor():
+    x = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    x.requires_grad = True
+
+    y = x.flatten()
+
+    assert y.grad_fn is not None
+
+    y[0].backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (2, 3)
+    assert x.grad.tolist() == [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+
+
 def test_autograd_core_nn_ops_keep_graph():
     import candle.nn.functional as F
 

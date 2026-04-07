@@ -27,7 +27,7 @@ def test_functionalize_writeback_respects_noncontig_view_npu():
     view = base.transpose(0, 1)
     with torch.functionalize():
         view.add_(torch.ones(view.shape, device="npu"))
-    assert base.to("cpu").storage().data.tolist() == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+    assert base.to("cpu").tolist() == [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
 
 
 def test_functionalize_writeback_respects_view_meta():

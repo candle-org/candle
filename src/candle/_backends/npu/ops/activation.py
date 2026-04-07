@@ -1,4 +1,96 @@
 """Activation functions and embedding for NPU."""
+
+try:
+    from candle._cython._npu_ops import fast_relu as _fast_relu_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_RELU = True
+except ImportError:
+    _fast_relu_impl = None  # type: ignore[assignment]
+    _HAS_FAST_RELU = False
+
+try:
+    from candle._cython._npu_ops import fast_hardtanh as _fast_hardtanh_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_HARDTANH = True
+except ImportError:
+    _fast_hardtanh_impl = None  # type: ignore[assignment]
+    _HAS_FAST_HARDTANH = False
+
+try:
+    from candle._cython._npu_ops import fast_dropout as _fast_dropout_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_DROPOUT = True
+except ImportError:
+    _fast_dropout_impl = None  # type: ignore[assignment]
+    _HAS_FAST_DROPOUT = False
+
+try:
+    from candle._cython._npu_ops import fast_embedding as _fast_embedding_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_EMBEDDING = True
+except ImportError:
+    _fast_embedding_impl = None  # type: ignore[assignment]
+    _HAS_FAST_EMBEDDING = False
+
+try:
+    from candle._cython._npu_ops import fast_prelu as _fast_prelu_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_PRELU = True
+except ImportError:
+    _fast_prelu_impl = None  # type: ignore[assignment]
+    _HAS_FAST_PRELU = False
+
+try:
+    from candle._cython._npu_ops import fast_softplus as _fast_softplus_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_SOFTPLUS = True
+except ImportError:
+    _fast_softplus_impl = None  # type: ignore[assignment]
+    _HAS_FAST_SOFTPLUS = False
+
+try:
+    from candle._cython._npu_ops import fast_softmax as _fast_softmax_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_SOFTMAX = True
+except ImportError:
+    _fast_softmax_impl = None  # type: ignore[assignment]
+    _HAS_FAST_SOFTMAX = False
+
+try:
+    from candle._cython._npu_ops import fast_log_softmax as _fast_log_softmax_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_LOG_SOFTMAX = True
+except ImportError:
+    _fast_log_softmax_impl = None  # type: ignore[assignment]
+    _HAS_FAST_LOG_SOFTMAX = False
+
+try:
+    from candle._cython._npu_ops import fast_leaky_relu as _fast_leaky_relu_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_LEAKY_RELU = True
+except ImportError:
+    _fast_leaky_relu_impl = None  # type: ignore[assignment]
+    _HAS_FAST_LEAKY_RELU = False
+
+try:
+    from candle._cython._npu_ops import fast_elu as _fast_elu_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_ELU = True
+except ImportError:
+    _fast_elu_impl = None  # type: ignore[assignment]
+    _HAS_FAST_ELU = False
+
+try:
+    from candle._cython._npu_ops import fast_silu as _fast_silu_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_SILU = True
+except ImportError:
+    _fast_silu_impl = None  # type: ignore[assignment]
+    _HAS_FAST_SILU = False
+
+try:
+    from candle._cython._npu_ops import fast_gelu as _fast_gelu_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_GELU = True
+except ImportError:
+    _fast_gelu_impl = None  # type: ignore[assignment]
+    _HAS_FAST_GELU = False
+
+try:
+    from candle._cython._npu_ops import fast_mish as _fast_mish_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_MISH = True
+except ImportError:
+    _fast_mish_impl = None  # type: ignore[assignment]
+    _HAS_FAST_MISH = False
+
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
     _broadcast_shape, _broadcast_shape_checked,
@@ -21,6 +113,9 @@ from .reduce import maximum, minimum
 
 
 def relu(a):
+    if _HAS_FAST_RELU:
+        return _fast_relu_impl(a)
+
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
@@ -51,6 +146,17 @@ def relu_(a):
 
     a_storage = _unwrap_storage(a)
     out_size = _numel(a.shape) * _dtype_itemsize(a.dtype)
+
+    if _HAS_FAST_RELU:
+        out = _fast_relu_impl(a)
+        npu_runtime.memcpy_d2d(
+            a_storage.data_ptr(),
+            out_size,
+            _unwrap_storage(out).data_ptr(),
+            runtime=runtime,
+        )
+        return a
+
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
     aclnn.relu(
         a_storage.data_ptr(),
@@ -93,6 +199,9 @@ def softplus(a, beta=1.0, threshold=20.0):
             out = where(mask, a, out)
         return out
 
+    if _HAS_FAST_SOFTPLUS:
+        return _fast_softplus_impl(a, beta, threshold)
+
     out_size = _numel(a.shape) * _dtype_itemsize(a.dtype)
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
     storage = _unwrap_storage(a)
@@ -112,6 +221,15 @@ def softplus(a, beta=1.0, threshold=20.0):
 
 
 def hardtanh(a, min_val=-1.0, max_val=1.0):
+    if _HAS_FAST_HARDTANH:
+        try:
+            return _fast_hardtanh_impl(a, min_val, max_val)
+        except RuntimeError as exc:
+            if "561103" not in str(exc):
+                raise
+            # Fallback to clamp when hardtanh kernel is unsupported.
+            return clamp(a, min_val, max_val)
+
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
@@ -146,16 +264,20 @@ def silu(a):
     """Compute SiLU (Swish) activation using aclnnSilu."""
     if not aclnn.silu_symbols_ok():
         raise RuntimeError("aclnnSilu not available")
+    if _HAS_FAST_SILU:
+        return _fast_silu_impl(a)
     return _unary_op(a, aclnn.silu, "silu")
 
 
 def gelu(a):
     """Compute GELU activation using aclnnGelu."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
     if not aclnn.gelu_symbols_ok():
         raise RuntimeError("aclnnGelu not available")
+    if _HAS_FAST_GELU:
+        return _fast_gelu_impl(a)
+
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
 
     out_shape = a.shape
     out_stride = npu_runtime._contiguous_stride(out_shape)
@@ -176,11 +298,13 @@ def gelu(a):
 
 def leaky_relu(a, negative_slope=0.01):
     """Compute Leaky ReLU activation using aclnnLeakyRelu."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
     if not aclnn.leaky_relu_symbols_ok():
         raise RuntimeError("aclnnLeakyRelu not available")
+    if _HAS_FAST_LEAKY_RELU:
+        return _fast_leaky_relu_impl(a, negative_slope)
+
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
 
     out_shape = a.shape
     out_stride = npu_runtime._contiguous_stride(out_shape)
@@ -202,11 +326,13 @@ def leaky_relu(a, negative_slope=0.01):
 
 def elu(a, alpha=1.0):
     """Compute ELU activation using aclnnElu."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
     if not aclnn.elu_symbols_ok():
         raise RuntimeError("aclnnElu not available")
+    if _HAS_FAST_ELU:
+        return _fast_elu_impl(a, alpha)
+
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
 
     out_shape = a.shape
     out_stride = npu_runtime._contiguous_stride(out_shape)
@@ -232,6 +358,8 @@ def mish(a):
         return mul(a, tanh(softplus(a)))
     if not aclnn.mish_symbols_ok():
         raise RuntimeError("aclnnMish not available")
+    if _HAS_FAST_MISH:
+        return _fast_mish_impl(a)
     return _unary_op(a, aclnn.mish, "mish")
 
 
@@ -242,6 +370,8 @@ def prelu(a, weight):
 
     if not aclnn.prelu_symbols_ok():
         raise RuntimeError("aclnnPrelu not available")
+    if _HAS_FAST_PRELU:
+        return _fast_prelu_impl(a, weight)
 
     out_shape = a.shape
     out_stride = npu_runtime._contiguous_stride(out_shape)
@@ -341,11 +471,13 @@ def rrelu_op(a, lower=0.125, upper=0.3333333333333333, training=False):
 
 def softmax(a, dim=-1):
     """Compute softmax along a dimension using aclnnSoftmax."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
     if not aclnn.softmax_symbols_ok():
         raise RuntimeError("aclnnSoftmax not available")
+    if _HAS_FAST_SOFTMAX:
+        return _fast_softmax_impl(a, dim)
+
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
 
     # Normalize dim
     if dim < 0:
@@ -371,11 +503,13 @@ def softmax(a, dim=-1):
 
 def log_softmax(a, dim=-1):
     """Compute log_softmax along a dimension using aclnnLogSoftmax."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
     if not aclnn.log_softmax_symbols_ok():
         raise RuntimeError("aclnnLogSoftmax not available")
+    if _HAS_FAST_LOG_SOFTMAX:
+        return _fast_log_softmax_impl(a, dim)
+
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
 
     # Normalize dim
     if dim < 0:
@@ -406,6 +540,8 @@ def embedding(weight, indices, padding_idx=None, scale_grad_by_freq=False, spars
 
     if not aclnn.embedding_symbols_ok():
         raise RuntimeError("aclnnEmbedding not available")
+    if _HAS_FAST_EMBEDDING:
+        return _fast_embedding_impl(weight, indices)
 
     # Output shape: indices.shape + (embedding_dim,)
     embedding_dim = weight.shape[1] if len(weight.shape) > 1 else weight.shape[0]
@@ -477,6 +613,11 @@ def dropout(a, p=0.5, training=True):
 
     if not aclnn.dropout_symbols_ok():
         raise RuntimeError("aclnnDropout symbols not available")
+
+    if _HAS_FAST_DROPOUT:
+        out, mask_ptr, mask_numel = _fast_dropout_impl(a, p)
+        out._backward_data = {"mask_ptr": mask_ptr, "mask_numel": mask_numel, "p": p}
+        return out
 
     out_shape = a.shape
     out_stride = npu_runtime._contiguous_stride(out_shape)

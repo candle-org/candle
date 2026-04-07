@@ -217,6 +217,31 @@ cdef inline void _flush_pending(object tensor):
             pipe.flush()
 
 
+cdef inline object _annotate_transpose_view(object source, object view):
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+
+    source_view_meta = getattr(source, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if source._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    view._view_meta = {
+        "op": "transpose",
+        "shape": tuple(view.shape),
+        "stride": tuple(view.stride),
+        "offset": int(view.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return view
+
+
 def tensor_add(self, other):
     _ensure_functional_refs()
     return _add_fn(self, other)
@@ -503,31 +528,230 @@ def tensor_relu(self):
     return _relu_fn(self)
 
 
+def tensor_flatten(self, start_dim=0, end_dim=-1):
+    cdef object ndim
+    cdef object start
+    cdef object end
+    cdef object flattened
+    cdef object d
+    cdef object new_shape
+    cdef object v
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+
+    ndim = len(self.shape)
+    if ndim == 0:
+        return self.cy_view((1,))
+
+    start = start_dim if start_dim >= 0 else start_dim + ndim
+    end = end_dim if end_dim >= 0 else end_dim + ndim
+    if start < 0 or start >= ndim:
+        raise IndexError("Dimension out of range")
+    if end < 0 or end >= ndim:
+        raise IndexError("Dimension out of range")
+    if start > end:
+        raise RuntimeError("flatten() has invalid args: start_dim cannot come after end_dim")
+
+    flattened = 1
+    for d in self.shape[start:end + 1]:
+        flattened *= d
+    new_shape = self.shape[:start] + (flattened,) + self.shape[end + 1:]
+
+    v = self.cy_view(tuple(new_shape))
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    v._view_meta = {
+        "op": "flatten",
+        "shape": tuple(v.shape),
+        "stride": tuple(v.stride),
+        "offset": int(v.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return v
+
+
 def tensor_reshape(self, *shape):
     if not shape:
         raise TypeError("reshape() missing shape arguments")
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = tuple(shape[0])
+    if self.requires_grad:
+        _ensure_dispatch_ref()
+        return _dispatch_fn("reshape", self.device.type, self, shape)
     _ensure_functional_refs()
     return _reshape_dispatch_fn(self, shape)
 
 
 def tensor_transpose(self, dim0, dim1):
-    _ensure_functional_refs()
-    return _transpose_dispatch_fn(self, dim0, dim1)
+    cdef object v
+
+    if self.requires_grad:
+        from candle._dispatch import dispatch
+        return dispatch("transpose", self.device.type, self, dim0, dim1)
+    v = self.cy_transpose(dim0, dim1)
+    return _annotate_transpose_view(self, v)
 
 
 def tensor_view(self, *shape):
+    cdef object v
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object infer_idx
+    cdef object known_size
+    cdef object shape_list
+    cdef object idx
+    cdef object dim
+    cdef object size
+    cdef object new_size
+
     if not shape:
         raise TypeError(
             "view() received an invalid combination of arguments - got (), but expected one of:\n"
             " * (torch.dtype dtype)\n"
             " * (tuple of ints size)\n"
         )
-    if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
-        shape = shape[0]
-    _ensure_functional_refs()
-    return _view_dispatch_fn(self, shape)
+    if len(shape) == 1:
+        if isinstance(shape[0], (tuple, list)):
+            shape = tuple(shape[0])
+        else:
+            shape = (shape[0],)
+    else:
+        shape = tuple(shape)
+
+    if not self.is_contiguous():
+        raise RuntimeError(
+            "view size is not compatible with input tensor's size and stride "
+            "(at least one dimension spans across two contiguous subspaces). "
+            "Use .reshape(...) instead."
+        )
+
+    size = 1
+    for dim in self.shape:
+        size *= dim
+
+    infer_idx = None
+    known_size = 1
+    shape_list = list(shape)
+    for idx, dim in enumerate(shape_list):
+        if dim == -1:
+            if infer_idx is not None:
+                raise RuntimeError("only one dimension can be inferred")
+            infer_idx = idx
+            continue
+        known_size *= dim
+
+    if infer_idx is not None:
+        if known_size == 0 or size % known_size != 0:
+            raise RuntimeError(f"shape '{list(shape)}' is invalid for input of size {size}")
+        shape_list[infer_idx] = size // known_size
+
+    shape = tuple(shape_list)
+    new_size = 1
+    for dim in shape:
+        new_size *= dim
+    if size != new_size:
+        raise ValueError("view size mismatch")
+
+    if self.requires_grad:
+        from candle._dispatch import dispatch
+        return dispatch("view", self.device.type, self, shape)
+
+    v = self.cy_view(shape)
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    v._view_meta = {
+        "op": "view",
+        "shape": tuple(v.shape),
+        "stride": tuple(v.stride),
+        "offset": int(v.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    from candle.autograd import forward_ad
+    level = forward_ad._current_level()
+    if level >= 0:
+        tangent = forward_ad.get_tangent(self, level)
+        if tangent is not None:
+            v._fw_set(level, tangent.view(shape))
+    return v
+
+
+def tensor_is_contiguous(self, memory_format=None):
+    cdef tuple expected
+    expected = _contiguous_stride_tuple(self.shape)
+    return self.stride == expected
+
+
+def tensor_contiguous(self, memory_format=None):
+    if self.is_contiguous(memory_format=memory_format):
+        return self
+    _ensure_dispatch_ref()
+    return _dispatch_fn("contiguous", self.device.type, self)
+
+
+def tensor_flatten(self, start_dim=0, end_dim=-1):
+    cdef Py_ssize_t ndim = len(self.shape)
+    cdef Py_ssize_t i
+    cdef Py_ssize_t flattened = 1
+    cdef tuple new_shape
+
+    if self.requires_grad:
+        _ensure_dispatch_ref()
+        return _dispatch_fn("flatten", self.device.type, self, start_dim, end_dim)
+    if ndim == 0:
+        return self.reshape((1,))
+    if start_dim < 0:
+        start_dim += ndim
+    if end_dim < 0:
+        end_dim += ndim
+    if start_dim < 0 or start_dim >= ndim:
+        raise IndexError("Dimension out of range")
+    if end_dim < 0 or end_dim >= ndim:
+        raise IndexError("Dimension out of range")
+    if start_dim > end_dim:
+        raise RuntimeError("flatten() has invalid args: start_dim cannot come after end_dim")
+
+    for i in range(start_dim, end_dim + 1):
+        flattened *= self.shape[i]
+    new_shape = self.shape[:start_dim] + (flattened,) + self.shape[end_dim + 1:]
+    return self.reshape(new_shape)
+
+
+def tensor_t(self):
+    cdef Py_ssize_t ndim = len(self.shape)
+    cdef object v
+    if ndim > 2:
+        raise RuntimeError(f"t() expects a tensor with <= 2 dimensions, but self is {ndim}D")
+    if ndim < 2:
+        return self
+    if self.requires_grad:
+        _ensure_dispatch_ref()
+        return _dispatch_fn("transpose", self.device.type, self, 0, 1)
+    v = self.cy_transpose(0, 1)
+    return _annotate_transpose_view(self, v)
+
+
+def tensor_as_strided(self, size, stride, storage_offset=None):
+    cdef object offset = storage_offset if storage_offset is not None else self.offset
+    _ensure_view_factory_ref()
+    return _cy_make_view_tensor_fn(self, self._storage, tuple(size), tuple(stride), offset)
 
 
 def tensor_is_contiguous(self, memory_format=None):
@@ -1011,12 +1235,18 @@ def tensor_transpose_(self, dim0, dim1):
 
 def tensor_t_(self):
     cdef Py_ssize_t ndim = len(self.shape)
+    cdef list shape
+    cdef list stride
     if ndim > 2:
         raise RuntimeError(f"t_() expects a tensor with <= 2 dimensions, but self is {ndim}D")
     self._check_inplace()
     if ndim < 2:
         return self
-    return self.transpose_(0, 1)
+    shape = list(self.shape)
+    stride = list(self.stride)
+    shape[0], shape[1] = shape[1], shape[0]
+    stride[0], stride[1] = stride[1], stride[0]
+    return self.as_strided_(tuple(shape), tuple(stride))
 
 
 def tensor_squeeze_(self, dim=None):
@@ -1084,11 +1314,23 @@ def tensor_as_strided_(self, size, stride, storage_offset=None):
 
 
 def tensor_swapdims_(self, dim0, dim1):
-    return self.transpose_(dim0, dim1)
+    cdef Py_ssize_t ndim = len(self.shape)
+    cdef Py_ssize_t d0 = dim0 if dim0 >= 0 else dim0 + ndim
+    cdef Py_ssize_t d1 = dim1 if dim1 >= 0 else dim1 + ndim
+    cdef list shape
+    cdef list stride
+
+    if d0 < 0 or d0 >= ndim or d1 < 0 or d1 >= ndim:
+        raise IndexError("Dimension out of range")
+    shape = list(self.shape)
+    stride = list(self.stride)
+    shape[d0], shape[d1] = shape[d1], shape[d0]
+    stride[d0], stride[d1] = stride[d1], stride[d0]
+    return self.as_strided_(tuple(shape), tuple(stride))
 
 
 def tensor_swapaxes_(self, axis0, axis1):
-    return self.swapdims_(axis0, axis1)
+    return tensor_swapdims_(self, axis0, axis1)
 
 
 def tensor_scatter_(self, dim, index, src):
@@ -1323,7 +1565,7 @@ def tensor_type_as(self, other):
 
 
 def tensor_reshape_as(self, other):
-    return self.reshape(other.shape)
+    return tensor_reshape(self, other.shape)
 
 
 def tensor_put_(self, indices, values, accumulate=False):
@@ -1386,10 +1628,50 @@ def tensor_index_add(self, dim, index, source, alpha=1):
 
 
 def tensor_permute(self, *dims):
+    cdef object ndim
+    cdef object normalized
+    cdef object d
+    cdef object shape
+    cdef object stride
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object v
+
     _ensure_dispatch_ref()
     if len(dims) == 1 and isinstance(dims[0], (tuple, list)):
         dims = tuple(dims[0])
-    return _dispatch_fn("permute", self.device.type, self, dims)
+    if self.requires_grad:
+        return _dispatch_fn("permute", self.device.type, self, dims)
+
+    ndim = len(self.shape)
+    normalized = []
+    for d in dims:
+        d = d if d >= 0 else d + ndim
+        normalized.append(d)
+
+    shape = [self.shape[d] for d in normalized]
+    stride = [self.stride[d] for d in normalized]
+    v = self.cy_as_strided(tuple(shape), tuple(stride), self.offset)
+
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    v._view_meta = {
+        "op": "permute",
+        "shape": tuple(v.shape),
+        "stride": tuple(v.stride),
+        "offset": int(v.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return v
 
 
 def tensor_mean(self, dim=None, keepdim=False, dtype=None, axis=None):
@@ -1558,18 +1840,193 @@ def tensor_argwhere(self):
 
 
 def tensor_movedim(self, source, destination):
+    cdef object ndim
+    cdef object source_tuple
+    cdef object destination_tuple
+    cdef object order
+    cdef object dst_order
+    cdef object dst_idx
+    cdef object shape
+    cdef object stride
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object v
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("movedim", self.device.type, self, source, destination)
+    if self.requires_grad:
+        return _dispatch_fn("movedim", self.device.type, self, source, destination)
+
+    ndim = len(self.shape)
+    if isinstance(source, int):
+        source_tuple = (source,)
+    elif isinstance(source, list):
+        source_tuple = tuple(source)
+    else:
+        source_tuple = source
+
+    if isinstance(destination, int):
+        destination_tuple = (destination,)
+    elif isinstance(destination, list):
+        destination_tuple = tuple(destination)
+    else:
+        destination_tuple = destination
+
+    if not isinstance(source_tuple, tuple) or not isinstance(destination_tuple, tuple):
+        return _dispatch_fn("movedim", self.device.type, self, source, destination)
+
+    source_tuple = tuple(s % ndim for s in source_tuple)
+    destination_tuple = tuple(d % ndim for d in destination_tuple)
+
+    order = [n for n in range(ndim) if n not in source_tuple]
+    dst_order = sorted(range(len(destination_tuple)), key=lambda i: destination_tuple[i])
+    for dst_idx in dst_order:
+        order.insert(destination_tuple[dst_idx], source_tuple[dst_idx])
+
+    shape = [self.shape[d] for d in order]
+    stride = [self.stride[d] for d in order]
+    v = self.cy_as_strided(tuple(shape), tuple(stride), self.offset)
+
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    v._view_meta = {
+        "op": "movedim",
+        "shape": tuple(v.shape),
+        "stride": tuple(v.stride),
+        "offset": int(v.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return v
 
 
 def tensor_diagonal(self, offset=0, dim1=0, dim2=1):
+    cdef object ndim
+    cdef object d1
+    cdef object d2
+    cdef object shape
+    cdef object stride
+    cdef object size1
+    cdef object size2
+    cdef object diag_len
+    cdef object base_offset
+    cdef object out_shape
+    cdef object out_stride
+    cdef object i
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object v
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("diagonal", self.device.type, self, offset, dim1, dim2)
+    if self.requires_grad:
+        return _dispatch_fn("diagonal", self.device.type, self, offset, dim1, dim2)
+
+    ndim = len(self.shape)
+    d1 = dim1 if dim1 >= 0 else dim1 + ndim
+    d2 = dim2 if dim2 >= 0 else dim2 + ndim
+
+    shape = list(self.shape)
+    stride = list(self.stride)
+    size1 = shape[d1]
+    size2 = shape[d2]
+
+    if offset >= 0:
+        diag_len = max(0, min(size1, size2 - offset))
+        base_offset = self.offset + offset * stride[d2]
+    else:
+        diag_len = max(0, min(size1 + offset, size2))
+        base_offset = self.offset + (-offset) * stride[d1]
+
+    out_shape = [shape[i] for i in range(ndim) if i not in (d1, d2)]
+    out_stride = [stride[i] for i in range(ndim) if i not in (d1, d2)]
+    out_shape.append(diag_len)
+    out_stride.append(stride[d1] + stride[d2])
+
+    v = self.cy_as_strided(tuple(out_shape), tuple(out_stride), base_offset)
+
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    v._view_meta = {
+        "op": "diagonal",
+        "shape": tuple(v.shape),
+        "stride": tuple(v.stride),
+        "offset": int(v.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return v
 
 
 def tensor_unbind(self, dim=0):
+    cdef object ndim
+    cdef object d
+    cdef object dim_size
+    cdef object i
+    cdef object idx
+    cdef object new_shape
+    cdef object new_stride
+    cdef object new_offset
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object outputs
+    cdef object v
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("unbind", self.device.type, self, dim)
+    if self.requires_grad:
+        return _dispatch_fn("unbind", self.device.type, self, dim)
+
+    ndim = len(self.shape)
+    d = dim if dim >= 0 else dim + ndim
+    dim_size = self.shape[d]
+    outputs = []
+
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    else:
+        creation_kind = "multi_view"
+
+    new_shape = list(self.shape)
+    del new_shape[d]
+    new_stride = list(self.stride)
+    del new_stride[d]
+
+    for i in range(dim_size):
+        idx = int(i)
+        new_offset = self.offset + idx * self.stride[d]
+        v = self.cy_as_strided(tuple(new_shape), tuple(new_stride), new_offset)
+        v._view_meta = {
+            "op": "select",
+            "shape": tuple(v.shape),
+            "stride": tuple(v.stride),
+            "offset": int(v.offset),
+            "creation_mode": creation_mode,
+            "creation_kind": creation_kind,
+        }
+        outputs.append(v)
+    return tuple(outputs)
 
 
 def tensor_vsplit(self, split_size_or_sections):
@@ -1578,13 +2035,52 @@ def tensor_vsplit(self, split_size_or_sections):
 
 
 def tensor_hsplit(self, split_size_or_sections):
+    cdef object dim
+    cdef object sizes
+    cdef object sections
+    cdef object dim_size
+    cdef object size
+    cdef object extra
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("hsplit", self.device.type, self, split_size_or_sections)
+    if self.requires_grad:
+        return _dispatch_fn("hsplit", self.device.type, self, split_size_or_sections)
+
+    dim = 0 if self.dim() == 1 else 1
+    if isinstance(split_size_or_sections, int):
+        sections = split_size_or_sections
+        if sections <= 0:
+            raise ValueError("sections must be > 0")
+        dim_size = self.shape[dim]
+        size, extra = divmod(dim_size, sections)
+        sizes = [size + 1] * extra + [size] * (sections - extra)
+        return tensor_split_method(self, tuple(sizes), dim)
+    return tensor_split_method(self, split_size_or_sections, dim)
 
 
 def tensor_dsplit(self, split_size_or_sections):
+    cdef object sizes
+    cdef object sections
+    cdef object dim_size
+    cdef object size
+    cdef object extra
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("dsplit", self.device.type, self, split_size_or_sections)
+    if self.requires_grad:
+        return _dispatch_fn("dsplit", self.device.type, self, split_size_or_sections)
+
+    if self.dim() < 3:
+        raise ValueError("dsplit expects input with at least 3 dimensions")
+
+    if isinstance(split_size_or_sections, int):
+        sections = split_size_or_sections
+        if sections <= 0:
+            raise ValueError("sections must be > 0")
+        dim_size = self.shape[2]
+        size, extra = divmod(dim_size, sections)
+        sizes = [size + 1] * extra + [size] * (sections - extra)
+        return tensor_split_method(self, tuple(sizes), 2)
+    return tensor_split_method(self, split_size_or_sections, 2)
 
 
 def tensor_take_along_dim(self, indices, dim):
@@ -2053,18 +2549,140 @@ def tensor_expand_copy_method(self, *sizes):
 
 
 def tensor_narrow_method(self, dim, start, length):
+    cdef object ndim
+    cdef object d
+    cdef object new_shape
+    cdef object new_offset
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object v
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("narrow", self.device.type, self, dim, start, length)
+    if self.requires_grad:
+        return _dispatch_fn("narrow", self.device.type, self, dim, start, length)
+
+    ndim = len(self.shape)
+    d = dim if dim >= 0 else dim + ndim
+    new_shape = list(self.shape)
+    new_shape[d] = int(length)
+    new_offset = self.offset + int(start) * self.stride[d]
+    v = self.cy_as_strided(tuple(new_shape), tuple(self.stride), new_offset)
+
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    v._view_meta = {
+        "op": "narrow",
+        "shape": tuple(v.shape),
+        "stride": tuple(v.stride),
+        "offset": int(v.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return v
 
 
 def tensor_select_method(self, dim, index):
+    cdef object ndim
+    cdef object d
+    cdef object idx
+    cdef object new_shape
+    cdef object new_stride
+    cdef object new_offset
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object v
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("select", self.device.type, self, dim, index)
+    if self.requires_grad:
+        return _dispatch_fn("select", self.device.type, self, dim, index)
+
+    ndim = len(self.shape)
+    d = dim if dim >= 0 else dim + ndim
+    idx = int(index)
+    if idx < 0:
+        idx += self.shape[d]
+    new_shape = list(self.shape)
+    del new_shape[d]
+    new_stride = list(self.stride)
+    new_offset = self.offset + idx * self.stride[d]
+    del new_stride[d]
+    v = self.cy_as_strided(tuple(new_shape), tuple(new_stride), new_offset)
+
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    v._view_meta = {
+        "op": "select",
+        "shape": tuple(v.shape),
+        "stride": tuple(v.stride),
+        "offset": int(v.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return v
 
 
 def tensor_unfold_method(self, dimension, size, step):
+    cdef object ndim
+    cdef object d
+    cdef object dim_size
+    cdef object n_windows
+    cdef object shape
+    cdef object stride
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object v
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("unfold", self.device.type, self, dimension, size, step)
+
+    ndim = len(self.shape)
+    d = dimension if dimension >= 0 else dimension + ndim
+    dim_size = self.shape[d]
+    n_windows = max(0, (dim_size - size) // step + 1)
+
+    shape = list(self.shape)
+    stride = list(self.stride)
+    shape[d] = n_windows
+    shape.append(size)
+    stride[d] = stride[d] * step
+    stride.append(self.stride[d])
+
+    v = self.cy_as_strided(tuple(shape), tuple(stride), self.offset)
+
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    v._view_meta = {
+        "op": "unfold",
+        "shape": tuple(v.shape),
+        "stride": tuple(v.stride),
+        "offset": int(v.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return v
 
 
 def tensor_moveaxis_method(self, source, destination):
@@ -2072,7 +2690,7 @@ def tensor_moveaxis_method(self, source, destination):
 
 
 def tensor_swapdims_method(self, dim0, dim1):
-    return self.transpose(dim0, dim1)
+    return self.cy_transpose(dim0, dim1)
 
 
 def tensor_swapaxes_method(self, axis0, axis1):
@@ -2163,14 +2781,24 @@ def tensor_hardtanh_method(self, min_val=-1.0, max_val=1.0):
     return _dispatch_fn("hardtanh", self.device.type, self, min_val, max_val)
 
 
-def tensor_min_method(self, other):
+def tensor_min_method(self, dim=None, keepdim=False):
     _ensure_dispatch_ref()
-    return _dispatch_fn("min", self.device.type, self, other)
+    if dim is None:
+        return _dispatch_fn("amin", self.device.type, self)
+    _ensure_base()
+    if isinstance(dim, _BaseTensor):
+        return _dispatch_fn("min", self.device.type, self, dim)
+    return _dispatch_fn("min", self.device.type, self, dim, keepdim)
 
 
-def tensor_max_method(self, other):
+def tensor_max_method(self, dim=None, keepdim=False):
     _ensure_dispatch_ref()
-    return _dispatch_fn("max", self.device.type, self, other)
+    if dim is None:
+        return _dispatch_fn("amax", self.device.type, self)
+    _ensure_base()
+    if isinstance(dim, _BaseTensor):
+        return _dispatch_fn("max", self.device.type, self, dim)
+    return _dispatch_fn("max", self.device.type, self, dim, keepdim)
 
 
 def tensor_amin_method(self, dim=None, keepdim=False):
@@ -2199,13 +2827,106 @@ def tensor_mm_method(self, mat2):
 
 
 def tensor_chunk_method(self, chunks, dim=0):
+    cdef object ndim
+    cdef object d
+    cdef object dim_size
+    cdef object actual_chunks
+    cdef object chunk_size
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("chunk", self.device.type, self, chunks, dim=dim)
+    if self.requires_grad:
+        return _dispatch_fn("chunk", self.device.type, self, chunks, dim=dim)
+
+    ndim = len(self.shape)
+    d = dim if dim >= 0 else dim + ndim
+    dim_size = self.shape[d]
+    if chunks <= 0:
+        raise ValueError("chunks must be > 0")
+    actual_chunks = chunks if dim_size == 0 else min(chunks, dim_size)
+    if actual_chunks == 0:
+        return tuple()
+    chunk_size = (dim_size + actual_chunks - 1) // actual_chunks
+    return tensor_split_method(self, chunk_size, d)
 
 
 def tensor_split_method(self, split_size_or_sections, dim=0):
+    cdef object ndim
+    cdef object d
+    cdef object dim_size
+    cdef object outputs
+    cdef object step
+    cdef object start
+    cdef object end
+    cdef object size
+    cdef object new_shape
+    cdef object new_offset
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+    cdef object v
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("split", self.device.type, self, split_size_or_sections, dim=dim)
+    if self.requires_grad:
+        return _dispatch_fn("split", self.device.type, self, split_size_or_sections, dim=dim)
+
+    ndim = len(self.shape)
+    d = dim if dim >= 0 else dim + ndim
+    dim_size = self.shape[d]
+    outputs = []
+
+    source_view_meta = getattr(self, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if self._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    else:
+        creation_kind = "multi_view"
+
+    if isinstance(split_size_or_sections, int):
+        if split_size_or_sections <= 0:
+            raise ValueError("split_size must be > 0")
+        step = split_size_or_sections
+        for start in range(0, dim_size, step):
+            end = start + step
+            if end > dim_size:
+                end = dim_size
+            new_shape = list(self.shape)
+            new_shape[d] = end - start
+            new_offset = self.offset + int(start) * self.stride[d]
+            v = self.cy_as_strided(tuple(new_shape), tuple(self.stride), new_offset)
+            v._view_meta = {
+                "op": "narrow",
+                "shape": tuple(v.shape),
+                "stride": tuple(v.stride),
+                "offset": int(v.offset),
+                "creation_mode": creation_mode,
+                "creation_kind": creation_kind,
+            }
+            outputs.append(v)
+    else:
+        if sum(split_size_or_sections) != dim_size:
+            raise ValueError("split sections must sum to dim size")
+        start = 0
+        for size in split_size_or_sections:
+            new_shape = list(self.shape)
+            new_shape[d] = size
+            new_offset = self.offset + int(start) * self.stride[d]
+            v = self.cy_as_strided(tuple(new_shape), tuple(self.stride), new_offset)
+            v._view_meta = {
+                "op": "narrow",
+                "shape": tuple(v.shape),
+                "stride": tuple(v.stride),
+                "offset": int(v.offset),
+                "creation_mode": creation_mode,
+                "creation_kind": creation_kind,
+            }
+            outputs.append(v)
+            start += size
+    return tuple(outputs)
 
 
 def tensor_roll_method(self, shifts, dims=None):
@@ -2280,7 +3001,18 @@ def tensor_ndim_fget(self):
 
 
 def tensor_T_fget(self):
-    return self.t()
+    cdef Py_ssize_t ndim = len(self.shape)
+    cdef object v
+
+    if ndim > 2:
+        raise RuntimeError(f"t() expects a tensor with <= 2 dimensions, but self is {ndim}D")
+    if ndim < 2:
+        return self
+    if self.requires_grad:
+        _ensure_dispatch_ref()
+        return _dispatch_fn("transpose", self.device.type, self, 0, 1)
+    v = self.cy_transpose(0, 1)
+    return _annotate_transpose_view(self, v)
 
 
 def tensor_is_floating_point(self):

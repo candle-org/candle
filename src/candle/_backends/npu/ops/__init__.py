@@ -25,7 +25,7 @@ from .math import (
     sinh, cosh, erf, erfc, floor, ceil, round, trunc, frac,
     log2, log10, exp2, expm1, log1p,
     asin, acos, atan, asinh, acosh, atanh,
-    atan2, pow, floor_divide,
+    atan2, pow, floor_divide, reciprocal,
 )
 
 from .comparison import (

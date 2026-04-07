@@ -214,6 +214,7 @@ from .ops import (
     adaptive_max_pool2d,
     # P1 ops
     std_,
+    reciprocal,
     reciprocal_,
     addmm,
     einsum_,
@@ -679,7 +680,8 @@ registry.register("adaptive_max_pool2d", "npu", adaptive_max_pool2d)
 
 # P1 ops
 registry.register("std", "npu", std_, meta=meta_infer.infer_sum)
-registry.register("reciprocal", "npu", reciprocal_, meta=meta_infer.infer_unary)
+registry.register("reciprocal", "npu", reciprocal, meta=meta_infer.infer_unary)
+registry.register("reciprocal_", "npu", reciprocal_, meta=meta_infer.infer_unary)
 registry.register("addmm", "npu", addmm)
 registry.register("einsum", "npu", einsum_)
 registry.register("upsample_nearest2d", "npu", upsample_nearest2d)
