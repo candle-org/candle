@@ -2034,52 +2034,63 @@ def test_repeat_interleave_tensor_allocates_workspace_before_execute(monkeypatch
         def is_initialized(self):
             return True
 
-        def create_tensor(self, shape, stride, dtype_code, ptr, fmt):
-            handle = 0x1000 + len([x for x in calls if x[0] == "create_tensor"])
-            calls.append(("create_tensor", tuple(shape), tuple(stride), dtype_code, ptr, fmt, handle))
-            return handle
+        def resolve_op(self, name):
+            calls.append(("resolve_op", name))
+            return (f"getws:{name}", f"exec:{name}")
 
-        def destroy_tensor(self, handle):
-            calls.append(("destroy_tensor", handle))
+        def two_tensor_two_ints_op(
+            self,
+            getws_ptr,
+            exec_ptr,
+            shape,
+            stride,
+            repeats_shape,
+            repeats_stride,
+            out_shape,
+            out_stride,
+            dim,
+            output_size,
+            dtype_code,
+            repeats_dtype_code,
+            out_dtype_code,
+            fmt,
+            self_ptr,
+            repeats_ptr,
+            out_ptr,
+            stream_ptr,
+        ):
+            calls.append((
+                "two_tensor_two_ints_op",
+                getws_ptr,
+                exec_ptr,
+                tuple(shape),
+                tuple(stride),
+                tuple(repeats_shape),
+                tuple(repeats_stride),
+                tuple(out_shape),
+                tuple(out_stride),
+                dim,
+                output_size,
+                dtype_code,
+                repeats_dtype_code,
+                out_dtype_code,
+                fmt,
+                self_ptr,
+                repeats_ptr,
+                out_ptr,
+                stream_ptr,
+            ))
+            return (64, 0xBEEF)
+
+        def execute(self, exec_ptr, workspace_ptr, workspace_size, executor, stream):
+            calls.append(("execute", exec_ptr, workspace_ptr, workspace_size, executor, stream))
+            return 0
 
     class _FakeBindings:
         aclnn_repeat_interleave_get_workspace = object()
         aclnn_repeat_interleave = object()
         aclnn_repeat_interleave_with_dim_get_workspace = object()
         aclnn_repeat_interleave_with_dim = object()
-
-        @staticmethod
-        def aclnn_repeat_interleave_with_dim_get_workspace(
-            self_handle,
-            repeats_handle,
-            dim,
-            output_size,
-            out_handle,
-            workspace_size_ptr,
-            executor_ptr,
-        ):
-            calls.append((
-                "get_workspace_with_dim",
-                self_handle.value,
-                repeats_handle.value,
-                dim.value,
-                output_size.value,
-                out_handle.value,
-            ))
-            workspace_size_ptr._obj.value = 64
-            executor_ptr._obj.value = 0xBEEF
-            return 0
-
-        @staticmethod
-        def aclnn_repeat_interleave_with_dim(workspace_ptr, workspace_size, executor, stream):
-            calls.append((
-                "execute_with_dim",
-                workspace_ptr.value,
-                workspace_size.value,
-                executor.value,
-                stream.value,
-            ))
-            return 0
 
     class _FakeAclWithMalloc:
         class rt:
@@ -2113,50 +2124,33 @@ def test_repeat_interleave_tensor_allocates_workspace_before_execute(monkeypatch
         runtime,
     )
 
+    assert ("resolve_op", "RepeatInterleaveWithDim") in calls
     assert ("malloc", 64, 0) in calls
-    assert ("execute_with_dim", 0xCAFE, 64, 0xBEEF, runtime.stream) in calls
+    assert ("execute", "exec:RepeatInterleaveWithDim", 0xCAFE, 64, 0xBEEF, runtime.stream) in calls
     assert any(entry[0] == "defer_executor" and entry[1] == 0xBEEF for entry in calls)
     assert ("raw", 0xCAFE) in runtime.freed
 
 
 def test_repeat_interleave_tensor_defers_tensor_handle_cleanup_until_executor_destroy(monkeypatch):
-    calls = []
-
     class _FakeFfi:
         def is_initialized(self):
             return True
 
-        def create_tensor(self, shape, stride, dtype_code, ptr, fmt):
-            handle = 0x2000 + len([x for x in calls if x[0] == "create_tensor"])
-            calls.append(("create_tensor", handle))
-            return handle
+        def resolve_op(self, name):
+            return (f"getws:{name}", f"exec:{name}")
 
-        def destroy_tensor(self, handle):
-            calls.append(("destroy_tensor", handle))
-
-    class _FakeBindings:
-        aclnn_repeat_interleave_get_workspace = object()
-        aclnn_repeat_interleave = object()
-        aclnn_repeat_interleave_with_dim_get_workspace = object()
-        aclnn_repeat_interleave_with_dim = object()
-
-        @staticmethod
-        def aclnn_repeat_interleave_with_dim_get_workspace(
-            self_handle, repeats_handle, dim, output_size, out_handle, workspace_size_ptr, executor_ptr
-        ):
-            workspace_size_ptr._obj.value = 0
-            executor_ptr._obj.value = 0xD00D
-            return 0
-
-        @staticmethod
-        def aclnn_repeat_interleave_with_dim(workspace_ptr, workspace_size, executor, stream):
-            calls.append(("execute_with_dim", executor.value))
-            return 0
+        def two_tensor_two_ints_op(self, *args, **kwargs):
+            return (0, 0xD00D)
 
     deferred = []
     monkeypatch.setattr(aclnn, "acl", None)
     monkeypatch.setattr(aclnn, "ensure_acl", lambda: _FakeAcl())
-    monkeypatch.setattr(aclnn, "get_bindings", lambda: _FakeBindings())
+    monkeypatch.setattr(aclnn, "get_bindings", lambda: type("_FakeBindings", (), {
+        "aclnn_repeat_interleave_get_workspace": object(),
+        "aclnn_repeat_interleave": object(),
+        "aclnn_repeat_interleave_with_dim_get_workspace": object(),
+        "aclnn_repeat_interleave_with_dim": object(),
+    })())
     monkeypatch.setattr(aclnn, "_ffi", _FakeFfi())
     monkeypatch.setattr(aclnn, "_maybe_sync", lambda runtime: None)
     monkeypatch.setattr(aclnn, "_defer_executor", lambda executor, cleanup=None: deferred.append((aclnn._executor_handle(executor), cleanup)))
@@ -2171,8 +2165,7 @@ def test_repeat_interleave_tensor_defers_tensor_handle_cleanup_until_executor_de
 
     assert len(deferred) == 1
     assert deferred[0][0] == 0xD00D
-    assert deferred[0][1] == [("tensor", 0x2000), ("tensor", 0x2001), ("tensor", 0x2002)]
-    assert not [entry for entry in calls if entry[0] == "destroy_tensor"]
+    assert deferred[0][1] is None
 
 
 
@@ -6186,7 +6179,7 @@ def test_tensor_list_axis_op_fast_path_defers_cleanup_and_keeps_executor(tmp_pat
     assert state['executor'] == 0xBEEF
     assert state['create'] == 3
     assert state['destroy_before'] == 0
-    assert state['destroy_after'] == 3
+    assert state['destroy_after'] == 1
     assert state['destroy_executor_before'] == 0
     assert state['destroy_executor_after'] == 1
 
@@ -7481,6 +7474,7 @@ def test_two_tensor_ints_bool_op_defers_tensor_cleanup_until_executor_destroy(tm
     assert state['destroy_after'] == 3
     assert state['destroy_executor_before'] == 0
     assert state['destroy_executor_after'] == 1
+
 def test_tensor_int_array_bool_double_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
     state = _run_compiled_executor_cleanup_contract(
         tmp_path,

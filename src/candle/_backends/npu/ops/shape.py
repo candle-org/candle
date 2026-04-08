@@ -1880,31 +1880,16 @@ def cartesian_prod(*tensors):
         if t.dtype != first.dtype:
             raise RuntimeError("meshgrid expects all tensors to have the same dtype")
 
-    # Composite: for each tensor i, repeat-interleave by product of later sizes,
-    # then tile by product of earlier sizes.
-    n = len(tensors)
-    sizes = [int(t.shape[0]) for t in tensors]
-    total = 1
-    for s in sizes:
-        total *= s
+    # Align with PyTorch CompositeImplicitAutograd cartesian_prod route:
+    # build meshgrid views first, then stack columns and reshape to (prod, n).
+    from ...._functional import meshgrid as functional_meshgrid
 
-    columns = []
-    for i, t in enumerate(tensors):
-        inner = 1
-        for j in range(i + 1, n):
-            inner *= sizes[j]
-        outer = 1
-        for j in range(0, i):
-            outer *= sizes[j]
-        # repeat each element inner times: reshape to (s,1) then repeat (1,inner) then flatten
-        col = reshape(t, (sizes[i], 1))
-        col = repeat(col, (1, inner))
-        col = reshape(col, (sizes[i] * inner,))
-        # tile the pattern outer times
-        if outer > 1:
-            col = tile(col, (outer,))
-        columns.append(col)
-    return stack(columns, dim=1)
+    grids = functional_meshgrid(*tensors, indexing="ij")
+    stacked = stack(tuple(grids), dim=-1)
+    total = 1
+    for t in tensors:
+        total *= int(t.shape[0])
+    return reshape(stacked, (total, len(tensors)))
 
 
 def block_diag(*tensors):
