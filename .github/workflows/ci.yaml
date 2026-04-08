@@ -134,8 +134,6 @@ jobs:
 
   # ════════════════════════════════════════════════════════════════
   # All test jobs run in parallel after pylint passes.
-  # On failure any job calls gh api to cancel the entire workflow run
-  # so remaining siblings stop immediately (cross-job fail-fast).
   # ════════════════════════════════════════════════════════════════
 
   test-cpu:
@@ -213,12 +211,6 @@ jobs:
       id: run-tests
       run: |
         pytest tests/cpu/ tests/contract/ -v --tb=short
-    - name: Cancel workflow on failure
-      if: steps.run-tests.outcome == 'failure'
-      run: |
-        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
-      env:
-        GH_TOKEN: ${{ github.token }}
 
   test-mps:
     needs: [detect-changes, pylint-check]
@@ -295,12 +287,6 @@ jobs:
       id: run-tests
       run: |
         pytest tests/mps/ -v --tb=short
-    - name: Cancel workflow on failure
-      if: steps.run-tests.outcome == 'failure'
-      run: |
-        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
-      env:
-        GH_TOKEN: ${{ github.token }}
 
   # ── NPU 910B runners ───────────────────────────────────────────
 
@@ -356,12 +342,6 @@ jobs:
         conda activate candle
         bash .github/scripts/ci-failfast-watcher.sh \
           pytest tests/npu/common/ tests/npu/910b/ -v --tb=short
-    - name: Cancel workflow on failure
-      if: steps.run-tests.outcome == 'failure'
-      run: |
-        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
-      env:
-        GH_TOKEN: ${{ github.token }}
 
   test-npu-910b-integ:
     needs: [detect-changes, pylint-check]
@@ -420,12 +400,6 @@ jobs:
           --ignore=tests/npu/910b \
           --ignore=tests/npu/310b \
           --ignore=tests/npu/310p
-    - name: Cancel workflow on failure
-      if: steps.run-tests.outcome == 'failure'
-      run: |
-        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
-      env:
-        GH_TOKEN: ${{ github.token }}
 
   test-npu-910b-dist:
     needs: [detect-changes, test-npu-910b-unit, test-npu-910b-integ]
@@ -480,12 +454,6 @@ jobs:
         conda activate candle
         bash .github/scripts/ci-failfast-watcher.sh \
           pytest tests/distributed/ -v --tb=short -k "hccl"
-    - name: Cancel workflow on failure
-      if: steps.run-tests.outcome == 'failure'
-      run: |
-        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
-      env:
-        GH_TOKEN: ${{ github.token }}
 
   # ── NPU 910A runners ───────────────────────────────────────────
 
@@ -607,12 +575,6 @@ jobs:
           --ignore=tests/npu/910b/ \
           --ignore=tests/npu/310b/ \
           --ignore=tests/npu/310p/
-    - name: Cancel workflow on failure
-      if: steps.run-tests.outcome == 'failure'
-      run: |
-        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
-      env:
-        GH_TOKEN: ${{ github.token }}
 
   test-npu-910a-dist-2card:
     name: 910A Distributed (4-5)
@@ -767,12 +729,6 @@ jobs:
           echo "2-card HCCL coverage unexpectedly skipped tests" >&2
           exit 1
         fi
-    - name: Cancel workflow on failure
-      if: steps.run-dist-tests.outcome == 'failure' || steps.run-hccl-tests.outcome == 'failure'
-      run: |
-        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
-      env:
-        GH_TOKEN: ${{ github.token }}
 
   test-npu-910a-dist-4card:
     name: 910A HCCL 4-Card (0-3)
@@ -897,12 +853,6 @@ jobs:
           echo "4-card HCCL coverage unexpectedly skipped tests" >&2
           exit 1
         fi
-    - name: Cancel workflow on failure
-      if: steps.run-hccl-4card-tests.outcome == 'failure'
-      run: |
-        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
-      env:
-        GH_TOKEN: ${{ github.token }}
 
   # ── NPU 310B runner ────────────────────────────────────────────
 
@@ -1080,9 +1030,3 @@ jobs:
         }
         clean_env bash .github/scripts/ci-failfast-watcher.sh \
           pytest tests/npu/common/ -v --tb=short
-    - name: Cancel workflow on failure
-      if: steps.run-310b-tests.outcome == 'failure' || steps.run-common-tests.outcome == 'failure'
-      run: |
-        gh run cancel ${{ github.run_id }} --repo ${{ github.repository }} || true
-      env:
-        GH_TOKEN: ${{ github.token }}
