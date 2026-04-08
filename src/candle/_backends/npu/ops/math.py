@@ -18,119 +18,161 @@ from ._helpers import (
 # ---------------------------------------------------------------------------
 
 try:
-    from candle._cython._npu_ops import fast_add as _fast_add_impl, fast_abs as _fast_abs_impl, fast_neg as _fast_neg_impl, fast_sign as _fast_sign_impl, fast_signbit as _fast_signbit_impl, fast_isfinite as _fast_isfinite_impl, fast_isposinf as _fast_isposinf_impl, fast_isneginf as _fast_isneginf_impl, fast_square as _fast_square_impl, fast_exp as _fast_exp_impl, fast_expm1 as _fast_expm1_impl, fast_log as _fast_log_impl, fast_log1p as _fast_log1p_impl, fast_sqrt as _fast_sqrt_impl, fast_rsqrt as _fast_rsqrt_impl, fast_sin as _fast_sin_impl, fast_cos as _fast_cos_impl, fast_tan as _fast_tan_impl, fast_tanh as _fast_tanh_impl, fast_sigmoid as _fast_sigmoid_impl, fast_sinh as _fast_sinh_impl, fast_cosh as _fast_cosh_impl, fast_erf as _fast_erf_impl, fast_erfc as _fast_erfc_impl, fast_floor as _fast_floor_impl, fast_ceil as _fast_ceil_impl, fast_round as _fast_round_impl, fast_trunc as _fast_trunc_impl, fast_log2 as _fast_log2_impl, fast_log10 as _fast_log10_impl, fast_exp2 as _fast_exp2_impl, fast_asinh as _fast_asinh_impl, fast_acosh as _fast_acosh_impl, fast_atanh as _fast_atanh_impl, fast_atan as _fast_atan_impl, fast_asin as _fast_asin_impl, fast_acos as _fast_acos_impl  # pylint: disable=import-error,no-name-in-module
-    _HAS_FAST_ADD = True
+    from candle._cython._npu_ops import (
+        fast_abs as _fast_abs_impl,
+        fast_acos as _fast_acos_impl,
+        fast_acosh as _fast_acosh_impl,
+        fast_add as _fast_add_impl,
+        fast_asin as _fast_asin_impl,
+        fast_asinh as _fast_asinh_impl,
+        fast_atan as _fast_atan_impl,
+        fast_atanh as _fast_atanh_impl,
+        fast_ceil as _fast_ceil_impl,
+        fast_cos as _fast_cos_impl,
+        fast_cosh as _fast_cosh_impl,
+        fast_erf as _fast_erf_impl,
+        fast_erfc as _fast_erfc_impl,
+        fast_exp as _fast_exp_impl,
+        fast_exp2 as _fast_exp2_impl,
+        fast_expm1 as _fast_expm1_impl,
+        fast_floor as _fast_floor_impl,
+        fast_isfinite as _fast_isfinite_impl,
+        fast_isneginf as _fast_isneginf_impl,
+        fast_isposinf as _fast_isposinf_impl,
+        fast_log as _fast_log_impl,
+        fast_log1p as _fast_log1p_impl,
+        fast_log10 as _fast_log10_impl,
+        fast_log2 as _fast_log2_impl,
+        fast_mul as _fast_mul_impl,
+        fast_neg as _fast_neg_impl,
+        fast_round as _fast_round_impl,
+        fast_rsqrt as _fast_rsqrt_impl,
+        fast_sigmoid as _fast_sigmoid_impl,
+        fast_sign as _fast_sign_impl,
+        fast_signbit as _fast_signbit_impl,
+        fast_sin as _fast_sin_impl,
+        fast_sinh as _fast_sinh_impl,
+        fast_sqrt as _fast_sqrt_impl,
+        fast_square as _fast_square_impl,
+        fast_tan as _fast_tan_impl,
+        fast_tanh as _fast_tanh_impl,
+        fast_trunc as _fast_trunc_impl,
+    )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_ABS = True
-    _HAS_FAST_NEG = True
-    _HAS_FAST_SIGN = True
-    _HAS_FAST_SIGNBIT = True
-    _HAS_FAST_ISFINITE = True
-    _HAS_FAST_ISPOSINF = True
-    _HAS_FAST_ISNEGINF = True
-    _HAS_FAST_SQUARE = True
-    _HAS_FAST_EXP = True
-    _HAS_FAST_EXPM1 = True
-    _HAS_FAST_LOG = True
-    _HAS_FAST_LOG1P = True
-    _HAS_FAST_SQRT = True
-    _HAS_FAST_RSQRT = True
-    _HAS_FAST_SIN = True
+    _HAS_FAST_ACOS = True
+    _HAS_FAST_ACOSH = True
+    _HAS_FAST_ADD = True
+    _HAS_FAST_ASIN = True
+    _HAS_FAST_ASINH = True
+    _HAS_FAST_ATAN = True
+    _HAS_FAST_ATANH = True
+    _HAS_FAST_CEIL = True
     _HAS_FAST_COS = True
-    _HAS_FAST_TAN = True
-    _HAS_FAST_TANH = True
-    _HAS_FAST_SIGMOID = True
-    _HAS_FAST_SINH = True
     _HAS_FAST_COSH = True
     _HAS_FAST_ERF = True
     _HAS_FAST_ERFC = True
-    _HAS_FAST_FLOOR = True
-    _HAS_FAST_CEIL = True
-    _HAS_FAST_ROUND = True
-    _HAS_FAST_TRUNC = True
-    _HAS_FAST_LOG2 = True
-    _HAS_FAST_LOG10 = True
+    _HAS_FAST_EXP = True
     _HAS_FAST_EXP2 = True
-    _HAS_FAST_ASINH = True
-    _HAS_FAST_ACOSH = True
-    _HAS_FAST_ATANH = True
-    _HAS_FAST_ATAN = True
-    _HAS_FAST_ASIN = True
-    _HAS_FAST_ACOS = True
+    _HAS_FAST_EXPM1 = True
+    _HAS_FAST_FLOOR = True
+    _HAS_FAST_ISFINITE = True
+    _HAS_FAST_ISNEGINF = True
+    _HAS_FAST_ISPOSINF = True
+    _HAS_FAST_LOG = True
+    _HAS_FAST_LOG1P = True
+    _HAS_FAST_LOG10 = True
+    _HAS_FAST_LOG2 = True
+    _HAS_FAST_MUL = True
+    _HAS_FAST_NEG = True
+    _HAS_FAST_ROUND = True
+    _HAS_FAST_RSQRT = True
+    _HAS_FAST_SIGMOID = True
+    _HAS_FAST_SIGN = True
+    _HAS_FAST_SIGNBIT = True
+    _HAS_FAST_SIN = True
+    _HAS_FAST_SINH = True
+    _HAS_FAST_SQRT = True
+    _HAS_FAST_SQUARE = True
+    _HAS_FAST_TAN = True
+    _HAS_FAST_TANH = True
+    _HAS_FAST_TRUNC = True
 except ImportError:
-    _fast_add_impl = None  # type: ignore[assignment]
     _fast_abs_impl = None  # type: ignore[assignment]
-    _fast_neg_impl = None  # type: ignore[assignment]
-    _fast_sign_impl = None  # type: ignore[assignment]
-    _fast_signbit_impl = None  # type: ignore[assignment]
-    _fast_isfinite_impl = None  # type: ignore[assignment]
-    _fast_isposinf_impl = None  # type: ignore[assignment]
-    _fast_isneginf_impl = None  # type: ignore[assignment]
-    _fast_square_impl = None  # type: ignore[assignment]
-    _fast_exp_impl = None  # type: ignore[assignment]
-    _fast_expm1_impl = None  # type: ignore[assignment]
-    _fast_log_impl = None  # type: ignore[assignment]
-    _fast_log1p_impl = None  # type: ignore[assignment]
-    _fast_sqrt_impl = None  # type: ignore[assignment]
-    _fast_rsqrt_impl = None  # type: ignore[assignment]
-    _fast_sin_impl = None  # type: ignore[assignment]
+    _fast_acos_impl = None  # type: ignore[assignment]
+    _fast_acosh_impl = None  # type: ignore[assignment]
+    _fast_add_impl = None  # type: ignore[assignment]
+    _fast_asin_impl = None  # type: ignore[assignment]
+    _fast_asinh_impl = None  # type: ignore[assignment]
+    _fast_atan_impl = None  # type: ignore[assignment]
+    _fast_atanh_impl = None  # type: ignore[assignment]
+    _fast_ceil_impl = None  # type: ignore[assignment]
     _fast_cos_impl = None  # type: ignore[assignment]
-    _fast_tan_impl = None  # type: ignore[assignment]
-    _fast_tanh_impl = None  # type: ignore[assignment]
-    _fast_sigmoid_impl = None  # type: ignore[assignment]
-    _fast_sinh_impl = None  # type: ignore[assignment]
     _fast_cosh_impl = None  # type: ignore[assignment]
     _fast_erf_impl = None  # type: ignore[assignment]
     _fast_erfc_impl = None  # type: ignore[assignment]
-    _fast_floor_impl = None  # type: ignore[assignment]
-    _fast_ceil_impl = None  # type: ignore[assignment]
-    _fast_round_impl = None  # type: ignore[assignment]
-    _fast_trunc_impl = None  # type: ignore[assignment]
-    _fast_log2_impl = None  # type: ignore[assignment]
-    _fast_log10_impl = None  # type: ignore[assignment]
+    _fast_exp_impl = None  # type: ignore[assignment]
     _fast_exp2_impl = None  # type: ignore[assignment]
-    _fast_asinh_impl = None  # type: ignore[assignment]
-    _fast_acosh_impl = None  # type: ignore[assignment]
-    _fast_atanh_impl = None  # type: ignore[assignment]
-    _fast_atan_impl = None  # type: ignore[assignment]
-    _fast_asin_impl = None  # type: ignore[assignment]
-    _fast_acos_impl = None  # type: ignore[assignment]
-    _HAS_FAST_ADD = False
+    _fast_expm1_impl = None  # type: ignore[assignment]
+    _fast_floor_impl = None  # type: ignore[assignment]
+    _fast_isfinite_impl = None  # type: ignore[assignment]
+    _fast_isneginf_impl = None  # type: ignore[assignment]
+    _fast_isposinf_impl = None  # type: ignore[assignment]
+    _fast_log_impl = None  # type: ignore[assignment]
+    _fast_log1p_impl = None  # type: ignore[assignment]
+    _fast_log10_impl = None  # type: ignore[assignment]
+    _fast_log2_impl = None  # type: ignore[assignment]
+    _fast_mul_impl = None  # type: ignore[assignment]
+    _fast_neg_impl = None  # type: ignore[assignment]
+    _fast_round_impl = None  # type: ignore[assignment]
+    _fast_rsqrt_impl = None  # type: ignore[assignment]
+    _fast_sigmoid_impl = None  # type: ignore[assignment]
+    _fast_sign_impl = None  # type: ignore[assignment]
+    _fast_signbit_impl = None  # type: ignore[assignment]
+    _fast_sin_impl = None  # type: ignore[assignment]
+    _fast_sinh_impl = None  # type: ignore[assignment]
+    _fast_sqrt_impl = None  # type: ignore[assignment]
+    _fast_square_impl = None  # type: ignore[assignment]
+    _fast_tan_impl = None  # type: ignore[assignment]
+    _fast_tanh_impl = None  # type: ignore[assignment]
+    _fast_trunc_impl = None  # type: ignore[assignment]
     _HAS_FAST_ABS = False
-    _HAS_FAST_NEG = False
-    _HAS_FAST_SIGN = False
-    _HAS_FAST_SIGNBIT = False
-    _HAS_FAST_ISFINITE = False
-    _HAS_FAST_ISPOSINF = False
-    _HAS_FAST_ISNEGINF = False
-    _HAS_FAST_SQUARE = False
-    _HAS_FAST_EXP = False
-    _HAS_FAST_EXPM1 = False
-    _HAS_FAST_LOG = False
-    _HAS_FAST_LOG1P = False
-    _HAS_FAST_SQRT = False
-    _HAS_FAST_RSQRT = False
-    _HAS_FAST_SIN = False
+    _HAS_FAST_ACOS = False
+    _HAS_FAST_ACOSH = False
+    _HAS_FAST_ADD = False
+    _HAS_FAST_ASIN = False
+    _HAS_FAST_ASINH = False
+    _HAS_FAST_ATAN = False
+    _HAS_FAST_ATANH = False
+    _HAS_FAST_CEIL = False
     _HAS_FAST_COS = False
-    _HAS_FAST_TAN = False
-    _HAS_FAST_TANH = False
-    _HAS_FAST_SIGMOID = False
-    _HAS_FAST_SINH = False
     _HAS_FAST_COSH = False
     _HAS_FAST_ERF = False
     _HAS_FAST_ERFC = False
-    _HAS_FAST_FLOOR = False
-    _HAS_FAST_CEIL = False
-    _HAS_FAST_ROUND = False
-    _HAS_FAST_TRUNC = False
-    _HAS_FAST_LOG2 = False
-    _HAS_FAST_LOG10 = False
+    _HAS_FAST_EXP = False
     _HAS_FAST_EXP2 = False
-    _HAS_FAST_ASINH = False
-    _HAS_FAST_ACOSH = False
-    _HAS_FAST_ATANH = False
-    _HAS_FAST_ATAN = False
-    _HAS_FAST_ASIN = False
-    _HAS_FAST_ACOS = False
+    _HAS_FAST_EXPM1 = False
+    _HAS_FAST_FLOOR = False
+    _HAS_FAST_ISFINITE = False
+    _HAS_FAST_ISNEGINF = False
+    _HAS_FAST_ISPOSINF = False
+    _HAS_FAST_LOG = False
+    _HAS_FAST_LOG1P = False
+    _HAS_FAST_LOG10 = False
+    _HAS_FAST_LOG2 = False
+    _HAS_FAST_MUL = False
+    _HAS_FAST_NEG = False
+    _HAS_FAST_ROUND = False
+    _HAS_FAST_RSQRT = False
+    _HAS_FAST_SIGMOID = False
+    _HAS_FAST_SIGN = False
+    _HAS_FAST_SIGNBIT = False
+    _HAS_FAST_SIN = False
+    _HAS_FAST_SINH = False
+    _HAS_FAST_SQRT = False
+    _HAS_FAST_SQUARE = False
+    _HAS_FAST_TAN = False
+    _HAS_FAST_TANH = False
+    _HAS_FAST_TRUNC = False
 
 
 def add(a, b):
@@ -144,6 +186,8 @@ def add(a, b):
 def mul(a, b):
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
+    if _HAS_FAST_MUL:
+        return _fast_mul_impl(a, b)
     return _binary_op(a, b, aclnn.mul, "mul")
 
 
