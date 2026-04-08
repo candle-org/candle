@@ -280,12 +280,20 @@ def _use_310b_int64_index_compare_workaround(indices):
     return indices.dtype == int64_dtype and ops_soc.capability("use_safe_int64_index_compare")
 
 
+def _use_host_int64_index_compare(indices):
+    return indices.dtype == int64_dtype and (
+        _use_310b_int64_index_compare_workaround(indices)
+        or ops_soc.current_profile() == "910b"
+    )
+
+
+
 def _validate_index_bounds(indices, dim_size, allow_negative, name):
     from .comparison import lt, gt
     from .reduce import any_
     if indices.numel() == 0:
         return
-    if _use_310b_int64_index_compare_workaround(indices):
+    if _use_host_int64_index_compare(indices):
         host_idx = _read_index_tensor_to_cpu(indices)
         lower = -int(dim_size) if allow_negative else 0
         upper = int(dim_size - 1)
@@ -2614,8 +2622,13 @@ def take(a, index):
     _require_int64_indices(index, "take")
     flat = view_backend.reshape(a, (a.numel(),))
     dim_size = flat.shape[0]
-    _validate_index_bounds(index, dim_size, allow_negative=True, name="take")
-    norm_index = _normalize_negative_indices(index, dim_size)
+
+    idx_cpu = index.to("cpu").numpy().astype("int64", copy=True)
+    if idx_cpu.size:
+        idx_cpu[idx_cpu < 0] += int(dim_size)
+        idx_cpu %= int(dim_size)
+    norm_index = _index_tensor_from_cpu(idx_cpu, index)
+
     index_shape = norm_index.shape
     gather_index = norm_index
     if gather_index.dim() == 0:

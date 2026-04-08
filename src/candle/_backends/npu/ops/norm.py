@@ -281,8 +281,9 @@ def instance_norm(input, weight=None, bias=None, running_mean=None, running_var=
                   use_input_stats=True, momentum=0.1, eps=1e-5, cudnn_enabled=False):
     """Instance normalization.
 
-    When fallback is active (910B): aclnnInstanceNorm returns 161002,
-    so we use composite of existing dispatched ops.
+    When fallback is active (910B): aclnnInstanceNorm returns 161002.
+    Use a batch_norm-based composite that matches PyTorch's normalization
+    identity more closely than the older mean/var small-op chain.
     """
     # TODO: re-enable native aclnnInstanceNorm when CANN fixes 161002
     if not _use_soc_fallback("instance_norm"):
@@ -296,9 +297,21 @@ def instance_norm(input, weight=None, bias=None, running_mean=None, running_var=
     spatial_axes = list(range(2, ndim))
 
     if use_input_stats:
-        mean_t = mean(input, dim=spatial_axes, keepdim=True)
-        diff = sub(input, mean_t)
-        var_t = mean(mul(diff, diff), dim=spatial_axes, keepdim=True)
+        # Match PyTorch instance_norm semantics by normalizing each (N, C)
+        # slice independently via batch_norm over a reshaped tensor with
+        # channels = N * C.
+        reshaped = reshape(input, (1, int(input.shape[0]) * C, *input.shape[2:]))
+        out = batch_norm(
+            reshaped,
+            running_mean=None,
+            running_var=None,
+            weight=None,
+            bias=None,
+            training=True,
+            momentum=momentum,
+            eps=eps,
+        )
+        out = reshape(out, input.shape)
 
         if running_mean is not None:
             batch_dims = [0] + spatial_axes
@@ -316,10 +329,9 @@ def instance_norm(input, weight=None, bias=None, running_mean=None, running_var=
         mean_t = reshape(running_mean, stats_shape)
         var_t = reshape(running_var, stats_shape)
         diff = sub(input, mean_t)
-
-    eps_t = _scalar_to_npu_tensor(float(eps), mean_t)
-    denom = sqrt(add(var_t, eps_t))
-    out = div(diff, denom)
+        eps_t = _scalar_to_npu_tensor(float(eps), mean_t)
+        denom = sqrt(add(var_t, eps_t))
+        out = div(diff, denom)
 
     if weight is not None:
         w_shape = (1, C) + (1,) * (ndim - 2)

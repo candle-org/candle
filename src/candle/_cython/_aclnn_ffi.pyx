@@ -644,6 +644,11 @@ def destroy_executor(uintptr_t handle):
     _release_executor_cleanup(handle)
     return ret
 
+def release_executor_cleanup(uintptr_t handle):
+    if handle == 0:
+        return
+    _release_executor_cleanup(handle)
+
 # ---------------------------------------------------------------------------
 # Op symbol resolution
 # ---------------------------------------------------------------------------
@@ -845,8 +850,6 @@ def binary_op_with_alpha(
                         NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -940,8 +943,6 @@ def binary_op_no_alpha(
                         NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1238,8 +1239,6 @@ def unary_out_dtype_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1403,8 +1402,6 @@ def reduce_dims_dtype_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1546,8 +1543,6 @@ def cast_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1610,8 +1605,6 @@ def argsort_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1705,8 +1698,6 @@ def dual_output_with_indices_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1771,8 +1762,6 @@ def reduce_all_dtype_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1837,8 +1826,6 @@ def axis_keepdim_dtype_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1901,8 +1888,6 @@ def axis_dtype_unary_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -1978,8 +1963,6 @@ def tensor_scalar_bool_out_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2043,8 +2026,6 @@ def tensor_scalar_dtype_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2108,8 +2089,6 @@ def axis_unary_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2217,14 +2196,29 @@ def layer_norm_op(
             )
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>norm_handle)] if norm_handle != NULL else [])
+            + ([('t', <uintptr_t>input_t)] if input_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else [])
+            + ([('t', <uintptr_t>mean_t)] if mean_t != NULL else [])
+            + ([('t', <uintptr_t>rstd_t)] if rstd_t != NULL else [])
+            + ([('t', <uintptr_t>weight_t)] if weight_t != NULL else [])
+            + ([('t', <uintptr_t>bias_t)] if bias_t != NULL else []),
+        )
+        norm_handle = NULL
+        input_t = NULL
+        out_t = NULL
+        mean_t = NULL
+        rstd_t = NULL
+        weight_t = NULL
+        bias_t = NULL
         if ws_size == 0:
             try:
                 with nogil:
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2234,8 +2228,10 @@ def layer_norm_op(
         with nogil:
             if norm_handle != NULL:
                 _fn_destroy_int_array(norm_handle)
-            _fast_destroy_tensor(input_t)
-            _fast_destroy_tensor(out_t)
+            if input_t != NULL:
+                _fast_destroy_tensor(input_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
             if mean_t != NULL:
                 _fast_destroy_tensor(mean_t)
             if rstd_t != NULL:
@@ -2300,8 +2296,6 @@ def tensor_two_scalars_dim_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2379,8 +2373,6 @@ def tensor_int_array_two_bools_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2461,8 +2453,6 @@ def tensor_int_array_bool_two_doubles_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2542,8 +2532,6 @@ def tensor_int_array_bool_double_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2623,8 +2611,6 @@ def tensor_scalar_int_array_bool_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2692,8 +2678,6 @@ def tensor_three_scalars_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2744,8 +2728,6 @@ def inplace_unary_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2793,8 +2775,6 @@ def inplace_normal_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2841,8 +2821,6 @@ def inplace_uniform_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2891,8 +2869,6 @@ def inplace_fill_scalar_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -2955,8 +2931,6 @@ def inplace_copy_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -3022,8 +2996,6 @@ def inplace_masked_fill_scalar_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -3090,8 +3062,6 @@ def inplace_index_fill_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -3169,8 +3139,6 @@ def inplace_index_copy_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -3264,8 +3232,6 @@ def scatter_add_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -3338,8 +3304,6 @@ def inplace_masked_scatter_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -3431,8 +3395,6 @@ def index_add_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -3911,8 +3873,6 @@ def tensor_list_string_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -3993,8 +3953,6 @@ def two_tensor_two_bools_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4075,8 +4033,6 @@ def unary_two_bools_two_outputs_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4128,8 +4084,6 @@ def output_tensor_three_scalars_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4177,8 +4131,6 @@ def output_tensor_two_ints_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4226,8 +4178,6 @@ def output_tensor_three_ints_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4281,8 +4231,6 @@ def output_tensor_int_array_double_two_ints_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4349,8 +4297,6 @@ def tensor_int_array_bool_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4416,8 +4362,6 @@ def tensor_two_ints_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4477,8 +4421,6 @@ def tensor_three_ints_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4562,8 +4504,6 @@ def tensor_int_array_scalar_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4652,8 +4592,6 @@ def tensor_int_array_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4800,14 +4738,31 @@ def batch_norm_op(
             )
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>input_t)] if input_t != NULL else [])
+            + ([('t', <uintptr_t>weight_t)] if weight_t != NULL else [])
+            + ([('t', <uintptr_t>bias_t)] if bias_t != NULL else [])
+            + ([('t', <uintptr_t>running_mean_t)] if running_mean_t != NULL else [])
+            + ([('t', <uintptr_t>running_var_t)] if running_var_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else [])
+            + ([('t', <uintptr_t>save_mean_t)] if save_mean_t != NULL else [])
+            + ([('t', <uintptr_t>save_invstd_t)] if save_invstd_t != NULL else []),
+        )
+        input_t = NULL
+        weight_t = NULL
+        bias_t = NULL
+        running_mean_t = NULL
+        running_var_t = NULL
+        out_t = NULL
+        save_mean_t = NULL
+        save_invstd_t = NULL
         if ws_size == 0:
             try:
                 with nogil:
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -4815,7 +4770,8 @@ def batch_norm_op(
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(input_t)
+            if input_t != NULL:
+                _fast_destroy_tensor(input_t)
             if weight_t != NULL:
                 _fast_destroy_tensor(weight_t)
             if bias_t != NULL:
@@ -4824,9 +4780,12 @@ def batch_norm_op(
                 _fast_destroy_tensor(running_mean_t)
             if running_var_t != NULL:
                 _fast_destroy_tensor(running_var_t)
-            _fast_destroy_tensor(out_t)
-            _fast_destroy_tensor(save_mean_t)
-            _fast_destroy_tensor(save_invstd_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
+            if save_mean_t != NULL:
+                _fast_destroy_tensor(save_mean_t)
+            if save_invstd_t != NULL:
+                _fast_destroy_tensor(save_invstd_t)
 
 
 def group_norm_op(
@@ -4935,8 +4894,6 @@ def group_norm_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -5072,8 +5029,6 @@ def convolution_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -5185,8 +5140,6 @@ def tensor_two_int_arrays_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -5341,8 +5294,6 @@ def tensor_four_int_arrays_two_ints_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -5482,8 +5433,6 @@ def tensor_three_int_arrays_two_bools_int64_int8_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -5654,8 +5603,6 @@ def tensor_four_int_arrays_bool_two_outputs_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -5751,8 +5698,6 @@ def optional_tensor_int_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -5844,8 +5789,6 @@ def ternary_two_inputs_with_dims_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -5915,8 +5858,6 @@ def slice_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -5985,8 +5926,6 @@ def three_tensor_one_int_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -6065,8 +6004,6 @@ def four_tensor_two_ints_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -6145,8 +6082,6 @@ def three_tensor_two_ints_bool_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -6229,8 +6164,6 @@ def four_tensor_two_scalars_one_int8_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -6320,8 +6253,6 @@ def tensor_int_array_two_outputs_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -6412,8 +6343,6 @@ def tensor_int_array_bool_two_outputs_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -6504,8 +6433,6 @@ def four_tensor_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -6645,8 +6572,6 @@ def four_tensor_three_int_arrays_two_bools_int64_int8_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -6831,8 +6756,6 @@ def four_tensor_four_int_arrays_bool_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -6928,8 +6851,6 @@ def tensor_int_array_three_ints_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -7009,8 +6930,6 @@ def two_tensor_ints_bool_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -7106,8 +7025,6 @@ def tensor_two_int_arrays_bool_two_doubles_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -7209,8 +7126,6 @@ def tensor_two_int_arrays_bool_double_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -7296,8 +7211,6 @@ def two_tensor_two_scalars_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -7375,8 +7288,6 @@ def two_tensor_scalar_bool_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -7454,8 +7365,6 @@ def two_tensor_three_scalars_bool_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -7600,8 +7509,6 @@ def layer_norm_backward_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -7700,8 +7607,6 @@ def rms_norm_grad_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -7860,8 +7765,6 @@ def batch_norm_backward_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8000,8 +7903,6 @@ def group_norm_backward_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8177,8 +8078,6 @@ def convolution_backward_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8279,8 +8178,6 @@ def grid_sampler2d_backward_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8384,8 +8281,6 @@ def three_tensor_two_outputs_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8467,8 +8362,6 @@ def two_tensor_scalar_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8546,8 +8439,6 @@ def two_tensor_one_double_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8637,8 +8528,6 @@ def three_tensor_scalar_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8730,14 +8619,27 @@ def six_tensor_string_double_op(
                 a_t, b_t, c_t, string_ptr, scalar_value, out_t, stats_a_t, stats_b_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>c_t)] if c_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else [])
+            + ([('t', <uintptr_t>stats_a_t)] if stats_a_t != NULL else [])
+            + ([('t', <uintptr_t>stats_b_t)] if stats_b_t != NULL else []),
+        )
+        a_t = NULL
+        b_t = NULL
+        c_t = NULL
+        out_t = NULL
+        stats_a_t = NULL
+        stats_b_t = NULL
         if ws_size == 0:
             try:
                 with nogil:
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8745,12 +8647,18 @@ def six_tensor_string_double_op(
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(a_t)
-            _fast_destroy_tensor(b_t)
-            _fast_destroy_tensor(c_t)
-            _fast_destroy_tensor(out_t)
-            _fast_destroy_tensor(stats_a_t)
-            _fast_destroy_tensor(stats_b_t)
+            if a_t != NULL:
+                _fast_destroy_tensor(a_t)
+            if b_t != NULL:
+                _fast_destroy_tensor(b_t)
+            if c_t != NULL:
+                _fast_destroy_tensor(c_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
+            if stats_a_t != NULL:
+                _fast_destroy_tensor(stats_a_t)
+            if stats_b_t != NULL:
+                _fast_destroy_tensor(stats_b_t)
 
 
 def six_tensor_five_floats_two_bools_op(
@@ -8835,8 +8743,6 @@ def six_tensor_five_floats_two_bools_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8917,8 +8823,6 @@ def where_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -8977,8 +8881,6 @@ def clamp_optional_scalars_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -9054,8 +8956,6 @@ def clamp_tensor_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -9108,14 +9008,19 @@ def tensor_two_scalars_op(
                 self_t, <void*>scalar_a, <void*>scalar_b, out_t, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
         if ws_size == 0:
             try:
                 with nogil:
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -9123,8 +9028,10 @@ def tensor_two_scalars_op(
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(self_t)
-            _fast_destroy_tensor(out_t)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 def binary_two_inputs_with_dim_op(
@@ -9191,8 +9098,6 @@ def binary_two_inputs_with_dim_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -9263,8 +9168,6 @@ def binary_two_inputs_with_int8_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -9333,8 +9236,6 @@ def two_tensor_two_ints_bool_mixed_fmt_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -9402,8 +9303,6 @@ def binary_two_inputs_three_attrs_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -9479,8 +9378,6 @@ def binary_two_inputs_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -9541,8 +9438,6 @@ def leaky_relu_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL
@@ -9619,8 +9514,6 @@ def rms_norm_op(
                     ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
                 if ret != 0:
                     raise RuntimeError(f"Execute failed: {ret}")
-                _release_executor_cleanup(<uintptr_t>executor)
-                executor = NULL
             except Exception:
                 destroy_executor(<uintptr_t>executor)
                 executor = NULL

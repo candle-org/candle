@@ -4287,6 +4287,11 @@ def _destroy_deferred_executor(executor):
     handle = _executor_handle(executor)
     if handle == 0:
         return
+    if _ffi is not None and _ffi.is_initialized() and hasattr(_ffi, "release_executor_cleanup"):
+        try:
+            _ffi.release_executor_cleanup(handle)
+        except Exception:
+            pass
     _run_deferred_executor_cleanup(handle)
 
 
@@ -6374,11 +6379,16 @@ def _unary_call(bindings, name, get_workspace_fn, exec_fn, self_ptr, out_ptr, sh
             ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
             if ret != 0:
                 raise RuntimeError(f"{name} failed: {ret}")
+        _defer_executor(ctypes.c_void_p(executor))
+        if workspace is not None:
+            runtime.defer_raw_free(workspace)
+            workspace = None
+        executor = 0
         _maybe_sync(runtime)
     finally:
         _defer_executor(ctypes.c_void_p(executor))
         if workspace is not None:
-            runtime.defer_free(workspace)
+            runtime.defer_raw_free(workspace)
 
 def abs(self_ptr, out_ptr, shape, stride, dtype, runtime, stream=None):
     global acl
