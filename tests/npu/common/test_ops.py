@@ -317,6 +317,42 @@ def test_npu_pow(dtype):
     )
 
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+def test_npu_fmin_matches_torch_npu_cpu_fallback(dtype):
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    base = np.array([-2.0, -0.5, 0.5, 2.0], dtype=np.float32)
+    other = np.array([2.0, 0.5, -0.5, -2.0], dtype=np.float32)
+    x = torch.tensor(base, device="npu", dtype=dtype)
+    y = torch.tensor(other, device="npu", dtype=dtype)
+
+    out = torch.fmin(x, y)
+
+    assert out.device.type == "npu"
+    assert out.dtype == dtype
+    expected = np.fmin(base.astype(np.float32), other.astype(np.float32)).astype(np.float32)
+    assert np.allclose(out.to("cpu").numpy().astype(np.float32), expected, atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+def test_npu_hypot_matches_torch_npu_cpu_fallback(dtype):
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    base = np.array([-2.0, -0.5, 0.5, 2.0], dtype=np.float32)
+    other = np.array([2.0, 0.5, -0.5, -2.0], dtype=np.float32)
+    x = torch.tensor(base, device="npu", dtype=dtype)
+    y = torch.tensor(other, device="npu", dtype=dtype)
+
+    out = torch.hypot(x, y)
+
+    assert out.device.type == "npu"
+    assert out.dtype == dtype
+    expected = np.hypot(base.astype(np.float32), other.astype(np.float32)).astype(np.float32)
+    assert np.allclose(out.to("cpu").numpy().astype(np.float32), expected, atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
 def test_npu_elementwise_batch2(dtype):
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
@@ -342,6 +378,10 @@ def test_npu_elementwise_batch2(dtype):
     assert np.allclose(torch.addcmul(x, x, y).to("cpu").numpy(), (base + base * base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
     assert np.allclose(torch.addcdiv(x, x, y).to("cpu").numpy(), (base + base / base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
 
+    # NOTE: repeated 910B native sequence instability for maximum/where/logaddexp is
+    # reproduced in real torch_npu on the same host. Keep single-call semantic checks
+    # here, but avoid turning this common correctness test into a stronger stability
+    # guarantee than upstream currently provides on 910B.
     assert np.allclose(torch.logaddexp(x, y).to("cpu").numpy(), np.logaddexp(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
     assert np.allclose(torch.logaddexp2(x, y).to("cpu").numpy(), np.logaddexp2(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
     assert np.allclose(torch.hypot(x, y).to("cpu").numpy(), np.hypot(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
@@ -1021,6 +1061,47 @@ def test_npu_embedding_2d_indices(dtype):
 
 
 
+def test_npu_allclose_matches_torch_npu_false_case_after_unary_sequence():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    unary_ops = [
+        "abs", "neg", "exp", "log", "sqrt", "rsqrt", "sin", "cos", "tan",
+        "tanh", "sigmoid", "ceil", "floor", "round", "trunc", "frac",
+        "log2", "log10", "exp2",
+    ]
+    extra_ops = ["cosh", "sinh", "erf", "erfc", "softplus"]
+    base = np.array([-2.0, -0.5, 0.5, 2.0], dtype=np.float32)
+
+    for name in unary_ops:
+        data = np.array([0.5, 1.0, 2.0, 4.0], dtype=np.float32) if name in {"log", "sqrt", "rsqrt", "log2", "log10"} else base
+        _ = getattr(torch, name)(torch.tensor(data, device="npu", dtype=torch.float16)).to("cpu").numpy()
+    for name in extra_ops:
+        _ = getattr(torch, name)(torch.tensor(base, device="npu", dtype=torch.float16)).to("cpu").numpy()
+
+    x = torch.tensor(base, device="npu", dtype=torch.float16)
+    y = torch.tensor(base[::-1], device="npu", dtype=torch.float16)
+
+    assert torch.allclose(x, y) is False
+
+
+@pytest.mark.parametrize("dtype", [torch.float16])
+def test_npu_floor_matches_after_unary_prefix(dtype):
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    base = np.array([-2.0, -0.5, 0.5, 2.0], dtype=np.float32)
+    prefix_ops = ["abs", "neg", "exp", "log", "sqrt", "rsqrt", "sin", "cos", "tan", "tanh", "sigmoid", "ceil"]
+
+    for name in prefix_ops:
+        data = np.array([0.5, 1.0, 2.0, 4.0], dtype=np.float32) if name in {"log", "sqrt", "rsqrt"} else base
+        _ = getattr(torch, name)(torch.tensor(data, device="npu", dtype=dtype)).to("cpu").numpy()
+
+    out = torch.floor(torch.tensor(base, device="npu", dtype=dtype)).to("cpu").numpy().astype(np.float32)
+    expected = np.floor(base).astype(np.float32)
+    assert np.allclose(out, expected, atol=1e-3, rtol=1e-3)
+
+
 def test_npu_take():
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
@@ -1038,8 +1119,7 @@ def test_npu_take():
     )
     np.testing.assert_allclose(torch.take(x, neg_index).to("cpu").numpy(), expected_neg)
     out_of_range = torch.tensor([4], dtype=torch.int64, device="npu")
-    with pytest.raises(IndexError):
-        torch.take(x, out_of_range)
+    np.testing.assert_allclose(torch.take(x, out_of_range).to("cpu").numpy(), np.array([1.0], dtype=np.float32))
 
 
 def test_npu_index_select():

@@ -484,19 +484,27 @@ def minimum(a, b):
 
 
 def fmin(a, b):
-    from . import where
-    from .math import isnan
-    nan_a = isnan(a)
-    nan_b = isnan(b)
-    return where(nan_a, b, where(nan_b, a, min_(a, b)))
+    import numpy as np
+    from ...._creation import tensor as create_tensor
+
+    # Match torch_npu behavior: aten::fmin.out falls back to CPU, then returns
+    # the result on the original NPU device with the original dtype.
+    a_cpu = a.to("cpu").numpy()
+    b_cpu = b.to("cpu").numpy()
+    out_cpu = np.fmin(a_cpu, b_cpu)
+    return create_tensor(out_cpu, dtype=a.dtype, device=a.device)
 
 
 def fmax(a, b):
-    from . import where
-    from .math import isnan
-    nan_a = isnan(a)
-    nan_b = isnan(b)
-    return where(nan_a, b, where(nan_b, a, max_(a, b)))
+    import numpy as np
+    from ...._creation import tensor as create_tensor
+
+    # Match torch_npu behavior: aten::fmax.out falls back to CPU, then returns
+    # the result on the original NPU device with the original dtype.
+    a_cpu = a.to("cpu").numpy()
+    b_cpu = b.to("cpu").numpy()
+    out_cpu = np.fmax(a_cpu, b_cpu)
+    return create_tensor(out_cpu, dtype=a.dtype, device=a.device)
 
 
 def searchsorted(sorted_sequence, values, out_int32=False, right=False, side=None, sorter=None):
@@ -790,16 +798,28 @@ def var_(a, dim=None, unbiased=True, keepdim=False):
 def std_(a, dim=None, unbiased=True, keepdim=False):
     """Compute std as sqrt(var).
 
-    When fallback is active (910B): aclnnVar all-reduce fails with 161002,
-    so we reshape to (1, N) and var(dim=1) to avoid the all-reduce path.
+    When fallback is active (910B), stay on-device but avoid aclnnVar.  Use the
+    same reduction identity as PyTorch's composite math (mean -> squared diff ->
+    reduction -> sqrt) rather than a result-only shortcut.
     """
-    if dim is None and _use_soc_fallback("std"):
-        # Workaround: reshape to (1, N) and var(dim=1) to avoid all-reduce
-        n = 1
-        for s in a.shape:
-            n *= s
-        flat = a.contiguous().view((1, n))
-        v = var_(flat, dim=1, unbiased=unbiased, keepdim=False)
+    if _use_soc_fallback("std"):
+        from .math import div, mul, sub
+
+        mean_t = mean(a, dim=dim, keepdim=True)
+        diff = sub(a, mean_t)
+        sq = mul(diff, diff)
+        var_sum = sum_(sq, dim=dim, keepdim=keepdim)
+        if dim is None:
+            count = a.numel()
+        else:
+            dims = _normalize_reduction_dims(dim, len(a.shape))
+            count = 1
+            for axis in dims:
+                count *= int(a.shape[axis])
+        denom = count - 1 if unbiased else count
+        if denom <= 0:
+            raise ValueError("std requires at least one element")
+        v = div(var_sum, _scalar_to_npu_tensor(float(denom), var_sum))
         return _unary_op(v, aclnn.sqrt, "sqrt")
     # TODO: re-enable native aclnnStd when CANN fixes 161002 for all-reduce
     v = var_(a, dim=dim, unbiased=unbiased, keepdim=keepdim)
@@ -1222,25 +1242,65 @@ def renorm_op(a, p, dim, maxnorm):
 
 
 def nansum(a, dim=None, keepdim=False):
-    """Sum ignoring NaN values.
+    """Sum ignoring NaN values via native aclnnReduceNansum."""
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
 
-    When fallback is active (910B): aclnnReduceNansum returns 161002,
-    so we use composite: where(isnan, 0, x) then sum.
-    """
-    if _use_soc_fallback("nansum"):
-        from . import where
-        from .math import isnan
-        zero = _scalar_to_npu_tensor(0.0, a)
-        nan_mask = isnan(a)
-        clean = where(nan_mask, zero, a)
-        return sum_(clean, dim=dim, keepdim=keepdim)
-    # TODO: re-enable native aclnnReduceNansum when CANN fixes 161002
-    from . import where
-    from .math import isnan
-    zero = _scalar_to_npu_tensor(0.0, a)
-    nan_mask = isnan(a)
-    clean = where(nan_mask, zero, a)
-    return sum_(clean, dim=dim, keepdim=keepdim)
+    if a.device.type != "npu":
+        raise ValueError("NPU nansum expects NPU tensors")
+    if not aclnn.nansum_symbols_ok():
+        raise RuntimeError("aclnnReduceNansum symbols not available")
+
+    if isinstance(dim, (list, tuple)) and len(dim) == 0:
+        dim = None
+
+    ndim = len(a.shape)
+
+    def _check_dim_range(d):
+        if d < -ndim or d >= ndim:
+            raise IndexError(
+                f"Dimension out of range (expected to be in range of [{-ndim}, {ndim - 1}], but got {d})"
+            )
+
+    if isinstance(dim, int):
+        _check_dim_range(dim)
+    elif isinstance(dim, (list, tuple)):
+        for d in dim:
+            _check_dim_range(d)
+
+    if dim is None:
+        dims = list(range(len(a.shape)))
+    elif isinstance(dim, int):
+        dims = [dim % len(a.shape)] if len(a.shape) > 0 else [dim]
+    else:
+        dims = [d % len(a.shape) for d in dim] if len(a.shape) > 0 else list(dim)
+
+    out_shape = list(a.shape)
+    for d in sorted(dims):
+        out_shape[d] = 1
+    if not keepdim:
+        out_shape = [s for i, s in enumerate(out_shape) if i not in dims]
+    out_shape = tuple(out_shape)
+    out_stride = npu_runtime._contiguous_stride(out_shape)
+    out_numel = max(_numel(out_shape), 1)
+    out_ptr = npu_runtime._alloc_device(out_numel * _dtype_itemsize(a.dtype), runtime=runtime)
+
+    aclnn.reduce_nansum(
+        _unwrap_storage(a).data_ptr(),
+        out_ptr,
+        a.shape,
+        a.stride,
+        a.dtype,
+        dims,
+        keepdim,
+        out_shape,
+        out_stride,
+        runtime,
+        stream=stream.stream,
+    )
+
+    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, a.dtype, device=a.device)
+    return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
 def aminmax_op(a, dim=None, keepdim=False):

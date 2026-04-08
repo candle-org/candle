@@ -54,14 +54,13 @@ def test_soc_capability_unknown_profile_uses_default_value():
 def test_soc_910b_fallback_ops_cover_expected_watchlist_set():
     expected = {
         "std",
-        "nansum",
         "instance_norm",
         "avg_pool2d",
-        "adaptive_avg_pool2d",
         "upsample_nearest1d",
         "einsum",
         "isinf",
         "im2col",
+        "allclose",
     }
     got = set(ops_soc.fallback_ops("910b"))
     assert got == expected
