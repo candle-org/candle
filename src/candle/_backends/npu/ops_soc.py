@@ -66,7 +66,6 @@ _FALLBACK_OPS = {
         "topk",         # aclnnTopk returns 561103
         "diag",         # aclnnDiag returns 561103
         "gather",       # aclnnGather returns 561103
-        "take_along_dim",  # aclnnGather returns 561103
         "layer_norm",   # aclnnLayerNorm returns 561103 for float32 (float16 works)
         "mish",         # aclnnMish returns 561103
         "batch_norm",   # aclnnBatchNorm returns 161002
