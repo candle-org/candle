@@ -114,6 +114,7 @@ _CHIP_FLAGS = {
     "910b": {
         "use_smallop_arange_1d": False,
         "use_smallop_linspace": True,
+        "use_safe_int64_index_compare": True,
     },
     "310b": {
         "use_smallop_arange_1d": True,

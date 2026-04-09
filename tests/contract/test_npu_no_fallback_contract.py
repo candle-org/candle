@@ -6112,7 +6112,31 @@ def test_inplace_unary_op_fast_path_releases_cleanup_and_returns_null_executor(t
     assert state['destroy_executor_after'] == 0
 
 
-def test_flush_deferred_executors_releases_cleanup_without_destroying_executor(monkeypatch):
+def test_unary_op_fast_path_releases_cleanup_and_returns_null_executor(tmp_path):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_neg_fastpath',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnNegGetWorkspaceSize(void* self, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnNegGetWorkspaceSize',
+            'aclnnNeg',
+            workspace_size=0,
+        ),
+        op_name='Neg',
+        ffi_call='ws_size, executor = ffi.unary_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 9, 2, 1, 2, 0)',
+        destroy_returned_executor=False,
+    )
+
+    assert state['ws_size'] == 0
+    assert state['executor'] == 0
+    assert state['create'] == 2
+    assert state['destroy_before'] == 2
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 0
+
+
+def test_flush_deferred_executors_releases_cleanup_and_destroys_executor(monkeypatch):
     calls = []
 
     class _FakeFfi:
@@ -6136,7 +6160,9 @@ def test_flush_deferred_executors_releases_cleanup_without_destroying_executor(m
 
     assert ("destroy_scalar", 0x2000) in calls
     assert ("destroy_tensor", 0x3000) in calls
-    assert not [entry for entry in calls if entry[0] == "destroy_executor"]
+    assert ("destroy_executor", 0xBEEF) in calls
+    assert calls.index(("destroy_executor", 0xBEEF)) < calls.index(("destroy_scalar", 0x2000))
+    assert calls.index(("destroy_executor", 0xBEEF)) < calls.index(("destroy_tensor", 0x3000))
     assert aclnn._DEFERRED_EXECUTORS == []
     assert aclnn._DEFERRED_EXECUTOR_CLEANUP == {}
 

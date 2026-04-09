@@ -4287,7 +4287,14 @@ def _destroy_deferred_executor(executor):
     handle = _executor_handle(executor)
     if handle == 0:
         return
-    _run_deferred_executor_cleanup(handle)
+    cleanup = _DEFERRED_EXECUTOR_CLEANUP.pop(handle, None)
+    if _ffi is None or not _ffi.is_initialized():
+        _apply_deferred_cleanup(cleanup)
+        return
+    try:
+        _ffi.destroy_executor(handle)
+    finally:
+        _apply_deferred_cleanup(cleanup)
 
 
 def _cleanup_aclnn():
