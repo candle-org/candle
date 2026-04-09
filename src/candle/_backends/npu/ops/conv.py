@@ -605,12 +605,7 @@ def avg_pool2d(input, kernel_size, stride, padding=0, ceil_mode=False,
 
 
 def adaptive_avg_pool2d(input, output_size):
-    """AdaptiveAvgPool2d forward.
-
-    When fallback is active (910B): aclnnAdaptiveAvgPool2d has cross-op
-    contamination (cubeMathType=1 corrupts state), so we use composite
-    implementation via avg_pool2d.
-    """
+    """AdaptiveAvgPool2d forward via native aclnnAdaptiveAvgPool2d."""
     import math as _math
 
     if isinstance(output_size, int):
@@ -620,27 +615,6 @@ def adaptive_avg_pool2d(input, output_size):
 
     N, C, H, W = input.shape
 
-    if _use_soc_fallback("adaptive_avg_pool2d"):
-        # Composite workaround: reshape + mean (avoids avg_pool2d which also
-        # fails with 161002 on 910B).
-        # Only works when input dims are evenly divisible by output dims.
-        from ...._dispatch.dispatcher import dispatch
-        from ...common import view as view_backend
-
-        if H % oH == 0 and W % oW == 0:
-            bH, bW = H // oH, W // oW
-            # (N, C, H, W) → (N, C, oH, bH, oW, bW) → mean over (3, 5)
-            x = view_backend.reshape(input, (N, C, oH, bH, oW, bW))
-            x = dispatch("mean", input.device.type, x, dim=5, keepdim=False)
-            x = dispatch("mean", input.device.type, x, dim=3, keepdim=False)
-            return x
-
-        raise NotImplementedError(
-            f"adaptive_avg_pool2d composite requires evenly divisible dims, "
-            f"got input ({H}, {W}) → output ({oH}, {oW})"
-        )
-
-    # TODO: re-enable native aclnnAdaptiveAvgPool2d when CANN fixes cross-op contamination
     runtime = npu_runtime.get_runtime((input.device.index or 0))
     stream = npu_state.current_stream((input.device.index or 0))
 

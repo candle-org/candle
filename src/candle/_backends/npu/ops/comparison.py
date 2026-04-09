@@ -125,11 +125,10 @@ def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
     if not isinstance(a, Tensor) or not isinstance(b, Tensor):
         raise ValueError("NPU allclose expects tensors")
     if _use_soc_fallback("allclose"):
-        # 910A: use isclose (single aclnn.sisclose kernel) + all_ instead of
-        # 6-op composite which triggers ACLNN 561000 after executor pool pressure.
-        close = isclose(a, b, rtol=rtol, atol=atol, equal_nan=equal_nan)
-        from . import all_
-        return all_(close).item()
+        import numpy as np
+        a_cpu = a.to("cpu").numpy().astype(np.float32, copy=False)
+        b_cpu = b.to("cpu").numpy().astype(np.float32, copy=False)
+        return bool(np.allclose(a_cpu, b_cpu, rtol=rtol, atol=atol, equal_nan=equal_nan))
     from .math import abs, sub, mul, add
     from .math import isnan
     diff = abs(sub(a, b))

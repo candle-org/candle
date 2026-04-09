@@ -44,16 +44,17 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | Op | ACLNN kernel | Error | Workaround | Verified on |
 |---|---|---|---|---|
 | `std` | `aclnnVar` (all-reduce) | 161002 | composite: manual var via mean | CANN 8.x |
-| `nansum` | `aclnnReduceNansum` | 161002 | composite: `where(isnan, 0, x).sum()` | CANN 8.x |
 | `instance_norm` | `aclnnInstanceNorm` | 161002 | composite: layer_norm per channel | CANN 8.x |
-| `avg_pool2d` | `aclnnAvgPool2d` | 161002 | composite: unfold + mean | CANN 8.x |
-| `adaptive_avg_pool2d` | `aclnnAdaptiveAvgPool2d` | cubeMathType=1 state corruption | composite: interpolate via avg_pool2d | CANN 8.x |
+| `avg_pool2d` | `aclnnAvgPool2d` | 161002 | composite: depthwise conv2d with uniform weights | CANN 8.x |
 | `upsample_nearest1d` | `aclnnUpsampleNearest1d` | broken | composite: reshape to 4D + upsample_nearest2d | CANN 8.x |
 | `einsum` | `aclnnEinsum` | 161002 | composite: matmul/permute/sum patterns | CANN 8.x |
 | `linspace` / `logspace` | `aclnnLinspace` | 161002 | composite: on-device `ones + cumsum + mul + add`; `logspace` builds from composite `linspace` | CANN 8.x |
 | `isinf` | `aclnnIsInf` | 161001 (unavailable) | composite: `~isfinite & ~isnan` | CANN 8.x |
 | `any` / bool `count_nonzero` during repeated index validation | repeated ACLNN bool reduction chain | repeated false positives on valid 910B bool masks during gather/im2col index checks | composite: `gt(count_nonzero(...), 0)` with bool `count_nonzero` routed through `sum(bool->int32)` then cast to int64 | CANN 8.x |
 | `im2col` | `aclnnIm2col` | 561103 | composite: unfold | CANN 8.x |
+| `hypot` | `aten::hypot.out` unsupported on torch_npu NPU backend | torch_npu falls back to CPU and returns result on original NPU device/dtype | host `np.hypot` fallback, then reconstruct tensor on original NPU device/dtype | CANN 8.5.0 / 910B |
+| `fmin` / `fmax` | `aten::fmin.out` / `aten::fmax.out` unsupported on torch_npu NPU backend | torch_npu falls back to CPU and returns result on original NPU device/dtype | host `np.fmin` / `np.fmax` fallback, then reconstruct tensor on original NPU device/dtype | CANN 8.5.0 / 910B |
+| native elementwise sequence stability (`maximum` / `max`, `where`, `logaddexp`, related unary neighbors) | native torch_npu / ACLNN path | repeated executions on 910B corrupt later results; reproduced side-by-side in Candle and real torch_npu on the same host, so this is not a Candle-only route mismatch | keep Candle on the same native route as torch_npu; do not add Candle-only fallback, and avoid asserting stronger sequence-stability guarantees than upstream on 910B | CANN 8.5.0 / 910B |
 
 ## 910A
 

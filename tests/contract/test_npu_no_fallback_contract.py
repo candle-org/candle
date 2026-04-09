@@ -10,6 +10,8 @@ import pytest
 
 from candle._backends.npu import aclnn
 from candle._backends.npu import creation as npu_creation
+from candle._backends.npu import runtime as npu_runtime
+from candle._backends.npu import allocator as npu_allocator
 from candle._backends.npu.ops import _helpers
 
 
@@ -2032,52 +2034,63 @@ def test_repeat_interleave_tensor_allocates_workspace_before_execute(monkeypatch
         def is_initialized(self):
             return True
 
-        def create_tensor(self, shape, stride, dtype_code, ptr, fmt):
-            handle = 0x1000 + len([x for x in calls if x[0] == "create_tensor"])
-            calls.append(("create_tensor", tuple(shape), tuple(stride), dtype_code, ptr, fmt, handle))
-            return handle
+        def resolve_op(self, name):
+            calls.append(("resolve_op", name))
+            return (f"getws:{name}", f"exec:{name}")
 
-        def destroy_tensor(self, handle):
-            calls.append(("destroy_tensor", handle))
+        def two_tensor_two_ints_op(
+            self,
+            getws_ptr,
+            exec_ptr,
+            shape,
+            stride,
+            repeats_shape,
+            repeats_stride,
+            out_shape,
+            out_stride,
+            dim,
+            output_size,
+            dtype_code,
+            repeats_dtype_code,
+            out_dtype_code,
+            fmt,
+            self_ptr,
+            repeats_ptr,
+            out_ptr,
+            stream_ptr,
+        ):
+            calls.append((
+                "two_tensor_two_ints_op",
+                getws_ptr,
+                exec_ptr,
+                tuple(shape),
+                tuple(stride),
+                tuple(repeats_shape),
+                tuple(repeats_stride),
+                tuple(out_shape),
+                tuple(out_stride),
+                dim,
+                output_size,
+                dtype_code,
+                repeats_dtype_code,
+                out_dtype_code,
+                fmt,
+                self_ptr,
+                repeats_ptr,
+                out_ptr,
+                stream_ptr,
+            ))
+            return (64, 0xBEEF)
+
+        def execute(self, exec_ptr, workspace_ptr, workspace_size, executor, stream):
+            calls.append(("execute", exec_ptr, workspace_ptr, workspace_size, executor, stream))
+            return 0
 
     class _FakeBindings:
         aclnn_repeat_interleave_get_workspace = object()
         aclnn_repeat_interleave = object()
         aclnn_repeat_interleave_with_dim_get_workspace = object()
         aclnn_repeat_interleave_with_dim = object()
-
-        @staticmethod
-        def aclnn_repeat_interleave_with_dim_get_workspace(
-            self_handle,
-            repeats_handle,
-            dim,
-            output_size,
-            out_handle,
-            workspace_size_ptr,
-            executor_ptr,
-        ):
-            calls.append((
-                "get_workspace_with_dim",
-                self_handle.value,
-                repeats_handle.value,
-                dim.value,
-                output_size.value,
-                out_handle.value,
-            ))
-            workspace_size_ptr._obj.value = 64
-            executor_ptr._obj.value = 0xBEEF
-            return 0
-
-        @staticmethod
-        def aclnn_repeat_interleave_with_dim(workspace_ptr, workspace_size, executor, stream):
-            calls.append((
-                "execute_with_dim",
-                workspace_ptr.value,
-                workspace_size.value,
-                executor.value,
-                stream.value,
-            ))
-            return 0
 
     class _FakeAclWithMalloc:
         class rt:
@@ -2111,50 +2124,33 @@ def test_repeat_interleave_tensor_allocates_workspace_before_execute(monkeypatch
         runtime,
     )
 
+    assert ("resolve_op", "RepeatInterleaveWithDim") in calls
     assert ("malloc", 64, 0) in calls
-    assert ("execute_with_dim", 0xCAFE, 64, 0xBEEF, runtime.stream) in calls
+    assert ("execute", "exec:RepeatInterleaveWithDim", 0xCAFE, 64, 0xBEEF, runtime.stream) in calls
     assert any(entry[0] == "defer_executor" and entry[1] == 0xBEEF for entry in calls)
     assert ("raw", 0xCAFE) in runtime.freed
 
 
 def test_repeat_interleave_tensor_defers_tensor_handle_cleanup_until_executor_destroy(monkeypatch):
-    calls = []
-
     class _FakeFfi:
         def is_initialized(self):
             return True
 
-        def create_tensor(self, shape, stride, dtype_code, ptr, fmt):
-            handle = 0x2000 + len([x for x in calls if x[0] == "create_tensor"])
-            calls.append(("create_tensor", handle))
-            return handle
+        def resolve_op(self, name):
+            return (f"getws:{name}", f"exec:{name}")
 
-        def destroy_tensor(self, handle):
-            calls.append(("destroy_tensor", handle))
-
-    class _FakeBindings:
-        aclnn_repeat_interleave_get_workspace = object()
-        aclnn_repeat_interleave = object()
-        aclnn_repeat_interleave_with_dim_get_workspace = object()
-        aclnn_repeat_interleave_with_dim = object()
-
-        @staticmethod
-        def aclnn_repeat_interleave_with_dim_get_workspace(
-            self_handle, repeats_handle, dim, output_size, out_handle, workspace_size_ptr, executor_ptr
-        ):
-            workspace_size_ptr._obj.value = 0
-            executor_ptr._obj.value = 0xD00D
-            return 0
-
-        @staticmethod
-        def aclnn_repeat_interleave_with_dim(workspace_ptr, workspace_size, executor, stream):
-            calls.append(("execute_with_dim", executor.value))
-            return 0
+        def two_tensor_two_ints_op(self, *args, **kwargs):
+            return (0, 0xD00D)
 
     deferred = []
     monkeypatch.setattr(aclnn, "acl", None)
     monkeypatch.setattr(aclnn, "ensure_acl", lambda: _FakeAcl())
-    monkeypatch.setattr(aclnn, "get_bindings", lambda: _FakeBindings())
+    monkeypatch.setattr(aclnn, "get_bindings", lambda: type("_FakeBindings", (), {
+        "aclnn_repeat_interleave_get_workspace": object(),
+        "aclnn_repeat_interleave": object(),
+        "aclnn_repeat_interleave_with_dim_get_workspace": object(),
+        "aclnn_repeat_interleave_with_dim": object(),
+    })())
     monkeypatch.setattr(aclnn, "_ffi", _FakeFfi())
     monkeypatch.setattr(aclnn, "_maybe_sync", lambda runtime: None)
     monkeypatch.setattr(aclnn, "_defer_executor", lambda executor, cleanup=None: deferred.append((aclnn._executor_handle(executor), cleanup)))
@@ -2169,8 +2165,7 @@ def test_repeat_interleave_tensor_defers_tensor_handle_cleanup_until_executor_de
 
     assert len(deferred) == 1
     assert deferred[0][0] == 0xD00D
-    assert deferred[0][1] == [("tensor", 0x2000), ("tensor", 0x2001), ("tensor", 0x2002)]
-    assert not [entry for entry in calls if entry[0] == "destroy_tensor"]
+    assert deferred[0][1] is None
 
 
 
@@ -5966,29 +5961,130 @@ def test_binary_op_with_alpha_defers_tensor_cleanup_until_executor_destroy(tmp_p
     assert state['destroy_executor_after'] == 1
 
 
-def test_binary_two_inputs_op_defers_tensor_cleanup_until_executor_destroy(tmp_path):
+
+
+
+
+def test_tensor_two_scalars_op_zero_workspace_defers_tensor_cleanup_until_executor_destroy(tmp_path):
     state = _run_compiled_executor_cleanup_contract(
         tmp_path,
-        lib_stem='fake_aclnn_pow_tensor_tensor',
+        lib_stem='fake_aclnn_softplus_zero_ws',
         c_source=_tensor_cleanup_contract_source(
-            'aclnnPowTensorTensorGetWorkspaceSize(void* self, void* other, void* out, uint64_t* workspace_size, void** executor)',
-            'aclnnPowTensorTensorGetWorkspaceSize',
-            'aclnnPowTensorTensor',
+            'aclnnSoftplusGetWorkspaceSize(void* self, void* beta, void* threshold, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnSoftplusGetWorkspaceSize',
+            'aclnnSoftplus',
+            workspace_size=0,
         ),
-        op_name='PowTensorTensor',
-        ffi_call='ws_size, executor = ffi.binary_two_inputs_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 9, 9, 9, 2, 1, 2, 3, 0)',
+        op_name='Softplus',
+        ffi_call='ws_size, executor = ffi.tensor_two_scalars_op(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), 9, 9, 2, 1, 2, 0x2000, 0x2001, 0)',
     )
 
-    assert state['ws_size' ] == 64
-    assert state['executor' ] == 0xBEEF
-    assert state['create' ] == 3
-    assert state['destroy_before' ] == 0
-    assert state['destroy_after' ] == 3
-    assert state['destroy_executor_before' ] == 0
-    assert state['destroy_executor_after' ] == 1
+    assert state['ws_size'] == 0
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 2
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 2
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
 
 
-def test_add_defers_alpha_scalar_cleanup_until_executor_destroy(monkeypatch):
+def test_binary_op_no_alpha_zero_workspace_defers_cleanup_until_executor_destroy(tmp_path, monkeypatch):
+    state = _run_compiled_executor_cleanup_contract(
+        tmp_path,
+        lib_stem='fake_aclnn_atan2_zero_ws',
+        c_source=_tensor_cleanup_contract_source(
+            'aclnnAtan2GetWorkspaceSize(void* self, void* other, void* out, uint64_t* workspace_size, void** executor)',
+            'aclnnAtan2GetWorkspaceSize',
+            'aclnnAtan2',
+            workspace_size=0,
+        ),
+        op_name='Atan2',
+        ffi_call='ws_size, executor = ffi.binary_op_no_alpha(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 9, 2, 1, 2, 3, 0)',
+    )
+
+    assert state['ws_size'] == 0
+    assert state['executor'] == 0xBEEF
+    assert state['create'] == 3
+    assert state['destroy_before'] == 0
+    assert state['destroy_after'] == 1
+    assert state['destroy_executor_before'] == 0
+    assert state['destroy_executor_after'] == 1
+
+    runtime = _FakeRuntime()
+    calls = []
+
+    class _FakeFfi:
+        def is_initialized(self):
+            return True
+
+        def resolve_op(self, op_name):
+            calls.append(("resolve_op", op_name))
+            return (f"getws:{op_name}", f"exec:{op_name}")
+
+        def unary_op(self, getws_ptr, exec_ptr, *args):
+            calls.append(("unary_op", getws_ptr, exec_ptr))
+            return (64, 0xBEEF)
+
+        def execute(self, exec_ptr, workspace_ptr, workspace_size, executor, stream):
+            calls.append(("execute", exec_ptr, workspace_ptr, workspace_size, executor, stream))
+            return 0
+
+    monkeypatch.setattr(aclnn, "acl", _FakeAcl())
+    monkeypatch.setattr(aclnn, "ensure_acl", lambda: _FakeAcl())
+    monkeypatch.setattr(aclnn, "_ffi", _FakeFfi())
+    monkeypatch.setattr(aclnn, "get_bindings", lambda: object())
+    monkeypatch.setattr(aclnn, "_maybe_sync", lambda runtime_arg: None)
+
+    deferred = []
+    monkeypatch.setattr(aclnn, "_defer_executor", lambda executor, cleanup=None: deferred.append((aclnn._executor_handle(executor), cleanup)))
+
+    aclnn._unary_call(object(), "aclnnAbs", None, None, 1, 2, (4,), (1,), "float16", runtime, 123)
+
+    assert runtime.freed == [("raw", 0xCAFE)]
+    assert deferred[0] == (0xBEEF, None)
+    assert ("execute", "exec:Abs", 0xCAFE, 64, 0xBEEF, 123) in calls
+
+
+def test_unary_call_registers_executor_and_workspace_before_sync(monkeypatch):
+    sync_seen = {}
+
+    class _SyncRuntime(_FakeRuntime):
+        def synchronize(self):
+            sync_seen["freed"] = list(self.freed)
+            sync_seen["deferred"] = list(deferred)
+
+    runtime = _SyncRuntime()
+    calls = []
+
+    class _FakeFfi:
+        def is_initialized(self):
+            return True
+
+        def resolve_op(self, op_name):
+            calls.append(("resolve_op", op_name))
+            return (f"getws:{op_name}", f"exec:{op_name}")
+
+        def unary_op(self, getws_ptr, exec_ptr, *args):
+            calls.append(("unary_op", getws_ptr, exec_ptr))
+            return (64, 0xBEEF)
+
+        def execute(self, exec_ptr, workspace_ptr, workspace_size, executor, stream):
+            calls.append(("execute", exec_ptr, workspace_ptr, workspace_size, executor, stream))
+            return 0
+
+    monkeypatch.setattr(aclnn, "acl", _FakeAcl())
+    monkeypatch.setattr(aclnn, "ensure_acl", lambda: _FakeAcl())
+    monkeypatch.setattr(aclnn, "_ffi", _FakeFfi())
+    monkeypatch.setattr(aclnn, "get_bindings", lambda: object())
+    monkeypatch.setattr(aclnn, "_maybe_sync", lambda runtime_arg: runtime_arg.synchronize())
+
+    deferred = []
+    monkeypatch.setattr(aclnn, "_defer_executor", lambda executor, cleanup=None: deferred.append((aclnn._executor_handle(executor), cleanup)))
+
+    aclnn._unary_call(object(), "aclnnAbs", None, None, 1, 2, (4,), (1,), "float16", runtime, 123)
+
+    assert sync_seen["freed"] == [("raw", 0xCAFE)]
+    assert sync_seen["deferred"] == [(0xBEEF, None)]
     runtime = _FakeRuntime()
     calls = []
 
@@ -6039,7 +6135,7 @@ def test_add_defers_alpha_scalar_cleanup_until_executor_destroy(monkeypatch):
     assert not [entry for entry in calls if entry[0] == "destroy_scalar"]
 
 
-def test_binary_op_with_alpha_fast_path_releases_cleanup_and_returns_null_executor(tmp_path):
+def test_binary_op_with_alpha_fast_path_defers_cleanup_and_keeps_executor(tmp_path):
     state = _run_compiled_executor_cleanup_contract(
         tmp_path,
         lib_stem='fake_aclnn_add_fastpath',
@@ -6051,17 +6147,17 @@ def test_binary_op_with_alpha_fast_path_releases_cleanup_and_returns_null_execut
         ),
         op_name='Add',
         ffi_call='ws_size, executor = ffi.binary_op_with_alpha(getws_ptr, exec_ptr, (3,), (1,), (3,), (1,), (3,), (1,), 9, 2, 1, 2, 3, 0x2000, 0)',
-        destroy_returned_executor=False,
+        destroy_returned_executor=True,
     )
 
     assert state['ws_size'] == 0
-    assert state['executor'] == 0
+    assert state['executor'] == 0xBEEF
     assert state['create'] == 3
     # Only out_t is in executor cleanup; self_t and other_t are owned by TensorDescCache
-    assert state['destroy_before'] == 1
+    assert state['destroy_before'] == 0
     assert state['destroy_after'] == 1
     assert state['destroy_executor_before'] == 0
-    assert state['destroy_executor_after'] == 0
+    assert state['destroy_executor_after'] == 1
 
 
 def test_tensor_list_axis_op_fast_path_defers_cleanup_and_keeps_executor(tmp_path):
@@ -6083,33 +6179,98 @@ def test_tensor_list_axis_op_fast_path_defers_cleanup_and_keeps_executor(tmp_pat
     assert state['executor'] == 0xBEEF
     assert state['create'] == 3
     assert state['destroy_before'] == 0
-    assert state['destroy_after'] == 3
+    assert state['destroy_after'] == 1
     assert state['destroy_executor_before'] == 0
     assert state['destroy_executor_after'] == 1
 
 
-def test_inplace_unary_op_fast_path_releases_cleanup_and_returns_null_executor(tmp_path):
-    state = _run_compiled_executor_cleanup_contract(
-        tmp_path,
-        lib_stem='fake_aclnn_inplace_one_fastpath',
-        c_source=_tensor_cleanup_contract_source(
-            'aclnnInplaceOneGetWorkspaceSize(void* self, uint64_t* workspace_size, void** executor)',
-            'aclnnInplaceOneGetWorkspaceSize',
-            'aclnnInplaceOne',
-            workspace_size=0,
-        ),
-        op_name='InplaceOne',
-        ffi_call='ws_size, executor = ffi.inplace_unary_op(getws_ptr, exec_ptr, (3,), (1,), 9, 2, 1, 0)',
-        destroy_returned_executor=False,
-    )
 
-    assert state['ws_size'] == 0
-    assert state['executor'] == 0
-    assert state['create'] == 1
-    assert state['destroy_before'] == 1
-    assert state['destroy_after'] == 1
-    assert state['destroy_executor_before'] == 0
-    assert state['destroy_executor_after'] == 0
+
+def test_allocator_synchronize_should_not_drain_runtime_deferred_frees_before_executor_flush(monkeypatch):
+    events = []
+
+    alloc = npu_allocator.NpuAllocator(0)
+
+    monkeypatch.setattr(alloc, "_sync_device", lambda: events.append("allocator._sync_device"))
+    monkeypatch.setattr(alloc, "_drain_pending", lambda: events.append("allocator._drain_pending"))
+    monkeypatch.setattr(alloc, "free", lambda ptr, stream=None: events.append(("allocator.free", ptr, stream)))
+
+    runtime = type("_FakeRuntimeState", (), {
+        "_deferred_frees": [0xAAA],
+        "_deferred_raw_frees": [0xBBB],
+        "_deferred_host_frees": [0xCCC],
+    })()
+
+    class _FakeAclRt:
+        @staticmethod
+        def free(ptr):
+            events.append(("acl.rt.free", ptr))
+            return 0
+
+        @staticmethod
+        def free_host(ptr):
+            events.append(("acl.rt.free_host", ptr))
+            return 0
+
+    monkeypatch.setattr(npu_runtime, "get_runtime", lambda device_id: runtime)
+    monkeypatch.setattr(npu_runtime, "acl", type("_FakeAcl", (), {"rt": _FakeAclRt})())
+
+    alloc.synchronize()
+
+    assert events == [
+        "allocator._sync_device",
+        "allocator._drain_pending",
+    ]
+    assert runtime._deferred_frees == [0xAAA]
+    assert runtime._deferred_raw_frees == [0xBBB]
+    assert runtime._deferred_host_frees == [0xCCC]
+
+
+def test_runtime_synchronize_flushes_executors_before_draining_frees(monkeypatch):
+    events = []
+
+    class _FakeAllocator:
+        def synchronize(self):
+            events.append("allocator.synchronize")
+
+        def free(self, ptr):
+            events.append(("allocator.free", ptr))
+
+    class _FakeAclRt:
+        @staticmethod
+        def free(ptr):
+            events.append(("acl.rt.free", ptr))
+            return 0
+
+        @staticmethod
+        def free_host(ptr):
+            events.append(("acl.rt.free_host", ptr))
+            return 0
+
+    runtime = npu_runtime._Runtime()
+    runtime.initialized = True
+    runtime.device_id = 0
+    runtime.context = object()
+    runtime.stream = object()
+    runtime._deferred_frees = [0xAAA]
+    runtime._deferred_raw_frees = [0xBBB]
+    runtime._deferred_host_frees = [0xCCC]
+
+    monkeypatch.setattr(runtime, "activate", lambda: events.append("runtime.activate"))
+    monkeypatch.setattr(npu_runtime, "acl", type("_FakeAcl", (), {"rt": _FakeAclRt})())
+    monkeypatch.setattr(npu_allocator, "get_allocator", lambda device_id: _FakeAllocator())
+    monkeypatch.setattr(aclnn, "flush_deferred_executors", lambda: events.append("aclnn.flush_deferred_executors"))
+
+    runtime.synchronize()
+
+    assert events == [
+        "runtime.activate",
+        "allocator.synchronize",
+        "aclnn.flush_deferred_executors",
+        ("allocator.free", 0xAAA),
+        ("acl.rt.free", 0xBBB),
+        ("acl.rt.free_host", 0xCCC),
+    ]
 
 
 def test_flush_deferred_executors_releases_cleanup_without_destroying_executor(monkeypatch):
@@ -6617,6 +6778,10 @@ def test_tensor_int_array_bool_two_doubles_op_defers_descriptor_cleanup_until_ex
     assert state['destroy_int_array_after'] == 1
     assert state['destroy_executor_before'] == 0
     assert state['destroy_executor_after'] == 1
+
+
+
+
 
 
 
@@ -7309,6 +7474,7 @@ def test_two_tensor_ints_bool_op_defers_tensor_cleanup_until_executor_destroy(tm
     assert state['destroy_after'] == 3
     assert state['destroy_executor_before'] == 0
     assert state['destroy_executor_after'] == 1
+
 def test_tensor_int_array_bool_double_op_defers_descriptor_cleanup_until_executor_destroy(tmp_path):
     state = _run_compiled_executor_cleanup_contract(
         tmp_path,

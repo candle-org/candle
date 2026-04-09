@@ -280,12 +280,20 @@ def _use_310b_int64_index_compare_workaround(indices):
     return indices.dtype == int64_dtype and ops_soc.capability("use_safe_int64_index_compare")
 
 
+def _use_host_int64_index_compare(indices):
+    return indices.dtype == int64_dtype and (
+        _use_310b_int64_index_compare_workaround(indices)
+        or ops_soc.current_profile() == "910b"
+    )
+
+
+
 def _validate_index_bounds(indices, dim_size, allow_negative, name):
     from .comparison import lt, gt
     from .reduce import any_
     if indices.numel() == 0:
         return
-    if _use_310b_int64_index_compare_workaround(indices):
+    if _use_host_int64_index_compare(indices):
         host_idx = _read_index_tensor_to_cpu(indices)
         lower = -int(dim_size) if allow_negative else 0
         upper = int(dim_size - 1)
@@ -1872,31 +1880,16 @@ def cartesian_prod(*tensors):
         if t.dtype != first.dtype:
             raise RuntimeError("meshgrid expects all tensors to have the same dtype")
 
-    # Composite: for each tensor i, repeat-interleave by product of later sizes,
-    # then tile by product of earlier sizes.
-    n = len(tensors)
-    sizes = [int(t.shape[0]) for t in tensors]
-    total = 1
-    for s in sizes:
-        total *= s
+    # Align with PyTorch CompositeImplicitAutograd cartesian_prod route:
+    # build meshgrid views first, then stack columns and reshape to (prod, n).
+    from ...._functional import meshgrid as functional_meshgrid
 
-    columns = []
-    for i, t in enumerate(tensors):
-        inner = 1
-        for j in range(i + 1, n):
-            inner *= sizes[j]
-        outer = 1
-        for j in range(0, i):
-            outer *= sizes[j]
-        # repeat each element inner times: reshape to (s,1) then repeat (1,inner) then flatten
-        col = reshape(t, (sizes[i], 1))
-        col = repeat(col, (1, inner))
-        col = reshape(col, (sizes[i] * inner,))
-        # tile the pattern outer times
-        if outer > 1:
-            col = tile(col, (outer,))
-        columns.append(col)
-    return stack(columns, dim=1)
+    grids = functional_meshgrid(*tensors, indexing="ij")
+    stacked = stack(tuple(grids), dim=-1)
+    total = 1
+    for t in tensors:
+        total *= int(t.shape[0])
+    return reshape(stacked, (total, len(tensors)))
 
 
 def block_diag(*tensors):
@@ -2614,8 +2607,13 @@ def take(a, index):
     _require_int64_indices(index, "take")
     flat = view_backend.reshape(a, (a.numel(),))
     dim_size = flat.shape[0]
-    _validate_index_bounds(index, dim_size, allow_negative=True, name="take")
-    norm_index = _normalize_negative_indices(index, dim_size)
+
+    idx_cpu = index.to("cpu").numpy().astype("int64", copy=True)
+    if idx_cpu.size:
+        idx_cpu[idx_cpu < 0] += int(dim_size)
+        idx_cpu %= int(dim_size)
+    norm_index = _index_tensor_from_cpu(idx_cpu, index)
+
     index_shape = norm_index.shape
     gather_index = norm_index
     if gather_index.dim() == 0:

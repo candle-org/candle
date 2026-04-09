@@ -4287,6 +4287,11 @@ def _destroy_deferred_executor(executor):
     handle = _executor_handle(executor)
     if handle == 0:
         return
+    if _ffi is not None and _ffi.is_initialized() and hasattr(_ffi, "release_executor_cleanup"):
+        try:
+            _ffi.release_executor_cleanup(handle)
+        except Exception:
+            pass
     _run_deferred_executor_cleanup(handle)
 
 
@@ -5982,91 +5987,65 @@ def repeat_interleave_tensor(
     repeats_dtype_code = _dtype_to_acl(repeats_dtype)
 
     _require_native_npu_ffi("repeat_interleave_tensor")
-    executor = ctypes.c_void_p()
-    workspace_size = ctypes.c_uint64(0)
+    executor = 0
     workspace = None
-    self_handle = 0
-    repeats_handle = 0
-    out_handle = 0
     try:
-        self_handle = _ffi.create_tensor(shape, stride, dtype_code, int(self_ptr), _ACL_FORMAT_ND)
-        repeats_handle = _ffi.create_tensor(
-            repeats_shape, repeats_stride, repeats_dtype_code, int(repeats_ptr), _ACL_FORMAT_ND
-        )
-        out_handle = _ffi.create_tensor(out_shape, out_stride, dtype_code, int(out_ptr), _ACL_FORMAT_ND)
-
         if use_dim:
-            ret = bindings.aclnn_repeat_interleave_with_dim_get_workspace(
-                ctypes.c_void_p(int(self_handle)),
-                ctypes.c_void_p(int(repeats_handle)),
-                ctypes.c_int64(int(dim)),
-                ctypes.c_int64(int(output_size)),
-                ctypes.c_void_p(int(out_handle)),
-                ctypes.byref(workspace_size),
-                ctypes.byref(executor),
+            getws_ptr, exec_ptr = _ffi.resolve_op("RepeatInterleaveWithDim")
+            ws_size, executor = _ffi.two_tensor_two_ints_op(
+                getws_ptr,
+                exec_ptr,
+                shape,
+                stride,
+                repeats_shape,
+                repeats_stride,
+                out_shape,
+                out_stride,
+                int(dim),
+                int(output_size),
+                dtype_code,
+                repeats_dtype_code,
+                dtype_code,
+                _ACL_FORMAT_ND,
+                int(self_ptr),
+                int(repeats_ptr),
+                int(out_ptr),
+                stream_ptr,
             )
         else:
-            ret = bindings.aclnn_repeat_interleave_get_workspace(
-                ctypes.c_void_p(int(self_handle)),
-                ctypes.c_void_p(int(repeats_handle)),
-                ctypes.c_int64(int(output_size)),
-                ctypes.c_void_p(int(out_handle)),
-                ctypes.byref(workspace_size),
-                ctypes.byref(executor),
+            getws_ptr, exec_ptr = _ffi.resolve_op("RepeatInterleave")
+            ws_size, executor = _ffi.two_tensor_one_int_op(
+                getws_ptr,
+                exec_ptr,
+                shape,
+                stride,
+                repeats_shape,
+                repeats_stride,
+                out_shape,
+                out_stride,
+                int(output_size),
+                dtype_code,
+                repeats_dtype_code,
+                dtype_code,
+                _ACL_FORMAT_ND,
+                int(self_ptr),
+                int(repeats_ptr),
+                int(out_ptr),
+                stream_ptr,
             )
-        if ret != 0:
-            raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
-
-        exec_handle = _executor_handle(executor)
-        if exec_handle == 0:
-            raise RuntimeError("aclnn repeat_interleave returned null executor")
-
-        if workspace_size.value:
-            workspace_ptr, ret = acl.rt.malloc(int(workspace_size.value), 0)
+        if ws_size:
+            workspace_ptr, ret = acl.rt.malloc(int(ws_size), 0)
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             workspace = workspace_ptr
-
-        if use_dim:
-            ret = bindings.aclnn_repeat_interleave_with_dim(
-                ctypes.c_void_p(int(workspace or 0)),
-                ctypes.c_uint64(int(workspace_size.value)),
-                ctypes.c_void_p(exec_handle),
-                ctypes.c_void_p(stream_ptr),
-            )
+            ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
             if ret != 0:
-                raise RuntimeError(f"aclnnRepeatInterleaveWithDim failed: {ret}")
-        else:
-            ret = bindings.aclnn_repeat_interleave(
-                ctypes.c_void_p(int(workspace or 0)),
-                ctypes.c_uint64(int(workspace_size.value)),
-                ctypes.c_void_p(exec_handle),
-                ctypes.c_void_p(stream_ptr),
-            )
-            if ret != 0:
+                if use_dim:
+                    raise RuntimeError(f"aclnnRepeatInterleaveWithDim failed: {ret}")
                 raise RuntimeError(f"aclnnRepeatInterleave failed: {ret}")
-
-        cleanup = [
-            ("tensor", self_handle),
-            ("tensor", repeats_handle),
-            ("tensor", out_handle),
-        ]
-        self_handle = repeats_handle = out_handle = 0
-        _defer_executor(executor, cleanup=cleanup)
-        executor = ctypes.c_void_p()
-        if runtime is not None:
-            runtime.synchronize()
         _maybe_sync(runtime)
     finally:
-        if _executor_handle(executor):
-            cleanup = [
-                ("tensor", self_handle),
-                ("tensor", repeats_handle),
-                ("tensor", out_handle),
-            ]
-            self_handle = repeats_handle = out_handle = 0
-            _defer_executor(executor, cleanup=cleanup)
-        _destroy_tensor_handles((self_handle, repeats_handle, out_handle))
+        _defer_executor(ctypes.c_void_p(executor))
         if workspace is not None:
             runtime.defer_raw_free(workspace)
 
@@ -6374,11 +6353,16 @@ def _unary_call(bindings, name, get_workspace_fn, exec_fn, self_ptr, out_ptr, sh
             ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
             if ret != 0:
                 raise RuntimeError(f"{name} failed: {ret}")
+        _defer_executor(ctypes.c_void_p(executor))
+        if workspace is not None:
+            runtime.defer_raw_free(workspace)
+            workspace = None
+        executor = 0
         _maybe_sync(runtime)
     finally:
         _defer_executor(ctypes.c_void_p(executor))
         if workspace is not None:
-            runtime.defer_free(workspace)
+            runtime.defer_raw_free(workspace)
 
 def abs(self_ptr, out_ptr, shape, stride, dtype, runtime, stream=None):
     global acl
@@ -12770,9 +12754,15 @@ def baddbmm(self_ptr, b1_ptr, b2_ptr, out_ptr,
                 raise RuntimeError(f"aclnnBaddbmm failed: {ret}")
         _maybe_sync(runtime)
     finally:
-        _defer_executor(ctypes.c_void_p(executor))
-        _ffi.destroy_scalar(int(beta_scalar))
-        _ffi.destroy_scalar(int(alpha_scalar))
+        cleanup = []
+        if int(beta_scalar) != 0:
+            cleanup.append(("scalar", int(beta_scalar)))
+        if int(alpha_scalar) != 0:
+            cleanup.append(("scalar", int(alpha_scalar)))
+        _defer_executor(ctypes.c_void_p(executor), cleanup=cleanup or None)
+        if not cleanup:
+            _ffi.destroy_scalar(int(beta_scalar))
+            _ffi.destroy_scalar(int(alpha_scalar))
         if workspace is not None:
             runtime.defer_raw_free(workspace)
 
