@@ -31,6 +31,33 @@ def test_tensor_data_setter_still_routes_through_runtime_storage_swap():
     assert x._version_counter.value == before + 1
 
 
+def test_tensor_data_setter_preserves_source_storage_stride_and_offset_truth():
+    x = torch.tensor([1.0, 2.0])
+    z = torch.tensor([9.0, 3.0, 4.0])
+    y = z[1:]
+
+    x.data = y
+
+    assert x.storage().data_ptr() == y.storage().data_ptr()
+    assert x.stride == y.stride
+    assert x.offset == y.offset
+    assert x.tolist() == [3.0, 4.0]
+
+
+def test_tensor_data_setter_preserves_runtime_device_dtype_caches():
+    x = torch.tensor([1.0, 2.0], dtype=torch.float32)
+    y = torch.tensor([3.0, 4.0], dtype=torch.float32)
+
+    before_device = x.device
+    before_dtype = x.dtype
+    x.data = y
+
+    assert x.device == before_device
+    assert x.dtype == before_dtype
+    assert x.device.type == "cpu"
+    assert x.dtype == torch.float32
+
+
 def test_tensor_shell_device_dtype_helpers_preserve_runtime_cache_values():
     x = torch.tensor([1.0, 2.0])
     before_device = x.device
