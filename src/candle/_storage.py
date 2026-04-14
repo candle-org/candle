@@ -67,6 +67,18 @@ atexit.register(cleanup_shared_files)
 
 
 class UntypedStorage:
+    """Public storage shell around runtime-owned backing memory.
+
+    UntypedStorage is the user-facing storage shell exposed by Candle's Python API.
+    The underlying pointer, allocation lifetime, and device placement are runtime
+    truths supplied by backend/runtime storage objects; Python methods here wrap
+    that runtime-owned backing data rather than owning it independently.
+    """
+
+    # A1 boundary note: this file remains the public storage API shell.
+    # Future runtime-sensitive storage ownership should move into Cython helpers
+    # instead of expanding Python-side owner state here.
+
     def __init__(self, device):
         if isinstance(device, str):
             device = Device(device)
@@ -277,6 +289,9 @@ class _CPUUntypedStorage(UntypedStorage):
             self._sharing_mechanism = strategy
             return self
 
+        # A1 boundary note: this file remains the public storage API shell.
+        # Future runtime-sensitive storage ownership should move into Cython helpers
+        # instead of expanding Python-side owner state here.
         if strategy == "file_descriptor":
             import mmap
             import os
@@ -519,6 +534,14 @@ class _MetaUntypedStorage(UntypedStorage):
 
 
 class TypedStorage:
+    """Public typed storage wrapper over an untyped runtime owner.
+
+    Runtime pointer ownership lives in the referenced untyped storage object.
+    TypedStorage adds dtype/size interpretation for the public Python API while
+    methods like data_ptr(), device, is_shared(), and is_pinned() delegate to the
+    runtime-owned untyped backing storage.
+    """
+
     def __init__(self, untyped, dtype=None, size=0, data=None):
         self._untyped = untyped
         self.dtype = dtype or float32
@@ -735,9 +758,11 @@ class TypedStorage:
         return int(self._size * itemsize)
 
     def data_ptr(self):
+        """Return the runtime-owned pointer exposed through the typed shell."""
         return self._untyped.data_ptr()
 
     def untyped_storage(self):
+        """Return the runtime owner backing this typed public storage view."""
         return self._untyped
 
     def is_shared(self):

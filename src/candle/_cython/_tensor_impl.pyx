@@ -1,8 +1,9 @@
 # cython: language_level=3, boundscheck=False, wraparound=False
-"""Cython TensorImpl — C-level storage for Tensor metadata.
+"""Cython TensorImpl — runtime-owned tensor metadata and cached runtime state.
 
-Mirrors PyTorch's TensorImpl: shape/stride/device/dtype/autograd fields
-are stored as C-typed attributes for zero-overhead access from Cython code.
+TensorImpl is the internal owner for tensor shape/stride/device/dtype/autograd
+state and other cached runtime fields used by the dispatcher and lifecycle code.
+Python Tensor remains the public shell that exposes the user-facing API.
 VersionCounter is inlined as a C int64.
 """
 
@@ -51,7 +52,11 @@ cdef inline object _coerce_stride_tuple(object stride):
 
 
 cdef class TensorImpl:
-    """C-level base for Tensor. All hot fields are cdef-typed."""
+    """Internal runtime owner for tensor metadata and cached state.
+
+    Python Tensor is the public shell; TensorImpl holds the runtime-owned fields
+    that back that shell and keep hot-path metadata in Cython-managed storage.
+    """
     # Field and method declarations in _tensor_impl.pxd
 
     # ---------------------------------------------------------------
@@ -460,6 +465,38 @@ cdef class TensorImpl:
     # View operations — share storage, only update layout
     # ---------------------------------------------------------------
 
+    cpdef object cy_detach(self):
+        cdef object tensor_type = type(self)
+        cdef TensorImpl out = <TensorImpl>tensor_type.__new__(tensor_type)
+        cy_init_tensor_fields(
+            out,
+            self._storage,
+            self._shape_tuple,
+            self._stride_tuple,
+            self._c_offset,
+            False,
+            None,
+            None,
+            None,
+            None,
+            self._pending,
+            False,
+            None,
+            self._version_value,
+            self._version_counter,
+        )
+        return out
+
+    cdef inline void _attach_view_runtime_truth(self, TensorImpl view):
+        view._version_value = self._version_value
+        view._base = self._base if self._base is not None else self
+        view._vc_proxy = None
+        view._view_meta = None
+        view._pending = False
+        view._retain_grad = False
+        view._backward_hooks = None
+        view._output_nr = 0
+
     cpdef object cy_view(self, tuple new_shape):
         cdef int64_t new_numel = 1
         cdef int i
@@ -490,14 +527,7 @@ cdef class TensorImpl:
         v.requires_grad = self.requires_grad
         v.grad = None
         v.grad_fn = self.grad_fn
-        v._version_value = self._version_value
-        v._base = self._base if self._base is not None else self
-        v._vc_proxy = None
-        v._view_meta = None
-        v._pending = False
-        v._retain_grad = False
-        v._backward_hooks = None
-        v._output_nr = 0
+        self._attach_view_runtime_truth(v)
         return v
 
     cpdef object cy_as_strided(self, tuple size, tuple stride, int64_t storage_offset):
@@ -517,14 +547,7 @@ cdef class TensorImpl:
         v.requires_grad = self.requires_grad
         v.grad = None
         v.grad_fn = self.grad_fn
-        v._version_value = self._version_value
-        v._base = self._base if self._base is not None else self
-        v._vc_proxy = None
-        v._view_meta = None
-        v._pending = False
-        v._retain_grad = False
-        v._backward_hooks = None
-        v._output_nr = 0
+        self._attach_view_runtime_truth(v)
         return v
 
     cpdef object cy_transpose(self, int dim0, int dim1):
@@ -542,6 +565,27 @@ cdef class TensorImpl:
         new_shape[dim0], new_shape[dim1] = new_shape[dim1], new_shape[dim0]
         new_stride[dim0], new_stride[dim1] = new_stride[dim1], new_stride[dim0]
         return self.cy_as_strided(tuple(new_shape), tuple(new_stride), self._c_offset)
+
+    cpdef object cy_set_runtime_truth(
+        self,
+        object typed_storage,
+        tuple size,
+        object stride,
+        int64_t storage_offset,
+    ):
+        cdef object device = getattr(typed_storage, "device", None)
+        cdef object dtype = getattr(typed_storage, "dtype", None)
+        self._storage = typed_storage
+        self._set_shape(size)
+        self._set_stride(stride)
+        self._c_offset = storage_offset
+        if device is not None:
+            self._set_device_from_obj(device)
+        if dtype is not None:
+            self._set_dtype_from_obj(dtype)
+        self._bump_version()
+        return self
+
 
 # -------------------------------------------------------------------
 # Module-level tensor factory functions

@@ -178,57 +178,10 @@ class Tensor(_TensorBase):
     _DK_AUTOGRAD_META     = 1 << 10
 
     def _set_device_from_storage(self, dev):
-        """Cache device from storage into TensorImpl fields and recompute dispatch keys."""
-        self._device_obj = dev
-        dt = getattr(dev, "type", str(dev))
-        devt = Tensor._DEVICE_MAP.get(dt, -1)
-        self._device_type = devt
-        idx = getattr(dev, "index", None)
-        self._device_index = idx if idx is not None else -1
-        # Mirror _recompute_dispatch_keys from _tensor_impl.pyx
-        if devt == 0:
-            dk = Tensor._DK_CPU
-        elif devt == 1:
-            dk = Tensor._DK_NPU
-        elif devt == 2:
-            dk = Tensor._DK_CUDA
-        elif devt == 3:
-            dk = Tensor._DK_MPS
-        elif devt == 4:
-            dk = Tensor._DK_META
-        else:
-            dk = Tensor._DK_CPU
-        if self.requires_grad:
-            dk |= Tensor._DK_ADINPLACEORVIEW | Tensor._DK_AUTOGRAD
-            if devt == 0:
-                dk |= Tensor._DK_AUTOGRAD_CPU
-            elif devt == 1:
-                dk |= Tensor._DK_AUTOGRAD_NPU
-            elif devt == 2:
-                dk |= Tensor._DK_AUTOGRAD_CUDA
-            elif devt == 3:
-                dk |= Tensor._DK_AUTOGRAD_MPS
-            elif devt == 4:
-                dk |= Tensor._DK_AUTOGRAD_META
-        self._dispatch_keys = dk
+        self._set_device_from_obj(dev)
 
     def _set_dtype_from_storage(self, dtype):
-        """Cache dtype from storage into TensorImpl fields."""
-        self._dtype_obj = dtype
-        self._itemsize = getattr(dtype, "itemsize", 4)
-        name = getattr(dtype, "name", "")
-        self._dtype_code = {
-            "float32": 0,
-            "float16": 1,
-            "float64": 2,
-            "bfloat16": 3,
-            "int32": 4,
-            "int64": 5,
-            "int16": 6,
-            "int8": 7,
-            "uint8": 8,
-            "bool": 9,
-        }.get(name, -1)
+        self._set_dtype_from_obj(dtype)
 
     def __delattr__(self, name):
         if name == "grad":
@@ -252,6 +205,9 @@ class Tensor(_TensorBase):
             raise RuntimeError(f"shape mismatch: expected {self.shape}, got {new_data.shape}")
         if new_data.dtype != self.dtype:
             raise RuntimeError(f"dtype mismatch: expected {self.dtype}, got {new_data.dtype}")
+        # A2 follow-up note: version-sensitive shell behavior still remains here.
+        # Later Tensor/Storage work should keep shrinking Python-side mutation truth
+        # rather than growing new owner state in `_tensor.py`.
         # Replace storage
         self._storage = new_data._storage
         self.stride = new_data.stride
@@ -604,14 +560,12 @@ class Tensor(_TensorBase):
                 raise RuntimeError("set_() view exceeds storage bounds")
 
         self._check_inplace()
-        self._storage = typed_storage
-        self.shape = size
-        self.stride = _StrideTuple(stride)
-        self.offset = int(storage_offset)
-        self._set_device_from_storage(device)
-        self._set_dtype_from_storage(dtype)
-        self._bump_version()
-        return self
+        return self.cy_set_runtime_truth(
+            typed_storage,
+            size,
+            _StrideTuple(stride),
+            int(storage_offset),
+        )
 
     def as_strided(self, size, stride, storage_offset=None):
         """Create a view of the tensor with given size, stride, and storage_offset."""
@@ -691,12 +645,7 @@ class Tensor(_TensorBase):
         return self
 
     def detach(self):
-        out = cy_make_tensor_from_storage(self._storage, self.shape, self.stride, self.offset, False)
-        out.grad_fn = None
-        out.grad = None
-        out._pending = self._pending
-        out._version_counter = self._version_counter
-        return out
+        return self.cy_detach()
 
     def detach_(self):
         self.requires_grad = False
