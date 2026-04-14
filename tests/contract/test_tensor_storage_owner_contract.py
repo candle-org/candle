@@ -90,6 +90,10 @@ def test_typed_storage_public_api_routes_through_untyped_runtime_owner():
 
 def test_tensor_data_setter_rejects_non_tensor_input_before_runtime_mutation():
     x = torch.tensor([1.0, 2.0])
+    before = x._version_counter.value
 
     with pytest.raises(TypeError, match=r"data must be a Tensor"):
         x.data = [3.0, 4.0]
+
+    assert x.tolist() == [1.0, 2.0]
+    assert x._version_counter.value == before
