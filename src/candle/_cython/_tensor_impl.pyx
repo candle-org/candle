@@ -587,11 +587,16 @@ cdef class TensorImpl:
         return self
 
     cpdef object cy_set_data_runtime_truth_from(self, object other):
+        # Internal fast path: callers already validated other as Tensor/TensorImpl.
+        # Keep this helper as a trusted copy boundary rather than re-validating here.
         cdef TensorImpl src = <TensorImpl>other
         self._storage = src._storage
         self._set_shape(src._shape_tuple)
         self._set_stride(src._stride_tuple)
         self._c_offset = src._c_offset
+        # Copy cached runtime metadata directly so set_data_ preserves the source
+        # tensor's already-resolved device/dtype truth without re-deriving it from
+        # Python objects or re-running the broader cy_set_runtime_truth path.
         self._device_type = src._device_type
         self._device_index = src._device_index
         self._device_obj = src._device_obj
