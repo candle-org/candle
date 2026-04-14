@@ -207,6 +207,14 @@ def test_chunk_view_shares_version_counter_with_source():
     view._version_counter.bump()
     assert base._version_counter.value == before_base + 1
 
+# Guards the Python __setitem__ entry point; the direct dispatch path is covered
+# by test_dispatch_setitem_bumps_version_counter_exactly_once below.
+def test_setitem_bumps_version_counter():
+    x = torch.tensor([1.0, 2.0, 3.0])
+    before = x._version_counter.value
+    x[0] = torch.tensor(9.0)
+    assert x._version_counter.value == before + 1
+
 
 def test_data_setter_bumps_version_counter_once():
     x = torch.tensor([1.0, 2.0])
