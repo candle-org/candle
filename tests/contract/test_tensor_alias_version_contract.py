@@ -31,6 +31,25 @@ def test_as_strided_view_shares_version_counter_with_source():
     assert base._version_counter.value == before_base + 1
 
 
+def test_view_runtime_truth_sets_base_to_source_tensor():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]])
+    view = base.view((4,))
+    assert view._base is base
+
+
+def test_as_strided_runtime_truth_sets_base_to_source_tensor():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]])
+    view = base.as_strided((2, 2), (2, 1))
+    assert view._base is base
+
+
+def test_view_runtime_truth_records_view_meta():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]])
+    view = base.view((4,))
+    assert view._view_meta is not None
+    assert view._view_meta["op"] == "view"
+
+
 def test_unary_inplace_preserves_view_aliasing():
     x = torch.tensor([[-1.0, 2.0], [-3.0, 4.0]])
     v = x.view((4,))
@@ -243,3 +262,33 @@ def test_set_on_view_bumps_shared_version_counter_once():
     assert v._version_counter.value == before_view + 1
     assert v.tolist() == [0.0, 1.0]
     assert v._base is x
+
+
+def test_detach_preserves_storage_shape_stride_offset_runtime_truth():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.view((4,))
+    detached = view.detach()
+    assert detached.storage().data_ptr() == view.storage().data_ptr()
+    assert detached.shape == view.shape
+    assert detached.stride == view.stride
+    assert detached.offset == view.offset
+    assert detached.requires_grad is False
+    assert detached.grad_fn is None
+
+
+def test_detach_of_view_preserves_base_version_sharing_truth():
+    base = torch.tensor([[0.0, 1.0], [2.0, 3.0]], requires_grad=True)
+    view = base.view((4,))
+    detached = view.detach()
+    before = detached._version_counter.value
+    base._version_counter.bump()
+    assert detached._version_counter.value == before + 1
+
+
+def test_set_preserves_device_dtype_runtime_truth():
+    x = torch.tensor([0.0, 1.0, 2.0, 3.0], dtype=torch.float32)
+    out = x.set_(x.storage(), 1, (2,), (1,))
+    assert out is x
+    assert x.device.type == "cpu"
+    assert x.dtype == torch.float32
+    assert x.tolist() == [1.0, 2.0]

@@ -1,8 +1,9 @@
 # cython: language_level=3, boundscheck=False, wraparound=False
-"""Cython fast-path for NPU storage creation.
+"""Cython storage runtime/helper layer.
 
-Replaces np.dtype(to_numpy_dtype(dtype)).itemsize with a C switch,
-and constructs the NPU storage wrappers directly in Cython.
+This module is part of Candle's storage runtime boundary, not just an
+optimization layer. It centralizes storage-backed object construction for
+runtime-owned device pointers and helpers that Python storage shells call into.
 
 NPU path is intentionally Cython-only — no Python fallback.
 """
