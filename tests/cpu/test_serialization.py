@@ -293,6 +293,16 @@ def test_torch_load_with_map_location_torch_device_cpu(tmp_path):
     assert set(loaded.keys()) == {"weight", "bias"}
 
 
+def test_load_zip_mmap_cpu_storage_device_is_device_object(tmp_path):
+    path = tmp_path / "mmap_cpu_storage_device.pth"
+    torch.save({"x": torch.tensor([1.0, 2.0])}, path)
+
+    loaded = mt.load(path, mmap=True)
+
+    storage = loaded["x"].untyped_storage()
+    assert storage.device.type == "cpu"
+
+
 def _patch_checkpoint_location_tag(src_path, dst_path, old, new):
     assert len(old) == len(new)
     with zipfile.ZipFile(src_path, "r") as zin, zipfile.ZipFile(dst_path, "w", compression=zipfile.ZIP_STORED) as zout:
