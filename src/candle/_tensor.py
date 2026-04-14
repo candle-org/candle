@@ -205,14 +205,7 @@ class Tensor(_TensorBase):
             raise RuntimeError(f"shape mismatch: expected {self.shape}, got {new_data.shape}")
         if new_data.dtype != self.dtype:
             raise RuntimeError(f"dtype mismatch: expected {self.dtype}, got {new_data.dtype}")
-        # A2 follow-up note: version-sensitive shell behavior still remains here.
-        # Later Tensor/Storage work should keep shrinking Python-side mutation truth
-        # rather than growing new owner state in `_tensor.py`.
-        # Replace storage
-        self._storage = new_data._storage
-        self.stride = new_data.stride
-        self.offset = new_data.offset
-        self._bump_version()
+        self.cy_set_data_runtime_truth_from(new_data)
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
