@@ -586,6 +586,27 @@ cdef class TensorImpl:
         self._bump_version()
         return self
 
+    cpdef object cy_set_data_runtime_truth_from(self, object other):
+        # Internal fast path: callers already validated other as Tensor/TensorImpl.
+        # Keep this helper as a trusted copy boundary rather than re-validating here.
+        cdef TensorImpl src = <TensorImpl>other
+        self._storage = src._storage
+        self._set_shape(src._shape_tuple)
+        self._set_stride(src._stride_tuple)
+        self._c_offset = src._c_offset
+        # Copy cached runtime metadata directly so set_data_ preserves the source
+        # tensor's already-resolved device/dtype truth without re-deriving it from
+        # Python objects or re-running the broader cy_set_runtime_truth path.
+        self._device_type = src._device_type
+        self._device_index = src._device_index
+        self._device_obj = src._device_obj
+        self._dtype_code = src._dtype_code
+        self._itemsize = src._itemsize
+        self._dtype_obj = src._dtype_obj
+        self._recompute_dispatch_keys()
+        self._bump_version()
+        return self
+
 
 # -------------------------------------------------------------------
 # Module-level tensor factory functions

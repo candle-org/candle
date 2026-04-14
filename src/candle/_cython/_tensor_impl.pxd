@@ -58,6 +58,9 @@ cdef class TensorImpl:
         object stride,
         int64_t storage_offset,
     )
+    # Internal helper: callers must already pass a validated Tensor/TensorImpl.
+    # This is not a public validation boundary.
+    cpdef object cy_set_data_runtime_truth_from(self, object other)
 
 
 cdef class _VersionCounterProxy:

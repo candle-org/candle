@@ -1,3 +1,5 @@
+import pytest
+
 import candle as torch
 
 
@@ -31,6 +33,42 @@ def test_tensor_data_setter_still_routes_through_runtime_storage_swap():
     assert x._version_counter.value == before + 1
 
 
+def test_tensor_data_setter_preserves_source_storage_stride_and_offset_truth():
+    x = torch.tensor([1.0, 2.0])
+    z = torch.tensor([9.0, 3.0, 4.0])
+    y = z[1:]
+
+    x.data = y
+
+    assert x.storage().data_ptr() == y.storage().data_ptr()
+    assert x.stride == y.stride
+    assert x.offset == y.offset
+    assert x.tolist() == [3.0, 4.0]
+
+
+def test_tensor_data_setter_preserves_runtime_device_dtype_caches():
+    x = torch.tensor([1.0, 2.0], dtype=torch.float32)
+    y = torch.tensor([3.0, 4.0], dtype=torch.float32)
+
+    x._set_device_from_storage(torch.device("meta"))
+    x._set_dtype_from_storage(torch.float64)
+
+    assert x._device_type != y._device_type
+    assert x._dtype_code != y._dtype_code
+    assert x._itemsize != y._itemsize
+    assert x._dtype_obj != y._dtype_obj
+    assert x._dispatch_keys != y._dispatch_keys
+
+    x.data = y
+
+    assert x._device_type == y._device_type
+    assert x._device_index == y._device_index
+    assert x._dtype_code == y._dtype_code
+    assert x._itemsize == y._itemsize
+    assert x._dtype_obj == y._dtype_obj
+    assert x._dispatch_keys == y._dispatch_keys
+
+
 def test_tensor_shell_device_dtype_helpers_preserve_runtime_cache_values():
     x = torch.tensor([1.0, 2.0])
     before_device = x.device
@@ -40,7 +78,6 @@ def test_tensor_shell_device_dtype_helpers_preserve_runtime_cache_values():
     assert x.device == before_device
     assert x.dtype == before_dtype
 
-
 def test_typed_storage_public_api_routes_through_untyped_runtime_owner():
     x = torch.tensor([1.0, 2.0])
     storage = x.storage()
@@ -48,3 +85,15 @@ def test_typed_storage_public_api_routes_through_untyped_runtime_owner():
 
     assert storage.data_ptr() == untyped.data_ptr()
     assert storage.device == untyped.device
+
+
+
+def test_tensor_data_setter_rejects_non_tensor_input_before_runtime_mutation():
+    x = torch.tensor([1.0, 2.0])
+    before = x._version_counter.value
+
+    with pytest.raises(TypeError, match=r"data must be a Tensor"):
+        x.data = [3.0, 4.0]
+
+    assert x.tolist() == [1.0, 2.0]
+    assert x._version_counter.value == before
