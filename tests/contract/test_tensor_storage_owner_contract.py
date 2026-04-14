@@ -48,12 +48,23 @@ def test_tensor_data_setter_preserves_runtime_device_dtype_caches():
     x = torch.tensor([1.0, 2.0], dtype=torch.float32)
     y = torch.tensor([3.0, 4.0], dtype=torch.float32)
 
+    x._set_device_from_storage(torch.device("meta"))
+    x._set_dtype_from_storage(torch.float64)
+
+    assert x._device_type != y._device_type
+    assert x._dtype_code != y._dtype_code
+    assert x._itemsize != y._itemsize
+    assert x._dtype_obj != y._dtype_obj
+    assert x._dispatch_keys != y._dispatch_keys
+
     x.data = y
 
-    assert x.device == y.device
-    assert x.dtype == y.dtype
-    assert x.device.type == y.device.type == "cpu"
-    assert x.dtype == y.dtype == torch.float32
+    assert x._device_type == y._device_type
+    assert x._device_index == y._device_index
+    assert x._dtype_code == y._dtype_code
+    assert x._itemsize == y._itemsize
+    assert x._dtype_obj == y._dtype_obj
+    assert x._dispatch_keys == y._dispatch_keys
 
 
 def test_tensor_shell_device_dtype_helpers_preserve_runtime_cache_values():

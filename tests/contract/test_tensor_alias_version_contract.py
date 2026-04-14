@@ -218,12 +218,12 @@ def test_setitem_bumps_version_counter():
 
 def test_data_setter_bumps_version_counter_once():
     x = torch.tensor([1.0, 2.0])
-    y = torch.tensor([3.0, 4.0])
     before = x._version_counter.value
 
-    x.data = y
+    x.data = torch.tensor([3.0, 4.0])
 
     assert x._version_counter.value == before + 1
+    assert x.tolist() == [3.0, 4.0]
 
 
 def test_dispatch_setitem_bumps_version_counter_exactly_once():
