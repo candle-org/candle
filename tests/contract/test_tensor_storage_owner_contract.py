@@ -1,3 +1,5 @@
+import pytest
+
 import candle as torch
 
 
@@ -76,7 +78,6 @@ def test_tensor_shell_device_dtype_helpers_preserve_runtime_cache_values():
     assert x.device == before_device
     assert x.dtype == before_dtype
 
-
 def test_typed_storage_public_api_routes_through_untyped_runtime_owner():
     x = torch.tensor([1.0, 2.0])
     storage = x.storage()
@@ -84,3 +85,11 @@ def test_typed_storage_public_api_routes_through_untyped_runtime_owner():
 
     assert storage.data_ptr() == untyped.data_ptr()
     assert storage.device == untyped.device
+
+
+
+def test_tensor_data_setter_rejects_non_tensor_input_before_runtime_mutation():
+    x = torch.tensor([1.0, 2.0])
+
+    with pytest.raises(TypeError, match=r"data must be a Tensor"):
+        x.data = [3.0, 4.0]

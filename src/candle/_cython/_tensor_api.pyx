@@ -324,10 +324,7 @@ def tensor_set_data(self, new_data):
         raise RuntimeError(f"shape mismatch: expected {self.shape}, got {new_data.shape}")
     if new_data.dtype != self.dtype:
         raise RuntimeError(f"dtype mismatch: expected {self.dtype}, got {new_data.dtype}")
-    self._storage = new_data._storage
-    self.stride = new_data.stride
-    self.offset = new_data.offset
-    self._bump_version()
+    self.cy_set_data_runtime_truth_from(new_data)
 
 
 def tensor_fw_get(self, level):
