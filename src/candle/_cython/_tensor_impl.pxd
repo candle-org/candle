@@ -58,6 +58,7 @@ cdef class TensorImpl:
         object stride,
         int64_t storage_offset,
     )
+    cpdef object cy_set_data_runtime_truth_from(self, object other)
 
 
 cdef class _VersionCounterProxy:
