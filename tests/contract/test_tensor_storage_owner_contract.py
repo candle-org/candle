@@ -1,6 +1,7 @@
 import pytest
 
 import candle as torch
+import candle._storage as candle_storage
 
 
 def test_tensor_impl_declares_runtime_owned_fields():
@@ -85,6 +86,11 @@ def test_typed_storage_public_api_routes_through_untyped_runtime_owner():
 
     assert storage.data_ptr() == untyped.data_ptr()
     assert storage.device == untyped.device
+
+
+
+def test_pinned_cpu_storage_factory_still_exposed_as_public_entry_point():
+    assert hasattr(candle_storage, "pinned_cpu_typed_storage_from_numpy")
 
 
 

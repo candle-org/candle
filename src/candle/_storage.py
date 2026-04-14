@@ -1,72 +1,23 @@
+import abc
 import atexit
 import ctypes
-import os
-import threading
 import weakref
 import numpy as np
 
+from ._cython._storage import (  # pylint: disable=import-error,no-name-in-module
+    CyCPUUntypedStorage,
+    CyPinnedCPUUntypedStorage,
+    cy_cleanup_shared_files as _cy_cleanup_shared_files,
+)
 from ._device import _default_device, device as Device
 from ._dtype import float32, to_numpy_dtype
 ACL_MEMCPY_DEVICE_TO_DEVICE = 3
 
 
-_SHARED_FILE_REGISTRY = set()
-_SHARED_FILE_REGISTRY_LOCK = threading.Lock()
+atexit.register(_cy_cleanup_shared_files)
 
 
-def _register_shared_file(path):
-    if not path:
-        return
-    with _SHARED_FILE_REGISTRY_LOCK:
-        _SHARED_FILE_REGISTRY.add(path)
-
-
-def _unregister_shared_file(path):
-    if not path:
-        return
-    with _SHARED_FILE_REGISTRY_LOCK:
-        _SHARED_FILE_REGISTRY.discard(path)
-
-
-def _cleanup_shared_file(path):
-    if not path:
-        return False
-    try:
-        os.remove(path)
-        return True
-    except FileNotFoundError:
-        return True
-    except Exception:
-        return False
-
-
-def _close_fd_and_cleanup(fd, path=None):
-    if fd is not None:
-        try:
-            os.close(int(fd))
-        except Exception:
-            pass
-    if path and _cleanup_shared_file(path):
-        _unregister_shared_file(path)
-
-
-def cleanup_shared_files():
-    with _SHARED_FILE_REGISTRY_LOCK:
-        paths = list(_SHARED_FILE_REGISTRY)
-    for path in paths:
-        if _cleanup_shared_file(path):
-            _unregister_shared_file(path)
-
-
-def shared_files_count():
-    with _SHARED_FILE_REGISTRY_LOCK:
-        return len(_SHARED_FILE_REGISTRY)
-
-
-atexit.register(cleanup_shared_files)
-
-
-class UntypedStorage:
+class UntypedStorage(metaclass=abc.ABCMeta):
     """Public storage shell around runtime-owned backing memory.
 
     UntypedStorage is the user-facing storage shell exposed by Candle's Python API.
@@ -83,6 +34,7 @@ class UntypedStorage:
         if isinstance(device, str):
             device = Device(device)
         self.device = device
+        self._shared = False
 
     def __repr__(self):
         if self.device.type == "cpu":
@@ -136,7 +88,7 @@ class UntypedStorage:
             if index is Ellipsis:
                 raise TypeError("can't index a torch.UntypedStorage with ellipsis")
             if isinstance(index, slice):
-                return _CPUUntypedStorage(self.buffer()[index], filename=None, shared=self._shared, device=self.device)
+                return CyCPUUntypedStorage(self.buffer()[index], filename=None, shared=self._shared, device=self.device)
             try:
                 return self.buffer()[index].item()
             except IndexError as exc:
@@ -188,232 +140,11 @@ class UntypedStorage:
 
     @classmethod
     def from_file(cls, filename, shared=False):
-        return _CPUUntypedStorage.from_file(filename, shared=shared)
+        return CyCPUUntypedStorage.from_file(filename, shared=shared)
 
     def filename(self):
         return None
 
-
-
-class _PinnedCPUUntypedStorage(UntypedStorage):
-    def __init__(self, array, ptr, filename=None, shared=False, device=None):
-        super().__init__(device or Device("cpu"))
-        self._array = array
-        self._shared = shared
-        self._filename = filename
-        self._ptr = int(ptr)
-        from ._backends.npu import runtime as npu_runtime
-
-        self._finalizer = weakref.finalize(self, npu_runtime.free_host, self._ptr)
-
-    def nbytes(self):
-        return int(self._array.nbytes)
-
-    def data_ptr(self):
-        return int(self._array.ctypes.data)
-
-    def buffer(self):
-        return self._array
-
-    def resize_(self, new_nbytes):
-        raise NotImplementedError("pinned storage cannot resize")
-
-    def share_memory_(self):
-        self._shared = True
-        return self
-
-    def is_shared(self):
-        return self._shared
-
-    def is_pinned(self):
-        return True
-
-    @classmethod
-    def from_file(cls, filename, shared=False):
-        data = np.memmap(filename, mode="r+", dtype=np.uint8)
-        return cls(data, int(data.ctypes.data), filename=filename, shared=shared)
-
-    def filename(self):
-        return self._filename
-
-
-class _CPUUntypedStorage(UntypedStorage):
-    def __init__(
-        self,
-        array,
-        filename=None,
-        shared=False,
-        device=None,
-        mmap_obj=None,
-        fd=None,
-        tmp_file=None,
-        sharing_mechanism=None,
-        cleanup_finalizer=None,
-    ):
-        super().__init__(device or Device("cpu"))
-        self._array = array
-        self._shared = shared
-        self._filename = filename
-        self._mmap = mmap_obj
-        self._fd = fd
-        self._tmp_file = tmp_file
-        self._sharing_mechanism = sharing_mechanism
-        self._cleanup_finalizer = cleanup_finalizer
-
-    def nbytes(self):
-        return int(self._array.nbytes)
-
-    def data_ptr(self):
-        return int(self._array.ctypes.data)
-
-    def buffer(self):
-        return self._array
-
-    def resize_(self, new_nbytes):
-        if self._filename is not None or self._shared:
-            raise RuntimeError("Trying to resize storage that is not resizable")
-        new_array = np.empty(int(new_nbytes), dtype=np.uint8)
-        old_bytes = self._array.view(np.uint8)
-        copy_bytes = min(old_bytes.size, new_array.size)
-        new_array[:copy_bytes] = old_bytes[:copy_bytes]
-        self._array = new_array
-        return self
-
-    def share_memory_(self, strategy="file_descriptor"):
-        if self._shared:
-            return self
-
-        nbytes = int(self._array.nbytes)
-        if nbytes == 0:
-            self._shared = True
-            self._sharing_mechanism = strategy
-            return self
-
-        # A1 boundary note: this file remains the public storage API shell.
-        # Future runtime-sensitive storage ownership should move into Cython helpers
-        # instead of expanding Python-side owner state here.
-        if strategy == "file_descriptor":
-            import mmap
-            import os
-            import tempfile
-
-            fd, filename = tempfile.mkstemp(prefix="candle_fd_", suffix=".bin")
-            try:
-                os.ftruncate(fd, nbytes)
-                mm = mmap.mmap(fd, nbytes)
-            except Exception:
-                os.close(fd)
-                raise
-
-            dst = np.frombuffer(mm, dtype=np.uint8, count=nbytes)
-            dst[:] = self._array.view(np.uint8).reshape(-1)
-
-            self._array = dst
-            self._mmap = mm
-            self._fd = fd
-            self._tmp_file = filename
-            self._filename = filename
-            self._shared = True
-            self._sharing_mechanism = "file_descriptor"
-
-            if self._cleanup_finalizer is not None:
-                self._cleanup_finalizer.detach()
-            self._cleanup_finalizer = weakref.finalize(
-                self,
-                _close_fd_and_cleanup,
-                int(fd),
-                filename,
-            )
-            return self
-
-        if strategy == "file_system":
-            import tempfile
-
-            fd, filename = tempfile.mkstemp(prefix="candle_shm_", suffix=".bin")
-            try:
-                with open(fd, "wb", closefd=False) as f:
-                    f.truncate(nbytes)
-            finally:
-                import os
-
-                os.close(fd)
-
-            mmap_arr = np.memmap(filename, mode="r+", dtype=np.uint8, shape=(nbytes,))
-            mmap_arr[:] = self._array.view(np.uint8).reshape(-1)
-
-            self._array = mmap_arr
-            self._filename = filename
-            self._shared = True
-            self._sharing_mechanism = "file_system"
-            _register_shared_file(filename)
-
-            if self._cleanup_finalizer is not None:
-                self._cleanup_finalizer.detach()
-            # file_system lifetime is process-level; explicit cleanup occurs via cleanup_shared_files()
-            self._cleanup_finalizer = None
-            return self
-
-        raise ValueError(f"unsupported sharing strategy: {strategy}")
-
-    def is_shared(self):
-        return self._shared
-
-    def shared_memory_meta(self):
-        if self._sharing_mechanism == "file_descriptor":
-            return {
-                "mechanism": "file_descriptor",
-                "fd": int(self._fd),
-                "filename": self._filename,
-                "nbytes": int(self._array.nbytes),
-            }
-        if self._sharing_mechanism == "file_system":
-            return {
-                "mechanism": "file_system",
-                "filename": self._filename,
-                "nbytes": int(self._array.nbytes),
-            }
-        return None
-
-    def typed_view(self, dtype, size):
-        return np.frombuffer(self._array, dtype=to_numpy_dtype(dtype), count=int(size))
-
-    @classmethod
-    def from_shared_memory(cls, filename, nbytes):
-        data = np.memmap(filename, mode="r+", dtype=np.uint8, shape=(int(nbytes),))
-        _register_shared_file(filename)
-        return cls(data, filename=filename, shared=True, sharing_mechanism="file_system")
-
-    @classmethod
-    def from_shared_fd(cls, fd, nbytes, filename=None):
-        import mmap
-
-        fd = int(fd)
-        mm = mmap.mmap(fd, int(nbytes))
-        arr = np.frombuffer(mm, dtype=np.uint8, count=int(nbytes))
-        storage = cls(
-            arr,
-            filename=filename,
-            shared=True,
-            mmap_obj=mm,
-            fd=fd,
-            tmp_file=filename,
-            sharing_mechanism="file_descriptor",
-        )
-        storage._cleanup_finalizer = weakref.finalize(
-            storage,
-            _close_fd_and_cleanup,
-            fd,
-            filename,
-        )
-        return storage
-
-    @classmethod
-    def from_file(cls, filename, shared=False):
-        data = np.memmap(filename, mode="r+", dtype=np.uint8)
-        return cls(data, filename=filename, shared=shared)
-
-    def filename(self):
-        return self._filename
 
 
 _npu_allocator_mod = None  # cached after first NPU storage creation
@@ -531,6 +262,10 @@ class _MetaUntypedStorage(UntypedStorage):
     def resize_(self, new_nbytes):
         self._nbytes = int(new_nbytes)
         return self
+
+
+UntypedStorage.register(CyCPUUntypedStorage)
+UntypedStorage.register(CyPinnedCPUUntypedStorage)
 
 
 class TypedStorage:
@@ -886,7 +621,7 @@ class Storage(TypedStorage):
 
 def typed_storage_from_numpy(arr, dtype, device=None):
     arr = np.ascontiguousarray(arr, dtype=to_numpy_dtype(dtype))
-    untyped = _CPUUntypedStorage(arr.view(np.uint8), device=device)
+    untyped = CyCPUUntypedStorage(arr.view(np.uint8), device=device)
     return TypedStorage(untyped, dtype, arr.size, data=arr)
 
 
@@ -1019,6 +754,6 @@ def pinned_cpu_typed_storage_from_numpy(arr, dtype, device=None):
     buf = np.ctypeslib.as_array((ctypes.c_uint8 * size).from_address(int(host_ptr)))
     buf[:] = arr.view(np.uint8).reshape(-1)
     raw = np.frombuffer(buf, dtype=np.uint8)
-    untyped = _PinnedCPUUntypedStorage(raw, host_ptr, device=device)
+    untyped = CyPinnedCPUUntypedStorage(raw, host_ptr, device=device)
     data = np.frombuffer(raw, dtype=to_numpy_dtype(dtype), count=arr.size)
     return TypedStorage(untyped, dtype, arr.size, data=data)

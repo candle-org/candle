@@ -1,8 +1,9 @@
 from multiprocessing import reduction
 
 from .. import multiprocessing as _mt_mp
+from .._cython._storage import CyCPUUntypedStorage  # pylint: disable=import-error,no-name-in-module
 from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
-from .._storage import _CPUUntypedStorage, TypedStorage
+from .._storage import TypedStorage
 from .._tensor import Tensor
 
 
@@ -17,7 +18,7 @@ _NON_LEAF_ERR_MSG = (
 def _rebuild_cpu_storage_from_meta(meta):
     mechanism = meta["mechanism"]
     if mechanism == "file_system":
-        return _CPUUntypedStorage.from_shared_memory(meta["filename"], meta["nbytes"])
+        return CyCPUUntypedStorage.from_shared_memory(meta["filename"], meta["nbytes"])
     if mechanism == "file_descriptor":
         fd = meta.get("fd")
         if fd is None:
@@ -25,7 +26,7 @@ def _rebuild_cpu_storage_from_meta(meta):
             if dup_fd is None:
                 raise RuntimeError("file_descriptor storage metadata missing fd/dup_fd")
             fd = dup_fd.detach()
-        return _CPUUntypedStorage.from_shared_fd(fd, meta["nbytes"], filename=meta.get("filename"))
+        return CyCPUUntypedStorage.from_shared_fd(fd, meta["nbytes"], filename=meta.get("filename"))
     raise RuntimeError(f"Unsupported CPU shared storage mechanism: {mechanism}")
 
 
@@ -49,7 +50,7 @@ def _rebuild_typed_storage(untyped, dtype, size):
 
 def _reduce_typed_storage(storage):
     untyped = storage.untyped_storage()
-    if isinstance(untyped, _CPUUntypedStorage):
+    if isinstance(untyped, CyCPUUntypedStorage):
         reduced = _reduce_cpu_storage(untyped)
         rebuild_untyped, args = reduced
         return (
@@ -94,7 +95,7 @@ def _rebuild_tensor_from_reduced_storage(rebuild_storage, storage_args, meta):
 
 
 def init_reductions():
-    reduction.register(_CPUUntypedStorage, _reduce_cpu_storage)
+    reduction.register(CyCPUUntypedStorage, _reduce_cpu_storage)
     reduction.register(TypedStorage, _reduce_typed_storage)
     reduction.register(Tensor, _reduce_tensor)
 

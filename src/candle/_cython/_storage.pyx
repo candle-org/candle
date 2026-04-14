@@ -8,7 +8,476 @@ runtime-owned device pointers and helpers that Python storage shells call into.
 NPU path is intentionally Cython-only — no Python fallback.
 """
 
+import ctypes
+import mmap
+import os
+import tempfile
+import threading
+import weakref
+
+import numpy as np
+
 from libc.stdint cimport int64_t
+
+
+# ---------------------------------------------------------------------------
+# Shared-file bookkeeping helpers for Python storage shell
+# ---------------------------------------------------------------------------
+
+_SHARED_FILE_REGISTRY = set()
+_SHARED_FILE_REGISTRY_LOCK = threading.Lock()
+
+
+def cy_register_shared_file(path):
+    if not path:
+        return
+    with _SHARED_FILE_REGISTRY_LOCK:
+        _SHARED_FILE_REGISTRY.add(path)
+
+
+def cy_unregister_shared_file(path):
+    if not path:
+        return
+    with _SHARED_FILE_REGISTRY_LOCK:
+        _SHARED_FILE_REGISTRY.discard(path)
+
+
+def cy_cleanup_shared_files():
+    with _SHARED_FILE_REGISTRY_LOCK:
+        paths = list(_SHARED_FILE_REGISTRY)
+    for path in paths:
+        cy_cleanup_shared_resource(None, path)
+
+
+def cy_cleanup_shared_resource(fd=None, path=None):
+    if fd is not None:
+        try:
+            os.close(int(fd))
+        except Exception:
+            pass
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        return
+    cy_unregister_shared_file(path)
+
+
+def cy_shared_files_count():
+    with _SHARED_FILE_REGISTRY_LOCK:
+        return len(_SHARED_FILE_REGISTRY)
+
+
+class CyPinnedCPUUntypedStorage:
+    def __init__(self, array, ptr, filename=None, shared=False, device=None):
+        from candle._device import device as Device
+        from candle._backends.npu import runtime as npu_runtime
+
+        if isinstance(device, str):
+            device = Device(device)
+        self.device = device or Device("cpu")
+        self._array = array
+        self._shared = shared
+        self._filename = filename
+        self._ptr = int(ptr)
+        self._finalizer = weakref.finalize(self, npu_runtime.free_host, self._ptr)
+
+    def __repr__(self):
+        values = [f" {item}" for item in self.buffer().tolist()]
+        body = "\n".join(values) if values else " "
+        return (
+            f"{body}\n"
+            f"[torch.storage.UntypedStorage(device={self.device.type}) of size {self.nbytes()}]"
+        )
+
+    def __len__(self):
+        return self.nbytes()
+
+    def __iter__(self):
+        return iter(self.buffer().tolist())
+
+    def __getitem__(self, index):
+        if isinstance(index, bool):
+            raise TypeError("can't index a torch.UntypedStorage with bool")
+        if isinstance(index, np.integer):
+            index = int(index)
+        elif isinstance(index, np.generic):
+            raise TypeError(
+                f"can't index a torch.UntypedStorage with numpy.{type(index).__name__}"
+            )
+        if isinstance(index, np.ndarray):
+            raise TypeError("can't index a torch.UntypedStorage with numpy.ndarray")
+        if isinstance(index, float):
+            raise TypeError("can't index a torch.UntypedStorage with float")
+        if isinstance(index, str):
+            raise TypeError("can't index a torch.UntypedStorage with str")
+        if isinstance(index, bytes):
+            raise TypeError("can't index a torch.UntypedStorage with bytes")
+        if isinstance(index, bytearray):
+            raise TypeError("can't index a torch.UntypedStorage with bytearray")
+        if isinstance(index, memoryview):
+            raise TypeError("can't index a torch.UntypedStorage with memoryview")
+        if isinstance(index, list):
+            raise TypeError("can't index a torch.UntypedStorage with list")
+        if isinstance(index, tuple):
+            raise TypeError("can't index a torch.UntypedStorage with tuple")
+        from candle._tensor import Tensor
+
+        if isinstance(index, Tensor):
+            raise TypeError("can't index a torch.UntypedStorage with Tensor")
+        if index is None:
+            raise TypeError("can't index a torch.UntypedStorage with NoneType")
+        if index is Ellipsis:
+            raise TypeError("can't index a torch.UntypedStorage with ellipsis")
+        if isinstance(index, slice):
+            return CyCPUUntypedStorage(
+                self.buffer()[index],
+                filename=None,
+                shared=self._shared,
+                device=self.device,
+            )
+        try:
+            return self.buffer()[index].item()
+        except IndexError as exc:
+            err_index = index
+            if isinstance(index, int) and index < 0:
+                err_index = index + self.nbytes()
+            raise IndexError(
+                f"index {err_index} out of range for storage of size {self.nbytes()}"
+            ) from exc
+
+    def __setitem__(self, index, value):
+        from candle._tensor import Tensor
+
+        if isinstance(index, np.integer):
+            index = int(index)
+        elif (
+            isinstance(
+                index,
+                (
+                    bool,
+                    list,
+                    tuple,
+                    np.generic,
+                    np.ndarray,
+                    Tensor,
+                    float,
+                    str,
+                    bytes,
+                    bytearray,
+                    memoryview,
+                ),
+            )
+            or index is None
+            or index is Ellipsis
+        ):
+            raise SystemError("error return without exception set")
+        try:
+            self.buffer()[index] = value
+        except IndexError as exc:
+            raise RuntimeError("out of bounds") from exc
+
+    def nbytes(self):
+        return int(self._array.nbytes)
+
+    def data_ptr(self):
+        return int(self._array.ctypes.data)
+
+    def buffer(self):
+        return self._array
+
+    def resize_(self, new_nbytes):
+        raise NotImplementedError("pinned storage cannot resize")
+
+    def share_memory_(self):
+        self._shared = True
+        return self
+
+    def is_shared(self):
+        return self._shared
+
+    def is_pinned(self):
+        return True
+
+    @classmethod
+    def from_file(cls, filename, shared=False):
+        data = np.memmap(filename, mode="r+", dtype=np.uint8)
+        return cls(data, int(data.ctypes.data), filename=filename, shared=shared)
+
+    def filename(self):
+        return self._filename
+
+
+class CyCPUUntypedStorage:
+    def __init__(
+        self,
+        array,
+        filename=None,
+        shared=False,
+        device=None,
+        mmap_obj=None,
+        fd=None,
+        tmp_file=None,
+        sharing_mechanism=None,
+        cleanup_finalizer=None,
+    ):
+        from candle._device import device as Device
+
+        if isinstance(device, str):
+            device = Device(device)
+        self.device = device or Device("cpu")
+        self._array = array
+        self._shared = shared
+        self._filename = filename
+        self._mmap = mmap_obj
+        self._fd = fd
+        self._tmp_file = tmp_file
+        self._sharing_mechanism = sharing_mechanism
+        self._cleanup_finalizer = cleanup_finalizer
+
+    def __repr__(self):
+        values = [f" {item}" for item in self.buffer().tolist()]
+        body = "\n".join(values) if values else " "
+        return (
+            f"{body}\n"
+            f"[torch.storage.UntypedStorage(device={self.device.type}) of size {self.nbytes()}]"
+        )
+
+    def __len__(self):
+        return self.nbytes()
+
+    def __iter__(self):
+        return iter(self.buffer().tolist())
+
+    def __getitem__(self, index):
+        if isinstance(index, bool):
+            raise TypeError("can't index a torch.UntypedStorage with bool")
+        if isinstance(index, np.integer):
+            index = int(index)
+        elif isinstance(index, np.generic):
+            raise TypeError(
+                f"can't index a torch.UntypedStorage with numpy.{type(index).__name__}"
+            )
+        if isinstance(index, np.ndarray):
+            raise TypeError("can't index a torch.UntypedStorage with numpy.ndarray")
+        if isinstance(index, float):
+            raise TypeError("can't index a torch.UntypedStorage with float")
+        if isinstance(index, str):
+            raise TypeError("can't index a torch.UntypedStorage with str")
+        if isinstance(index, bytes):
+            raise TypeError("can't index a torch.UntypedStorage with bytes")
+        if isinstance(index, bytearray):
+            raise TypeError("can't index a torch.UntypedStorage with bytearray")
+        if isinstance(index, memoryview):
+            raise TypeError("can't index a torch.UntypedStorage with memoryview")
+        if isinstance(index, list):
+            raise TypeError("can't index a torch.UntypedStorage with list")
+        if isinstance(index, tuple):
+            raise TypeError("can't index a torch.UntypedStorage with tuple")
+        from candle._tensor import Tensor
+
+        if isinstance(index, Tensor):
+            raise TypeError("can't index a torch.UntypedStorage with Tensor")
+        if index is None:
+            raise TypeError("can't index a torch.UntypedStorage with NoneType")
+        if index is Ellipsis:
+            raise TypeError("can't index a torch.UntypedStorage with ellipsis")
+        if isinstance(index, slice):
+            return CyCPUUntypedStorage(
+                self.buffer()[index],
+                filename=None,
+                shared=self._shared,
+                device=self.device,
+            )
+        try:
+            return self.buffer()[index].item()
+        except IndexError as exc:
+            err_index = index
+            if isinstance(index, int) and index < 0:
+                err_index = index + self.nbytes()
+            raise IndexError(
+                f"index {err_index} out of range for storage of size {self.nbytes()}"
+            ) from exc
+
+    def __setitem__(self, index, value):
+        from candle._tensor import Tensor
+
+        if isinstance(index, np.integer):
+            index = int(index)
+        elif (
+            isinstance(
+                index,
+                (
+                    bool,
+                    list,
+                    tuple,
+                    np.generic,
+                    np.ndarray,
+                    Tensor,
+                    float,
+                    str,
+                    bytes,
+                    bytearray,
+                    memoryview,
+                ),
+            )
+            or index is None
+            or index is Ellipsis
+        ):
+            raise SystemError("error return without exception set")
+        try:
+            self.buffer()[index] = value
+        except IndexError as exc:
+            raise RuntimeError("out of bounds") from exc
+
+    def nbytes(self):
+        return int(self._array.nbytes)
+
+    def data_ptr(self):
+        return int(self._array.ctypes.data)
+
+    def buffer(self):
+        return self._array
+
+    def resize_(self, new_nbytes):
+        if self._filename is not None or self._shared:
+            raise RuntimeError("Trying to resize storage that is not resizable")
+        new_array = np.empty(int(new_nbytes), dtype=np.uint8)
+        old_bytes = self._array.view(np.uint8)
+        copy_bytes = min(old_bytes.size, new_array.size)
+        new_array[:copy_bytes] = old_bytes[:copy_bytes]
+        self._array = new_array
+        return self
+
+    def share_memory_(self, strategy="file_descriptor"):
+        if self._shared:
+            return self
+
+        nbytes = int(self._array.nbytes)
+        if nbytes == 0:
+            self._shared = True
+            self._sharing_mechanism = strategy
+            return self
+
+        if strategy == "file_descriptor":
+            fd, filename = tempfile.mkstemp(prefix="candle_fd_", suffix=".bin")
+            try:
+                os.ftruncate(fd, nbytes)
+                mm = mmap.mmap(fd, nbytes)
+            except Exception:
+                os.close(fd)
+                raise
+
+            dst = np.frombuffer(mm, dtype=np.uint8, count=nbytes)
+            dst[:] = self._array.view(np.uint8).reshape(-1)
+
+            self._array = dst
+            self._mmap = mm
+            self._fd = fd
+            self._tmp_file = filename
+            self._filename = filename
+            self._shared = True
+            self._sharing_mechanism = "file_descriptor"
+
+            if self._cleanup_finalizer is not None:
+                self._cleanup_finalizer.detach()
+            self._cleanup_finalizer = weakref.finalize(
+                self,
+                cy_cleanup_shared_resource,
+                int(fd),
+                filename,
+            )
+            return self
+
+        if strategy == "file_system":
+            fd, filename = tempfile.mkstemp(prefix="candle_shm_", suffix=".bin")
+            try:
+                with open(fd, "wb", closefd=False) as f:
+                    f.truncate(nbytes)
+            finally:
+                os.close(fd)
+
+            mmap_arr = np.memmap(filename, mode="r+", dtype=np.uint8, shape=(nbytes,))
+            mmap_arr[:] = self._array.view(np.uint8).reshape(-1)
+
+            self._array = mmap_arr
+            self._filename = filename
+            self._shared = True
+            self._sharing_mechanism = "file_system"
+            cy_register_shared_file(filename)
+
+            if self._cleanup_finalizer is not None:
+                self._cleanup_finalizer.detach()
+            self._cleanup_finalizer = None
+            return self
+
+        raise ValueError(f"unsupported sharing strategy: {strategy}")
+
+    def is_shared(self):
+        return self._shared
+
+    def is_pinned(self):
+        return False
+
+    def shared_memory_meta(self):
+        if self._sharing_mechanism == "file_descriptor":
+            return {
+                "mechanism": "file_descriptor",
+                "fd": int(self._fd),
+                "filename": self._filename,
+                "nbytes": int(self._array.nbytes),
+            }
+        if self._sharing_mechanism == "file_system":
+            return {
+                "mechanism": "file_system",
+                "filename": self._filename,
+                "nbytes": int(self._array.nbytes),
+            }
+        return None
+
+    def typed_view(self, dtype, size):
+        from candle._dtype import to_numpy_dtype
+
+        return np.frombuffer(self._array, dtype=to_numpy_dtype(dtype), count=int(size))
+
+    @classmethod
+    def from_shared_memory(cls, filename, nbytes):
+        data = np.memmap(filename, mode="r+", dtype=np.uint8, shape=(int(nbytes),))
+        cy_register_shared_file(filename)
+        return cls(data, filename=filename, shared=True, sharing_mechanism="file_system")
+
+    @classmethod
+    def from_shared_fd(cls, fd, nbytes, filename=None):
+        fd = int(fd)
+        mm = mmap.mmap(fd, int(nbytes))
+        arr = np.frombuffer(mm, dtype=np.uint8, count=int(nbytes))
+        storage = cls(
+            arr,
+            filename=filename,
+            shared=True,
+            mmap_obj=mm,
+            fd=fd,
+            tmp_file=filename,
+            sharing_mechanism="file_descriptor",
+        )
+        storage._cleanup_finalizer = weakref.finalize(
+            storage,
+            cy_cleanup_shared_resource,
+            fd,
+            filename,
+        )
+        return storage
+
+    @classmethod
+    def from_file(cls, filename, shared=False):
+        data = np.memmap(filename, mode="r+", dtype=np.uint8)
+        return cls(data, filename=filename, shared=shared)
+
+    def filename(self):
+        return self._filename
 
 
 # ---------------------------------------------------------------------------
