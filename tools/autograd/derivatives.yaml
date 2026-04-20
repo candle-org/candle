@@ -526,8 +526,8 @@
   self: cumprod_backward(grad.to(self.scalar_type()), self, dim, result)
   result: "cumprod_jvp(self_t, self_p, result, dim).to(dtype.has_value() ? *dtype : self_p.scalar_type())"
 
-- name: cumsum(Tensor self, int dim, *, ScalarType? dtype=None) -> Tensor
-  self: cumsum_backward(grad.to(self.scalar_type()), dim)
+- name: cumsum(Tensor input, int dim, *, ScalarType? dtype=None) -> Tensor
+  input: cumsum_backward(grad.to(input.scalar_type()), dim)
   result: auto_linear
 
 - name: cummax(Tensor self, int dim) -> (Tensor values, Tensor indices)
@@ -727,8 +727,8 @@
   self: grad / exponent.exp2()
   mantissa: self_t / exponent.exp2()
 
-- name: gather(Tensor self, int dim, Tensor index, *, bool sparse_grad=False) -> Tensor
-  self: gather_backward(grad, self, dim, index, sparse_grad)
+- name: gather(Tensor input, int dim, Tensor index, *, bool sparse_grad=False) -> Tensor
+  input: gather_backward(grad, input, dim, index, sparse_grad)
   index: non_differentiable
   result: auto_linear
 
@@ -1395,9 +1395,9 @@
   exponent: pow_backward_exponent(grad, self, exponent, result)
   result: auto_element_wise
 
-- name: prod(Tensor self, *, ScalarType? dtype=None) -> Tensor
-  self: prod_backward(grad, self.to(grad.scalar_type()), result)
-  result: (prod_backward(at::ones({}, result.options()).expand_as(result), self_p.to(result.scalar_type()), result) * self_t.conj()).sum().conj()
+- name: prod(Tensor input, *, ScalarType? dtype=None) -> Tensor
+  input: prod_backward(grad, input.to(grad.scalar_type()), result)
+  result: (prod_backward(at::ones({}, result.options()).expand_as(result), input_p.to(result.scalar_type()), result) * input_t.conj()).sum().conj()
 
 - name: prod.dim_int(Tensor self, int dim, bool keepdim=False, *, ScalarType? dtype=None) -> Tensor
   self: prod_backward(grad, self.to(grad.scalar_type()), result, dim, keepdim)
@@ -1446,8 +1446,8 @@
   self: renorm_backward(grad, self, p, dim, maxnorm)
   result: renorm_jvp(self_p, self_t, p, dim, maxnorm)
 
-- name: repeat(Tensor self, SymInt[] repeats) -> Tensor
-  self: repeat_backward(grad, repeats, self.sym_sizes())
+- name: repeat(Tensor input, SymInt[] repeats) -> Tensor
+  input: repeat_backward(grad, repeats, input.sym_sizes())
   result: auto_linear
 
 - name: special_entr(Tensor self) -> Tensor
@@ -1591,9 +1591,9 @@
   output_differentiability: [True, False, False, False]  # LU is an auxiliary tensor not exposed to the user
 
 - name: sort(Tensor self, int dim=-1, bool descending=False) -> (Tensor values, Tensor indices)
-  self: value_selecting_reduction_backward_symint(grad, dim, indices, self.sym_sizes(), true)
+  self: value_selecting_reduction_backward_symint(grad, dim, result1, self.sym_sizes(), true)
   output_differentiability: [True, False]
-  values: gather_with_keepdimed_indices(self_t, dim, indices, true)
+  values: gather_with_keepdimed_indices(self_t, dim, result1, true)
 
 - name: sort.stable(Tensor self, *, bool? stable, int dim=-1, bool descending=False) -> (Tensor values, Tensor indices)
   self: value_selecting_reduction_backward_symint(grad, dim, indices, self.sym_sizes(), true)
@@ -1763,9 +1763,9 @@
   result: auto_element_wise
 
 - name: topk(Tensor self, SymInt k, int dim=-1, bool largest=True, bool sorted=True) -> (Tensor values, Tensor indices)
-  self: value_selecting_reduction_backward_symint(grad, dim, indices, self.sym_sizes(), true)
+  self: value_selecting_reduction_backward_symint(grad, dim, result1, self.sym_sizes(), true)
   output_differentiability: [True, False]
-  values: gather(self_t, dim, indices)
+  values: gather(self_t, dim, result1)
 
 - name: trace(Tensor self) -> Tensor
   self: trace_backward_symint(grad, self.sym_sizes())

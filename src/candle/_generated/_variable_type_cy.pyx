@@ -1027,15 +1027,15 @@ def cumprod_autograd(self_, dim, dtype=None, **_kwargs):
     return result
 
 
-def cumsum_autograd(self_, dim, dtype=None, **_kwargs):
+def cumsum_autograd(input_, dim, dtype=None, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
-    result = _redispatch("cumsum", raw_keyset, self_, dim, dtype, **_kwargs)
-    if _GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.CumsumBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+    result = _redispatch("cumsum", raw_keyset, input_, dim, dtype, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.CumsumBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
+        grad_fn._save(input_=input_)
         grad_fn._dim = dim
         grad_fn._dtype = dtype
         result.grad_fn = grad_fn
@@ -1781,15 +1781,15 @@ def frexp_tensor_autograd(self_, **_kwargs):
     return result
 
 
-def gather_autograd(self_, dim, index, sparse_grad=False, **_kwargs):
+def gather_autograd(input_, dim, index, sparse_grad=False, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
-    result = _redispatch("gather", raw_keyset, self_, dim, index, sparse_grad, **_kwargs)
-    if _GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.GatherBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+    result = _redispatch("gather", raw_keyset, input_, dim, index, sparse_grad, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.GatherBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(index=index, self_=self_)
+        grad_fn._save(index=index, input_=input_)
         grad_fn._dim = dim
         grad_fn._sparse_grad = sparse_grad
         result.grad_fn = grad_fn
@@ -3969,15 +3969,15 @@ def pow_scalar_autograd(self_, exponent, **_kwargs):
     return result
 
 
-def prod_autograd(self_, dtype=None, **_kwargs):
+def prod_autograd(input_, dtype=None, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
-    result = _redispatch("prod", raw_keyset, self_, dtype, **_kwargs)
-    if _GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.ProdBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+    result = _redispatch("prod", raw_keyset, input_, dtype, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.ProdBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, result=result)
+        grad_fn._save(input_=input_, result=result)
         grad_fn._dtype = dtype
         result.grad_fn = grad_fn
         result.requires_grad = True
@@ -4150,15 +4150,15 @@ def renorm_autograd(self_, p, dim, maxnorm, **_kwargs):
     return result
 
 
-def repeat_autograd(self_, repeats, **_kwargs):
+def repeat_autograd(input_, repeats, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
-    result = _redispatch("repeat", raw_keyset, self_, repeats, **_kwargs)
-    if _GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.RepeatBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+    result = _redispatch("repeat", raw_keyset, input_, repeats, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.RepeatBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
+        grad_fn._save(input_=input_)
         grad_fn._repeats = repeats
         result.grad_fn = grad_fn
         result.requires_grad = True
@@ -4601,7 +4601,7 @@ def sort_autograd(self_, dim=-1, descending=False, **_kwargs):
     if _GradMode.enabled and (self_.requires_grad):
         grad_fn = _F.SortBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, indices=result)
+        grad_fn._save(self_=self_, result1=result[1])
         grad_fn._dim = dim
         grad_fn._descending = descending
         result[0].grad_fn = grad_fn
@@ -5124,7 +5124,7 @@ def topk_autograd(self_, k, dim=-1, largest=True, sorted=True, **_kwargs):
     if _GradMode.enabled and (self_.requires_grad):
         grad_fn = _F.TopkBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, indices=result)
+        grad_fn._save(self_=self_, result1=result[1])
         grad_fn._k = k
         grad_fn._dim = dim
         grad_fn._largest = largest
@@ -10662,12 +10662,12 @@ def cumprod_autograd_post(result, self_, dim, dtype=None, *, raw_keyset, active_
     return result
 
 
-def cumsum_autograd_post(result, self_, dim, dtype=None, *, raw_keyset, active_keyset, **_kwargs):
+def cumsum_autograd_post(result, input_, dim, dtype=None, *, raw_keyset, active_keyset, **_kwargs):
     _ensure_refs()
-    if _GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.CumsumBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.CumsumBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
+        grad_fn._save(input_=input_)
         grad_fn._dim = dim
         grad_fn._dtype = dtype
         result.grad_fn = grad_fn
@@ -11269,12 +11269,12 @@ def frexp_tensor_autograd_post(result, self_, *, raw_keyset, active_keyset, **_k
     return result
 
 
-def gather_autograd_post(result, self_, dim, index, sparse_grad=False, *, raw_keyset, active_keyset, **_kwargs):
+def gather_autograd_post(result, input_, dim, index, sparse_grad=False, *, raw_keyset, active_keyset, **_kwargs):
     _ensure_refs()
-    if _GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.GatherBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.GatherBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(index=index, self_=self_)
+        grad_fn._save(index=index, input_=input_)
         grad_fn._dim = dim
         grad_fn._sparse_grad = sparse_grad
         result.grad_fn = grad_fn
@@ -13017,12 +13017,12 @@ def pow_scalar_autograd_post(result, self_, exponent, *, raw_keyset, active_keys
     return result
 
 
-def prod_autograd_post(result, self_, dtype=None, *, raw_keyset, active_keyset, **_kwargs):
+def prod_autograd_post(result, input_, dtype=None, *, raw_keyset, active_keyset, **_kwargs):
     _ensure_refs()
-    if _GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.ProdBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.ProdBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, result=result)
+        grad_fn._save(input_=input_, result=result)
         grad_fn._dtype = dtype
         result.grad_fn = grad_fn
         result.requires_grad = True
@@ -13162,12 +13162,12 @@ def renorm_autograd_post(result, self_, p, dim, maxnorm, *, raw_keyset, active_k
     return result
 
 
-def repeat_autograd_post(result, self_, repeats, *, raw_keyset, active_keyset, **_kwargs):
+def repeat_autograd_post(result, input_, repeats, *, raw_keyset, active_keyset, **_kwargs):
     _ensure_refs()
-    if _GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.RepeatBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.RepeatBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
+        grad_fn._save(input_=input_)
         grad_fn._repeats = repeats
         result.grad_fn = grad_fn
         result.requires_grad = True
@@ -13523,7 +13523,7 @@ def sort_autograd_post(result, self_, dim=-1, descending=False, *, raw_keyset, a
     if _GradMode.enabled and (self_.requires_grad):
         grad_fn = _F.SortBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, indices=result)
+        grad_fn._save(self_=self_, result1=result[1])
         grad_fn._dim = dim
         grad_fn._descending = descending
         result[0].grad_fn = grad_fn
@@ -13943,7 +13943,7 @@ def topk_autograd_post(result, self_, k, dim=-1, largest=True, sorted=True, *, r
     if _GradMode.enabled and (self_.requires_grad):
         grad_fn = _F.TopkBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, indices=result)
+        grad_fn._save(self_=self_, result1=result[1])
         grad_fn._k = k
         grad_fn._dim = dim
         grad_fn._largest = largest
@@ -17747,8 +17747,19 @@ norm_autograd = norm_scalar_autograd
 norm_autograd_post = norm_scalar_autograd_post
 normal_autograd = normal_tensor_float_autograd
 normal_autograd_post = normal_tensor_float_autograd_post
-pow_autograd = pow_tensor_scalar_autograd
-pow_autograd_post = pow_tensor_scalar_autograd_post
+def pow_autograd(self_, exponent, **_kwargs):
+    if hasattr(self_, 'device'):
+        if hasattr(exponent, 'device'):
+            return pow_tensor_tensor_autograd(self_, exponent, **_kwargs)
+        return pow_tensor_scalar_autograd(self_, exponent, **_kwargs)
+    return pow_scalar_autograd(self_, exponent, **_kwargs)
+
+def pow_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_kwargs):
+    if hasattr(self_, 'device'):
+        if hasattr(exponent, 'device'):
+            return pow_tensor_tensor_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+        return pow_tensor_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    return pow_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
 random__autograd = random__from_autograd
 random__autograd_post = random__from_autograd_post
 remainder_autograd = remainder_scalar_autograd

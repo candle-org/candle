@@ -8,7 +8,11 @@ from .formula_transpiler import transpile
 def gen_functions(infos: list[DifferentiabilityInfo]) -> str:
     """Generate the full functions.py source."""
     parts = [_HEADER]
+    seen_backward_names = set()
     for info in infos:
+        if info.backward_name in seen_backward_names:
+            continue
+        seen_backward_names.add(info.backward_name)
         parts.append(_gen_one_node(info))
     seen_ops = set()
     alias_lines = []
@@ -42,6 +46,15 @@ from .._backends.autograd import (
 )
 from .._dispatch.dispatcher import redispatch
 from ..autograd.utils import reduce_grad
+from .functions_legacy import (
+    _as_strided_backward_helper,
+    _as_strided_scatter_backward_helper,
+    _pow_backward_exponent_helper,
+    _pow_backward_helper,
+    _pow_backward_self_helper,
+    _slice_backward_wrapper_helper,
+    _to_padded_tensor_backward_helper,
+)
 
 
 def _inverse_permutation(dims):
@@ -73,6 +86,18 @@ def _exp2_backward_helper(grad, result, keyset):
 def _sigmoid_backward_helper(grad, result, keyset):
     ones = result._ones_like()
     return redispatch("mul", keyset, grad, redispatch("mul", keyset, result, redispatch("add", keyset, ones, redispatch("neg", keyset, result))))
+
+
+def _erf_backward_helper(grad, self_, keyset):
+    coeff = _scalar_tensor_like(self_, 2.0 / _math.sqrt(_math.pi))
+    x_sq = redispatch("mul", keyset, self_, self_)
+    neg_x_sq = redispatch("neg", keyset, x_sq)
+    exp_term = redispatch("exp", keyset, neg_x_sq)
+    return redispatch("mul", keyset, grad, redispatch("mul", keyset, coeff, exp_term))
+
+
+def _hardtanh_backward_helper(grad, self_, min_val, max_val, keyset):
+    return _hardtanh_grad(grad, self_, min_val, max_val, keyset)
 
 
 def _tanh_backward_helper(grad, result, keyset):
@@ -1461,6 +1486,13 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
     saved_outputs = info.all_saved_outputs
     non_tensor_args = info.non_tensor_args
 
+    # Upstream keeps SoftmaxBackward0 on the self-based helper path even though
+    # the raw derivative entry references `result`. The legacy softmax forward
+    # wrapper saves only `self`, so preserving the upstream save/load surface is
+    # required for compatibility.
+    if cls_name == "SoftmaxBackward0":
+        saved_inputs = ["self"]
+        saved_outputs = []
     # Detect if any differentiable input is a Tensor[]
     has_tensor_list = any(a.is_tensor_list for a in info.differentiable_inputs)
 
@@ -1573,6 +1605,63 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
         lines.append(f"        grad_input_mask = [{', '.join(mask_parts)}]")
     if info.derivatives:
         lines.append("        with _grad_context(keyset):")
+
+    if info.backward_name == "MulTensorBackward0":
+        lines.append("            _self_dtype = self_.dtype if hasattr(self_, 'dtype') else grad.dtype")
+        lines.append("            _other_dtype = other.dtype if hasattr(other, 'dtype') else grad.dtype")
+        lines.append("            grad_self = _sum_to_backward_helper(_mul_tensor_backward_helper(grad, other, _self_dtype, keyset), self_.shape if hasattr(self_, 'shape') else (), keyset)")
+        lines.append("            grad_other = _sum_to_backward_helper(_mul_tensor_backward_helper(grad, self_, _other_dtype, keyset), other.shape, keyset) if hasattr(other, 'shape') else None")
+        lines.append("        return (grad_self, grad_other,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "SoftmaxBackward0":
+        lines.append("            grad_self = _softmax_grad(grad, self_, dim, keyset)")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "EluBackward0":
+        lines.append("            grad_self = _elu_grad(grad, self_, alpha, keyset)")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "CeluBackward0":
+        lines.append("            grad_self = _celu_grad(grad, self_, alpha, keyset)")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampTensorBackward0":
+        lines.append("            grad_input_mask = [True, (min is not None), (max is not None)]")
+        lines.append("            grad_self = _clamp_backward_helper(grad, self_, min, max, keyset)")
+        lines.append("            grad_min, grad_max = None, None")
+        lines.append("        return (grad_self, grad_min, grad_max,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampBackward0":
+        lines.append("            grad_self = _clamp_backward_helper(grad, self_, min, max, keyset)")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampMinBackward0":
+        lines.append("            grad_self = redispatch(\"where\", keyset, redispatch(\"ge\", keyset, self_, min), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampMinTensorBackward0":
+        lines.append("            grad_self = redispatch(\"where\", keyset, redispatch(\"ge\", keyset, self_, min), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("            grad_min = redispatch(\"where\", keyset, redispatch(\"lt\", keyset, self_, min), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("        return (grad_self, grad_min,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampMaxBackward0":
+        lines.append("            grad_self = redispatch(\"where\", keyset, redispatch(\"le\", keyset, self_, max), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("        return (grad_self,)")
+        return "\n".join(lines)
+
+    if info.backward_name == "ClampMaxTensorBackward0":
+        lines.append("            grad_self = redispatch(\"where\", keyset, redispatch(\"le\", keyset, self_, max), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("            grad_max = redispatch(\"where\", keyset, redispatch(\"gt\", keyset, self_, max), grad, _scalar_tensor_like(grad, 0.))")
+        lines.append("        return (grad_self, grad_max,)")
+        return "\n".join(lines)
 
     for deriv in info.derivatives:
         formula = transpile(deriv.formula)
@@ -1854,7 +1943,11 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
     import re as _re
     parts = [_PYX_HEADER]
     parts.append(_get_pyx_helpers_block())
+    seen_backward_names = set()
     for info in infos:
+        if info.backward_name in seen_backward_names:
+            continue
+        seen_backward_names.add(info.backward_name)
         parts.append(_gen_one_node_pyx(info))
     seen_ops: set = set()
     alias_lines = []
