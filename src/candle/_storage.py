@@ -625,6 +625,14 @@ def typed_storage_from_numpy(arr, dtype, device=None):
     return TypedStorage(untyped, dtype, arr.size, data=arr)
 
 
+def typed_storage_from_numpy_view(arr, dtype, device=None):
+    arr = np.asarray(arr, dtype=to_numpy_dtype(dtype))
+    if not arr.flags.c_contiguous:
+        raise ValueError("expected contiguous numpy view")
+    untyped = _CPUUntypedStorage(arr.view(np.uint8), device=device)
+    return TypedStorage(untyped, dtype, arr.size, data=arr)
+
+
 def empty_cpu_typed_storage(shape, dtype, device=None):
     arr = np.empty(shape, dtype=to_numpy_dtype(dtype))
     return typed_storage_from_numpy(arr, dtype, device=device)

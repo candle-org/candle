@@ -1,5 +1,6 @@
 import numpy as np
 from ._dtype import float32, int64
+from ._dtype import to_numpy_dtype
 from ._dtype import bool as bool_dtype
 from ._functional import tensor as tensor_dispatch
 from ._functional import zeros as zeros_dispatch
@@ -16,6 +17,8 @@ from ._functional import rand as rand_dispatch
 from ._functional import randint as randint_dispatch
 from ._functional import randperm as randperm_dispatch
 from ._functional import normal as normal_dispatch
+from ._storage import typed_storage_from_numpy_view
+from ._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 
 
 def _apply_requires_grad(out, requires_grad):
@@ -164,6 +167,15 @@ def from_numpy(ndarray):
     }
     dt = _numpy_to_dtype.get(ndarray.dtype.type, float32)
     return tensor_dispatch(ndarray, dtype=dt)
+
+
+def frombuffer(buffer, *, dtype, count=-1, offset=0, requires_grad=False):
+    np_dtype = to_numpy_dtype(dtype)
+    arr = np.frombuffer(buffer, dtype=np_dtype, count=count, offset=offset)
+    storage = typed_storage_from_numpy_view(arr, dtype)
+    stride = tuple(np.array(arr.strides) // arr.itemsize)
+    out = cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
+    return _apply_requires_grad(out, requires_grad)
 
 
 def as_tensor(data, dtype=None, device=None):
