@@ -1,3 +1,4 @@
+# pylint: disable=import-error,no-name-in-module,possibly-unused-variable
 import abc
 
 
@@ -541,6 +542,9 @@ def _make_legacy_classes():
 def __getattr__(name):
     if name in ("PyTorchFileReader", "PyTorchFileWriter"):
         from ._stream import PyTorchFileReader, PyTorchFileWriter
+        return locals()[name]
+    if name in ("TypedStorage", "UntypedStorage"):
+        from .storage import TypedStorage, UntypedStorage
         return locals()[name]
     _map = {
         "FloatStorage": "_FloatStorage", "DoubleStorage": "_DoubleStorage",

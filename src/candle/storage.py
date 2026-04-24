@@ -1,4 +1,5 @@
 # mypy: allow-untyped-defs
+# pylint: disable=global-variable-not-assigned
 
 from __future__ import annotations
 

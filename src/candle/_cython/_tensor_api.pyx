@@ -184,7 +184,7 @@ cdef inline void _ensure_conversion_refs():
     global _cast_tensor_dtype_npu_fn, _npu_available_fn
 
     if _typed_storage_from_numpy_fn is None:
-        from candle._storage import (
+        from candle._C import (
             typed_storage_from_numpy,
             meta_typed_storage_from_shape,
             mps_typed_storage_from_numpy,

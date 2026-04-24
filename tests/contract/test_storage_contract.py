@@ -1,7 +1,7 @@
 import tempfile
 
 import candle as torch
-import candle._storage as candle_storage
+import candle._C as candle_storage
 import torch as pt
 from .helpers import assert_torch_error
 

@@ -21,7 +21,7 @@ def test_untyped_storage_resize_cpu_bytes():
 
 def test_meta_storage_resize_changes_size():
     storage = torch.Tensor(
-        torch._storage.meta_typed_storage_from_shape((2, 3), torch.float32, device="meta"),
+        torch._C.meta_typed_storage_from_shape((2, 3), torch.float32, device="meta"),
         (2, 3),
         (3, 1),
     ).storage()
@@ -31,7 +31,7 @@ def test_meta_storage_resize_changes_size():
 
 def test_pinned_storage_resize_raises():
     try:
-        storage = torch._storage.pinned_cpu_typed_storage_from_numpy(
+        storage = torch._C.pinned_cpu_typed_storage_from_numpy(
             torch.tensor([1.0, 2.0]).numpy(),
             torch.float32,
         )

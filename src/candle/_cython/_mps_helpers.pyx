@@ -82,7 +82,7 @@ cdef inline void _ensure_runtime():
     from candle._tensor import _compute_strides, Tensor
     _compute_strides_fn = _compute_strides
     _Tensor_cls = Tensor
-    from candle._storage import (
+    from candle._C import (
         mps_typed_storage_from_numpy, _MPSUntypedStorage, TypedStorage,
     )
     _mps_typed_storage_from_numpy_fn = mps_typed_storage_from_numpy
