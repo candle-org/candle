@@ -40,7 +40,7 @@ def test_pipeline_functionalize_multi_mutation_uses_return_alias_mapping():
     )
 
     def _raw_cpu_tensor(values, ref):
-        from candle._storage import typed_storage_from_numpy
+        from candle._C import typed_storage_from_numpy
         from candle._tensor import Tensor
 
         arr = np.array(values, dtype=np.float32)

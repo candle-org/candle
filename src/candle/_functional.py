@@ -1078,6 +1078,9 @@ def full(*args, dtype=None, device=None):
 
 
 def to(a, device=None, dtype=None, non_blocking=False, copy=False, memory_format=None):
+    if isinstance(dtype, str):
+        from ._dtype import _NAME_MAP
+        dtype = _NAME_MAP[dtype]
     return dispatch(
         "to",
         a.device,

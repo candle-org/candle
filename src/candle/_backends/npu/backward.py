@@ -5,7 +5,7 @@ gradient tensors.  This avoids compositing multiple small dispatch ops
 and instead calls the single fused ACLNN backward kernel directly.
 """
 
-from ..._storage import npu_typed_storage_from_ptr
+from ..._C import npu_typed_storage_from_ptr
 from . import aclnn
 from . import runtime as npu_runtime
 from . import state as npu_state

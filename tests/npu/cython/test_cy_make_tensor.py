@@ -6,7 +6,7 @@ def test_cy_make_npu_tensor_equivalence(npu_device):
     """Tensor from cy_make_npu_tensor must match one from normal constructor."""
     import candle as torch
     from candle._cython._storage import cy_make_npu_tensor  # pylint: disable=import-error,no-name-in-module
-    from candle._storage import npu_typed_storage_from_ptr
+    from candle._C import npu_typed_storage_from_ptr
     import candle
 
     dtype = candle.float32

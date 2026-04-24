@@ -845,7 +845,7 @@ class TestSerializationBirthConsistency:
     def test_stream_storage_reconstruction_matches_public_metadata(self):
         import numpy as np
         import candle as torch
-        from candle._storage import typed_storage_from_numpy
+        from candle._C import typed_storage_from_numpy
         from candle._dtype import float32
 
         arr = np.arange(6, dtype=np.float32)

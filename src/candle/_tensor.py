@@ -1,15 +1,8 @@
 import numpy as np
 
 from ._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
-from ._storage import (
-    Storage,
-    _warn_typed_storage_removal,
-    empty_cpu_typed_storage,
-    meta_typed_storage_from_shape,
-    npu_typed_storage_from_ptr,
-    pinned_cpu_typed_storage_from_numpy,
-    typed_storage_from_numpy,
-)
+from .storage import _warn_typed_storage_removal
+from ._C import Storage, empty_cpu_typed_storage, meta_typed_storage_from_shape, npu_typed_storage_from_ptr, pinned_cpu_typed_storage_from_numpy, typed_storage_from_numpy
 from ._device import _default_device, device as Device
 from ._dtype import float32, float16, float64, bfloat16, int8, int16, int32, int64, uint8
 from ._dtype import bool as dtype_bool
@@ -527,11 +520,21 @@ class Tensor(_TensorBase):
             t = empty(size, dtype=dt, device=dev)
             return t
 
-    def set_(self, typed_storage, storage_offset, size, stride):
-        from ._storage import TypedStorage
+    def set_(self, typed_storage, storage_offset=None, size=None, stride=None):
+        from .storage import TypedStorage
 
         if not isinstance(typed_storage, TypedStorage):
             raise TypeError("set_() currently only supports TypedStorage input")
+
+        # Single-argument form: set_(storage) — 1D tensor viewing entire storage
+        if storage_offset is None:
+            return self.cy_set_runtime_truth(
+                typed_storage,
+                (typed_storage.size(),),
+                _StrideTuple((1,)),
+                0,
+            )
+
         if not isinstance(storage_offset, int) or storage_offset < 0:
             raise RuntimeError("storage_offset must be a non-negative integer")
         if not isinstance(size, (tuple, list)) or not isinstance(stride, (tuple, list)):
@@ -1079,7 +1082,7 @@ class Tensor(_TensorBase):
             from ._backends.npu.ops._helpers import _cast_tensor_dtype
             return _cast_tensor_dtype(self, dtype)
         elif self.device.type == "mps":
-            from ._storage import mps_typed_storage_from_numpy
+            from ._C import mps_typed_storage_from_numpy
             arr = self._numpy_view()
             src_dtype = self.dtype
             target_np = to_numpy_dtype(dtype)

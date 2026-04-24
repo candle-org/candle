@@ -8,7 +8,7 @@ import math
 import numpy as np
 
 from ..._tensor import Tensor
-from ..._storage import typed_storage_from_numpy
+from ..._C import typed_storage_from_numpy
 
 
 def _to_numpy(t):
@@ -17,7 +17,7 @@ def _to_numpy(t):
 
 def _write_back(t, arr):
     """Write numpy array back into a Tensor's storage."""
-    storage_data = t.storage()._data
+    storage_data = t.storage().data
     storage_data[:] = np.asarray(arr).reshape(storage_data.shape)
 
 

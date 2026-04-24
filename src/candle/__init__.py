@@ -10,7 +10,7 @@ from ._dtype import (
     int8, int16, int32, int64, uint8, uint16, uint32, uint64,
     bool,
     complex32, complex64, complex128,
-    quint8, qint8, qint32, quint4x2,
+    quint8, qint8, qint32, quint4x2, quint2x4,
     # aliases
     half, double, short, long, byte, cfloat, cdouble,
     # info classes
@@ -22,6 +22,15 @@ from ._dtype import DType as dtype  # torch.dtype compatibility
 from ._dtype import DType as Dtype  # schema/type alias compatibility
 from ._device import device as Device, _default_device, get_default_device, set_default_device
 from ._device import device
+
+
+def is_storage(obj):
+    from ._C import StorageBase
+    from .storage import _StorageBase, TypedStorage
+    return isinstance(obj, (StorageBase, _StorageBase)) or (
+        hasattr(obj, '_untyped_storage') and hasattr(obj, 'dtype')
+    )
+from . import _C  # must load before _tensor (storage.py needs torch._C)
 from ._tensor import Tensor
 
 # Torch-level numeric constants
@@ -93,8 +102,12 @@ Size = tuple
 from ._creation import tensor, zeros, ones, empty, arange, linspace, full, logspace, eye, range, randn, rand, randint, randperm, from_numpy, as_tensor, normal
 from ._functional import zeros_like
 from ._functional import ones_like, empty_like, full_like, randn_like, rand_like, randint_like
-from ._storage import UntypedStorage, TypedStorage
-from ._storage import FloatStorage, DoubleStorage, HalfStorage, LongStorage, IntStorage, ByteStorage, BoolStorage
+from .storage import UntypedStorage, TypedStorage
+from ._C import (
+    FloatStorage, DoubleStorage, HalfStorage, LongStorage, IntStorage,
+    ByteStorage, BoolStorage, _install_typed_storage_compat,
+)
+_C._install_typed_storage_compat()
 from ._functional import add, mul, matmul, relu, sum, all, any, argmax, argmin, count_nonzero, masked_select, flip, roll, rot90, repeat, repeat_interleave, tile, nonzero, allclose, isclose, equal, cumsum, cumprod, cummax, argsort, sort, topk, stack, cat, concat, concatenate, hstack, vstack, row_stack, dstack, column_stack, pad_sequence, block_diag, tril, triu, diag, cartesian_prod, chunk, split, vsplit, hsplit, dsplit, unbind, tril_indices, triu_indices, take, take_along_dim, index_select, gather, scatter, abs, neg, exp, log, sqrt, div, true_divide, mean, std
 from ._functional import sin, cos, tan, tanh, sigmoid, floor, ceil, round, trunc, frac
 from ._functional import pow, log2, log10, exp2, rsqrt
@@ -620,7 +633,7 @@ __all__ = [
     "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
     "bool",
     "complex32", "complex64", "complex128",
-    "quint8", "qint8", "qint32", "quint4x2",
+    "quint8", "qint8", "qint32", "quint4x2", "quint2x4",
     # dtype aliases
     "half", "float", "double",
     "short", "int", "long", "byte",

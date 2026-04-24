@@ -1,7 +1,7 @@
 import numpy as np
 
 from ..._dtype import to_numpy_dtype
-from ..._storage import typed_storage_from_numpy
+from ..._C import typed_storage_from_numpy
 from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 
 

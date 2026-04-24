@@ -30,7 +30,8 @@ from ._dtype import (
     to_numpy_dtype,
 )
 from ._cython._storage import CyCPUUntypedStorage  # pylint: disable=import-error,no-name-in-module
-from ._storage import TypedStorage, UntypedStorage, typed_storage_from_numpy
+from .storage import TypedStorage, UntypedStorage
+from ._C import typed_storage_from_numpy
 from ._C import PyTorchFileReader, PyTorchFileWriter
 from ._stream import PyTorchStreamReader, PyTorchStreamWriter
 from ._tensor import Tensor as MindTensor
@@ -589,7 +590,7 @@ def _load_zip_checkpoint(
             )
             arr = raw.view(np_dtype)
             untyped = CyCPUUntypedStorage(raw, device="cpu")
-            storage = TypedStorage(untyped, dtype=dtype, size=int(numel), data=arr)
+            storage = TypedStorage(wrap_storage=untyped, dtype=dtype, _internal=True)
         else:
             payload, _ = reader.getRecord(record_name)
             arr = np.frombuffer(payload, dtype=np_dtype, count=int(numel)).copy()
