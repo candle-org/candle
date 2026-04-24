@@ -7,7 +7,7 @@ import math
 import numpy as np
 
 from ..._tensor import Tensor
-from ..._storage import mps_typed_storage_from_numpy
+from ..._C import mps_typed_storage_from_numpy
 
 
 def _to_numpy(t):
@@ -16,7 +16,7 @@ def _to_numpy(t):
 
 def _write_back(t, arr):
     """Write numpy array back into a Tensor's storage."""
-    t.storage()._data[:] = arr
+    t.storage().data[:] = arr
 
 
 def _sgd_step(param, grad, buf, lr, momentum, dampening, weight_decay, nesterov, maximize):

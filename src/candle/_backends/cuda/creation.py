@@ -2,7 +2,7 @@ import numpy as np
 
 from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from ..._dtype import to_numpy_dtype
-from ..._storage import cuda_typed_storage_from_numpy, empty_cuda_typed_storage
+from ..._C import cuda_typed_storage_from_numpy, empty_cuda_typed_storage
 from ..._tensor import Tensor
 
 

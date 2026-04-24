@@ -56,7 +56,7 @@ except ImportError:
     pass
 
 try:
-    from ._storage import cy_npu_storage_from_ptr  # noqa: F401
+    from .storage import cy_npu_storage_from_ptr  # noqa: F401
     _HAS_CYTHON_STORAGE = True
 except ImportError:
     pass

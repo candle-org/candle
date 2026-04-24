@@ -296,7 +296,7 @@ def alloc_npu_tensor(shape, dtype, device=None):
         A new Tensor with uninitialized storage.
     """
     from . import runtime as npu_runtime
-    from ..._storage import npu_typed_storage_from_ptr
+    from ..._C import npu_typed_storage_from_ptr
     from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
     from ..._device import device as Device
 
@@ -343,7 +343,7 @@ def alloc_like(t):
         A new Tensor with the same metadata but uninitialized storage.
     """
     from . import runtime as npu_runtime
-    from ..._storage import npu_typed_storage_from_ptr
+    from ..._C import npu_typed_storage_from_ptr
     from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 
     device_id = (t.device.index if hasattr(t.device, "index") else None) or 0

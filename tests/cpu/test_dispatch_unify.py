@@ -3,7 +3,7 @@ import numpy as np
 import candle._creation as creation
 import candle._functional as functional
 from candle._dtype import float32
-from candle._storage import typed_storage_from_numpy
+from candle._C import typed_storage_from_numpy
 from candle._tensor import Tensor
 
 

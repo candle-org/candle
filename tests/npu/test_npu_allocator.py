@@ -223,7 +223,7 @@ def test_npu_storage_free_updates_allocator(monkeypatch):
     import gc
 
     from candle._backends.npu import allocator
-    from candle._storage import npu_typed_storage_from_ptr
+    from candle._C import npu_typed_storage_from_ptr
 
     alloc = allocator.get_allocator(0)
     monkeypatch.setattr(alloc, "_raw_malloc", lambda size: (1234, size))

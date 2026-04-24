@@ -58,6 +58,8 @@ class _QuantizedDType(DType):
 float8_e4m3fn = DType("float8_e4m3fn", np.uint8, 1, is_floating_point=True)
 float8_e5m2 = DType("float8_e5m2", np.uint8, 1, is_floating_point=True)
 float8_e8m0fnu = DType("float8_e8m0fnu", np.uint8, 1, is_floating_point=True)
+float8_e5m2fnuz = DType("float8_e5m2fnuz", np.uint8, 1, is_floating_point=True)
+float8_e4m3fnuz = DType("float8_e4m3fnuz", np.uint8, 1, is_floating_point=True)
 float16 = DType("float16", np.float16, 2, is_floating_point=True)
 float32 = DType("float32", np.float32, 4, is_floating_point=True)
 float64 = DType("float64", np.float64, 8, is_floating_point=True)
@@ -79,6 +81,7 @@ quint8 = _QuantizedDType("quint8", np.uint8, 1, is_signed=False)
 qint8 = _QuantizedDType("qint8", np.int8, 1, is_signed=True)
 qint32 = _QuantizedDType("qint32", np.int32, 4, is_signed=True)
 quint4x2 = _QuantizedDType("quint4x2", np.uint8, 1, is_signed=False)
+quint2x4 = _QuantizedDType("quint2x4", np.uint8, 1, is_signed=False)
 
 # Boolean
 bool = DType("bool", np.bool_, 1, is_signed=False)
@@ -104,6 +107,8 @@ _NUMPY_DTYPE_MAP = {
     float8_e4m3fn: np.uint8,
     float8_e5m2: np.uint8,
     float8_e8m0fnu: np.uint8,
+    float8_e5m2fnuz: np.uint8,
+    float8_e4m3fnuz: np.uint8,
     float16: np.float16,
     float32: np.float32,
     float64: np.float64,
@@ -120,6 +125,7 @@ _NUMPY_DTYPE_MAP = {
     qint8: np.int8,
     qint32: np.int32,
     quint4x2: np.uint8,
+    quint2x4: np.uint8,
     bool: np.bool_,
     complex32: np.complex64,
     complex64: np.complex64,
@@ -154,6 +160,8 @@ _NAME_MAP = {
     "float8_e4m3fn": float8_e4m3fn,
     "float8_e5m2": float8_e5m2,
     "float8_e8m0fnu": float8_e8m0fnu,
+    "float8_e5m2fnuz": float8_e5m2fnuz,
+    "float8_e4m3fnuz": float8_e4m3fnuz,
     "float32": float32, "float": float32,
     "float64": float64, "double": float64,
     "bfloat16": bfloat16,
@@ -169,6 +177,7 @@ _NAME_MAP = {
     "qint8": qint8,
     "qint32": qint32,
     "quint4x2": quint4x2,
+    "quint2x4": quint2x4,
     "bool": bool,
     "complex64": complex64, "cfloat": complex64,
     "complex128": complex128, "cdouble": complex128,

@@ -4,7 +4,7 @@ from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disab
 from ..._dtype import float32 as float32_dtype
 from ..._dtype import float64 as float64_dtype
 from ..._dtype import to_numpy_dtype
-from ..._storage import npu_typed_storage_from_ptr
+from ..._C import npu_typed_storage_from_ptr
 from . import runtime as npu_runtime
 from . import aclnn
 from . import state as npu_state

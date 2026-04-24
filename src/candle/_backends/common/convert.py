@@ -2,15 +2,7 @@ import numpy as np
 
 from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from ..._device import device as Device
-from ..._storage import (
-    cuda_typed_storage_from_numpy,
-    cuda_typed_storage_to_numpy,
-    empty_cpu_typed_storage,
-    empty_cuda_typed_storage,
-    meta_typed_storage_from_shape,
-    npu_typed_storage_from_ptr,
-    typed_storage_from_numpy,
-)
+from ..._C import cuda_typed_storage_from_numpy, cuda_typed_storage_to_numpy, empty_cpu_typed_storage, empty_cuda_typed_storage, meta_typed_storage_from_shape, npu_typed_storage_from_ptr, typed_storage_from_numpy
 from ..._tensor import Tensor
 
 
@@ -25,6 +17,9 @@ def _wrap_like(source, storage):
 
 
 def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=None):
+    if isinstance(dtype, str):
+        from ..._dtype import _NAME_MAP
+        dtype = _NAME_MAP[dtype]
     if dtype is not None:
         a = a._to_dtype(dtype)
     if isinstance(dev, str):
@@ -48,7 +43,7 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
                 return _wrap_like(a, storage)
 
             if dev.type == "mps":
-                from ..._storage import mps_typed_storage_from_numpy
+                from ..._C import mps_typed_storage_from_numpy
                 arr = a.storage().data.copy()
                 storage = mps_typed_storage_from_numpy(arr, a.dtype, device=dev)
 
@@ -74,7 +69,7 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
             return _wrap_like(a, storage)
 
         if dev.type == "mps":
-            from ..._storage import mps_typed_storage_from_numpy
+            from ..._C import mps_typed_storage_from_numpy
             from ..._dtype import to_numpy_dtype
             arr = np.zeros(a.shape, dtype=to_numpy_dtype(a.dtype))
             storage = mps_typed_storage_from_numpy(arr.ravel(), a.dtype, device=dev)
@@ -88,7 +83,7 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
         storage = meta_typed_storage_from_shape(a.shape, a.dtype, device=dev)
         return _wrap_like(a, storage)
     if a.device.type == "cpu" and dev.type == "mps":
-        from ..._storage import mps_typed_storage_from_numpy
+        from ..._C import mps_typed_storage_from_numpy
         arr = a._numpy_view()
         storage = mps_typed_storage_from_numpy(np.ascontiguousarray(arr), a.dtype, device=dev)
         return _wrap_like(a, storage)
@@ -100,7 +95,7 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
         storage = meta_typed_storage_from_shape(a.shape, a.dtype, device=dev)
         return _wrap_like(a, storage)
     if a.device.type == "mps" and dev.type == "mps":
-        from ..._storage import mps_typed_storage_from_numpy
+        from ..._C import mps_typed_storage_from_numpy
         arr = np.array(a.storage().data, copy=True)
         storage = mps_typed_storage_from_numpy(arr, a.dtype, device=dev)
         return _wrap_like(a, storage)

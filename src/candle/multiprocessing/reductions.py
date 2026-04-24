@@ -3,7 +3,7 @@ from multiprocessing import reduction
 from .. import multiprocessing as _mt_mp
 from .._cython._storage import CyCPUUntypedStorage  # pylint: disable=import-error,no-name-in-module
 from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
-from .._storage import TypedStorage
+from ..storage import TypedStorage
 from .._tensor import Tensor
 
 
@@ -45,7 +45,7 @@ def _reduce_cpu_storage(storage):
 
 def _rebuild_typed_storage(untyped, dtype, size):
     data = untyped.typed_view(dtype, size)
-    return TypedStorage(untyped, dtype=dtype, size=size, data=data)
+    return TypedStorage(wrap_storage=untyped, dtype=dtype, _internal=True)
 
 
 def _reduce_typed_storage(storage):

@@ -14,7 +14,7 @@ import numpy as np
 
 from ..._stream import PyTorchStreamReader, PyTorchStreamWriter
 from ..._tensor import Tensor as MindTensor
-from ..._storage import typed_storage_from_numpy
+from ..._C import typed_storage_from_numpy
 from ..._dtype import (
     bool as mt_bool,
     bfloat16,

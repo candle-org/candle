@@ -8,7 +8,8 @@ from ...._dtype import float16 as float16_dtype
 from ...._dtype import float32 as float32_dtype
 from ...._dtype import float64 as float64_dtype
 from ...._dtype import to_numpy_dtype
-from ...._storage import mps_typed_storage_from_numpy, _MPSUntypedStorage, TypedStorage
+from ....storage import TypedStorage
+from ...._C import mps_typed_storage_from_numpy, _MPSUntypedStorage
 from ...._tensor import Tensor
 from ...._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from .. import accelerate as _accel

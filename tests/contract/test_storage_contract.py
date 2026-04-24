@@ -39,7 +39,7 @@ def test_storage_module_still_exposes_public_storage_entry_points():
 
 
 def test_storage_module_does_not_expose_private_untyped_storage_classes():
-    import candle._storage as storage_mod
+    import candle.storage as storage_mod
 
     assert not hasattr(storage_mod, "_PinnedCPUUntypedStorage")
     assert not hasattr(storage_mod, "_CPUUntypedStorage")
