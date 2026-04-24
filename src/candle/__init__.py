@@ -109,7 +109,7 @@ from ._creation import tensor, zeros, ones, empty, arange, linspace, full, logsp
 from ._functional import zeros_like
 from ._functional import ones_like, empty_like, full_like, randn_like, rand_like, randint_like
 from .storage import UntypedStorage, TypedStorage
-from ._C import (
+from ._C import (  # pylint: disable=no-name-in-module
     FloatStorage, DoubleStorage, HalfStorage, LongStorage, IntStorage,
     ByteStorage, BoolStorage, _install_typed_storage_compat,
 )
