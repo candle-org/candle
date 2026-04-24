@@ -1,2335 +1,1900 @@
-import numpy as np
+# mypy: allow-untyped-defs
+import copyreg
+import enum
+import functools
+import itertools
+import warnings
+from collections import OrderedDict
+from collections.abc import Callable
+from copy import deepcopy
+from numbers import Number
+from typing import Any, cast, Concatenate, TypeVar, Union
+from typing_extensions import ParamSpec
 
-from ._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
-from .storage import _warn_typed_storage_removal
-from ._C import (  # pylint: disable=no-name-in-module
-    Storage, empty_cpu_typed_storage, meta_typed_storage_from_shape,
-    npu_typed_storage_from_ptr, pinned_cpu_typed_storage_from_numpy,
-    typed_storage_from_numpy,
+import candle as torch
+import candle._C as _C
+from ._namedtensor_internals import (
+    check_serializing_named_tensor,
+    is_ellipsis,
+    resolve_ellipsis,
+    single_ellipsis_index,
+    unzip_namedshape,
+    update_names,
 )
-from ._device import _default_device, device as Device
-from ._dtype import float32, float16, float64, bfloat16, int8, int16, int32, int64, uint8
-from ._dtype import bool as dtype_bool
-from ._dtype import to_numpy_dtype
-from ._functional import add, mul, matmul, relu, sum, mean as mean_dispatch, std as std_dispatch, true_divide as true_divide_dispatch, repeat as repeat_dispatch, chunk as chunk_dispatch, split as split_dispatch, vsplit as vsplit_dispatch, hsplit as hsplit_dispatch, dsplit as dsplit_dispatch, unbind as unbind_dispatch, abs as abs_dispatch, neg as neg_dispatch
-from ._functional import sub as sub_dispatch, div as div_dispatch
-from ._functional import exp as exp_dispatch, log as log_dispatch, sqrt as sqrt_dispatch
-from ._functional import sin as sin_dispatch, cos as cos_dispatch, tan as tan_dispatch
-from ._functional import tanh as tanh_dispatch, sigmoid as sigmoid_dispatch
-from ._functional import floor as floor_dispatch, ceil as ceil_dispatch, round as round_dispatch
-from ._functional import trunc as trunc_dispatch, frac as frac_dispatch
-from ._functional import pow as pow_dispatch, log2 as log2_dispatch, log10 as log10_dispatch
-from ._functional import exp2 as exp2_dispatch, rsqrt as rsqrt_dispatch
-from ._functional import sign as sign_dispatch, signbit as signbit_dispatch, square as square_dispatch
-from ._functional import isnan as isnan_dispatch, isinf as isinf_dispatch, isfinite as isfinite_dispatch
-from ._functional import sinh as sinh_dispatch, cosh as cosh_dispatch
-from ._functional import asinh as asinh_dispatch, acosh as acosh_dispatch, atanh as atanh_dispatch
-from ._functional import erf as erf_dispatch, erfc as erfc_dispatch, softplus as softplus_dispatch
-from ._functional import clamp as clamp_dispatch, clamp_min as clamp_min_dispatch, clamp_max as clamp_max_dispatch
-from ._functional import relu6 as relu6_dispatch, hardtanh as hardtanh_dispatch
-from ._functional import min as min_dispatch, max as max_dispatch
-from ._functional import amin as amin_dispatch, amax as amax_dispatch
-from ._functional import fmin as fmin_dispatch, fmax as fmax_dispatch
-from ._functional import where as where_dispatch
-from ._functional import atan as atan_dispatch, atan2 as atan2_dispatch
-from ._functional import asin as asin_dispatch, acos as acos_dispatch
-from ._functional import lerp as lerp_dispatch
-from ._functional import addcmul as addcmul_dispatch, addcdiv as addcdiv_dispatch
-from ._functional import logaddexp as logaddexp_dispatch, logaddexp2 as logaddexp2_dispatch
-from ._functional import hypot as hypot_dispatch, remainder as remainder_dispatch, fmod as fmod_dispatch
-from ._functional import all as all_dispatch, any as any_dispatch, argmax as argmax_dispatch
-from ._functional import argmin as argmin_dispatch, count_nonzero as count_nonzero_dispatch
-from ._functional import allclose as allclose_dispatch, isclose as isclose_dispatch, equal as equal_dispatch
-from ._functional import eq as eq_dispatch, ne as ne_dispatch, lt as lt_dispatch, le as le_dispatch, gt as gt_dispatch, ge as ge_dispatch
-from ._functional import cumsum as cumsum_dispatch, cumprod as cumprod_dispatch, cummax as cummax_dispatch
-from ._functional import argsort as argsort_dispatch, sort as sort_dispatch, topk as topk_dispatch
-from ._functional import tril as tril_dispatch, triu as triu_dispatch, diag as diag_dispatch
-from ._functional import reshape as reshape_dispatch
-from ._functional import transpose as transpose_dispatch, view as view_dispatch, to as to_dispatch
-from ._functional import nonzero as nonzero_dispatch, masked_select as masked_select_dispatch
-from ._functional import gather as gather_dispatch, scatter as scatter_dispatch
-from ._functional import index_select as index_select_dispatch, take as take_dispatch
-from ._functional import narrow as narrow_dispatch, select as select_dispatch
-from ._functional import expand as expand_dispatch
-from ._functional import masked_fill_ as masked_fill__dispatch, masked_fill as masked_fill_dispatch
-from ._functional import index_put_ as index_put__dispatch, index_put as index_put_dispatch
-from ._functional import index_copy_ as index_copy__dispatch
-from ._functional import index_fill_ as index_fill__dispatch
-from ._functional import index_add_ as index_add__dispatch
-from ._functional import scatter_ as scatter__dispatch, scatter_add_ as scatter_add__dispatch
-from ._functional import masked_scatter_ as masked_scatter__dispatch
-from ._functional import unfold as unfold_dispatch
-from ._functional import squeeze as squeeze_dispatch, unsqueeze as unsqueeze_dispatch, permute as permute_dispatch
-from ._functional import var as var_dispatch, norm as norm_dispatch, prod as prod_dispatch
-from ._functional import mm as mm_dispatch, bmm as bmm_dispatch
-from ._functional import floor_divide as floor_divide_dispatch
-from ._functional import slice as slice_dispatch, slice_copy as slice_copy_dispatch, slice_scatter as slice_scatter_dispatch
-from ._functional import expand_copy as expand_copy_dispatch
-from ._functional import sum_to_size as sum_to_size_dispatch
-from ._functional import as_strided_ as as_strided__dispatch
-from ._functional import as_strided_copy as as_strided_copy_dispatch
-from ._functional import as_strided_scatter as as_strided_scatter_dispatch
-from ._functional import tile as tile_dispatch, flip as flip_dispatch, roll as roll_dispatch, rot90 as rot90_dispatch
-from ._functional import movedim as movedim_dispatch, moveaxis as moveaxis_dispatch, diagonal as diagonal_dispatch
-from ._functional import reciprocal as reciprocal_dispatch, addmm as addmm_dispatch
-from ._functional import log1p as log1p_dispatch, expm1 as expm1_dispatch
-from .autograd.engine import backward as _backward
-
-# TensorImpl base class: compiled Cython extension required.
-from ._cython._tensor_impl import TensorImpl as _TensorBase  # pylint: disable=import-error,no-name-in-module
-from ._cython._tensor_impl import _VersionCounterProxy  # noqa: F401  # pylint: disable=import-error,no-name-in-module
-from ._cython._tensor_impl import cy_init_tensor_fields  # pylint: disable=import-error,no-name-in-module
+from .overrides import (
+    get_default_nowrap_functions,
+    handle_torch_function,
+    has_torch_function,
+    has_torch_function_unary,
+    has_torch_function_variadic,
+)
 
 
-class _StrideTuple(tuple):
-    """A tuple subclass that is also callable, matching PyTorch's stride() API.
-
-    Supports both attribute access (t.stride) and method call (t.stride()),
-    as well as per-dimension access (t.stride(dim)).
-    """
-    def __call__(self, dim=None):
-        if dim is None:
-            return tuple(self)
-        if dim < 0:
-            dim += len(self)
-        return self[dim]
+_P = ParamSpec("_P")
+_TensorLike = TypeVar("_TensorLike", bound=_C.TensorBase)
 
 
-def _compute_strides(shape):
-    stride = []
-    acc = 1
-    for d in reversed(shape):
-        stride.append(acc)
-        acc *= d
-    return _StrideTuple(reversed(stride))
+def _handle_torch_function_and_wrap_type_error_to_not_implemented(
+    f: Callable[Concatenate[_TensorLike, _P], "Tensor"],
+) -> Callable[Concatenate[_TensorLike, _P], "Tensor"]:
+    @functools.wraps(f)
+    def wrapped(self: _TensorLike, *args: _P.args, **kwargs: _P.kwargs) -> "Tensor":
+        try:
+            # See https://github.com/pytorch/pytorch/issues/75462
+            sargs = self, *args
+            if has_torch_function(sargs):
+                return handle_torch_function(wrapped, sargs, self, *args, **kwargs)
+            return f(self, *args, **kwargs)
+        except TypeError:
+            return NotImplemented
+
+    return wrapped
 
 
-def _bf16_to_f32(arr):
-    """Convert bfloat16 (stored as uint16) to float32."""
-    u32 = arr.astype(np.uint32) << 16
-    return u32.view(np.float32)
+# Should not be used, this is kept only for BC of loading old serialized Tensor subclasses
+def _rebuild_from_type(func, type, args, dict):
+    if type is Tensor:
+        return func(*args)
+
+    ret = func(*args).as_subclass(type)
+    ret.__dict__ = dict
+    return ret
 
 
-def _f32_to_bf16(arr):
-    """Convert float32 to bfloat16 (stored as uint16), round-to-nearest-even."""
-    u32 = arr.view(np.uint32)
-    # Round to nearest even: add bias + (lsb of result)
-    rounding_bias = (u32 >> 16) & 1
-    u32 = u32 + 0x7FFF + rounding_bias
-    return (u32 >> 16).astype(np.uint16)
+def _rebuild_from_type_v2(func, new_type, args, state):
+    ret = func(*args)
+    if type(ret) is not new_type:
+        ret = ret.as_subclass(new_type)
+    # Tensor does define __setstate__ even though it doesn't define
+    # __getstate__. So only use __setstate__ if it is NOT the one defined
+    # on Tensor
+    if (
+        getattr(ret.__class__, "__setstate__", Tensor.__setstate__)
+        is not Tensor.__setstate__
+    ):
+        ret.__setstate__(state)
+    else:
+        ret = torch._utils._set_obj_state(ret, state)
+    return ret
 
 
-class _HookHandle:
-    _next_id = 0
+def _dtype_to_typestr(dtype):
+    # CUDA devices are little-endian and tensors are stored in native byte
+    # order. 1-byte entries are endian-agnostic.
+    return {
+        torch.complex64: "<c8",
+        torch.complex128: "<c16",
+        torch.bfloat16: "<V2",  # Same as ml_dtypes.bfloat16.dtype.str.
+        torch.float16: "<f2",
+        torch.float32: "<f4",
+        torch.float64: "<f8",
+        torch.uint8: "|u1",
+        torch.int8: "|i1",
+        torch.uint16: "<u2",
+        torch.int16: "<i2",
+        torch.uint32: "<u4",
+        torch.int32: "<i4",
+        torch.uint64: "<u8",
+        torch.int64: "<i8",
+        torch.bool: "|b1",
+    }[dtype]
 
-    def __init__(self, hooks):
-        self._hooks = hooks
-        self.id = _HookHandle._next_id
-        _HookHandle._next_id += 1
 
-    def remove(self):
-        if self._hooks is None:
-            return
-        self._hooks.pop(self.id, None)
-        self._hooks = None
+# NB: If you subclass Tensor, and want to share the subclassed class
+# across processes, you must also update torch/multiprocessing/reductions.py
+# to define a ForkingPickler serialization mode for the class.
+#
+# NB: If you add a new method to Tensor, you must update
+# torch/_C/__init__.pyi.in to add a type annotation for your method;
+# otherwise, it will not show up in autocomplete.
+class Tensor(torch._C.TensorBase):
+    _is_param: bool
+    # pyrefly: ignore [missing-attribute]
+    __dlpack_c_exchange_api__: object = torch._C._dlpack_exchange_api()
 
-    def __enter__(self):
-        return self
+    def _clear_non_serializable_cached_data(self):
+        r"""Clears any data cached in the tensor's ``__dict__`` that would prevent the tensor
+        from being serialized.
 
-    def __exit__(self, *args):
-        self.remove()
+        For example, subclasses with custom dispatched sizes / strides cache this info in
+        non-serializable PyCapsules within the ``__dict__``, and this must be cleared out for
+        serialization to function.
 
+        Any subclass that overrides this MUST call ``super()._clear_non_serializable_cached_data().``
+        Additional data cleared within the override must be able to be re-cached transparently
+        to avoid breaking subclass functionality.
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor._clear_non_serializable_cached_data, (self,), self
+            )
+        # NB: Wrapper subclasses that implement custom-dispatched sizes / strides cache
+        # this info via non-serializable PyCapsules.
+        CACHED_SIZES_STRIDES_KEYS = [
+            "_sym_sizes_capsule",
+            "_sym_sizes_capsule_len",
+            "_sym_strides_capsule",
+            "_sym_strides_capsule_len",
+        ]
+        for key in CACHED_SIZES_STRIDES_KEYS:
+            self.__dict__.pop(key, None)
 
-class Tensor(_TensorBase):
-    def __init__(self, storage, shape, stride, offset=0, requires_grad=False):
-        cy_init_tensor_fields(
-            self,
-            storage,
-            tuple(shape),
-            _StrideTuple(stride),
-            int(offset),
-            bool(requires_grad),
-            None,
-            None,
-            None,
-            None,
-            False,
-            False,
-            None,
-            0,
-            None,
+    def __deepcopy__(self, memo):
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.__deepcopy__, (self,), self, memo)
+        if not self.is_leaf:
+            raise RuntimeError(
+                "Only Tensors created explicitly by the user "
+                "(graph leaves) support the deepcopy protocol at the moment.  "
+                "If you were attempting to deepcopy a module, this may be because "
+                "of a torch.nn.utils.weight_norm usage, "
+                "see https://github.com/pytorch/pytorch/pull/103001"
+            )
+        if id(self) in memo:
+            return memo[id(self)]
+        with torch.no_grad():
+            # TODO: skipping storage copy is wrong for meta, as meta
+            # does accurate alias tracking; however, the code below
+            # doesn't work because of
+            # https://github.com/pytorch/pytorch/issues/47442
+            # Update the test in test_serialization if you remove 'meta' from here
+            if (
+                self.is_sparse
+                or self.device.type
+                in ["lazy", "xla", "mtia", "mps", "maia", "meta", "ipu"]
+                or (
+                    not torch._C._has_storage(self)
+                    and self.device.type == torch._C._get_privateuse1_backend_name()
+                )
+                or (type(self) is not Tensor and self.data_ptr() == 0)
+            ):
+                new_tensor = self.clone()
+                if type(new_tensor) is not type(self):
+                    raise RuntimeError(
+                        "The default implementation of __deepcopy__() for wrapper subclasses "
+                        "only works for subclass types that implement clone() and for which "
+                        "cloning returns another instance of the same subclass. You should either "
+                        "properly implement clone() for your subclass or override __deepcopy__() "
+                        "if it is intended behavior for clone() to return an instance of a "
+                        "different type."
+                    )
+            else:
+                new_storage = self._typed_storage()._deepcopy(memo)
+                if self.is_quantized:
+                    # quantizer_params can be different type based on torch attribute
+                    quantizer_params: (
+                        tuple[torch.qscheme, float, int]
+                        | tuple[torch.qscheme, Tensor, Tensor, int]
+                    )
+                    if self.qscheme() == torch.per_tensor_affine:
+                        quantizer_params = (
+                            self.qscheme(),
+                            self.q_scale(),
+                            self.q_zero_point(),
+                        )
+                    elif self.qscheme() in (
+                        torch.per_channel_affine,
+                        torch.per_channel_affine_float_qparams,
+                    ):
+                        quantizer_params = (
+                            self.qscheme(),
+                            self.q_per_channel_scales(),
+                            self.q_per_channel_zero_points(),
+                            self.q_per_channel_axis(),
+                        )
+                    else:
+                        raise RuntimeError(
+                            f"Unsupported qscheme {self.qscheme()} in deepcopy"
+                        )
+                    # TODO: Once we decide to break serialization FC, no longer
+                    # need to wrap with TypedStorage
+                    new_tensor = torch._utils._rebuild_qtensor(
+                        torch.storage.TypedStorage(
+                            wrap_storage=new_storage._untyped_storage,
+                            dtype=self.dtype,
+                            _internal=True,
+                        ),
+                        self.storage_offset(),
+                        self.size(),
+                        self.stride(),
+                        quantizer_params,
+                        self.requires_grad,
+                        self._backward_hooks,
+                    )
+                    if type(new_tensor) is not type(self):
+                        raise RuntimeError(
+                            "The default implementation of __deepcopy__() for quantized tensors "
+                            "expects the tensor returned by torch._utils._rebuild_qtensor() to "
+                            "match the type of the instance being copied. If you encounter this, "
+                            "please open an issue on PyTorch's GitHub."
+                        )
+                else:
+                    new_tensor = self.new_empty([])
+                    if type(new_tensor) is not type(self):
+                        raise RuntimeError(
+                            "The default implementation of __deepcopy__() for non-wrapper subclasses "
+                            "only works for subclass types that implement new_empty() and for which "
+                            "that function returns another instance of the same subclass. You should "
+                            "either properly implement new_empty() for your subclass or override "
+                            "__deepcopy__() if it is intended behavior for new_empty() to return "
+                            "an instance of a different type."
+                        )
+                    new_tensor.set_(
+                        new_storage, self.storage_offset(), self.size(), self.stride()
+                    )
+                    if self.is_conj():
+                        new_tensor = new_tensor.conj_physical()
+                    if self.is_neg():
+                        new_tensor = new_tensor.neg()
+            if self.requires_grad:
+                new_tensor.requires_grad_()
+            if self.grad is not None:
+                new_tensor.grad = self.grad.__deepcopy__(memo)
+
+            if type(self) is not Tensor:
+                if type(new_tensor) is not type(self):
+                    raise RuntimeError(
+                        "Type of deepcopy result does not match the type of the source tensor. "
+                        "If you encounter this, please open an issue on PyTorch's GitHub."
+                    )
+
+                # Plain Tensors don't have slots
+                slots_to_save = copyreg._slotnames(self.__class__)  # type: ignore[attr-defined]
+                for slot in slots_to_save:
+                    if hasattr(self, slot):
+                        setattr(new_tensor, slot, deepcopy(getattr(self, slot), memo))
+
+            # don't try to deepcopy non-serializable cached data
+            self._clear_non_serializable_cached_data()
+            new_tensor.__dict__ = deepcopy(self.__dict__, memo)
+
+            memo[id(self)] = new_tensor
+            return new_tensor
+
+    def __reduce_ex__(self, proto):
+        materialize_fake_tensors = (
+            torch.serialization._serialization_tls.materialize_fake_tensors
+        )
+        state = torch._utils._get_obj_state(self)
+        # Ignore all state when using FakeTensor with skip_data(materialize_fake_tensors) because FakeTensor has
+        # some state that cannot be pickled
+        if (
+            # TODO: remove hasattr, it's a hack to support versions of torch that
+            # don't have _subclasses
+            hasattr(torch, "_subclasses")
+            and type(self) is torch._subclasses.fake_tensor.FakeTensor
+            and materialize_fake_tensors
+        ) or (type(self) is Tensor and not state):
+            # Fast path for regular tensor without Python state.
+            return self._reduce_ex_internal(proto)
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.__reduce_ex__, (self,), self, proto)
+        func, args = self._reduce_ex_internal(proto)
+        # sizes / strides cache needs to be cleared here because it'll just be re-cached
+        # if cleared earlier. Note that state references the -actual- tensor dict.
+        self._clear_non_serializable_cached_data()
+        return (_rebuild_from_type_v2, (func, type(self), args, state))
+
+    def storage(self):
+        r"""
+        storage() -> torch.TypedStorage
+
+        Returns the underlying :class:`TypedStorage`.
+
+        .. warning::
+
+            :class:`TypedStorage` is deprecated. It will be removed in the future, and
+            :class:`UntypedStorage` will be the only storage class. To access the
+            :class:`UntypedStorage` directly, use :attr:`Tensor.untyped_storage()`.
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.storage, (self,), self)
+
+        torch.storage._warn_typed_storage_removal(stacklevel=2)
+        return self._typed_storage()
+
+    # For internal use only, to avoid raising deprecation warning
+    def _typed_storage(self):
+        untyped_storage = self.untyped_storage()
+        return torch.TypedStorage(
+            wrap_storage=untyped_storage, dtype=self.dtype, _internal=True
         )
 
-    _DEVICE_MAP = {"cpu": 0, "npu": 1, "cuda": 2, "mps": 3, "meta": 4}
-    # Dispatch key bit values — must stay in sync with _tensor_impl.pyx
-    _DK_CPU  = 1 << 15
-    _DK_NPU  = 1 << 13
-    _DK_CUDA = 1 << 14
-    _DK_MPS  = 1 << 21
-    _DK_META = 1 << 12
-    _DK_ADINPLACEORVIEW   = 1 << 4
-    _DK_AUTOGRAD          = 1 << 11
-    _DK_AUTOGRAD_CPU      = 1 << 6
-    _DK_AUTOGRAD_NPU      = 1 << 7
-    _DK_AUTOGRAD_CUDA     = 1 << 8
-    _DK_AUTOGRAD_MPS      = 1 << 22
-    _DK_AUTOGRAD_META     = 1 << 10
+    def _reduce_ex_internal(self, proto):
+        check_serializing_named_tensor(self)
 
-    def _set_device_from_storage(self, dev):
-        self._set_device_from_obj(dev)
+        from torch.utils.hooks import warn_if_has_hooks
 
-    def _set_dtype_from_storage(self, dtype):
-        self._set_dtype_from_obj(dtype)
+        # See Note [Don't serialize hooks]
+        warn_if_has_hooks(self)
+        backward_hooks: dict[Any, Any] = OrderedDict()
 
-    def __delattr__(self, name):
-        if name == "grad":
-            object.__setattr__(self, "grad", None)
+        skip_data = torch.serialization._serialization_tls.skip_data
+        materialize_fake_tensors = (
+            torch.serialization._serialization_tls.materialize_fake_tensors
+        )
+
+        if self.device.type in ["xla", "maia", "mtia"] or (
+            not torch._C._has_storage(self)
+            and self.device.type == torch._C._get_privateuse1_backend_name()
+        ):
+            if skip_data:
+                raise RuntimeError(
+                    "Cannot serialize tensors on backends with no storage under skip_data context manager"
+                )
+            cpu_tensor = self.cpu()
+            return (
+                torch._utils._rebuild_device_tensor_from_cpu_tensor,
+                (cpu_tensor, self.dtype, str(self.device), self.requires_grad),
+            )
+        if self.device.type == "meta":
+            # NB: This implementation BREAKS storage sharing.  Current
+            # hypothesis is that no one cares for meta tensors.
+            if skip_data:
+                warnings.warn(
+                    "Serializing tensors on the meta device under skip_data context manager is a no-op",
+                    stacklevel=2,
+                )
+            arg_meta = (
+                self.dtype,
+                tuple(self.size()),
+                self.stride(),
+                self.requires_grad,
+            )
+            return (torch._utils._rebuild_meta_tensor_no_storage, arg_meta)
+        if self.is_quantized:
+            if skip_data:
+                raise RuntimeError(
+                    "Cannot serialize qtensor under skip_data context manager, file an issue if you need this feature"
+                )
+            # quantizer_params can be different type based on torch attribute
+            quantizer_params: (
+                tuple[torch.qscheme, float, int] | tuple[Any, Tensor, Tensor, int]
+            )
+            if self.qscheme() == torch.per_tensor_affine:
+                quantizer_params = (
+                    torch.per_tensor_affine,
+                    self.q_scale(),
+                    self.q_zero_point(),
+                )
+            elif self.qscheme() in (
+                torch.per_channel_affine,
+                torch.per_channel_affine_float_qparams,
+            ):
+                # convert scales and zero points to tuple to avoid recursive calls
+                # when/if we get multi-axis quantized tensors in the future, the shape
+                # is recoverable from the main tensor shape
+                quantizer_params = (
+                    torch.per_channel_affine,
+                    self.q_per_channel_scales(),
+                    self.q_per_channel_zero_points(),
+                    self.q_per_channel_axis(),
+                )
+            else:
+                raise RuntimeError(
+                    f"Serialization is not supported for tensors of type {self.qscheme()}"
+                )
+            # TODO: Once we decide to break serialization FC, no longer
+            # need to wrap with TypedStorage
+            args_qtensor = (
+                torch.storage.TypedStorage(
+                    wrap_storage=self._typed_storage()._untyped_storage,
+                    dtype=self.dtype,
+                    _internal=True,
+                ),
+                self.storage_offset(),
+                tuple(self.size()),
+                self.stride(),
+                quantizer_params,
+                self.requires_grad,
+                backward_hooks,
+            )
+            return (torch._utils._rebuild_qtensor, args_qtensor)
+        elif self.is_sparse:
+            if self.layout == torch.sparse_coo:
+                args_sparse = (
+                    self.layout,
+                    (self._indices(), self._values(), self.size(), self.is_coalesced()),
+                )
+            else:
+                raise NotImplementedError(
+                    f"sparse tensor __reduce_ex__ for layout `{self.layout}`"
+                )
+            return (torch._utils._rebuild_sparse_tensor, args_sparse)
+        elif self.layout in {
+            torch.sparse_csr,
+            torch.sparse_csc,
+            torch.sparse_bsr,
+            torch.sparse_bsc,
+        }:
+            if self.layout in {torch.sparse_csr, torch.sparse_bsr}:
+                compressed_indices, plain_indices = (
+                    self.crow_indices(),
+                    self.col_indices(),
+                )
+            else:
+                compressed_indices, plain_indices = (
+                    self.ccol_indices(),
+                    self.row_indices(),
+                )
+            args_sparse_compressed = (
+                self.layout,
+                (
+                    compressed_indices,
+                    plain_indices,
+                    self.values(),
+                    self.size(),
+                ),
+            )
+            return (torch._utils._rebuild_sparse_tensor, args_sparse_compressed)
+        elif self.is_nested:
+            if skip_data:
+                raise RuntimeError(
+                    "Cannot serialize nested tensor under skip_data context manager, file an issue if you need this feature"
+                )
+            args_nested = (
+                # NB: values() currently returns the storage as a buffer in an unsafe way.
+                # Ideally, we'd use a private API for this instead. TODO: Switch to this if
+                # we ever get around to adding it.
+                self.values(),
+                self._nested_tensor_size(),
+                self._nested_tensor_strides(),
+                self._nested_tensor_storage_offsets(),
+            )
+            return (torch._utils._rebuild_nested_tensor, args_nested)
+        elif (
+            type(self) is not torch.Tensor
+            and type(self).__torch_dispatch__ is not torch.Tensor.__torch_dispatch__
+            and (
+                isinstance(self, torch._subclasses.functional_tensor.FunctionalTensor)
+                or (
+                    not isinstance(self, torch._subclasses.fake_tensor.FakeTensor)
+                    and self.data_ptr() == 0
+                )
+            )
+        ):
+            arg_wrapper_subclass = (
+                type(self),
+                self.dtype,
+                tuple(self.size()),
+                self.stride(),
+                self.storage_offset(),
+                self.layout,
+                self.device,
+                self.requires_grad,
+            )
+            return (torch._utils._rebuild_wrapper_subclass, arg_wrapper_subclass)
+        elif (
+            type(self) is not torch.Tensor
+            and type(self).__torch_dispatch__ is not torch.Tensor.__torch_dispatch__
+            and (
+                isinstance(self, torch._subclasses.fake_tensor.FakeTensor)
+                and not (skip_data and materialize_fake_tensors)
+            )
+        ):
+            arg_wrapper_subclass = (
+                type(self),
+                self.dtype,
+                tuple(self.size()),
+                self.stride(),
+                self.storage_offset(),
+                self.layout,
+                self.device,
+                self.requires_grad,
+            )
+            return (torch._utils._rebuild_wrapper_subclass, arg_wrapper_subclass)
+        else:
+            v3_dtypes = torch.storage._new_dtypes()
+            if self.dtype in v3_dtypes:
+                rebuild_func = torch._utils._rebuild_tensor_v3
+                storage = self.untyped_storage()
+            else:
+                # TODO: Once we decide to break serialization FC, no longer
+                # need to wrap with TypedStorage
+                rebuild_func = torch._utils._rebuild_tensor_v2  # type: ignore[assignment]
+                storage = torch.storage.TypedStorage(
+                    wrap_storage=self._typed_storage()._untyped_storage,
+                    dtype=self.dtype,
+                    _internal=True,
+                )  # type: ignore[assignment]
+
+            # TODO: remove hasattr, it's a hack to support versions of torch that
+            # don't have _subclasses
+            if (
+                hasattr(torch, "_subclasses")
+                and isinstance(self, torch._subclasses.fake_tensor.FakeTensor)
+                and skip_data
+            ):
+                storage._fake_device = self.device
+
+            args = (
+                storage,
+                self.storage_offset(),
+                tuple(self.size()),
+                self.stride(),
+                self.requires_grad,
+                backward_hooks,
+            )  # previously was self._backward_hooks
+
+            if isinstance(storage, torch.storage.UntypedStorage):
+                args = args + (self.dtype,)  # type: ignore[assignment]
+
+            metadata = torch._utils.get_tensor_metadata(self)
+            if metadata:
+                args = args + (metadata,)  # type: ignore[assignment]
+
+            return (rebuild_func, args)
+
+    def __setstate__(self, state):
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.__setstate__, (self,), self, state)
+        # Warning: this method is NOT called when you torch.load() a tensor;
+        # that is managed by _rebuild_tensor_v2
+        if not self.is_leaf:
+            raise RuntimeError("__setstate__ can be only called on leaf Tensors")
+        if len(state) == 4:
+            # legacy serialization of Tensor
+
+            self.set_(*state)
             return
-        if name in {"data", "requires_grad", "_grad_fn", "grad_fn", "_backward_hooks"}:
-            raise RuntimeError(f"cannot delete {name}")
-        object.__delattr__(self, name)
+        elif len(state) == 5:
+            # legacy serialization of Variable
+            self.data = state[0]
+            state = (state[3], state[4], state[2])
+        # The setting of _backward_hooks is expected to be a no-op.
+        # See Note [Don't serialize hooks]
+        self.requires_grad, _, self._backward_hooks = state
+
+    def __repr__(self, *, tensor_contents=None):
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.__repr__, (self,), self, tensor_contents=tensor_contents
+            )
+        # All strings are unicode in Python 3.
+        return torch._tensor_str._str(self, tensor_contents=tensor_contents)
+
+    def backward(
+        self, gradient=None, retain_graph=None, create_graph=False, inputs=None
+    ):
+        r"""Computes the gradient of current tensor wrt graph leaves.
+
+        The graph is differentiated using the chain rule. If the tensor is
+        non-scalar (i.e. its data has more than one element) and requires
+        gradient, the function additionally requires specifying a ``gradient``.
+        It should be a tensor of matching type and shape, that represents
+        the gradient of the differentiated function w.r.t. ``self``.
+
+        This function accumulates gradients in the leaves - you might need to zero
+        ``.grad`` attributes or set them to ``None`` before calling it.
+        See :ref:`Default gradient layouts<default-grad-layouts>`
+        for details on the memory layout of accumulated gradients.
+
+        .. note::
+
+            If you run any forward ops, create ``gradient``, and/or call ``backward``
+            in a user-specified CUDA stream context, see
+            :ref:`Stream semantics of backward passes<bwd-cuda-stream-semantics>`.
+
+        .. note::
+
+            When ``inputs`` are provided and a given input is not a leaf,
+            the current implementation will call its grad_fn (though it is not strictly needed to get this gradients).
+            It is an implementation detail on which the user should not rely.
+            See https://github.com/pytorch/pytorch/pull/60521#issuecomment-867061780 for more details.
+
+        Args:
+            gradient (Tensor, optional): The gradient of the function
+                being differentiated w.r.t. ``self``.
+                This argument can be omitted if ``self`` is a scalar. Defaults to ``None``.
+            retain_graph (bool, optional): If ``False``, the graph used to compute the grads will be freed;
+                If ``True``, it will be retained. The default is ``None``, in which case the value is inferred from ``create_graph``
+                (i.e., the graph is retained only when higher-order derivative tracking is requested). Note that in nearly all cases
+                setting this option to True is not needed and often can be worked around in a much more efficient way.
+            create_graph (bool, optional): If ``True``, graph of the derivative will
+                be constructed, allowing to compute higher order derivative
+                products. Defaults to ``False``.
+            inputs (Sequence[Tensor], optional): Inputs w.r.t. which the gradient will be
+                accumulated into ``.grad``. All other tensors will be ignored. If not
+                provided, the gradient is accumulated into all the leaf Tensors that were
+                used to compute the :attr:`tensors`. Defaults to ``None``.
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.backward,
+                (self,),
+                self,
+                gradient=gradient,
+                retain_graph=retain_graph,
+                create_graph=create_graph,
+                inputs=inputs,
+            )
+        torch.autograd.backward(
+            self, gradient, retain_graph, create_graph, inputs=inputs
+        )
+
+    def index(self, positions, dims):
+        """
+        Index a regular tensor by binding specified positions to dims.
+
+        This converts a regular tensor to a first-class tensor by binding
+        the specified positional dimensions to Dim objects.
+
+        Args:
+            positions: Tuple of dimension positions to bind
+            dims: Dim objects or tuple of Dim objects to bind to
+
+        Returns:
+            First-class tensor with specified dimensions bound
+        """
+        # TODO: make it possible to dispatch on positions/dims
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.index,
+                (self,),
+                self,
+                positions,
+                dims,
+            )
+
+        from functorch.dim import index
+
+        return index(self, positions, dims)
+
+    def register_hook(self, hook):
+        r"""Registers a backward hook.
+
+        The hook will be called every time a gradient with respect to the
+        Tensor is computed. The hook should have the following signature::
+
+            hook(grad) -> Tensor or None
+
+
+        The hook should not modify its argument, but it can optionally return
+        a new gradient which will be used in place of :attr:`grad`.
+
+        This function returns a handle with a method ``handle.remove()``
+        that removes the hook from the module.
+
+        .. note::
+            See :ref:`backward-hooks-execution` for more information on how when this hook
+            is executed, and how its execution is ordered relative to other hooks.
+
+        Example::
+
+            >>> v = torch.tensor([0., 0., 0.], requires_grad=True)
+            >>> h = v.register_hook(lambda grad: grad * 2)  # double the gradient
+            >>> v.backward(torch.tensor([1., 2., 3.]))
+            >>> v.grad
+
+             2
+             4
+             6
+            [torch.FloatTensor of size (3,)]
+
+            >>> h.remove()  # removes the hook
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.register_hook, (self,), self, hook)
+        if not self.requires_grad:
+            raise RuntimeError(
+                "cannot register a hook on a tensor that doesn't require gradient"
+            )
+        if self._backward_hooks is None:
+            self._backward_hooks = OrderedDict()
+            if self.grad_fn is not None:
+                if hasattr(self.grad_fn, '_register_hook_dict'):
+                    self.grad_fn._register_hook_dict(self)
+
+        from torch.utils.hooks import RemovableHandle
+
+        handle = RemovableHandle(self._backward_hooks)
+        self._backward_hooks[handle.id] = hook
+        return handle
+
+    def register_post_accumulate_grad_hook(self, hook):
+        r"""Registers a backward hook that runs after grad accumulation.
+
+        The hook will be called after all gradients for a tensor have been accumulated,
+        meaning that the .grad field has been updated on that tensor. The post
+        accumulate grad hook is ONLY applicable for leaf tensors (tensors without a
+        .grad_fn field). Registering this hook on a non-leaf tensor will error!
+
+        The hook should have the following signature::
+
+            hook(param: Tensor) -> None
+
+        Note that, unlike other autograd hooks, this hook operates on the tensor
+        that requires grad and not the grad itself. The hook can in-place modify
+        and access its Tensor argument, including its .grad field.
+
+        This function returns a handle with a method ``handle.remove()``
+        that removes the hook from the module.
+
+        .. note::
+            See :ref:`backward-hooks-execution` for more information on how when this hook
+            is executed, and how its execution is ordered relative to other hooks. Since
+            this hook runs during the backward pass, it will run in no_grad mode (unless
+            create_graph is True). You can use torch.enable_grad() to re-enable autograd
+            within the hook if you need it.
+
+        Example::
+
+            >>> v = torch.tensor([0., 0., 0.], requires_grad=True)
+            >>> lr = 0.01
+            >>> # simulate a simple SGD update
+            >>> h = v.register_post_accumulate_grad_hook(lambda p: p.add_(p.grad, alpha=-lr))
+            >>> v.backward(torch.tensor([1., 2., 3.]))
+            >>> v
+            tensor([-0.0100, -0.0200, -0.0300], requires_grad=True)
+
+            >>> h.remove()  # removes the hook
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.register_post_accumulate_grad_hook, (self,), self, hook
+            )
+        if not self.requires_grad:
+            raise RuntimeError(
+                "cannot register a hook on a tensor that doesn't require gradient"
+            )
+        if self.grad_fn is not None:
+            raise RuntimeError(
+                "post accumulate grad hooks cannot be registered on non-leaf tensors"
+            )
+        if self._post_accumulate_grad_hooks is None:
+            self._post_accumulate_grad_hooks: dict[Any, Any] = (
+                # pyrefly: ignore [bad-assignment]
+                OrderedDict()
+            )
+
+        from torch.utils.hooks import RemovableHandle
+
+        handle = RemovableHandle(self._post_accumulate_grad_hooks)
+        self._post_accumulate_grad_hooks[handle.id] = hook
+        return handle
+
+    def reinforce(self, reward):
+        def trim(str):
+            return "\n".join([line.strip() for line in str.split("\n")])
+
+        raise RuntimeError(
+            trim(
+                r"""reinforce() was removed.
+            Use torch.distributions instead.
+            See https://pytorch.org/docs/main/distributions.html
+
+            Instead of:
+
+            probs = policy_network(state)
+            action = probs.multinomial()
+            next_state, reward = env.step(action)
+            action.reinforce(reward)
+            action.backward()
+
+            Use:
+
+            probs = policy_network(state)
+            # NOTE: categorical is equivalent to what used to be called multinomial
+            m = torch.distributions.Categorical(probs)
+            action = m.sample()
+            next_state, reward = env.step(action)
+            loss = -m.log_prob(action) * reward
+            loss.backward()
+        """
+            )
+        )
+
+    detach = _C._add_docstr(
+        _C.TensorBase.detach,
+        r"""
+    Returns a new Tensor, detached from the current graph.
+
+    The result will never require gradient.
+
+    This method also affects forward mode AD gradients and the result will never
+    have forward mode AD gradients.
+
+    .. note::
+
+      Returned Tensor shares the same storage with the original one.
+      In-place modifications on either of them will be seen, and may trigger
+      errors in correctness checks.
+    """,
+    )
+
+    detach_ = _C._add_docstr(
+        _C.TensorBase.detach_,
+        r"""
+    Detaches the Tensor from the graph that created it, making it a leaf.
+    Views cannot be detached in-place.
+
+    This method also affects forward mode AD gradients and the result will never
+    have forward mode AD gradients.
+    """,
+    )
+
+    def is_shared(self):
+        r"""Checks if tensor is in shared memory.
+
+        This is always ``True`` for CUDA tensors.
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.is_shared, (self,), self)
+        return self._typed_storage()._is_shared()
+
+    def share_memory_(self):
+        r"""Moves the underlying storage to shared memory.
+
+        This is a no-op if the underlying storage is already in shared memory
+        and for CUDA tensors. Tensors in shared memory cannot be resized.
+
+        See :meth:`torch.UntypedStorage.share_memory_` for more details.
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.share_memory_, (self,), self)
+        self._typed_storage()._share_memory_()
+        return self
+
+    def module_load(self, other, assign=False):
+        r"""Defines how to transform ``other`` when loading it into ``self`` in :meth:`~nn.Module.load_state_dict`.
+
+        Used when :func:`~torch.__future__.get_swap_module_params_on_conversion` is ``True``.
+
+        It is expected that ``self`` is a parameter or buffer in an ``nn.Module`` and ``other`` is the
+        value in the state dictionary with the corresponding key, this method defines
+        how ``other`` is remapped before being swapped with ``self`` via
+        :func:`~torch.utils.swap_tensors` in :meth:`~nn.Module.load_state_dict`.
+
+        .. note::
+            This method should always return a new object that is not ``self`` or ``other``.
+            For example, the default implementation returns ``self.copy_(other).detach()``
+            if ``assign`` is ``False`` or ``other.detach()`` if ``assign`` is ``True``.
+
+        Args:
+            other (Tensor): value in state dict with key corresponding to ``self``
+            assign (bool): the assign argument passed to :meth:`nn.Module.load_state_dict`
+
+        """
+        if has_torch_function_variadic(self, other):
+            return handle_torch_function(
+                Tensor.module_load, (self, other), self, other, assign=assign
+            )
+
+        if assign:
+            return other.detach()
+        else:
+            return self.copy_(other).detach()
+
+    def __reversed__(self):
+        r"""Reverses the tensor along dimension 0."""
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.__reversed__, (self,), self)
+        if self.dim() == 0:
+            return self
+        else:
+            return self.flip(0)
+
+    def norm(
+        self,
+        p: float | str | None = "fro",
+        dim=None,
+        keepdim=False,
+        dtype=None,
+    ):
+        r"""See :func:`torch.linalg.norm`"""
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.norm, (self,), self, p=p, dim=dim, keepdim=keepdim, dtype=dtype
+            )
+        return torch.norm(self, p, dim, keepdim, dtype=dtype)
+
+    def solve(self, other):
+        from torch._linalg_utils import solve
+
+        return solve(self, other)
+
+    def lstsq(self, other):
+        from torch._linalg_utils import lstsq
+
+        return lstsq(self, other)
+
+    def eig(self, eigenvectors=False):
+        from torch._linalg_utils import eig
+
+        return eig(self, eigenvectors=eigenvectors)
+
+    def symeig(self, eigenvectors=False):
+        from torch._linalg_utils import _symeig
+
+        return _symeig(self, eigenvectors=eigenvectors)
+
+    def lu(self, pivot=True, get_infos=False):
+        r"""See :func:`torch.lu`"""
+        # If get_infos is True, then we don't need to check for errors and vice versa
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.lu, (self,), self, pivot=pivot, get_infos=get_infos
+            )
+
+        LU, pivots, infos = torch._lu_with_info(
+            self, pivot=pivot, check_errors=(not get_infos)
+        )
+        if get_infos:
+            return LU, pivots, infos
+        else:
+            return LU, pivots
+
+    def stft(
+        self,
+        n_fft: int,
+        hop_length: int | None = None,
+        win_length: int | None = None,
+        window: "Tensor | None" = None,
+        center: bool = True,
+        pad_mode: str = "reflect",
+        normalized: bool = False,
+        onesided: bool | None = None,
+        return_complex: bool | None = None,
+        align_to_window: bool | None = None,
+    ):
+        r"""See :func:`torch.stft`
+
+        .. warning::
+          This function changed signature at version 0.4.1. Calling with
+          the previous signature may cause error or return incorrect result.
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.stft,
+                (self,),
+                self,
+                n_fft,
+                hop_length=hop_length,
+                win_length=win_length,
+                window=window,
+                center=center,
+                pad_mode=pad_mode,
+                normalized=normalized,
+                onesided=onesided,
+                return_complex=return_complex,
+                align_to_window=align_to_window,
+            )
+        return torch.stft(
+            self,
+            n_fft,
+            hop_length,
+            win_length,
+            window,
+            center,
+            pad_mode,
+            normalized,
+            onesided,
+            return_complex=return_complex,
+            align_to_window=align_to_window,
+        )
+
+    def istft(
+        self,
+        n_fft: int,
+        hop_length: int | None = None,
+        win_length: int | None = None,
+        window: "Tensor | None" = None,
+        center: bool = True,
+        normalized: bool = False,
+        onesided: bool | None = None,
+        length: int | None = None,
+        return_complex: bool = False,
+    ):
+        r"""See :func:`torch.istft`"""
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.istft,
+                (self,),
+                self,
+                n_fft,
+                hop_length=hop_length,
+                win_length=win_length,
+                window=window,
+                center=center,
+                normalized=normalized,
+                onesided=onesided,
+                length=length,
+                return_complex=return_complex,
+            )
+        return torch.istft(
+            self,
+            n_fft,
+            hop_length,
+            win_length,
+            window,
+            center,
+            normalized,
+            onesided,
+            length,
+            return_complex=return_complex,
+        )
+
+    def resize(self, *sizes):
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.resize, (self,), self, *sizes)
+        warnings.warn("non-inplace resize is deprecated", stacklevel=2)
+        from torch.autograd._functions import Resize
+
+        return Resize.apply(self, sizes)
+
+    def resize_as(self, tensor):
+        if has_torch_function_variadic(self, tensor):
+            return handle_torch_function(Tensor.resize_as, (self, tensor), self, tensor)
+        warnings.warn("non-inplace resize_as is deprecated", stacklevel=2)
+        from torch.autograd._functions import Resize
+
+        return Resize.apply(self, tensor.size())
+
+    def split(self, split_size, dim=0):
+        r"""See :func:`torch.split`"""
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.split, (self,), self, split_size, dim=dim
+            )
+        if isinstance(split_size, Tensor):
+            try:
+                split_size = int(split_size)
+            except ValueError:
+                pass
+
+        if isinstance(split_size, (int, torch.SymInt)):
+            return torch._VF.split(self, split_size, dim)  # type: ignore[attr-defined]
+        else:
+            return torch._VF.split_with_sizes(
+                self,
+                split_size,
+                dim,
+            )
+
+    def unique(self, sorted=True, return_inverse=False, return_counts=False, dim=None):
+        r"""Returns the unique elements of the input tensor.
+
+        See :func:`torch.unique`
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.unique,
+                (self,),
+                self,
+                sorted=sorted,
+                return_inverse=return_inverse,
+                return_counts=return_counts,
+                dim=dim,
+            )
+        return torch.unique(
+            self,
+            sorted=sorted,
+            return_inverse=return_inverse,
+            return_counts=return_counts,
+            dim=dim,
+        )
+
+    def unique_consecutive(self, return_inverse=False, return_counts=False, dim=None):
+        r"""Eliminates all but the first element from every consecutive group of equivalent elements.
+
+        See :func:`torch.unique_consecutive`
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.unique_consecutive,
+                (self,),
+                self,
+                return_inverse=return_inverse,
+                return_counts=return_counts,
+                dim=dim,
+            )
+        return torch.unique_consecutive(
+            self, return_inverse=return_inverse, return_counts=return_counts, dim=dim
+        )
+
+    @_handle_torch_function_and_wrap_type_error_to_not_implemented
+    def __rsub__(self, other: Union["Tensor", int, float, bool, complex]) -> "Tensor":
+        return _C._VariableFunctions.rsub(self, other)
+
+    @_handle_torch_function_and_wrap_type_error_to_not_implemented
+    def __rdiv__(self, other: Union["Tensor", int, float, bool, complex]) -> "Tensor":
+        return self.reciprocal() * other
+
+    __rtruediv__ = __rdiv__
+    __itruediv__ = _C.TensorBase.__idiv__
+
+    # pyrefly: ignore [bad-override]
+    __pow__ = cast(
+        Callable[
+            ["torch._C.TensorBase", Union["Tensor", int, float, bool, complex]],
+            "Tensor",
+        ],
+        _handle_torch_function_and_wrap_type_error_to_not_implemented(
+            _C.TensorBase.pow
+        ),
+    )
+
+    __ipow__ = _handle_torch_function_and_wrap_type_error_to_not_implemented(
+        _C.TensorBase.pow_
+    )
+
+    @_handle_torch_function_and_wrap_type_error_to_not_implemented
+    def __rmod__(self, other: Union["Tensor", int, float, bool, complex]) -> "Tensor":
+        return torch.remainder(other, self)
+
+    def __format__(self, format_spec):
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.__format__, (self,), self, format_spec)
+        if self.dim() == 0 and not self.is_meta and type(self) is Tensor:
+            # Use detach() here to avoid the warning when converting a scalar Tensor that
+            # requires gradients to a python number. It is ok for formatting.
+            return self.detach().item().__format__(format_spec)
+        return object.__format__(self, format_spec)
+
+    @_handle_torch_function_and_wrap_type_error_to_not_implemented
+    def __rpow__(self, other: Union["Tensor", int, float, bool, complex]) -> "Tensor":
+        return torch.pow(other, self)
+
+    @_handle_torch_function_and_wrap_type_error_to_not_implemented
+    def __floordiv__(self, other: Union["Tensor", int, float, bool]) -> "Tensor":  # type: ignore[override]
+        # TODO(rec): the superclass says it accepts complex here,
+        # but torch.floor_divide says it doesn't.
+        return torch.floor_divide(self, other)
+
+    @_handle_torch_function_and_wrap_type_error_to_not_implemented
+    def __rfloordiv__(self, other: Union["Tensor", int, float, bool]) -> "Tensor":  # type: ignore[override]
+        return torch.floor_divide(other, self)
+
+    @_handle_torch_function_and_wrap_type_error_to_not_implemented
+    def __rlshift__(
+        self, other: Union["Tensor", int, float, bool, complex]
+    ) -> "Tensor":
+        return torch.bitwise_left_shift(other, self)
+
+    @_handle_torch_function_and_wrap_type_error_to_not_implemented
+    def __rrshift__(
+        self, other: Union["Tensor", int, float, bool, complex]
+    ) -> "Tensor":
+        return torch.bitwise_right_shift(other, self)
+
+    @_handle_torch_function_and_wrap_type_error_to_not_implemented
+    def __rmatmul__(self, other: "Tensor") -> "Tensor":
+        return torch.matmul(other, self)
+
+    __pos__ = _C.TensorBase.positive
+    __neg__ = _C.TensorBase.neg
+    __abs__ = _C.TensorBase.abs
+
+    def __len__(self):
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.__len__, (self,), self)
+        if self.dim() == 0:
+            raise TypeError("len() of a 0-d tensor")
+        if torch._C._get_tracing_state():
+            warnings.warn(
+                "Using len to get tensor shape might cause the trace to be incorrect. "
+                "Recommended usage would be tensor.shape[0]. "
+                "Passing a tensor of different shape might lead to errors or silently give "
+                "incorrect results.",
+                category=torch.jit.TracerWarning,
+                stacklevel=2,
+            )
+        return self.shape[0]
+
+    def __iter__(self):
+        # NB: we use 'imap' and not 'map' here, so that we get a generator
+        # and don't eagerly perform all the indexes.  This could save us
+        # work, and also helps keep trace ordering deterministic
+        # (e.g., if you zip(*hiddens), the eager map will force all the
+        # indexes of hiddens[0] before hiddens[1], while the generator
+        # map will interleave them.)
+        # NB: We have intentionally skipped __torch_function__ dispatch here.
+        # See gh-54457
+        if self.dim() == 0:
+            raise TypeError("iteration over a 0-d tensor")
+        if torch._C._get_tracing_state():
+            warnings.warn(
+                "Iterating over a tensor might cause the trace to be incorrect. "
+                "Passing a tensor of different shape won't change the number of "
+                "iterations executed (and might lead to errors or silently give "
+                "incorrect results).",
+                category=torch.jit.TracerWarning,
+                stacklevel=2,
+            )
+        return iter(self.unbind(0))
+
+    def __hash__(self):
+        # Do NOT handle __torch_function__ here as user's default
+        # implementation that handle most functions will most likely do it wrong.
+        # It can be easily overridden by defining this method on the user
+        # subclass if needed.
+        return id(self)
+
+    def __dir__(self):
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.__dir__, (self,), self)
+        tensor_methods = dir(self.__class__)
+        tensor_methods.remove("volatile")  # deprecated
+        attrs = list(self.__dict__.keys())
+        keys = tensor_methods + attrs
+
+        # property only available dense, cuda tensors
+        if (not self.is_cuda) or self.is_sparse:
+            keys.remove("__cuda_array_interface__")
+
+        return sorted(keys)
+
+    # Numpy array interface, to support `numpy.asarray(tensor) -> ndarray`
+    __array_priority__ = 1000  # prefer Tensor ops over numpy ones
+
+    def __array__(self, dtype=None):
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.__array__, (self,), self, dtype=dtype)
+        if dtype is None:
+            return self.numpy()
+        else:
+            return self.numpy().astype(dtype, copy=False)
+
+    # Wrap Numpy array again in a suitable tensor when done, to support e.g.
+    # `numpy.sin(tensor) -> tensor` or `numpy.greater(tensor, 0) -> ByteTensor`
+    def __array_wrap__(self, array):
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.__array_wrap__, (self,), self, array=array
+            )
+        if array.dtype == bool:
+            # Workaround, torch has no built-in bool tensor
+            array = array.astype("uint8")
+        return torch.from_numpy(array)
+
+    def __contains__(self, element: Any, /) -> bool:
+        r"""Check if `element` is present in tensor
+
+        Args:
+            element (Tensor or scalar): element to be checked
+                for presence in current tensor"
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.__contains__, (self,), self, element)
+        if isinstance(
+            element, (torch.Tensor, Number, torch.SymInt, torch.SymFloat, torch.SymBool)
+        ):
+            # type hint doesn't understand the __contains__ result array
+            return bool((element == self).any().item())  # type: ignore[union-attr]
+
+        raise RuntimeError(
+            f"Tensor.__contains__ only supports Tensor or scalar, but you passed in a {type(element)}."
+        )
 
     @property
-    def data(self):
-        """Returns the underlying data tensor (detached from autograd graph)."""
-        return self.detach()
+    def __cuda_array_interface__(self):
+        """Array view description for cuda tensors.
 
-    @data.setter
-    def data(self, new_data):
-        """Replace the tensor's data with new_data (in-place)."""
-        if not isinstance(new_data, Tensor):
-            raise TypeError(f"data must be a Tensor, got {type(new_data).__name__}")
-        if new_data.shape != self.shape:
-            raise RuntimeError(f"shape mismatch: expected {self.shape}, got {new_data.shape}")
-        if new_data.dtype != self.dtype:
-            raise RuntimeError(f"dtype mismatch: expected {self.dtype}, got {new_data.dtype}")
-        self.cy_set_data_runtime_truth_from(new_data)
+        See:
+        https://numba.pydata.org/numba-doc/dev/cuda/cuda_array_interface.html
+        """
+        if has_torch_function_unary(self):
+            # TODO mypy doesn't support @property, see: https://github.com/python/mypy/issues/6185
+            return handle_torch_function(  # pyrefly: ignore [bad-argument-count]
+                Tensor.__cuda_array_interface__.__get__,  # type: ignore[attr-defined]
+                (self,),
+                self,  # pyrefly: ignore [bad-argument-type]
+            )
+
+        # raise AttributeError for unsupported tensors, so that
+        # hasattr(cpu_tensor, "__cuda_array_interface__") is False.
+        if not self.is_cuda:
+            raise AttributeError(
+                f"Can't get __cuda_array_interface__ on non-CUDA tensor type: {self.type()} "
+                "If CUDA data is required use tensor.cuda() to copy tensor to device memory."
+            )
+
+        if self.is_sparse:
+            raise AttributeError(
+                f"Can't get __cuda_array_interface__ on sparse type: {self.type()} "
+                "Use Tensor.to_dense() to convert to a dense tensor first."
+            )
+
+        # RuntimeError, matching tensor.__array__() behavior.
+        if self.requires_grad:
+            raise RuntimeError(
+                "Can't get __cuda_array_interface__ on Variable that requires grad. "
+                "If gradients aren't required, use var.detach() to get Variable that doesn't require grad."
+            )
+
+        typestr = _dtype_to_typestr(self.dtype)
+        itemsize = self.element_size()
+        shape = tuple(self.shape)
+        if self.is_contiguous():
+            # __cuda_array_interface__ v2 requires the strides to be omitted
+            # (either not set or set to None) for C-contiguous arrays.
+            strides = None
+        else:
+            strides = tuple(s * itemsize for s in self.stride())
+        data_ptr = self.data_ptr() if self.numel() > 0 else 0
+        data = (data_ptr, False)  # read-only is false
+
+        return dict(typestr=typestr, shape=shape, strides=strides, data=data, version=2)
+
+    def storage_type(self):
+        r"""storage_type() -> type
+
+        Returns the type of the underlying storage.
+
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.storage_type, (self,), self)
+
+        torch.storage._warn_typed_storage_removal()
+
+        return self._typed_storage()._get_legacy_storage_class()
+
+    def refine_names(self, *names):  # pyrefly: ignore  # bad-override
+        r"""Refines the dimension names of :attr:`self` according to :attr:`names`.
+
+        Refining is a special case of renaming that "lifts" unnamed dimensions.
+        A ``None`` dim can be refined to have any name; a named dim can only be
+        refined to have the same name.
+
+        Because named tensors can coexist with unnamed tensors, refining names
+        gives a nice way to write named-tensor-aware code that works with both
+        named and unnamed tensors.
+
+        :attr:`names` may contain up to one Ellipsis (``...``).
+        The Ellipsis is expanded greedily; it is expanded in-place to fill
+        :attr:`names` to the same length as ``self.dim()`` using names from the
+        corresponding indices of ``self.names``.
+
+
+        Args:
+            names (iterable of str): The desired names of the output tensor. May
+                contain up to one Ellipsis.
+
+        Examples::
+
+            >>> imgs = torch.randn(32, 3, 128, 128)
+            >>> named_imgs = imgs.refine_names('N', 'C', 'H', 'W')
+            >>> named_imgs.names
+            ('N', 'C', 'H', 'W')
+
+            >>> tensor = torch.randn(2, 3, 5, 7, 11)
+            >>> tensor = tensor.refine_names('A', ..., 'B', 'C')
+            >>> tensor.names
+            ('A', None, None, 'B', 'C')
+
+        .. warning::
+            The named tensor API is experimental and subject to change.
+
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.refine_names, (self,), self, *names)
+        names = resolve_ellipsis(names, self.names, "refine_names")
+        return super().refine_names(names)
+
+    def align_to(self, *names):  # pyrefly: ignore  # bad-override
+        r"""Permutes the dimensions of the :attr:`self` tensor to match the order
+        specified in :attr:`names`, adding size-one dims for any new names.
+
+        All of the dims of :attr:`self` must be named in order to use this method.
+        The resulting tensor is a view on the original tensor.
+
+        All dimension names of :attr:`self` must be present in :attr:`names`.
+        :attr:`names` may contain additional names that are not in ``self.names``;
+        the output tensor has a size-one dimension for each of those new names.
+
+        :attr:`names` may contain up to one Ellipsis (``...``).
+        The Ellipsis is expanded to be equal to all dimension names of :attr:`self`
+        that are not mentioned in :attr:`names`, in the order that they appear
+        in :attr:`self`.
+
+
+        Args:
+            names (iterable of str): The desired dimension ordering of the
+                output tensor. May contain up to one Ellipsis that is expanded
+                to all unmentioned dim names of :attr:`self`.
+
+        Examples::
+
+            >>> tensor = torch.randn(2, 2, 2, 2, 2, 2)
+            >>> named_tensor = tensor.refine_names('A', 'B', 'C', 'D', 'E', 'F')
+
+            # Move the F and E dims to the front while keeping the rest in order
+            >>> named_tensor.align_to('F', 'E', ...)
+
+        .. warning::
+            The named tensor API is experimental and subject to change.
+
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.align_to, (self,), self, *names)
+        ellipsis_idx = single_ellipsis_index(names, "align_to")
+        if ellipsis_idx is None:
+            return super().align_to(names)
+        return super().align_to(
+            [name for name in names if not is_ellipsis(name)], ellipsis_idx
+        )
+
+    def unflatten(self, dim, sizes):  # type: ignore[override]
+        r"""
+        unflatten(dim, sizes) -> Tensor
+
+        See :func:`torch.unflatten`.
+
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.unflatten, (self,), self, dim, sizes)
+
+        if not sizes:
+            raise RuntimeError("unflatten: sizes must be non-empty")
+
+        names = None
+        if isinstance(sizes, OrderedDict) or (
+            isinstance(sizes, (tuple, list)) and isinstance(sizes[0], (tuple, list))
+        ):
+            names, sizes = unzip_namedshape(sizes)
+            return super().unflatten(dim, sizes, names)
+        else:
+            return super().unflatten(dim, sizes)
+
+    def rename_(self, *names, **rename_map):
+        """In-place version of :meth:`~Tensor.rename`."""
+
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.rename_, (self,), self, *names, **rename_map
+            )
+
+        # Note [rename_ / rename API]
+        # The Python API for these is different from the C++ API. In Python:
+        # 1) tensor.rename(*names) takes a vararglist of names
+        # 2) tensor.rename(**rename_map) takes a map of names to rename.
+        # C++ is static, making it difficult to implement similar behavior.
+        return update_names(self, names, rename_map, inplace=True)
+
+    def rename(self, *names, **rename_map):
+        """Renames dimension names of :attr:`self`.
+
+        There are two main usages:
+
+        ``self.rename(**rename_map)`` returns a view on tensor that has dims
+        renamed as specified in the mapping :attr:`rename_map`.
+
+        ``self.rename(*names)`` returns a view on tensor, renaming all
+        dimensions positionally using :attr:`names`.
+        Use ``self.rename(None)`` to drop names on a tensor.
+
+        One cannot specify both positional args :attr:`names` and keyword args
+        :attr:`rename_map`.
+
+        Examples::
+
+            >>> imgs = torch.rand(2, 3, 5, 7, names=('N', 'C', 'H', 'W'))
+            >>> renamed_imgs = imgs.rename(N='batch', C='channels')
+            >>> renamed_imgs.names
+            ('batch', 'channels', 'H', 'W')
+
+            >>> renamed_imgs = imgs.rename(None)
+            >>> renamed_imgs.names
+            (None, None, None, None)
+
+            >>> renamed_imgs = imgs.rename('batch', 'channel', 'height', 'width')
+            >>> renamed_imgs.names
+            ('batch', 'channel', 'height', 'width')
+
+        .. warning::
+            The named tensor API is experimental and subject to change.
+
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor.rename, (self,), self, *names, **rename_map
+            )
+
+        # See Note [rename_ / rename API]
+        return update_names(self, names, rename_map, inplace=False)
+
+    def to_sparse_coo(self):
+        """Convert a tensor to :ref:`coordinate format <sparse-coo-docs>`.
+
+        Examples::
+
+             >>> dense = torch.randn(5, 5)
+             >>> sparse = dense.to_sparse_coo()
+             >>> sparse._nnz()
+             25
+
+        """
+        return self.to_sparse()
+
+    def dim_order(self, *, ambiguity_check: bool | list[torch.memory_format] = False):
+        """
+        dim_order(ambiguity_check=False) -> tuple
+
+        Returns the uniquely determined tuple of int describing the dim order or
+        physical layout of :attr:`self`.
+
+        The dim order represents how dimensions are laid out in memory of dense tensors,
+        starting from the outermost to the innermost dimension.
+
+        Note that the dim order may not always be uniquely determined.
+        If `ambiguity_check` is True, this function raises a RuntimeError when the dim order cannot be uniquely determined;
+        If `ambiguity_check` is a list of memory formats, this function raises a RuntimeError when tensor can not be interpreted
+        into exactly one of the given memory formats, or it cannot be uniquely determined.
+        If `ambiguity_check` is False, it will return one of legal dim order(s) without checking its uniqueness.
+        Otherwise, it will raise TypeError.
+
+        Args:
+            ambiguity_check (bool or List[torch.memory_format]): The check method for ambiguity of dim order.
+
+        Examples::
+
+            >>> torch.empty((2, 3, 5, 7)).dim_order()
+            (0, 1, 2, 3)
+            >>> torch.empty((2, 3, 5, 7)).transpose(1, 2).dim_order()
+            (0, 2, 1, 3)
+            >>> torch.empty((2, 3, 5, 7), memory_format=torch.channels_last).dim_order()
+            (0, 2, 3, 1)
+            >>> torch.empty((1, 2, 3, 4)).dim_order()
+            (0, 1, 2, 3)
+            >>> try:
+            ...     torch.empty((1, 2, 3, 4)).dim_order(ambiguity_check=True)
+            ... except RuntimeError as e:
+            ...     print(e)
+            The tensor does not have unique dim order, or cannot map to exact one of the given memory formats.
+            >>> torch.empty((1, 2, 3, 4)).dim_order(
+            ...     ambiguity_check=[torch.contiguous_format, torch.channels_last]
+            ... )  # It can be mapped to contiguous format
+            (0, 1, 2, 3)
+            >>> try:
+            ...     torch.empty((1, 2, 3, 4)).dim_order(ambiguity_check="ILLEGAL") # type: ignore[arg-type]
+            ... except TypeError as e:
+            ...     print(e)
+            The ambiguity_check argument must be a bool or a list of memory formats.
+
+        .. warning::
+            The dim_order tensor API is experimental and subject to change.
+        """
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.dim_order, (self,), self)
+
+        if self.is_sparse:
+            raise AttributeError(
+                f"Can't get dim order on sparse type: {self.type()} "
+                "Use Tensor.to_dense() to convert to a dense tensor first."
+            )
+
+        # Sanity check ambiguity_check data types
+        if not isinstance(ambiguity_check, bool):
+            if not isinstance(ambiguity_check, list):
+                raise TypeError(
+                    "The ambiguity_check argument must be a bool or a list of memory formats."
+                )
+            for memory_format in ambiguity_check:
+                if not isinstance(memory_format, torch.memory_format):
+                    raise TypeError(
+                        "The ambiguity_check argument must be a bool or a list of memory formats."
+                    )
+
+        def invalid_unique_memory_format(tensor, valid_memory_formats):
+            """
+            Returns True if the tensor cannot be uniquely mapped to any of the given memory formats, False otherwise.
+            """
+
+            n_legality = 0
+
+            for memory_format in valid_memory_formats:
+                if tensor.is_contiguous(memory_format=memory_format):
+                    n_legality += 1
+
+            return n_legality != 1
+
+        def has_multiple_dim_order(tensor):
+            """
+            Returns True if there're multiple legal dim orders for given tensor, False otherwise.
+
+            The tensor is considered to have multiple legal dim orders if either of the following conditions is met:
+
+            * Singleton Dimensions: There's at least one singleteon dimension in the tensor.
+              Since their size is 1, they don't affect the memory offset (stride * index
+              is zero because index is always zero). Therefore, they can be placed anywhere
+              in the dimension order without changing how data is accessed.
+            * Same strides: Strides reflect how the tensor is stored in memory.
+              If any two dimensions have the same stride, swapping these dimensions won't
+              change how data is accessed, leading to multiple correct dimension orders.
+            """
+            from torch.fx.experimental.symbolic_shapes import guard_or_false
+
+            sizes = tensor.size()
+            strides = tensor.stride()
+
+            # Check if there are any duplicate strides
+            has_duplicate_strides = any(
+                guard_or_false(earlier == later)
+                for earlier, later in itertools.pairwise(strides)
+            )
+
+            # Check if there are any singleton dimensions
+            has_singleton_dims = any(guard_or_false(size == 1) for size in sizes)
+
+            return has_duplicate_strides or has_singleton_dims
+
+        valid_memory_formats = (
+            ambiguity_check if isinstance(ambiguity_check, list) else []
+        )
+        check_multiple_dim_order = (
+            ambiguity_check if isinstance(ambiguity_check, bool) else True
+        )
+
+        if (
+            check_multiple_dim_order and has_multiple_dim_order(self)
+        ) and invalid_unique_memory_format(self, valid_memory_formats):
+            raise RuntimeError(
+                "The tensor does not have unique dim order, or cannot map to exact one of the given memory formats."
+            )
+
+        import torch._prims_common as utils
+
+        out_perm, raise_ambiguity = (
+            utils.compute_elementwise_output_logical_to_physical_perm(
+                self, ambiguity_check=ambiguity_check
+            )
+        )
+        if raise_ambiguity:
+            raise RuntimeError("The tensor does not have unique dim order.")
+        return tuple(out_perm)
+
+    def _update_names(self, names, inplace):
+        if has_torch_function_unary(self):
+            return handle_torch_function(
+                Tensor._update_names, (self,), self, names, inplace
+            )
+
+        # See Note [rename_ / rename API]
+        if inplace:
+            return super().rename_(names)
+        else:
+            return super().rename(names)
 
     @classmethod
     def __torch_function__(cls, func, types, args=(), kwargs=None):
-        return NotImplemented
-
-    @classmethod
-    def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
-        return NotImplemented
-
-    def _fw_get(self, level):
-        tangents = getattr(self, "_fw_tangents", None)
-        if not tangents:
-            return None
-        return tangents.get(level)
-
-    def _fw_set(self, level, tangent):
-        tangents = getattr(self, "_fw_tangents", None)
-        if tangents is None:
-            tangents = {}
-            self._fw_tangents = tangents
-        tangents[level] = tangent
-
-    def _fw_clear(self, level):
-        tangents = getattr(self, "_fw_tangents", None)
-        if not tangents:
-            return
-        tangents.pop(level, None)
-        if not tangents:
-            self._fw_tangents = {}
-
-    def _fw_has(self, level):
-        tangents = getattr(self, "_fw_tangents", None)
-        return bool(tangents) and level in tangents
-
-    def untyped_storage(self):
-        """Return the underlying untyped storage.
-
-        This is needed for compatibility with safetensors which calls
-        tensor.untyped_storage().nbytes() to determine storage size.
         """
-        return self._storage.untyped_storage()
+        This __torch_function__ implementation wraps subclasses such that
+        methods called on subclasses return a subclass instance instead of
+        a ``torch.Tensor`` instance.
 
-    def _typed_storage(self):
-        """Return the TypedStorage backing this tensor (internal API)."""
-        return self._storage
+        One corollary to this is that you need coverage for torch.Tensor
+        methods if implementing __torch_function__ for subclasses.
 
-    def storage(self):
-        _warn_typed_storage_removal(stacklevel=2)
-        return self._storage
+        We recommend always calling ``super().__torch_function__`` as the base
+        case when doing the above.
 
-    def data_ptr(self):
-        """Return the address of the first element of this tensor."""
-        storage = self._storage.untyped_storage()
-        base = storage.data_ptr()
-        return base + self.offset * self.dtype.itemsize
+        While not mandatory, we recommend making `__torch_function__` a classmethod.
+        """
+        if kwargs is None:
+            kwargs = {}
 
-    @property
-    def ndim(self):
-        return self._ndim
+        if not all(issubclass(cls, t) for t in types):
+            return NotImplemented
 
-    def is_floating_point(self):
-        return self.dtype.is_floating_point
-
-    def is_complex(self):
-        return self.dtype.is_complex
-
-    def is_contiguous(self, memory_format=None):
-        """Check if tensor is contiguous in row-major order."""
-        expected = _compute_strides(self.shape)
-        return self.stride == expected
-
-    def contiguous(self, memory_format=None):
-        """Return contiguous tensor (copy if not already contiguous)."""
-        if self.is_contiguous():
-            return self
-
-        # Use dispatch to stay on device (avoid numpy round-trip)
-        from ._dispatch import dispatch
-        return dispatch("contiguous", self.device.type, self)
-
-    def _numpy_view(self):
-        if self.device.type == "meta":
-            raise RuntimeError("meta tensor has no data")
-        if self.device.type != "cpu":
-            # Convert to CPU to get numpy view
-            return self.to("cpu")._numpy_view()
-        base = self._storage.data.ravel()
-        itemsize = base.itemsize
-        strides = tuple(s * itemsize for s in self.stride)
-        return np.lib.stride_tricks.as_strided(
-            base[self.offset:], shape=self.shape, strides=strides
-        )
-
-    def reshape(self, *shape):
-        if not shape:
-            raise TypeError("reshape() missing shape arguments")
-        if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
-            shape = tuple(shape[0])
-        if not self.requires_grad:
-            return reshape_dispatch(self, shape)
-        from ._dispatch import dispatch
-        return dispatch("reshape", self.device.type, self, shape)
-
-    def view(self, *shape):
-        if not shape:
-            raise TypeError(
-                "view() received an invalid combination of arguments - got (), but expected one of:\n"
-                " * (torch.dtype dtype)\n"
-                " * (tuple of ints size)\n"
-            )
-        if len(shape) == 1:
-            if isinstance(shape[0], (tuple, list)):
-                shape = tuple(shape[0])
+        with _C.DisableTorchFunctionSubclass():
+            ret = func(*args, **kwargs)
+            if func in get_default_nowrap_functions():
+                return ret
             else:
-                shape = (shape[0],)
-        else:
-            shape = tuple(shape)
-
-        if not self.is_contiguous():
-            raise RuntimeError(
-                "view size is not compatible with input tensor's size and stride "
-                "(at least one dimension spans across two contiguous subspaces). "
-                "Use .reshape(...) instead."
-            )
-
-        size = 1
-        for dim in self.shape:
-            size *= dim
-
-        infer_idx = None
-        known_size = 1
-        shape_list = list(shape)
-        for idx, dim in enumerate(shape_list):
-            if dim == -1:
-                if infer_idx is not None:
-                    raise RuntimeError("only one dimension can be inferred")
-                infer_idx = idx
-                continue
-            known_size *= dim
-
-        if infer_idx is not None:
-            if known_size == 0 or size % known_size != 0:
-                raise RuntimeError(f"shape '{list(shape)}' is invalid for input of size {size}")
-            shape_list[infer_idx] = size // known_size
-
-        shape = tuple(shape_list)
-        new_size = 1
-        for dim in shape:
-            new_size *= dim
-        if size != new_size:
-            raise ValueError("view size mismatch")
-
-        if self.requires_grad:
-            from ._dispatch import dispatch
-            return dispatch("view", self.device.type, self, shape)
-
-        view = self.cy_view(shape)
-        source_view_meta = getattr(self, "_view_meta", None) or {}
-        from candle.autograd.grad_mode import current_creation_mode
-        creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
-        creation_kind = source_view_meta.get("creation_kind")
-        if creation_mode is not None:
-            if self._is_view():
-                creation_kind = "view_of_view"
-            else:
-                creation_kind = "view"
-        view._view_meta = {
-            "op": "view",
-            "shape": tuple(view.shape),
-            "stride": tuple(view.stride),
-            "offset": int(view.offset),
-            "creation_mode": creation_mode,
-            "creation_kind": creation_kind,
-        }
-        from candle.autograd import forward_ad
-        level = forward_ad._current_level()
-        if level >= 0:
-            tangent = forward_ad.get_tangent(self, level)
-            if tangent is not None:
-                view._fw_set(level, tangent.view(shape))
-        return view
-
-    def flatten(self, start_dim=0, end_dim=-1):
-        if self.requires_grad:
-            from ._dispatch import dispatch
-            return dispatch("flatten", self.device.type, self, start_dim, end_dim)
-        ndim = len(self.shape)
-        if ndim == 0:
-            return self.reshape((1,))
-        if start_dim < 0:
-            start_dim += ndim
-        if end_dim < 0:
-            end_dim += ndim
-        if start_dim < 0 or start_dim >= ndim:
-            raise IndexError("Dimension out of range")
-        if end_dim < 0 or end_dim >= ndim:
-            raise IndexError("Dimension out of range")
-        if start_dim > end_dim:
-            raise RuntimeError("flatten() has invalid args: start_dim cannot come after end_dim")
-
-        flattened = 1
-        for d in self.shape[start_dim:end_dim + 1]:
-            flattened *= d
-        new_shape = self.shape[:start_dim] + (flattened,) + self.shape[end_dim + 1:]
-        return self.reshape(new_shape)
-
-    def _transpose_view(self, dim0, dim1):
-        view = self.cy_transpose(dim0, dim1)
-        source_view_meta = getattr(self, "_view_meta", None) or {}
-        from candle.autograd.grad_mode import current_creation_mode
-        creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
-        creation_kind = source_view_meta.get("creation_kind")
-        if creation_mode is not None:
-            if self._is_view():
-                creation_kind = "view_of_view"
-            else:
-                creation_kind = "view"
-        view._view_meta = {
-            "op": "transpose",
-            "shape": tuple(view.shape),
-            "stride": tuple(view.stride),
-            "offset": int(view.offset),
-            "creation_mode": creation_mode,
-            "creation_kind": creation_kind,
-        }
-        return view
-
-    def transpose(self, dim0, dim1):
-        if self.requires_grad:
-            from ._dispatch import dispatch
-            return dispatch("transpose", self.device.type, self, dim0, dim1)
-        return self._transpose_view(dim0, dim1)
-
-    def transpose_(self, dim0, dim1):
-        ndim = len(self.shape)
-        d0 = dim0 if dim0 >= 0 else dim0 + ndim
-        d1 = dim1 if dim1 >= 0 else dim1 + ndim
-        if d0 < 0 or d0 >= ndim or d1 < 0 or d1 >= ndim:
-            raise IndexError("Dimension out of range")
-        shape = list(self.shape)
-        stride = list(self.stride)
-        shape[d0], shape[d1] = shape[d1], shape[d0]
-        stride[d0], stride[d1] = stride[d1], stride[d0]
-        return self.as_strided_(tuple(shape), tuple(stride))
-
-    def t(self):
-        """Transpose for 2D tensors. Expects input to be <= 2-D tensor and transposes dimensions 0 and 1."""
-        if len(self.shape) > 2:
-            raise RuntimeError(f"t() expects a tensor with <= 2 dimensions, but self is {len(self.shape)}D")
-        if len(self.shape) < 2:
-            return self
-        if self.requires_grad:
-            from ._dispatch import dispatch
-            return dispatch("transpose", self.device.type, self, 0, 1)
-        return self._transpose_view(0, 1)
-
-    def t_(self):
-        """In-place transpose for 2D tensors."""
-        if len(self.shape) > 2:
-            raise RuntimeError(f"t_() expects a tensor with <= 2 dimensions, but self is {len(self.shape)}D")
-        self._check_inplace()
-        if len(self.shape) < 2:
-            return self
-        shape = list(self.shape)
-        stride = list(self.stride)
-        shape[0], shape[1] = shape[1], shape[0]
-        stride[0], stride[1] = stride[1], stride[0]
-        self.shape = tuple(shape)
-        self.stride = _StrideTuple(tuple(stride))
-        return self
-
-    @property
-    def T(self):
-        if len(self.shape) > 2:
-            raise RuntimeError(f"t() expects a tensor with <= 2 dimensions, but self is {len(self.shape)}D")
-        if len(self.shape) < 2:
-            return self
-        if self.requires_grad:
-            from ._dispatch import dispatch
-            return dispatch("transpose", self.device.type, self, 0, 1)
-        return self._transpose_view(0, 1)
-
-    def view_as(self, other):
-        """Reshape this tensor to the same shape as other."""
-        return self.view(other.shape)
-
-    def var_mean(self, dim=None, keepdim=False, unbiased=True):
-        from ._functional import var_mean
-        return var_mean(self, dim=dim, keepdim=keepdim, unbiased=unbiased)
-
-    def new_empty(self, size, *, dtype=None, device=None, requires_grad=False):
-        """Create a new empty tensor with the same dtype and device as self."""
-        from ._creation import empty
-        dt = dtype if dtype is not None else self.dtype
-        dev = device if device is not None else self.device
-        return empty(size, dtype=dt, device=dev)
-
-    def new_tensor(self, data, *, dtype=None, device=None, requires_grad=False):
-        """Create a new tensor with the given data using this tensor's dtype and device by default."""
-        from ._creation import tensor
-        dt = dtype if dtype is not None else self.dtype
-        dev = device if device is not None else self.device
-        return tensor(data, dtype=dt, device=dev)
-
-    def new_empty_strided(self, size, stride, *, dtype=None, device=None, requires_grad=False):
-        """Create a new empty tensor with the given size and stride."""
-        dt = dtype if dtype is not None else self.dtype
-        dev = device if device is not None else self.device
-        if dev.type == "cpu":
-            numel = 1
-            for s in size:
-                numel *= s
-            arr = np.empty(numel, dtype=to_numpy_dtype(dt))
-            storage = typed_storage_from_numpy(arr, dt, device=dev)
-            return cy_make_tensor_from_storage(storage, tuple(size), tuple(stride), 0, requires_grad)
-        else:
-            from ._creation import empty
-            t = empty(size, dtype=dt, device=dev)
-            return t
-
-    def set_(self, typed_storage, storage_offset=None, size=None, stride=None):
-        from .storage import TypedStorage
-
-        if not isinstance(typed_storage, TypedStorage):
-            raise TypeError("set_() currently only supports TypedStorage input")
-
-        # Single-argument form: set_(storage) — 1D tensor viewing entire storage
-        if storage_offset is None:
-            return self.cy_set_runtime_truth(
-                typed_storage,
-                (typed_storage.size(),),
-                _StrideTuple((1,)),
-                0,
-            )
-
-        if not isinstance(storage_offset, int) or storage_offset < 0:
-            raise RuntimeError("storage_offset must be a non-negative integer")
-        if not isinstance(size, (tuple, list)) or not isinstance(stride, (tuple, list)):
-            raise RuntimeError("size and stride must be tuple-like")
-        if len(size) != len(stride):
-            raise RuntimeError("size and stride must have the same length")
-        if any(not isinstance(dim, int) for dim in size):
-            raise RuntimeError("size values must be integers")
-        if any(not isinstance(step, int) for step in stride):
-            raise RuntimeError("stride values must be integers")
-        if any(dim < 0 for dim in size):
-            raise RuntimeError("size values must be non-negative")
-        if any(step < 0 for step in stride):
-            raise RuntimeError("stride values must be non-negative")
-
-        size = tuple(size)
-        stride = tuple(stride)
-        device = getattr(typed_storage, "device", None)
-        dtype = getattr(typed_storage, "dtype", None)
-        if device is None or dtype is None:
-            raise RuntimeError("typed_storage must have device and dtype")
-
-        if not any(dim == 0 for dim in size):
-            max_index = storage_offset
-            for dim, step in zip(size, stride):
-                max_index += (dim - 1) * step
-            if max_index >= typed_storage.size():
-                raise RuntimeError("set_() view exceeds storage bounds")
-
-        self._check_inplace()
-        return self.cy_set_runtime_truth(
-            typed_storage,
-            size,
-            _StrideTuple(stride),
-            int(storage_offset),
-        )
-
-    def as_strided(self, size, stride, storage_offset=None):
-        """Create a view of the tensor with given size, stride, and storage_offset."""
-        offset = storage_offset if storage_offset is not None else self.offset
-        return self.cy_as_strided(tuple(size), tuple(stride), offset)
-
-    def _ones_like(self):
-        if self.device.type == "meta":
-            storage = meta_typed_storage_from_shape(self.shape, self.dtype, device=self.device)
-            return cy_make_tensor_from_storage(storage, self.shape, self.stride, 0, False)
-        arr = np.ones(self.shape, dtype=to_numpy_dtype(self.dtype))
-        storage = typed_storage_from_numpy(arr, self.dtype, device=self.device if self.device.type == "cpu" else None)
-        stride = tuple(np.array(arr.strides) // arr.itemsize)
-        tensor = cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
-        if self.device.type != "cpu":
-            return tensor.to(self.device)
-        return tensor
-
-    def record_stream(self, stream):
-        if self.device.type != "npu":
-            return
-        from ._backends.npu import allocator as npu_allocator
-
-        alloc = npu_allocator.get_allocator(self.device.index or 0)
-        alloc.record_stream(self.storage().data_ptr(), stream.stream)
-
-    def numpy(self):
-        if self._pending:
-            from ._dispatch.pipeline import current_pipeline
-
-            pipe = current_pipeline()
-            if pipe is not None:
-                pipe.flush()
-        if self.device.type == "meta":
-            raise RuntimeError("meta tensor has no data")
-        if self.device.type != "cpu":
-            raise RuntimeError("numpy() is only available for CPU tensors")
-        return self._numpy_view()
-
-    def backward(self, gradient=None, retain_graph=False, create_graph=False, inputs=None):
-        if self._pending:
-            from ._dispatch.pipeline import current_pipeline
-
-            pipe = current_pipeline()
-            if pipe is not None:
-                pipe.flush()
-        _backward(
-            self,
-            gradient,
-            retain_graph=retain_graph,
-            create_graph=create_graph,
-            inputs=inputs,
-        )
-
-    def pin_memory(self):
-        if self.device.type != "cpu":
-            raise RuntimeError("pin_memory only supports CPU tensors")
-        from . import npu as npu_api
-
-        if not npu_api.is_available():
-            raise RuntimeError("Cannot access accelerator device when none is available.")
-        if self.is_pinned():
-            return self
-        storage = pinned_cpu_typed_storage_from_numpy(self._numpy_view(), self.dtype, device=self.device)
-        return cy_make_tensor_from_storage(storage, self.shape, self.stride, self.offset, self.requires_grad)
-
-    def is_pinned(self):
-        return self._storage.is_pinned()
-
-    def retain_grad(self):
-        self._retain_grad = True
-
-    def requires_grad_(self, requires_grad=True):
-        self.requires_grad = bool(requires_grad)
-        if not self.requires_grad:
-            self.grad_fn = None
-        return self
-
-    def detach(self):
-        return self.cy_detach()
-
-    def detach_(self):
-        self.requires_grad = False
-        self.grad_fn = None
-        self._retain_grad = False
-        return self
-
-    def register_hook(self, hook):
-        if not callable(hook):
-            raise TypeError("hook must be callable")
-        hooks = getattr(self, "_backward_hooks", None)
-        if hooks is None:
-            hooks = {}
-            self._backward_hooks = hooks
-        handle = _HookHandle(hooks)
-        hooks[handle.id] = hook
-        return handle
-
-    def _is_view(self):
-        return self._base is not None
-
-    def _check_inplace(self):
-        from .autograd.grad_mode import is_grad_enabled
-
-        if not is_grad_enabled():
-            return
-        if not self.requires_grad:
-            return
-        if self._is_view() and self._base is not None:
-            view_meta = getattr(self, "_view_meta", None) or {}
-            creation_mode = view_meta.get("creation_mode")
-            creation_kind = view_meta.get("creation_kind")
-            grad_fn_name = self.grad_fn.name() if self.grad_fn is not None and hasattr(self.grad_fn, "name") else "<unknown>"
-            if creation_kind == "multi_view":
-                raise RuntimeError(
-                    f"Output 0 of {grad_fn_name} is a view and is being modified inplace. This view is the output of a function that returns multiple views. Such functions do not allow the output views to be modified inplace. You should replace the inplace operation by an out-of-place one."
-                )
-            if creation_kind == "custom_function":
-                display_name = grad_fn_name.removesuffix("Backward0") if grad_fn_name.endswith("Backward0") else grad_fn_name
-                raise RuntimeError(
-                    f"Output 0 of {display_name} is a view and is being modified inplace. This view was created inside a custom Function (or because an input was returned as-is) and the autograd logic to handle view+inplace would override the custom backward associated with the custom Function, leading to incorrect gradients. This behavior is forbidden. You can fix this by cloning the output of the custom Function."
-                )
-            if creation_mode == "no_grad":
-                if creation_kind == "view_of_view":
-                    raise RuntimeError(
-                        "a view of a view which is being modified inside the no_grad block."
-                    )
-                if creation_kind == "view":
-                    raise RuntimeError(
-                        "A view was created in no_grad mode and is being modified inplace with grad mode enabled."
-                    )
-            if creation_mode == "inference_mode":
-                if creation_kind == "view_of_view":
-                    raise RuntimeError(
-                        "a view of a view which is being modified inside the inference_mode."
-                    )
-                if creation_kind == "view":
-                    raise RuntimeError(
-                        "A view was created in inference_mode and is being modified inplace in normal mode."
-                    )
-            if self._base.grad_fn is None and self._base.requires_grad:
-                raise RuntimeError("a view of a leaf Variable that requires grad is being used in an in-place operation.")
-        if self.grad_fn is None and not self._is_view():
-            raise RuntimeError("a leaf Variable that requires grad is being used in an in-place operation.")
-
-    def add_(self, other, *, alpha=1):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        if alpha != 1:
-            other = mul(other, alpha)
-        out = dispatch("add_", self.device.type, self, other)
-        return out
-
-    def add(self, other, *, alpha=1):
-        return add(self, other, alpha=alpha)
-
-    def sub(self, other, *, alpha=1):
-        return sub_dispatch(self, other, alpha=alpha)
-
-    def mul(self, other):
-        return mul(self, other)
-
-    def div(self, other, *, rounding_mode=None):
-        return div_dispatch(self, other)
-
-    def mul_(self, other):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("mul_", self.device.type, self, other)
-        return out
-
-    def relu_(self):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("relu_", self.device.type, self)
-        return out
-
-    def zero_(self):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("zero_", self.device.type, self)
-        return out
-
-    def uniform_(self, low=0.0, high=1.0, *, generator=None):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("uniform_", self.device.type, self, low, high, generator=generator)
-        return out
-
-    def normal_(self, mean=0.0, std=1.0, *, generator=None):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("normal_", self.device.type, self, mean, std, generator=generator)
-        return out
-
-    def random_(self, from_=0, to=None, *, generator=None):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("random_", self.device.type, self, from_, to, generator=generator)
-        return out
-
-    def randint_(self, low, high=None, *, generator=None):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("randint_", self.device.type, self, low, high, generator=generator)
-        return out
-
-    def bernoulli_(self, p=0.5, *, generator=None):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("bernoulli_", self.device.type, self, p, generator=generator)
-        return out
-
-    def multinomial(self, num_samples, replacement=False, *, generator=None):
-        from ._random import multinomial
-        return multinomial(self, num_samples, replacement=replacement, generator=generator)
-
-    def exponential_(self, lambd=1.0, *, generator=None):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("exponential_", self.device.type, self, lambd, generator=generator)
-        return out
-
-    def log_normal_(self, mean=1.0, std=2.0, *, generator=None):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("log_normal_", self.device.type, self, mean, std, generator=generator)
-        return out
-
-    def cauchy_(self, median=0.0, sigma=1.0, *, generator=None):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("cauchy_", self.device.type, self, median, sigma, generator=generator)
-        return out
-
-    def geometric_(self, p, *, generator=None):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("geometric_", self.device.type, self, p, generator=generator)
-        return out
-
-    def fill_(self, value):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("fill_", self.device.type, self, value)
-        return out
-
-    def clamp_(self, min=None, max=None):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("clamp_", self.device.type, self, min, max)
-        return out
-
-    def copy_(self, src):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("copy_", self.device.type, self, src)
-        return out
-
-    def erfinv_(self):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        out = dispatch("erfinv_", self.device.type, self)
-        return out
-
-    def sub_(self, other, *, alpha=1):
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        if alpha != 1:
-            other = mul(other, alpha)
-        out = dispatch("sub_", self.device.type, self, other)
-        return out
-
-    def abs_(self):
-        """In-place absolute value."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("abs_", self.device.type, self)
-
-    def neg_(self):
-        """In-place negation."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("neg_", self.device.type, self)
-
-    def exp_(self):
-        """In-place exponential."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("exp_", self.device.type, self)
-
-    def log_(self):
-        """In-place natural logarithm."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("log_", self.device.type, self)
-
-    def log2_(self):
-        """In-place base-2 logarithm."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("log2_", self.device.type, self)
-
-    def log10_(self):
-        """In-place base-10 logarithm."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("log10_", self.device.type, self)
-
-    def sqrt_(self):
-        """In-place square root."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("sqrt_", self.device.type, self)
-
-    def sin_(self):
-        """In-place sine."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("sin_", self.device.type, self)
-
-    def cos_(self):
-        """In-place cosine."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("cos_", self.device.type, self)
-
-    def tan_(self):
-        """In-place tangent."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("tan_", self.device.type, self)
-
-    def tanh_(self):
-        """In-place hyperbolic tangent."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("tanh_", self.device.type, self)
-
-    def sigmoid_(self):
-        """In-place sigmoid."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("sigmoid_", self.device.type, self)
-
-    def floor_(self):
-        """In-place floor."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("floor_", self.device.type, self)
-
-    def ceil_(self):
-        """In-place ceiling."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("ceil_", self.device.type, self)
-
-    def round_(self):
-        """In-place rounding."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("round_", self.device.type, self)
-
-    def trunc_(self):
-        """In-place truncation."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("trunc_", self.device.type, self)
-
-    def pow_(self, exponent):
-        """In-place power."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("pow_", self.device.type, self, exponent)
-
-    def reciprocal_(self):
-        """In-place reciprocal."""
-        from ._dispatch.dispatcher import dispatch
-
-        self._check_inplace()
-        return dispatch("reciprocal_", self.device.type, self)
-
-    def to(self, *args, **kwargs):
-        if self._pending:
-            from ._dispatch.pipeline import current_pipeline
-
-            pipe = current_pipeline()
-            if pipe is not None:
-                pipe.flush()
-        # Parse arguments: to(device), to(dtype), to(device, dtype), to(dtype=, device=)
-        device = None
-        dtype = None
-        non_blocking = kwargs.get("non_blocking", False)
-        copy = kwargs.get("copy", False)
-        memory_format = kwargs.get("memory_format", None)
-        for arg in args:
-            if isinstance(arg, Device):
-                device = arg
-            elif isinstance(arg, str):
-                from ._dtype import from_name
-                dt = from_name(arg)
-                if dt is not None:
-                    dtype = dt
-                else:
-                    device = Device(arg)
-            elif hasattr(arg, 'name') and hasattr(arg, 'itemsize'):
-                dtype = arg
-            else:
-                device = Device(str(arg))
-        if "device" in kwargs:
-            device = kwargs["device"]
-            if isinstance(device, str):
-                device = Device(device)
-        if "dtype" in kwargs:
-            dtype = kwargs["dtype"]
-        result = self
-        if dtype is not None and dtype != self.dtype:
-            result = result._to_dtype(dtype)
-        if device is not None:
-            result = to_dispatch(
-                result,
-                device,
-                dtype=dtype,
-                non_blocking=non_blocking,
-                copy=copy,
-                memory_format=memory_format,
-            )
-        if result is self and dtype is None and device is None:
-            return self
-        return result
-
-    def cpu(self, memory_format=None):
-        if memory_format is None:
-            return self.to("cpu")
-        return self.to("cpu", memory_format=memory_format)
-
-    def npu(self, device=None, non_blocking=False, memory_format=None):
-        if device is None:
-            device = "npu"
-        return self.to(device, non_blocking=non_blocking, memory_format=memory_format)
-
-    def mps(self, memory_format=None):
-        if memory_format is None:
-            return self.to("mps")
-        return self.to("mps", memory_format=memory_format)
-
-    def cuda(self, device=None, non_blocking=False, memory_format=None):
-        if device is None:
-            target = "cuda"
-        elif isinstance(device, str):
-            target = device
-        else:
-            target = f"cuda:{int(device)}"
-        return self.to(target, non_blocking=non_blocking, memory_format=memory_format)
-
-    def _to_dtype(self, dtype):
-        if self.device.type == "cpu":
-            arr = self._numpy_view()
-            src_dtype = self.dtype
-            target_np = to_numpy_dtype(dtype)
-            if src_dtype == bfloat16:
-                # bfloat16 -> target: first convert uint16 bits to float32
-                arr = _bf16_to_f32(arr)
-            if dtype == bfloat16:
-                # source -> bfloat16: convert to float32 then to uint16 bits
-                arr = arr.astype(np.float32)
-                arr = _f32_to_bf16(arr)
-            else:
-                arr = arr.astype(target_np)
-            storage = typed_storage_from_numpy(arr, dtype, device=self.device)
-            stride = tuple(np.array(arr.strides) // arr.itemsize)
-            return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
-        elif self.device.type == "npu":
-            from ._backends.npu.ops._helpers import _cast_tensor_dtype
-            return _cast_tensor_dtype(self, dtype)
-        elif self.device.type == "mps":
-            from ._C import mps_typed_storage_from_numpy
-            arr = self._numpy_view()
-            src_dtype = self.dtype
-            target_np = to_numpy_dtype(dtype)
-            if src_dtype == bfloat16:
-                arr = _bf16_to_f32(arr)
-            if dtype == bfloat16:
-                arr = arr.astype(np.float32)
-                arr = _f32_to_bf16(arr)
-            else:
-                arr = arr.astype(target_np)
-            storage = mps_typed_storage_from_numpy(
-                np.ascontiguousarray(arr), dtype, device=self.device
-            )
-            stride = tuple(np.array(arr.strides) // arr.itemsize) if arr.ndim > 0 else ()
-            return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
-        elif self.device.type == "meta":
-            storage = meta_typed_storage_from_shape(self.shape, dtype, device=self.device)
-            return cy_make_tensor_from_storage(storage, self.shape, _compute_strides(self.shape), 0, False)
-        else:
-            raise RuntimeError(
-                f"dtype conversion not yet supported on device {self.device.type}"
-            )
-
-    def new_ones(self, size, dtype=None, device=None):
-        from ._creation import ones
-
-        if dtype is None:
-            dtype = self.dtype
-        if device is None:
-            device = self.device
-        return ones(size, dtype=dtype, device=device)
-
-    def new_zeros(self, size, dtype=None, device=None):
-        from ._creation import zeros
-
-        if dtype is None:
-            dtype = self.dtype
-        if device is None:
-            device = self.device
-        return zeros(size, dtype=dtype, device=device)
-
-    def type(self, dtype=None):
-        if dtype is None:
-            return f"torch.{self.dtype.name.capitalize()}Tensor"
-        if isinstance(dtype, str):
-            from ._dtype import from_name
-            _type_map = {
-                "torch.FloatTensor": float32,
-                "torch.DoubleTensor": float64,
-                "torch.HalfTensor": float16,
-                "torch.BFloat16Tensor": bfloat16,
-                "torch.LongTensor": int64,
-                "torch.IntTensor": int32,
-                "torch.ShortTensor": int16,
-                "torch.CharTensor": int8,
-                "torch.ByteTensor": uint8,
-                "torch.BoolTensor": dtype_bool,
-            }
-            dt = _type_map.get(dtype) or from_name(dtype)
-            if dt is None:
-                raise RuntimeError(f"Unknown type: {dtype}")
-            return self._to_dtype(dt)
-        return self._to_dtype(dtype)
-
-    def __add__(self, other):
-        return add(self, other)
-
-    def __sub__(self, other):
-        if isinstance(other, Tensor):
-            return add(self, neg_dispatch(other))
-        return add(self, -other)
-
-    def __rsub__(self, other):
-        return add(neg_dispatch(self), other)
-
-    def __mul__(self, other):
-        return mul(self, other)
-
-    def __rmul__(self, other):
-        return mul(self, other)
-
-    def __truediv__(self, other):
-        return true_divide_dispatch(self, other)
-
-    def __rtruediv__(self, other):
-        return true_divide_dispatch(other, self)
-
-    def __pow__(self, exponent):
-        return pow_dispatch(self, exponent)
-
-    def __rpow__(self, base):
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("pow", self.device.type, base, self)
-
-    def __floordiv__(self, other):
-        return floor_divide_dispatch(self, other)
-
-    def __rfloordiv__(self, other):
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("floor_divide", self.device.type, other, self)
-
-    def __mod__(self, other):
-        return remainder_dispatch(self, other)
-
-    def __rmod__(self, other):
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("remainder", self.device.type, other, self)
-
-    def __iadd__(self, other):
-        self._check_inplace()
-        self.add_(other)
-        return self
-
-    def __isub__(self, other):
-        self._check_inplace()
-        self.sub_(other)
-        return self
-
-    def __imul__(self, other):
-        self._check_inplace()
-        self.mul_(other)
-        return self
-
-    def __itruediv__(self, other):
-        self._check_inplace()
-        self.div_(other)
-        return self
-
-    def __neg__(self):
-        return neg_dispatch(self)
-
-    def clone(self):
-        from ._functional import to as to_dispatch
-
-        return to_dispatch(self, self.device, copy=True)
-
-    def matmul(self, other):
-        return matmul(self, other)
-
-    def __matmul__(self, other):
-        return matmul(self, other)
-
-    def __rmatmul__(self, other):
-        return matmul(other, self)
-
-    def relu(self):
-        return relu(self)
-
-    def abs(self):
-        return abs_dispatch(self)
-
-    def neg(self):
-        return neg_dispatch(self)
-
-    def exp(self):
-        return exp_dispatch(self)
-
-    def log(self):
-        return log_dispatch(self)
-
-    def sqrt(self):
-        return sqrt_dispatch(self)
-
-    def tril(self, diagonal=0):
-        return tril_dispatch(self, diagonal)
-
-    def triu(self, diagonal=0):
-        return triu_dispatch(self, diagonal)
-
-    def diag(self, diagonal=0):
-        return diag_dispatch(self, diagonal)
-
-    def sin(self):
-        return sin_dispatch(self)
-
-    def cos(self):
-        return cos_dispatch(self)
-
-    def tan(self):
-        return tan_dispatch(self)
-
-    def tanh(self):
-        return tanh_dispatch(self)
-
-    def sigmoid(self):
-        return sigmoid_dispatch(self)
-
-    def floor(self):
-        return floor_dispatch(self)
-
-    def ceil(self):
-        return ceil_dispatch(self)
-
-    def round(self):
-        return round_dispatch(self)
-
-    def trunc(self):
-        return trunc_dispatch(self)
-
-    def frac(self):
-        return frac_dispatch(self)
-
-    def pow(self, exponent):
-        return pow_dispatch(self, exponent)
-
-    def log2(self):
-        return log2_dispatch(self)
-
-    def log10(self):
-        return log10_dispatch(self)
-
-    def exp2(self):
-        return exp2_dispatch(self)
-
-    def rsqrt(self):
-        return rsqrt_dispatch(self)
-
-    def sign(self):
-        return sign_dispatch(self)
-
-    def signbit(self):
-        return signbit_dispatch(self)
-
-    def square(self):
-        return square_dispatch(self)
-
-    def isnan(self):
-        return isnan_dispatch(self)
-
-    def isinf(self):
-        return isinf_dispatch(self)
-
-    def isfinite(self):
-        return isfinite_dispatch(self)
-
-    def sinh(self):
-        return sinh_dispatch(self)
-
-    def cosh(self):
-        return cosh_dispatch(self)
-
-    def asinh(self):
-        return asinh_dispatch(self)
-
-    def acosh(self):
-        return acosh_dispatch(self)
-
-    def atanh(self):
-        return atanh_dispatch(self)
-
-    def erf(self):
-        return erf_dispatch(self)
-
-    def erfc(self):
-        return erfc_dispatch(self)
-
-    def softplus(self):
-        return softplus_dispatch(self)
-
-    def clamp(self, min_val=None, max_val=None):
-        return clamp_dispatch(self, min_val, max_val)
-
-    def clamp_min(self, min_val):
-        return clamp_min_dispatch(self, min_val)
-
-    def clamp_max(self, max_val):
-        return clamp_max_dispatch(self, max_val)
-
-    def clamp_(self, min=None, max=None):
-        self._check_inplace()
-        out = clamp_dispatch(self, min, max)
-        return self.copy_(out)
-
-    def relu6(self):
-        return relu6_dispatch(self)
-
-    def hardtanh(self, min_val=-1.0, max_val=1.0):
-        return hardtanh_dispatch(self, min_val, max_val)
-
-    def min(self, dim=None, keepdim=False):
-        from ._dispatch.dispatcher import dispatch
-        if dim is None:
-            return amin_dispatch(self)
-        if isinstance(dim, Tensor):
-            return min_dispatch(self, dim)
-        return dispatch("min", self.device.type, self, dim, keepdim)
-
-    def max(self, dim=None, keepdim=False):
-        from ._dispatch.dispatcher import dispatch
-        if dim is None:
-            return amax_dispatch(self)
-        if isinstance(dim, Tensor):
-            return max_dispatch(self, dim)
-        return dispatch("max", self.device.type, self, dim, keepdim)
-
-    def amin(self, dim=None, keepdim=False):
-        return amin_dispatch(self, dim=dim, keepdim=keepdim)
-
-    def amax(self, dim=None, keepdim=False):
-        return amax_dispatch(self, dim=dim, keepdim=keepdim)
-
-    def fmin(self, other):
-        return fmin_dispatch(self, other)
-
-    def fmax(self, other):
-        return fmax_dispatch(self, other)
-
-    def where(self, condition, other):
-        return where_dispatch(condition, self, other)
-
-    def atan(self):
-        return atan_dispatch(self)
-
-    def atan2(self, other):
-        return atan2_dispatch(self, other)
-
-    def asin(self):
-        return asin_dispatch(self)
-
-    def acos(self):
-        return acos_dispatch(self)
-
-    def lerp(self, other, weight):
-        return lerp_dispatch(self, other, weight)
-
-    def addcmul(self, tensor1, tensor2, value=1.0):
-        return addcmul_dispatch(self, tensor1, tensor2, value=value)
-
-    def addcdiv(self, tensor1, tensor2, value=1.0):
-        return addcdiv_dispatch(self, tensor1, tensor2, value=value)
-
-    def logaddexp(self, other):
-        return logaddexp_dispatch(self, other)
-
-    def logaddexp2(self, other):
-        return logaddexp2_dispatch(self, other)
-
-    def hypot(self, other):
-        return hypot_dispatch(self, other)
-
-    def remainder(self, other):
-        return remainder_dispatch(self, other)
-
-    def fmod(self, other):
-        return fmod_dispatch(self, other)
-
-    def squeeze(self, dim=None):
-        return squeeze_dispatch(self, dim)
-
-    def squeeze_(self, dim=None):
-        if dim is not None:
-            if isinstance(dim, (list, tuple)):
-                if dim:
-                    ndim = len(self.shape)
-                    targets = set()
-                    for item in dim:
-                        d = item if item >= 0 else item + ndim
-                        targets.add(d)
-                    pairs = [
-                        (s, st)
-                        for idx, (s, st) in enumerate(zip(self.shape, self.stride))
-                        if idx not in targets or s != 1
-                    ]
-                    shape = [p[0] for p in pairs]
-                    stride = [p[1] for p in pairs]
-                else:
-                    shape = list(self.shape)
-                    stride = list(self.stride)
-            else:
-                d = dim if dim >= 0 else dim + len(self.shape)
-                shape = list(self.shape)
-                stride = list(self.stride)
-                if 0 <= d < len(shape) and shape[d] == 1:
-                    del shape[d]
-                    del stride[d]
-        else:
-            pairs = [(s, st) for s, st in zip(self.shape, self.stride) if s != 1]
-            shape = [p[0] for p in pairs]
-            stride = [p[1] for p in pairs]
-        return self.as_strided_(tuple(shape), tuple(stride))
-
-    def unsqueeze(self, dim):
-        return unsqueeze_dispatch(self, dim)
-
-    def unsqueeze_(self, dim):
-        ndim = len(self.shape)
-        d = dim if dim >= 0 else dim + ndim + 1
-        if d < 0 or d > ndim:
-            raise IndexError("Dimension out of range")
-        shape = list(self.shape)
-        stride = list(self.stride)
-        new_stride = stride[d] * shape[d] if d < ndim else 1
-        shape.insert(d, 1)
-        stride.insert(d, new_stride)
-        return self.as_strided_(tuple(shape), tuple(stride))
-
-    def permute(self, *dims):
-        if len(dims) == 1 and isinstance(dims[0], (tuple, list)):
-            dims = tuple(dims[0])
-        return permute_dispatch(self, dims)
-
-    def var(self, dim=None, keepdim=False, unbiased=True):
-        return var_dispatch(self, dim=dim, keepdim=keepdim, unbiased=unbiased)
-
-    def norm(self, p=2, dim=None, keepdim=False):
-        return norm_dispatch(self, p=p, dim=dim, keepdim=keepdim)
-
-    def prod(self, dim=None, keepdim=False):
-        return prod_dispatch(self, dim=dim, keepdim=keepdim)
-
-    def mm(self, mat2):
-        return mm_dispatch(self, mat2)
-
-    def bmm(self, batch2):
-        return bmm_dispatch(self, batch2)
-    def sum(self, dim=None, keepdim=False, *, dtype=None):
-        return sum(self, dim=dim, keepdim=keepdim, dtype=dtype)
-
-    def mean(self, dim=None, keepdim=False, *, dtype=None, axis=None):
-        if axis is not None:
-            dim = axis
-        return mean_dispatch(self, dim=dim, keepdim=keepdim, dtype=dtype)
-
-    def std(self, dim=None, keepdim=False, unbiased=True, axis=None):
-        if axis is not None:
-            dim = axis
-        return std_dispatch(self, dim=dim, keepdim=keepdim, unbiased=unbiased)
-
-    def all(self, dim=None, keepdim=False):
-        return all_dispatch(self, dim=dim, keepdim=keepdim)
-
-    def any(self, dim=None, keepdim=False):
-        return any_dispatch(self, dim=dim, keepdim=keepdim)
-
-    def argmax(self, dim=None, keepdim=False):
-        return argmax_dispatch(self, dim=dim, keepdim=keepdim)
-
-    def argmin(self, dim=None, keepdim=False):
-        return argmin_dispatch(self, dim=dim, keepdim=keepdim)
-
-    def count_nonzero(self, dim=None, keepdim=False):
-        return count_nonzero_dispatch(self, dim=dim, keepdim=keepdim)
-
-    def cumsum(self, dim=0):
-        return cumsum_dispatch(self, dim)
-
-    def cumprod(self, dim=0):
-        return cumprod_dispatch(self, dim)
-
-    def cummax(self, dim=0):
-        return cummax_dispatch(self, dim)
-
-    def argsort(self, dim=-1, descending=False, stable=False):
-        return argsort_dispatch(self, dim=dim, descending=descending, stable=stable)
-
-    def sort(self, dim=-1, descending=False, stable=False):
-        return sort_dispatch(self, dim=dim, descending=descending, stable=stable)
-
-    def topk(self, k, dim=-1, largest=True, sorted=True):
-        return topk_dispatch(self, k, dim=dim, largest=largest, sorted=sorted)
-
-    def split(self, split_size_or_sections, dim=0):
-        return split_dispatch(self, split_size_or_sections, dim=dim)
-
-    def chunk(self, chunks, dim=0):
-        return chunk_dispatch(self, chunks, dim=dim)
-
-    def repeat(self, *repeats):
-        if len(repeats) == 1 and isinstance(repeats[0], (tuple, list)):
-            repeats = tuple(repeats[0])
-        return repeat_dispatch(self, repeats)
-
-    def tile(self, *dims):
-        if len(dims) == 1 and isinstance(dims[0], (tuple, list)):
-            dims = tuple(dims[0])
-        return tile_dispatch(self, dims)
-
-    def flip(self, dims):
-        if isinstance(dims, int):
-            dims = [dims]
-        return flip_dispatch(self, dims)
-
-    def roll(self, shifts, dims=None):
-        return roll_dispatch(self, shifts, dims)
-
-    def rot90(self, k=1, dims=(0, 1)):
-        return rot90_dispatch(self, k, dims)
-
-    def reciprocal(self):
-        return reciprocal_dispatch(self)
-
-    def log1p(self):
-        """Returns a new tensor with the natural logarithm of (1 + input)."""
-        return log1p_dispatch(self)
-
-    def expm1(self):
-        """Returns a new tensor with the exponential of the elements minus 1."""
-        return expm1_dispatch(self)
-
-    def logsumexp(self, dim, keepdim=False):
-        """Returns the log of summed exponentials of each row of the input tensor in the given dimension dim."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("logsumexp", self.device.type, self, dim, keepdim)
-
-    def trace(self):
-        """Returns the sum of the elements of the diagonal of the input 2-D matrix."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("trace", self.device.type, self)
-
-    def det(self):
-        """Returns the determinant of a square matrix."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("det", self.device.type, self)
-
-    def matrix_power(self, n):
-        """Returns the matrix raised to the power n for square matrices."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("matrix_power", self.device.type, self, n)
-
-    def dist(self, other, p=2):
-        """Returns the p-norm of (self - other)."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("dist", self.device.type, self, other, p)
-
-    def renorm(self, p, dim, maxnorm):
-        """Returns a tensor where each sub-tensor along dimension dim is normalized."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("renorm", self.device.type, self, p, dim, maxnorm)
-
-    def nansum(self, dim=None, keepdim=False):
-        """Returns the sum of all elements, treating NaNs as zero."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("nansum", self.device.type, self, dim, keepdim)
-
-    def nanmean(self, dim=None, keepdim=False):
-        """Returns the mean of all elements, treating NaNs as zero."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("nanmean", self.device.type, self, dim, keepdim)
-
-    def argwhere(self):
-        """Returns a tensor containing the indices of all non-zero elements."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("argwhere", self.device.type, self)
-
-    def addmm(self, mat1, mat2, *, beta=1, alpha=1):
-        return addmm_dispatch(self, mat1, mat2, beta=beta, alpha=alpha)
-
-    def baddbmm(self, batch1, batch2, *, beta=1, alpha=1):
-        """Performs a batch matrix-matrix product with added input.
-
-        out = beta * self + alpha * (batch1 @ batch2)
+                return _convert(ret, cls)
+
+    __torch_dispatch__ = _C._disabled_torch_dispatch_impl
+
+    def __dlpack__(
+        self,
+        *,
+        stream: Any | None = -1,
+        max_version: tuple[int, int] | None = None,
+        dl_device: tuple[enum.IntEnum, int] | None = None,
+        copy: bool | None = None,
+    ):
+        """
+        Creates a DLpack `capsule https://data-apis.org/array-api/latest/design_topics/data_interchange.html#data-interchange`_
+        of the current tensor to be exported to other libraries.
+
+        This function will be called from the `from_dlpack` method
+        of the library that will consume the capsule. `from_dlpack` passes the current
+        stream to this method as part of the specification.
 
         Args:
-            batch1: First batch of matrices (B x N x M)
-            batch2: Second batch of matrices (B x M x P)
-            beta: Multiplier for self (default: 1)
-            alpha: Multiplier for batch1 @ batch2 (default: 1)
+            stream (integer or None): An optional Python integer representing a
+                pointer to a CUDA stream. The current stream is synchronized with
+                this stream before the capsule is created, and since the capsule
+                shares its storage with the tensor this make it safe to access from
+                both streams.  If -1 is passed then no synchronization is performed.
+                If 1 (on CUDA) or 0 (on ROCM) then the default stream is used for
+                synchronization. This API intentionally slightly deviates from the DLPack
+                guidance: the default stream is -1 (stream-preserving; no cross-stream sync),
+                because many from_dlpack implementations intend stream preservation.
+                For non-CUDA devices, -1 is treated the same as None.
 
-        Returns:
-            Tensor of shape (B x N x P)
+            max_version (tuple[int, int] or None): An optional Python tuple with
+                2 integers, representing the maximum version the caller supports. If
+                None (default), PyTorch will fallback to DLPack 0.8.
+
+            dl_device (tuple[DLDeviceType, int] or None): An optional tuple specifying
+                in which device the exported DLPack capsule should be on. If None (default),
+                the exported DLPack capsule will be on the same device as ``self``.
+
+            copy (bool or None): An optional boolean indicating whether or not to copy
+                ``self``. If None, PyTorch will copy only if necessary.
         """
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("baddbmm", self.device.type, self, batch1, batch2, beta=beta, alpha=alpha)
-
-    def type_as(self, other):
-        return self.to(other.dtype)
-
-    def reshape_as(self, other):
-        return self.cy_view(other.shape)
-
-    def new_full(self, size, fill_value, *, dtype=None, device=None, requires_grad=False):
-        from ._creation import full
-        dt = dtype if dtype is not None else self.dtype
-        dev = device if device is not None else self.device
-        return full(size, fill_value, dtype=dt, device=dev)
-
-    def div_(self, other):
-        from ._dispatch.dispatcher import dispatch
-        self._check_inplace()
-        out = dispatch("div_", self.device.type, self, other)
-        return out
-
-    def unflatten(self, dim, sizes):
-        ndim = len(self.shape)
-        if dim < 0:
-            dim += ndim
-        new_shape = self.shape[:dim] + tuple(sizes) + self.shape[dim + 1:]
-        return self.view(new_shape)
-
-    # -----------------------------------------------------------------------
-    # Indexing / selection methods
-    # -----------------------------------------------------------------------
-
-    def narrow(self, dim, start, length):
-        return narrow_dispatch(self, dim, start, length)
-
-    def select(self, dim, index):
-        return select_dispatch(self, dim, index)
-
-    def expand(self, *sizes):
-        return expand_dispatch(self, *sizes)
-
-    def expand_copy(self, *sizes):
-        return expand_copy_dispatch(self, sizes)
-
-    def sum_to_size(self, *size):
-        return sum_to_size_dispatch(self, *size)
-
-    def expand_as(self, other):
-        return expand_dispatch(self, *other.shape)
-
-    def nonzero(self, as_tuple=False):
-        return nonzero_dispatch(self, as_tuple=as_tuple)
-
-    def masked_select(self, mask):
-        return masked_select_dispatch(self, mask)
-
-    def slice(self, dim, start=0, end=9223372036854775807, step=1):
-        return slice_dispatch(self, dim, start, end, step)
-
-    def slice_copy(self, dim, start=0, end=9223372036854775807, step=1):
-        return slice_copy_dispatch(self, dim, start, end, step)
-
-    def slice_scatter(self, src, dim, start=0, end=9223372036854775807, step=1):
-        return slice_scatter_dispatch(self, src, dim, start, end, step)
-
-    def gather(self, dim, index):
-        return gather_dispatch(self, dim, index)
-
-    def scatter(self, dim, index, src):
-        return scatter_dispatch(self, dim, index, src)
-
-    def scatter_(self, dim, index, src):
-        self._check_inplace()
-        return scatter__dispatch(self, dim, index, src)
-
-    def scatter_add_(self, dim, index, src):
-        self._check_inplace()
-        return scatter_add__dispatch(self, dim, index, src)
-
-    def index_select(self, dim, index):
-        return index_select_dispatch(self, dim, index)
-
-    def take(self, index):
-        return take_dispatch(self, index)
-
-    def as_strided_(self, size, stride, storage_offset=None):
-        self._check_inplace()
-        return as_strided__dispatch(self, size, stride, storage_offset)
-
-    def as_strided_copy(self, size, stride, storage_offset=None):
-        return as_strided_copy_dispatch(self, size, stride, storage_offset)
-
-    def as_strided_scatter(self, src, size, stride, storage_offset=None):
-        return as_strided_scatter_dispatch(self, src, size, stride, storage_offset)
-
-    def masked_fill(self, mask, value):
-        return masked_fill_dispatch(self, mask, value)
-
-    def masked_fill_(self, mask, value):
-        self._check_inplace()
-        return masked_fill__dispatch(self, mask, value)
-
-    def masked_scatter_(self, mask, source):
-        self._check_inplace()
-        return masked_scatter__dispatch(self, mask, source)
-
-    def index_put_(self, indices, values, accumulate=False):
-        self._check_inplace()
-        return index_put__dispatch(self, indices, values, accumulate)
-
-    def index_put(self, indices, values, accumulate=False):
-        return index_put_dispatch(self, indices, values, accumulate)
-
-    def index_copy_(self, dim, index, source):
-        self._check_inplace()
-        return index_copy__dispatch(self, dim, index, source)
-
-    def index_fill_(self, dim, index, value):
-        self._check_inplace()
-        return index_fill__dispatch(self, dim, index, value)
-
-    def index_add_(self, dim, index, source, alpha=1.0):
-        self._check_inplace()
-        return index_add__dispatch(self, dim, index, source, alpha)
-
-    def unfold(self, dimension, size, step):
-        return unfold_dispatch(self, dimension, size, step)
-
-    def allclose(self, other, rtol=1e-05, atol=1e-08, equal_nan=False):
-        return allclose_dispatch(self, other, rtol=rtol, atol=atol, equal_nan=equal_nan)
-
-    def isclose(self, other, rtol=1e-05, atol=1e-08, equal_nan=False):
-        return isclose_dispatch(self, other, rtol=rtol, atol=atol, equal_nan=equal_nan)
-
-    def equal(self, other):
-        return equal_dispatch(self, other)
-
-    def eq(self, other):
-        return self.__eq__(other)
-
-    def ne(self, other):
-        return self.__ne__(other)
-
-    def lt(self, other):
-        """Element-wise less-than comparison."""
-        return lt_dispatch(self, other)
-
-    def le(self, other):
-        """Element-wise less-than-or-equal comparison."""
-        return le_dispatch(self, other)
-
-    def gt(self, other):
-        """Element-wise greater-than comparison."""
-        return gt_dispatch(self, other)
-
-    def ge(self, other):
-        """Element-wise greater-than-or-equal comparison."""
-        return ge_dispatch(self, other)
-
-    def logical_and(self, other):
-        """Element-wise logical AND."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("logical_and", self.device.type, self, other)
-
-    def logical_or(self, other):
-        """Element-wise logical OR."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("logical_or", self.device.type, self, other)
-
-    def logical_xor(self, other):
-        """Element-wise logical XOR."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("logical_xor", self.device.type, self, other)
-
-    def logical_not(self):
-        """Element-wise logical NOT."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("logical_not", self.device.type, self)
-
-    def bitwise_and(self, other):
-        """Element-wise bitwise AND."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("bitwise_and", self.device.type, self, other)
-
-    def bitwise_or(self, other):
-        """Element-wise bitwise OR."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("bitwise_or", self.device.type, self, other)
-
-    def bitwise_xor(self, other):
-        """Element-wise bitwise XOR."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("bitwise_xor", self.device.type, self, other)
-
-    def bitwise_not(self):
-        """Element-wise bitwise NOT."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("bitwise_not", self.device.type, self)
-
-    def bitwise_and_(self, other):
-        """In-place element-wise bitwise AND."""
-        self._check_inplace()
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("bitwise_and_", self.device.type, self, other)
-
-    def bitwise_or_(self, other):
-        """In-place element-wise bitwise OR."""
-        self._check_inplace()
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("bitwise_or_", self.device.type, self, other)
-
-    def bitwise_xor_(self, other):
-        """In-place element-wise bitwise XOR."""
-        self._check_inplace()
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("bitwise_xor_", self.device.type, self, other)
-
-    def movedim(self, source, destination):
-        """Move dimensions to new positions."""
-        return movedim_dispatch(self, source, destination)
-
-    def moveaxis(self, source, destination):
-        """Alias for movedim."""
-        return moveaxis_dispatch(self, source, destination)
-
-    def swapdims(self, dim0, dim1):
-        """Swap two dimensions (alias for transpose with positional args)."""
-        return self.cy_transpose(dim0, dim1)
-
-    def swapdims_(self, dim0, dim1):
-        ndim = len(self.shape)
-        d0 = dim0 if dim0 >= 0 else dim0 + ndim
-        d1 = dim1 if dim1 >= 0 else dim1 + ndim
-        if d0 < 0 or d0 >= ndim or d1 < 0 or d1 >= ndim:
-            raise IndexError("Dimension out of range")
-        shape = list(self.shape)
-        stride = list(self.stride)
-        shape[d0], shape[d1] = shape[d1], shape[d0]
-        stride[d0], stride[d1] = stride[d1], stride[d0]
-        self.shape = tuple(shape)
-        self.stride = _StrideTuple(tuple(stride))
-        return self
-
-    def swapaxes(self, axis0, axis1):
-        """Alias for swapdims."""
-        return self.cy_transpose(axis0, axis1)
-
-    def swapaxes_(self, axis0, axis1):
-        ndim = len(self.shape)
-        d0 = axis0 if axis0 >= 0 else axis0 + ndim
-        d1 = axis1 if axis1 >= 0 else axis1 + ndim
-        if d0 < 0 or d0 >= ndim or d1 < 0 or d1 >= ndim:
-            raise IndexError("Dimension out of range")
-        shape = list(self.shape)
-        stride = list(self.stride)
-        shape[d0], shape[d1] = shape[d1], shape[d0]
-        stride[d0], stride[d1] = stride[d1], stride[d0]
-        self.shape = tuple(shape)
-        self.stride = _StrideTuple(tuple(stride))
-        return self
-
-    def diagonal(self, offset=0, dim1=0, dim2=1):
-        """Returns partial view of input with the diagonal elements of input."""
-        return diagonal_dispatch(self, offset, dim1, dim2)
-
-    def unbind(self, dim=0):
-        """Remove a tensor dimension, returning a tuple of all slices along dim."""
-        return unbind_dispatch(self, dim=dim)
-
-    def vsplit(self, split_size_or_sections):
-        """Split a tensor into multiple sub-tensors vertically (row-wise)."""
-        return vsplit_dispatch(self, split_size_or_sections)
-
-    def hsplit(self, split_size_or_sections):
-        """Split a tensor into multiple sub-tensors horizontally (column-wise)."""
-        return hsplit_dispatch(self, split_size_or_sections)
-
-    def dsplit(self, split_size_or_sections):
-        """Split a tensor into multiple sub-tensors along the third axis."""
-        return dsplit_dispatch(self, split_size_or_sections)
-
-    def take_along_dim(self, indices, dim):
-        """Take values along an axis at the given indices."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("take_along_dim", self.device.type, self, indices, dim)
-
-    def scatter_add(self, dim, index, src):
-        """Non-inplace scatter_add: adds all values from src into self at index positions."""
-        out = self.clone()
-        out.scatter_add_(dim, index, src)
-        return out
-
-    def index_fill(self, dim, index, value):
-        """Non-inplace version of index_fill_: fills self tensor with value along dim at index."""
-        out = self.clone()
-        out.index_fill_(dim, index, value)
-        return out
-
-    def index_copy(self, dim, index, source):
-        """Non-inplace version of index_copy_: copies values from source into self along dim."""
-        out = self.clone()
-        out.index_copy_(dim, index, source)
-        return out
-
-    def index_add(self, dim, index, source, alpha=1):
-        """Non-inplace version of index_add_: adds values from source (scaled by alpha) into self along dim."""
-        out = self.clone()
-        out.index_add_(dim, index, source, alpha)
-        return out
-
-    def put_(self, indices, values, accumulate=False):
-        """Copies elements from values into self tensor at positions specified by indices.
-
-        Treats self as a flat (1-D) tensor and uses flat indices.
-        """
-        self._check_inplace()
-        # Work on a contiguous version for flat indexing
-        if not self.is_contiguous():
-            cont = self.contiguous()
-            self._storage = cont._storage
-            self.stride = cont.stride
-        numel_idx = indices.numel()
-        shape = self.shape
-        for i in range(numel_idx):
-            idx = int(indices.reshape((numel_idx,))[i].item())
-            val = values.reshape((numel_idx,))[i]
-            # Calculate multi-dim index from flat index
-            multi_idx = []
-            tmp = idx
-            for d in reversed(shape):
-                multi_idx.append(tmp % d)
-                tmp //= d
-            multi_idx = tuple(reversed(multi_idx))
-            if accumulate:
-                self[multi_idx] = self[multi_idx] + val
+        if has_torch_function_unary(self):
+            args = (self,)
+            kwargs = {
+                "stream": stream,
+                "max_version": max_version,
+                "dl_device": dl_device,
+                "copy": copy,
+            }
+            return handle_torch_function(Tensor.__dlpack__, (self,), *args, **kwargs)
+
+        # DLPack capsules can't capture all of PyTorch's semantics,
+        # so we prohibit exporting tensors that would lose their properties like
+        # requires_grad and having the conjugate bit set.
+        if self.requires_grad:
+            raise BufferError(
+                "Can't export tensors that require gradient, use tensor.detach()"
+            )
+        if self.is_conj():
+            raise BufferError("Can't export tensors with the conjugate bit set")
+        if self.layout != torch.strided:
+            raise BufferError(
+                "Can't export tensors with layout other than torch.strided"
+            )
+
+        if (
+            self.device.type == "cuda"
+            and self.device.index != torch.cuda.current_device()
+        ):
+            raise BufferError(
+                "Can't export tensors on a different CUDA device index. "
+                f"Expected: {self.device.index}. "
+                f"Current device: {torch.cuda.current_device()}."
+            )
+
+        if stream is not None and type(stream) is not int:
+            # Stream pointers in CUDA/ROCm are uniquely numbered and can
+            # be retrieved from their integer value.
+            raise TypeError("stream must be ``int`` or ``none``")
+        elif self.device.type == "cuda" and stream != -1:
+            # NB: This logic handles the special case values for default
+            # streams and must be kept in sync with from_dlpack in
+            # torch/utils/dlpack.py
+            is_rocm = torch.version.hip is not None
+            is_cuda = not is_rocm
+
+            if stream is None or (is_rocm and stream == 0) or (is_cuda and stream == 1):
+                stream = torch.cuda.default_stream()
             else:
-                self[multi_idx] = val
-        self._bump_version()
-        return self
+                if is_cuda and stream == 2:
+                    raise BufferError("per-thread default stream is not supported.")
 
-    def cummin(self, dim):
-        """Returns a namedtuple (values, indices) of cumulative minimum of elements along dim."""
-        from ._dispatch.dispatcher import dispatch
-        return dispatch("cummin", self.device.type, self, dim)
+                device_str = "CUDA" if is_cuda else "ROCm"
+                if not (
+                    (is_cuda and stream != 0) or (is_rocm and stream not in (1, 2))
+                ):
+                    raise AssertionError(
+                        f"unsupported stream on {device_str}: {stream}."
+                    )
 
-    def __getitem__(self, key):
-        from ._dispatch.dispatcher import dispatch
+                stream = torch.cuda.ExternalStream(stream)
 
-        return dispatch("getitem", self.device.type, self, key)
+            # Only synchronize on different streams
+            current_stream = torch.cuda.current_stream()
+            if stream != current_stream:
+                event = torch.cuda.Event()
+                event.record(current_stream)
+                stream.wait_event(event)
+        elif self.device.type == "cpu":
+            if stream is not None and stream != -1:
+                raise AssertionError("stream should be None on cpu.")
 
-    def __setitem__(self, key, value):
-        from ._dispatch.dispatcher import dispatch
+        if self.device.type == "xla":
+            import torch_xla
+            import torch_xla.utils.dlpack as xla_dlpack
 
-        self._check_inplace()
-        dispatch("setitem", self.device.type, self, key, value)
+            if (
+                len(torch_xla.real_devices()) <= 0
+                or "cuda" not in torch_xla.real_devices()[0].lower()
+            ):
+                raise RuntimeError(
+                    "Can't export to dlpack an XLA tensor that is not on CUDA."
+                )
 
-    def __and__(self, other):
-        return mul(self.bool(), other.bool() if isinstance(other, Tensor) else bool(other))
+            # Does not support DLPack 1.0, yet.
+            return xla_dlpack.to_dlpack(self)
 
-    def __or__(self, other):
-        return add(self.bool(), other.bool() if isinstance(other, Tensor) else bool(other))
+        if max_version is None or max_version[0] < 1:
+            # Fallback to the old, unversioned variant.
+            return _C._to_dlpack(self, dl_device=dl_device, copy=copy)
 
-    def __xor__(self, other):
-        return ne_dispatch(self.bool(), other.bool() if isinstance(other, Tensor) else bool(other))
+        return _C._to_dlpack_versioned(self, dl_device=dl_device, copy=copy)
 
-    def __hash__(self):
-        return id(self)
+    def __dlpack_device__(self) -> tuple[enum.IntEnum, int]:
+        if has_torch_function_unary(self):
+            return handle_torch_function(Tensor.__dlpack_device__, (self,), self)
+
+        from torch.utils.dlpack import DLDeviceType
+
+        device = self.device
+        idx = device.index if device.index is not None else 0
+        torch_device_type = device.type
+        if torch_device_type == "cuda" and torch.version.hip is not None:
+            device_type = DLDeviceType.kDLROCM
+        elif torch_device_type == "cpu" and self.is_pinned():
+            device_type = DLDeviceType.kDLCUDAHost
+        elif torch_device_type == "cuda":
+            device_type = DLDeviceType.kDLCUDA
+        elif torch_device_type == "cpu":
+            device_type = DLDeviceType.kDLCPU
+        elif torch_device_type == "xpu":
+            device_type = DLDeviceType.kDLOneAPI
+        elif self.device.type == "privateuse1":
+            device_type = DLDeviceType.kDLExtDev
+        elif torch_device_type == "xla":
+            import torch_xla
+
+            if (
+                len(torch_xla.real_devices()) <= 0
+                or "cuda" not in torch_xla.real_devices()[0].lower()
+            ):
+                raise ValueError(f"Unknown device type {torch_device_type} for Dlpack")
+
+            device_type = DLDeviceType.kDLCUDA
+        elif torch_device_type == "mps":
+            device_type = DLDeviceType.kDLMetal
+        else:
+            raise ValueError(f"Unknown device type {torch_device_type} for Dlpack")
+        return (device_type, idx)
+
+    __module__ = "torch"
 
 
-from . import _cython as _cython_mod
+def _convert(ret, cls):
+    if cls is Tensor:
+        return ret
 
-if getattr(_cython_mod, "_HAS_CYTHON_TENSOR_API", False):
-    Tensor._set_device_from_storage = _cython_mod.tensor_set_device_from_storage
-    Tensor._set_dtype_from_storage = _cython_mod.tensor_set_dtype_from_storage
-    Tensor.data = property(Tensor.data.fget, _cython_mod.tensor_set_data)
-    Tensor.__delattr__ = _cython_mod.tensor_delattr
-    Tensor._fw_get = _cython_mod.tensor_fw_get
-    Tensor._fw_set = _cython_mod.tensor_fw_set
-    Tensor._fw_clear = _cython_mod.tensor_fw_clear
-    Tensor._fw_has = _cython_mod.tensor_fw_has
-    Tensor.untyped_storage = _cython_mod.tensor_untyped_storage
-    Tensor.record_stream = _cython_mod.tensor_record_stream
-    Tensor.is_pinned = _cython_mod.tensor_is_pinned
+    if isinstance(ret, Tensor) and not isinstance(ret, cls):
+        ret = ret.as_subclass(cls)
 
-    _python_tensor_min = Tensor.min
-    _python_tensor_max = Tensor.max
+    if isinstance(ret, (tuple, list)):
+        # Also handles things like namedtuples
+        ret = type(ret)(_convert(r, cls) for r in ret)
 
-    Tensor.__add__ = _cython_mod.tensor_add
-    Tensor.__sub__ = _cython_mod.tensor_sub
-    Tensor.__mul__ = _cython_mod.tensor_mul
-    Tensor.__matmul__ = _cython_mod.tensor_matmul
-    Tensor.__getitem__ = _cython_mod.tensor_getitem
-    Tensor.__setitem__ = _cython_mod.tensor_setitem
-    Tensor.__iadd__ = _cython_mod.tensor_iadd
-    Tensor.__isub__ = _cython_mod.tensor_isub
-    Tensor.__imul__ = _cython_mod.tensor_imul
-    Tensor.__itruediv__ = _cython_mod.tensor_itruediv
-    Tensor.__neg__ = _cython_mod.tensor_neg
-    Tensor.neg = _cython_mod.tensor_neg
+    return ret
 
-    Tensor.clone = _cython_mod.tensor_clone
-    Tensor.detach = _cython_mod.tensor_detach
-    Tensor.detach_ = _cython_mod.tensor_detach_
-    Tensor.to = _cython_mod.tensor_to
-    Tensor._to_dtype = _cython_mod.tensor_to_dtype
-    Tensor.cpu = _cython_mod.tensor_cpu
-    Tensor.npu = _cython_mod.tensor_npu
-    Tensor.mps = _cython_mod.tensor_mps
-    Tensor.cuda = _cython_mod.tensor_cuda
-    Tensor.backward = _cython_mod.tensor_backward
-    Tensor.relu = _cython_mod.tensor_relu
-    Tensor.is_contiguous = _cython_mod.tensor_is_contiguous
-    Tensor.contiguous = _cython_mod.tensor_contiguous
-    Tensor.reshape = _cython_mod.tensor_reshape
-    Tensor.transpose = _cython_mod.tensor_transpose
-    Tensor.view = _cython_mod.tensor_view
-    Tensor.flatten = _cython_mod.tensor_flatten
-    Tensor.t = _cython_mod.tensor_t
-    Tensor.as_strided = _cython_mod.tensor_as_strided
-    Tensor.size = _cython_mod.tensor_size
-    Tensor.dim = _cython_mod.tensor_dim
 
-    Tensor.retain_grad = _cython_mod.tensor_retain_grad
-    Tensor.requires_grad_ = _cython_mod.tensor_requires_grad_
-    Tensor.register_hook = _cython_mod.tensor_register_hook
-    Tensor._is_view = _cython_mod.tensor_is_view
-    Tensor._check_inplace = _cython_mod.tensor_check_inplace
-
-    Tensor.add_ = _cython_mod.tensor_add_
-    Tensor.mul_ = _cython_mod.tensor_mul_
-    Tensor.relu_ = _cython_mod.tensor_relu_
-    Tensor.zero_ = _cython_mod.tensor_zero_
-    Tensor.fill_ = _cython_mod.tensor_fill_
-    Tensor.copy_ = _cython_mod.tensor_copy_
-
-    Tensor.abs_ = _cython_mod.tensor_abs_
-    Tensor.neg_ = _cython_mod.tensor_neg_
-    Tensor.exp_ = _cython_mod.tensor_exp_
-    Tensor.log_ = _cython_mod.tensor_log_
-    Tensor.log2_ = _cython_mod.tensor_log2_
-    Tensor.log10_ = _cython_mod.tensor_log10_
-    Tensor.sqrt_ = _cython_mod.tensor_sqrt_
-    Tensor.sin_ = _cython_mod.tensor_sin_
-    Tensor.cos_ = _cython_mod.tensor_cos_
-    Tensor.tan_ = _cython_mod.tensor_tan_
-    Tensor.tanh_ = _cython_mod.tensor_tanh_
-    Tensor.sigmoid_ = _cython_mod.tensor_sigmoid_
-    Tensor.floor_ = _cython_mod.tensor_floor_
-    Tensor.ceil_ = _cython_mod.tensor_ceil_
-    Tensor.round_ = _cython_mod.tensor_round_
-    Tensor.trunc_ = _cython_mod.tensor_trunc_
-    Tensor.pow_ = _cython_mod.tensor_pow_
-    Tensor.reciprocal_ = _cython_mod.tensor_reciprocal_
-    Tensor.erfinv_ = _cython_mod.tensor_erfinv_
-
-    Tensor.sub_ = _cython_mod.tensor_sub_
-    Tensor.clamp_ = _cython_mod.tensor_clamp_
-    Tensor.uniform_ = _cython_mod.tensor_uniform_
-    Tensor.normal_ = _cython_mod.tensor_normal_
-    Tensor.random_ = _cython_mod.tensor_random_
-    Tensor.randint_ = _cython_mod.tensor_randint_
-    Tensor.bernoulli_ = _cython_mod.tensor_bernoulli_
-    Tensor.exponential_ = _cython_mod.tensor_exponential_
-    Tensor.log_normal_ = _cython_mod.tensor_log_normal_
-    Tensor.cauchy_ = _cython_mod.tensor_cauchy_
-    Tensor.geometric_ = _cython_mod.tensor_geometric_
-
-    Tensor.transpose_ = _cython_mod.tensor_transpose_
-    Tensor.t_ = _cython_mod.tensor_t_
-    Tensor.squeeze_ = _cython_mod.tensor_squeeze_
-    Tensor.unsqueeze_ = _cython_mod.tensor_unsqueeze_
-    Tensor.as_strided_ = _cython_mod.tensor_as_strided_
-    Tensor.swapdims_ = _cython_mod.tensor_swapdims_
-    Tensor.swapaxes_ = _cython_mod.tensor_swapaxes_
-
-    Tensor.scatter_add = _cython_mod.tensor_scatter_add
-    Tensor.index_fill = _cython_mod.tensor_index_fill
-    Tensor.index_copy = _cython_mod.tensor_index_copy
-    Tensor.index_add = _cython_mod.tensor_index_add
-    Tensor.put_ = _cython_mod.tensor_put_
-    Tensor.scatter_ = _cython_mod.tensor_scatter_
-    Tensor.scatter_add_ = _cython_mod.tensor_scatter_add_
-    Tensor.masked_fill_ = _cython_mod.tensor_masked_fill_
-    Tensor.masked_scatter_ = _cython_mod.tensor_masked_scatter_
-    Tensor.index_put_ = _cython_mod.tensor_index_put_
-    Tensor.index_copy_ = _cython_mod.tensor_index_copy_
-    Tensor.index_fill_ = _cython_mod.tensor_index_fill_
-    Tensor.index_add_ = _cython_mod.tensor_index_add_
-
-    Tensor.new_empty = _cython_mod.tensor_new_empty
-    Tensor.new_tensor = _cython_mod.tensor_new_tensor
-    Tensor.new_empty_strided = _cython_mod.tensor_new_empty_strided
-    Tensor._ones_like = _cython_mod.tensor_ones_like
-    Tensor.new_ones = _cython_mod.tensor_new_ones
-    Tensor.new_zeros = _cython_mod.tensor_new_zeros
-    Tensor.new_full = _cython_mod.tensor_new_full
-    Tensor.div_ = _cython_mod.tensor_div_
-    Tensor.unflatten = _cython_mod.tensor_unflatten
-    Tensor.bitwise_and_ = _cython_mod.tensor_bitwise_and_
-    Tensor.bitwise_or_ = _cython_mod.tensor_bitwise_or_
-    Tensor.bitwise_xor_ = _cython_mod.tensor_bitwise_xor_
-    Tensor.type = _cython_mod.tensor_type
-    Tensor.type_as = _cython_mod.tensor_type_as
-    Tensor.reshape_as = _cython_mod.tensor_reshape_as
-    Tensor.permute = _cython_mod.tensor_permute
-    Tensor.mean = _cython_mod.tensor_mean
-    Tensor.std = _cython_mod.tensor_std
-    Tensor.repeat = _cython_mod.tensor_repeat
-    Tensor.tile = _cython_mod.tensor_tile
-    Tensor.flip = _cython_mod.tensor_flip
-    Tensor.logsumexp = _cython_mod.tensor_logsumexp
-    Tensor.trace = _cython_mod.tensor_trace
-    Tensor.det = _cython_mod.tensor_det
-    Tensor.matrix_power = _cython_mod.tensor_matrix_power
-    Tensor.dist = _cython_mod.tensor_dist
-    Tensor.renorm = _cython_mod.tensor_renorm
-    Tensor.nansum = _cython_mod.tensor_nansum
-    Tensor.nanmean = _cython_mod.tensor_nanmean
-    Tensor.argwhere = _cython_mod.tensor_argwhere
-    Tensor.baddbmm = _cython_mod.tensor_baddbmm
-    Tensor.vsplit = _cython_mod.tensor_vsplit
-    Tensor.hsplit = _cython_mod.tensor_hsplit
-    Tensor.dsplit = _cython_mod.tensor_dsplit
-    Tensor.take_along_dim = _cython_mod.tensor_take_along_dim
-    Tensor.cummin = _cython_mod.tensor_cummin
-    Tensor.log1p = _cython_mod.tensor_log1p
-    Tensor.expm1 = _cython_mod.tensor_expm1
-    Tensor.lt = _cython_mod.tensor_lt
-    Tensor.le = _cython_mod.tensor_le
-    Tensor.gt = _cython_mod.tensor_gt
-    Tensor.ge = _cython_mod.tensor_ge
-    Tensor.abs = _cython_mod.tensor_abs
-    Tensor.exp = _cython_mod.tensor_exp
-    Tensor.log = _cython_mod.tensor_log
-    Tensor.sqrt = _cython_mod.tensor_sqrt
-    Tensor.sin = _cython_mod.tensor_sin
-    Tensor.cos = _cython_mod.tensor_cos
-    Tensor.tan = _cython_mod.tensor_tan
-    Tensor.tanh = _cython_mod.tensor_tanh
-    Tensor.sigmoid = _cython_mod.tensor_sigmoid
-    Tensor.floor = _cython_mod.tensor_floor
-    Tensor.ceil = _cython_mod.tensor_ceil
-    Tensor.round = _cython_mod.tensor_round
-    Tensor.trunc = _cython_mod.tensor_trunc
-    Tensor.frac = _cython_mod.tensor_frac
-    Tensor.log2 = _cython_mod.tensor_log2
-    Tensor.log10 = _cython_mod.tensor_log10
-    Tensor.exp2 = _cython_mod.tensor_exp2
-    Tensor.rsqrt = _cython_mod.tensor_rsqrt
-    Tensor.sign = _cython_mod.tensor_sign
-    Tensor.signbit = _cython_mod.tensor_signbit
-    Tensor.square = _cython_mod.tensor_square
-    Tensor.isnan = _cython_mod.tensor_isnan
-    Tensor.isinf = _cython_mod.tensor_isinf
-    Tensor.isfinite = _cython_mod.tensor_isfinite
-    Tensor.sinh = _cython_mod.tensor_sinh
-    Tensor.cosh = _cython_mod.tensor_cosh
-    Tensor.asinh = _cython_mod.tensor_asinh
-    Tensor.acosh = _cython_mod.tensor_acosh
-    Tensor.atanh = _cython_mod.tensor_atanh
-    Tensor.erf = _cython_mod.tensor_erf
-    Tensor.erfc = _cython_mod.tensor_erfc
-    Tensor.reciprocal = _cython_mod.tensor_reciprocal
-    Tensor.tril = _cython_mod.tensor_tril
-    Tensor.triu = _cython_mod.tensor_triu
-    Tensor.diag = _cython_mod.tensor_diag
-    Tensor.add = _cython_mod.tensor_add_method
-    Tensor.sub = _cython_mod.tensor_sub_method
-    Tensor.mul = _cython_mod.tensor_mul_method
-    Tensor.div = _cython_mod.tensor_div_method
-    Tensor.pow = _cython_mod.tensor_pow_method
-    Tensor.matmul = _cython_mod.tensor_matmul_method
-    Tensor.__rsub__ = _cython_mod.tensor_rsub
-    Tensor.__rmul__ = _cython_mod.tensor_rmul
-    Tensor.__truediv__ = _cython_mod.tensor_truediv
-    Tensor.__rtruediv__ = _cython_mod.tensor_rtruediv
-    Tensor.__pow__ = _cython_mod.tensor_pow_op
-    Tensor.__rpow__ = _cython_mod.tensor_rpow
-    Tensor.__floordiv__ = _cython_mod.tensor_floordiv
-    Tensor.__rfloordiv__ = _cython_mod.tensor_rfloordiv
-    Tensor.__mod__ = _cython_mod.tensor_mod
-    Tensor.__rmod__ = _cython_mod.tensor_rmod
-    Tensor.__rmatmul__ = _cython_mod.tensor_rmatmul
-    Tensor.__and__ = _cython_mod.tensor_and
-    Tensor.__or__ = _cython_mod.tensor_or
-    Tensor.__xor__ = _cython_mod.tensor_xor
-    Tensor.all = _cython_mod.tensor_all_method
-    Tensor.any = _cython_mod.tensor_any_method
-    Tensor.sum = _cython_mod.tensor_sum_method
-    Tensor.prod = _cython_mod.tensor_prod_method
-    Tensor.var = _cython_mod.tensor_var_method
-    Tensor.var_mean = _cython_mod.tensor_var_mean_method
-    Tensor.norm = _cython_mod.tensor_norm_method
-    Tensor.count_nonzero = _cython_mod.tensor_count_nonzero_method
-    Tensor.cumsum = _cython_mod.tensor_cumsum_method
-    Tensor.cumprod = _cython_mod.tensor_cumprod_method
-    Tensor.cummax = _cython_mod.tensor_cummax_method
-    Tensor.argsort = _cython_mod.tensor_argsort_method
-    Tensor.sort = _cython_mod.tensor_sort_method
-    Tensor.topk = _cython_mod.tensor_topk_method
-    Tensor.eq = _cython_mod.tensor_eq_method
-    Tensor.ne = _cython_mod.tensor_ne_method
-    Tensor.allclose = _cython_mod.tensor_allclose_method
-    Tensor.isclose = _cython_mod.tensor_isclose_method
-    Tensor.equal = _cython_mod.tensor_equal_method
-    Tensor.view_as = _cython_mod.tensor_view_as
-    Tensor.expand = _cython_mod.tensor_expand_method
-    Tensor.expand_as = _cython_mod.tensor_expand_as_method
-    Tensor.expand_copy = _cython_mod.tensor_expand_copy_method
-    Tensor.narrow = _cython_mod.tensor_narrow_method
-    Tensor.select = _cython_mod.tensor_select_method
-    Tensor.unfold = _cython_mod.tensor_unfold_method
-    Tensor.moveaxis = _cython_mod.tensor_moveaxis_method
-    Tensor.swapdims = _cython_mod.tensor_swapdims_method
-    Tensor.swapaxes = _cython_mod.tensor_swapaxes_method
-    Tensor.gather = _cython_mod.tensor_gather_method
-    Tensor.scatter = _cython_mod.tensor_scatter_method
-    Tensor.index_select = _cython_mod.tensor_index_select_method
-    Tensor.take = _cython_mod.tensor_take_method
-    Tensor.masked_fill = _cython_mod.tensor_masked_fill_method
-    Tensor.masked_select = _cython_mod.tensor_masked_select_method
-    Tensor.index_put = _cython_mod.tensor_index_put_method
-    Tensor.slice = _cython_mod.tensor_slice_method
-    Tensor.slice_copy = _cython_mod.tensor_slice_copy_method
-    Tensor.slice_scatter = _cython_mod.tensor_slice_scatter_method
-    Tensor.nonzero = _cython_mod.tensor_nonzero_method
-    Tensor.sum_to_size = _cython_mod.tensor_sum_to_size_method
-    Tensor.softplus = _cython_mod.tensor_softplus_method
-    Tensor.clamp = _cython_mod.tensor_clamp_method
-    Tensor.relu6 = _cython_mod.tensor_relu6_method
-    Tensor.hardtanh = _cython_mod.tensor_hardtanh_method
-    Tensor.min = _cython_mod.tensor_min_method
-    Tensor.max = _cython_mod.tensor_max_method
-    Tensor.amin = _cython_mod.tensor_amin_method
-    Tensor.amax = _cython_mod.tensor_amax_method
-    Tensor.addmm = _cython_mod.tensor_addmm_method
-    Tensor.bmm = _cython_mod.tensor_bmm_method
-    Tensor.mm = _cython_mod.tensor_mm_method
-    Tensor.chunk = _cython_mod.tensor_chunk_method
-    Tensor.split = _cython_mod.tensor_split_method
-    Tensor.roll = _cython_mod.tensor_roll_method
-    Tensor.rot90 = _cython_mod.tensor_rot90_method
-    Tensor.addcdiv = _cython_mod.tensor_addcdiv_method
-    Tensor.addcmul = _cython_mod.tensor_addcmul_method
-    Tensor.hypot = _cython_mod.tensor_hypot_method
-    Tensor.lerp = _cython_mod.tensor_lerp_method
-    Tensor.atan2 = _cython_mod.tensor_atan2_method
-    Tensor.asin = _cython_mod.tensor_asin_method
-    Tensor.acos = _cython_mod.tensor_acos_method
-    Tensor.atan = _cython_mod.tensor_atan_method
-    Tensor.as_strided_copy = _cython_mod.tensor_as_strided_copy_method
-    Tensor.as_strided_scatter = _cython_mod.tensor_as_strided_scatter_method
-    Tensor.multinomial = _cython_mod.tensor_multinomial_method
-    Tensor.ndim = property(_cython_mod.tensor_ndim_fget)
-    Tensor.T = property(_cython_mod.tensor_T_fget)
-    Tensor.is_floating_point = _cython_mod.tensor_is_floating_point
-    Tensor.is_complex = _cython_mod.tensor_is_complex
-    Tensor.clamp_min = _cython_mod.tensor_clamp_min_method
-    Tensor.clamp_max = _cython_mod.tensor_clamp_max_method
-    Tensor.fmin = _cython_mod.tensor_fmin_method
-    Tensor.fmax = _cython_mod.tensor_fmax_method
-    Tensor.where = _cython_mod.tensor_where_method
-    Tensor.logaddexp = _cython_mod.tensor_logaddexp_method
-    Tensor.logaddexp2 = _cython_mod.tensor_logaddexp2_method
-    Tensor.remainder = _cython_mod.tensor_remainder_method
-    Tensor.fmod = _cython_mod.tensor_fmod_method
-    Tensor.squeeze = _cython_mod.tensor_squeeze_method
-    Tensor.unsqueeze = _cython_mod.tensor_unsqueeze_method
-    Tensor.argmax = _cython_mod.tensor_argmax_method
-    Tensor.argmin = _cython_mod.tensor_argmin_method
-    Tensor.logical_and = _cython_mod.tensor_logical_and
-    Tensor.logical_or = _cython_mod.tensor_logical_or
-    Tensor.logical_xor = _cython_mod.tensor_logical_xor
-    Tensor.logical_not = _cython_mod.tensor_logical_not
-    Tensor.bitwise_and = _cython_mod.tensor_bitwise_and
-    Tensor.bitwise_or = _cython_mod.tensor_bitwise_or
-    Tensor.bitwise_xor = _cython_mod.tensor_bitwise_xor
-    Tensor.bitwise_not = _cython_mod.tensor_bitwise_not
-    Tensor.movedim = _cython_mod.tensor_movedim
-    Tensor.diagonal = _cython_mod.tensor_diagonal
-    Tensor.unbind = _cython_mod.tensor_unbind
-
-    Tensor.numpy = _cython_mod.tensor_numpy
-    Tensor._numpy_view = _cython_mod.tensor_numpy_view
-    Tensor.pin_memory = _cython_mod.tensor_pin_memory
+# Re-export candle-specific symbols from _tensor_helpers for backward compatibility
+from ._tensor_helpers import (  # noqa: E402,F401
+    _StrideTuple,
+    _compute_strides,
+    _HookHandle,
+    _bf16_to_f32,
+    _f32_to_bf16,
+)

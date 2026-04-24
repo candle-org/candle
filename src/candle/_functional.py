@@ -200,6 +200,26 @@ try:
 
     _has_torch_function_impl = _cy_has_torch_function
     _handle_torch_function_impl = _cy_handle_torch_function
+
+    # Wrap to respect DisableTorchFunctionSubclass
+    def _has_torch_function_wrapper(args, kwargs):
+        from ._C import _torch_function_enabled
+        if not _torch_function_enabled:
+            return False
+        return _cy_has_torch_function(args, kwargs)
+    _has_torch_function_impl = _has_torch_function_wrapper
+
+    def _handle_torch_function_wrapper(func, args, kwargs):
+        from ._C import _torch_function_enabled
+        if not _torch_function_enabled:
+            return NotImplemented
+        return _cy_handle_torch_function(func, args, kwargs)
+    _handle_torch_function_impl = _handle_torch_function_wrapper
+
+    # Also patch the Cython module's internal references directly
+    import candle._cython._functional_ops as _cy_ops
+    _cy_ops._has_torch_function = _has_torch_function_wrapper
+    _cy_ops._handle_torch_function = _handle_torch_function_wrapper
     _add_impl = _cy_add
     _mul_impl = _cy_mul
     _matmul_impl = _cy_matmul
