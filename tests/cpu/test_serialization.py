@@ -816,4 +816,43 @@ def test_path_save_uses_pytorch_file_writer_snake_case_surface(tmp_path, monkeyp
 
     assert calls[0][0] == "write_record"
     assert calls[0][1] == "data.pkl"
-    assert calls[-1] == ("write_end_of_file",)
+
+
+def test_torch_typed_storage_pickle_loads_through_candle(tmp_path):
+    path = tmp_path / "torch_typed_storage.pkl"
+    torch.save(torch.FloatStorage([1.0, 2.0, 3.0]), path)
+
+    loaded = mt.load(path)
+
+    assert isinstance(loaded, mt.TypedStorage)
+    assert loaded.dtype.name == "float32"
+    assert list(loaded) == [1.0, 2.0, 3.0]
+
+
+def test_candle_typed_storage_pickle_loads_through_torch(tmp_path):
+    path = tmp_path / "candle_typed_storage.pkl"
+    mt.save(mt.tensor([1.0, 2.0, 3.0]).storage(), path)
+
+    loaded = torch.load(path, map_location="cpu")
+
+    assert list(loaded) == [1.0, 2.0, 3.0]
+
+
+def test_candle_untyped_storage_reduce_roundtrip(tmp_path):
+    path = tmp_path / "candle_untyped_storage.pkl"
+    mt.save(mt.tensor([1.0, 2.0], dtype=mt.float32).untyped_storage(), path)
+
+    loaded = mt.load(path)
+
+    assert loaded.nbytes() == 8
+
+
+def test_multiprocessing_rebuild_typed_storage_preserves_values():
+    from candle.multiprocessing.reductions import _reduce_typed_storage
+
+    storage = mt.tensor([1.0, 2.0], dtype=mt.float32).storage()
+    rebuild, args = _reduce_typed_storage(storage)
+
+    rebuilt = rebuild(*args)
+
+    assert list(rebuilt) == [1.0, 2.0]

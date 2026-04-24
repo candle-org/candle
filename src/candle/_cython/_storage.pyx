@@ -17,6 +17,8 @@ import weakref
 
 import numpy as np
 
+from candle._cython._storage_impl import StorageImpl  # pylint: disable=import-error,no-name-in-module
+
 from libc.stdint cimport int64_t
 
 
@@ -229,14 +231,27 @@ class CyCPUUntypedStorage:
         if isinstance(device, str):
             device = Device(device)
         self.device = device or Device("cpu")
-        self._array = array
-        self._shared = shared
-        self._filename = filename
         self._mmap = mmap_obj
-        self._fd = fd
         self._tmp_file = tmp_file
-        self._sharing_mechanism = sharing_mechanism
-        self._cleanup_finalizer = cleanup_finalizer
+        if cleanup_finalizer is not None:
+            finalizer = cleanup_finalizer
+        elif shared and sharing_mechanism == "file_descriptor" and fd is not None:
+            finalizer = weakref.finalize(
+                self,
+                cy_cleanup_shared_resource,
+                int(fd),
+                filename,
+            )
+        else:
+            finalizer = None
+        self._impl = StorageImpl.from_numpy(
+            array,
+            shared=shared,
+            filename=filename,
+            sharing_mechanism=sharing_mechanism,
+            cleanup_finalizer=finalizer,
+            fd=fd,
+        )
 
     def __repr__(self):
         values = [f" {item}" for item in self.buffer().tolist()]
@@ -289,8 +304,9 @@ class CyCPUUntypedStorage:
             return CyCPUUntypedStorage(
                 self.buffer()[index],
                 filename=None,
-                shared=self._shared,
+                shared=False,
                 device=self.device,
+                sharing_mechanism=None,
             )
         try:
             return self.buffer()[index].item()
@@ -334,32 +350,37 @@ class CyCPUUntypedStorage:
             raise RuntimeError("out of bounds") from exc
 
     def nbytes(self):
-        return int(self._array.nbytes)
+        return int(self._impl.nbytes())
 
     def data_ptr(self):
-        return int(self._array.ctypes.data)
+        return int(self._impl.data_ptr())
 
     def buffer(self):
-        return self._array
+        return self._impl.owner()
 
     def resize_(self, new_nbytes):
-        if self._filename is not None or self._shared:
+        if self._impl.filename() is not None or self._impl.is_shared():
             raise RuntimeError("Trying to resize storage that is not resizable")
         new_array = np.empty(int(new_nbytes), dtype=np.uint8)
-        old_bytes = self._array.view(np.uint8)
+        old_bytes = self.buffer().view(np.uint8)
         copy_bytes = min(old_bytes.size, new_array.size)
         new_array[:copy_bytes] = old_bytes[:copy_bytes]
-        self._array = new_array
+        self._impl = StorageImpl.from_numpy(new_array)
+        self._mmap = None
+        self._tmp_file = None
         return self
 
     def share_memory_(self, strategy="file_descriptor"):
-        if self._shared:
+        if self._impl.is_shared():
             return self
 
-        nbytes = int(self._array.nbytes)
+        nbytes = int(self._impl.nbytes())
         if nbytes == 0:
-            self._shared = True
-            self._sharing_mechanism = strategy
+            self._impl = StorageImpl.from_numpy(
+                self.buffer(),
+                shared=True,
+                sharing_mechanism=strategy,
+            )
             return self
 
         if strategy == "file_descriptor":
@@ -372,23 +393,22 @@ class CyCPUUntypedStorage:
                 raise
 
             dst = np.frombuffer(mm, dtype=np.uint8, count=nbytes)
-            dst[:] = self._array.view(np.uint8).reshape(-1)
-
-            self._array = dst
-            self._mmap = mm
-            self._fd = fd
-            self._tmp_file = filename
-            self._filename = filename
-            self._shared = True
-            self._sharing_mechanism = "file_descriptor"
-
-            if self._cleanup_finalizer is not None:
-                self._cleanup_finalizer.detach()
-            self._cleanup_finalizer = weakref.finalize(
+            dst[:] = self.buffer().view(np.uint8).reshape(-1)
+            finalizer = weakref.finalize(
                 self,
                 cy_cleanup_shared_resource,
                 int(fd),
                 filename,
+            )
+            self._mmap = mm
+            self._tmp_file = filename
+            self._impl = StorageImpl.from_numpy(
+                dst,
+                shared=True,
+                filename=filename,
+                sharing_mechanism="file_descriptor",
+                cleanup_finalizer=finalizer,
+                fd=fd,
             )
             return self
 
@@ -401,47 +421,45 @@ class CyCPUUntypedStorage:
                 os.close(fd)
 
             mmap_arr = np.memmap(filename, mode="r+", dtype=np.uint8, shape=(nbytes,))
-            mmap_arr[:] = self._array.view(np.uint8).reshape(-1)
-
-            self._array = mmap_arr
-            self._filename = filename
-            self._shared = True
-            self._sharing_mechanism = "file_system"
+            mmap_arr[:] = self.buffer().view(np.uint8).reshape(-1)
             cy_register_shared_file(filename)
-
-            if self._cleanup_finalizer is not None:
-                self._cleanup_finalizer.detach()
-            self._cleanup_finalizer = None
+            self._mmap = None
+            self._tmp_file = filename
+            self._impl = StorageImpl.from_numpy(
+                mmap_arr,
+                shared=True,
+                filename=filename,
+                sharing_mechanism="file_system",
+            )
             return self
 
         raise ValueError(f"unsupported sharing strategy: {strategy}")
 
     def is_shared(self):
-        return self._shared
+        return bool(self._impl.is_shared())
 
     def is_pinned(self):
         return False
 
     def shared_memory_meta(self):
-        if self._sharing_mechanism == "file_descriptor":
+        mechanism = self._impl.sharing_mechanism()
+        if mechanism == "file_descriptor":
             return {
                 "mechanism": "file_descriptor",
-                "fd": int(self._fd),
-                "filename": self._filename,
-                "nbytes": int(self._array.nbytes),
+                "fd": int(self._impl.shared_fd()),
+                "filename": self._impl.filename(),
+                "nbytes": int(self._impl.nbytes()),
             }
-        if self._sharing_mechanism == "file_system":
+        if mechanism == "file_system":
             return {
                 "mechanism": "file_system",
-                "filename": self._filename,
-                "nbytes": int(self._array.nbytes),
+                "filename": self._impl.filename(),
+                "nbytes": int(self._impl.nbytes()),
             }
         return None
 
     def typed_view(self, dtype, size):
-        from candle._dtype import to_numpy_dtype
-
-        return np.frombuffer(self._array, dtype=to_numpy_dtype(dtype), count=int(size))
+        return self._impl.typed_view(dtype, size)
 
     @classmethod
     def from_shared_memory(cls, filename, nbytes):
@@ -454,7 +472,7 @@ class CyCPUUntypedStorage:
         fd = int(fd)
         mm = mmap.mmap(fd, int(nbytes))
         arr = np.frombuffer(mm, dtype=np.uint8, count=int(nbytes))
-        storage = cls(
+        return cls(
             arr,
             filename=filename,
             shared=True,
@@ -463,13 +481,6 @@ class CyCPUUntypedStorage:
             tmp_file=filename,
             sharing_mechanism="file_descriptor",
         )
-        storage._cleanup_finalizer = weakref.finalize(
-            storage,
-            cy_cleanup_shared_resource,
-            fd,
-            filename,
-        )
-        return storage
 
     @classmethod
     def from_file(cls, filename, shared=False):
@@ -477,7 +488,7 @@ class CyCPUUntypedStorage:
         return cls(data, filename=filename, shared=shared)
 
     def filename(self):
-        return self._filename
+        return self._impl.filename()
 
 
 # ---------------------------------------------------------------------------

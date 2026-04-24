@@ -54,6 +54,11 @@ def test_multiprocessing_storage_bookkeeping_surface_still_exists():
 
 
 
+def test_storage_module_exposes_legacy_typed_storage_names():
+    for name in {"FloatStorage", "DoubleStorage", "HalfStorage", "LongStorage", "IntStorage", "ByteStorage", "BoolStorage"}:
+        assert hasattr(candle_storage, name)
+
+
 def test_storage_resize_file_backed_error():
     with tempfile.NamedTemporaryFile() as tmp:
         tmp.write(b"\x00" * 8)

@@ -1,6 +1,7 @@
 import abc
 import atexit
 import ctypes
+import warnings
 import weakref
 import numpy as np
 
@@ -10,8 +11,24 @@ from ._cython._storage import (  # pylint: disable=import-error,no-name-in-modul
     cy_cleanup_shared_files as _cy_cleanup_shared_files,
 )
 from ._device import _default_device, device as Device
-from ._dtype import float32, to_numpy_dtype
+from ._dtype import bool as dtype_bool
+from ._dtype import float16, float32, float64, int32, int64, uint8, to_numpy_dtype
 ACL_MEMCPY_DEVICE_TO_DEVICE = 3
+
+
+_ALWAYS_WARN_TYPED_STORAGE_REMOVAL = False
+
+
+def _warn_typed_storage_removal(stacklevel=2):
+    has_warned = _warn_typed_storage_removal.__dict__.get("has_warned", False)
+    if _ALWAYS_WARN_TYPED_STORAGE_REMOVAL or not has_warned:
+        warnings.warn(
+            "TypedStorage is deprecated. It will be removed in the future and UntypedStorage will be the only storage class. "
+            "This should only matter to you if you are using storages directly.  To access UntypedStorage directly, use tensor.untyped_storage() instead of tensor.storage()",
+            UserWarning,
+            stacklevel=stacklevel + 1,
+        )
+        _warn_typed_storage_removal.__dict__["has_warned"] = True
 
 
 atexit.register(_cy_cleanup_shared_files)
@@ -506,6 +523,10 @@ class TypedStorage:
     def is_pinned(self):
         return self._untyped.is_pinned()
 
+    def share_memory_(self):
+        self._untyped.share_memory_()
+        return self
+
     @property
     def data(self):
         if self.device.type not in ("cpu", "mps"):
@@ -613,6 +634,45 @@ class TypedStorage:
             buf = self._untyped.buffer()
             self._data = np.frombuffer(buf, dtype=to_numpy_dtype(self.dtype), count=self._size)
         return self
+
+
+    @classmethod
+    def from_file(cls, filename, shared=False, size=0):
+        itemsize = np.dtype(to_numpy_dtype(cls.dtype)).itemsize
+        nbytes = int(size) * itemsize
+        untyped = UntypedStorage.from_file(filename, shared=shared)
+        if nbytes and untyped.nbytes() != nbytes:
+            untyped.resize_(nbytes)
+        data = untyped.typed_view(cls.dtype, int(size))
+        return cls(untyped, cls.dtype, int(size), data=data)
+
+
+class FloatStorage(TypedStorage):
+    dtype = float32
+
+
+class DoubleStorage(TypedStorage):
+    dtype = float64
+
+
+class HalfStorage(TypedStorage):
+    dtype = float16
+
+
+class LongStorage(TypedStorage):
+    dtype = int64
+
+
+class IntStorage(TypedStorage):
+    dtype = int32
+
+
+class ByteStorage(TypedStorage):
+    dtype = uint8
+
+
+class BoolStorage(TypedStorage):
+    dtype = dtype_bool
 
 
 class Storage(TypedStorage):

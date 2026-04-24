@@ -30,7 +30,7 @@ from ._dtype import (
     to_numpy_dtype,
 )
 from ._cython._storage import CyCPUUntypedStorage  # pylint: disable=import-error,no-name-in-module
-from ._storage import TypedStorage, typed_storage_from_numpy
+from ._storage import TypedStorage, UntypedStorage, typed_storage_from_numpy
 from ._C import PyTorchFileReader, PyTorchFileWriter
 from ._stream import PyTorchStreamReader, PyTorchStreamWriter
 from ._tensor import Tensor as MindTensor
@@ -328,6 +328,32 @@ def _tensor_to_proxy(tensor, storage_refs_by_id):
 def _prepare_for_pickle(obj, storage_refs_by_id):
     if isinstance(obj, MindTensor):
         return _tensor_to_proxy(obj, storage_refs_by_id)
+    if isinstance(obj, TypedStorage):
+        untyped = obj.untyped_storage()
+        storage_id = id(untyped)
+        if storage_id not in storage_refs_by_id:
+            raw = np.ascontiguousarray(untyped.buffer()).tobytes()
+            storage_type = _DTYPE_NAME_TO_STORAGE.get(obj.dtype.name, ByteStorage)
+            storage_refs_by_id[storage_id] = _StorageRef(
+                storage_type=storage_type,
+                key=str(len(storage_refs_by_id)),
+                location="cpu",
+                numel=int(obj.size()),
+                raw_bytes=raw,
+            )
+        return storage_refs_by_id[storage_id]
+    if isinstance(obj, UntypedStorage):
+        storage_id = id(obj)
+        if storage_id not in storage_refs_by_id:
+            raw = np.ascontiguousarray(obj.buffer()).tobytes()
+            storage_refs_by_id[storage_id] = _StorageRef(
+                storage_type=ByteStorage,
+                key=str(len(storage_refs_by_id)),
+                location="cpu",
+                numel=int(obj.nbytes()),
+                raw_bytes=raw,
+            )
+        return storage_refs_by_id[storage_id]
     if isinstance(obj, OrderedDict):
         return OrderedDict((k, _prepare_for_pickle(v, storage_refs_by_id)) for k, v in obj.items())
     if isinstance(obj, dict):
