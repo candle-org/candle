@@ -1,3 +1,5 @@
+import warnings
+
 import candle as torch
 
 
@@ -783,6 +785,117 @@ def test_meta_storage_no_data_ptr():
         raise AssertionError("meta storage should not expose data_ptr")
 
 
+def test_tensor_storage_entrypoints_share_same_runtime_backing():
+    tensor = torch.tensor([1.0, 2.0], dtype=torch.float32)
+
+    typed = tensor._typed_storage()
+    warned = tensor.storage()
+    untyped = tensor.untyped_storage()
+
+    assert isinstance(typed, torch.TypedStorage)
+    assert isinstance(warned, torch.TypedStorage)
+    assert isinstance(untyped, torch.UntypedStorage)
+    assert typed.data_ptr() == warned.data_ptr() == untyped.data_ptr()
+    assert typed.untyped_storage() is untyped
+
+
+def test_untyped_storage_from_file_private_mapping_does_not_mark_shared(tmp_path):
+    path = tmp_path / "private_storage.bin"
+    path.write_bytes(b"\x00" * 8)
+
+    storage = torch.UntypedStorage.from_file(str(path), shared=False)
+
+    assert storage.nbytes() == 8
+    assert storage.is_shared() is False
+    assert storage.filename() == str(path)
+
+
+def test_untyped_storage_share_memory_is_idempotent():
+    storage = torch.tensor([1.0, 2.0], dtype=torch.float32).untyped_storage()
+
+    first = storage.share_memory_()
+    second = storage.share_memory_()
+
+    assert first is storage
+    assert second is storage
+    assert storage.is_shared() is True
+
+
+def test_cpu_untyped_storage_uses_storage_impl_runtime_owner():
+    storage = torch.tensor([1.0, 2.0], dtype=torch.float32).untyped_storage()
+
+    assert hasattr(storage, "_impl")
+    assert not hasattr(storage, "_array")
+    assert storage._impl.data_ptr() == storage.data_ptr()
+    assert storage._impl.nbytes() == storage.nbytes()
+
+
+def test_untyped_storage_shared_slice_is_private_view():
+    storage = torch.tensor([1.0, 2.0], dtype=torch.float32).untyped_storage()
+    storage.share_memory_()
+
+    sliced = storage[:]
+
+    assert sliced.is_shared() is False
+    assert sliced.filename() is None
+
+
+def test_tensor_storage_warns_once_and_returns_typed_storage():
+    import candle._storage as storage_mod
+
+    storage_mod._warn_typed_storage_removal.__dict__.pop("has_warned", None)
+    tensor = torch.tensor([1.0, 2.0], dtype=torch.float32)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        storage = tensor.storage()
+
+    assert isinstance(storage, torch.TypedStorage)
+    assert len(caught) == 1
+    assert "TypedStorage is deprecated" in str(caught[0].message)
+
+
+def test_tensor__typed_storage_returns_same_storage_without_warning():
+    tensor = torch.tensor([1.0, 2.0], dtype=torch.float32)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        storage = tensor._typed_storage()
+
+    assert isinstance(storage, torch.TypedStorage)
+    assert caught == []
+    assert storage.untyped_storage() is tensor.untyped_storage()
+
+
+def test_typed_storage_from_file_matches_untyped_backing(tmp_path):
+    path = tmp_path / "typed_storage.bin"
+    path.write_bytes((1).to_bytes(4, "little") + (2).to_bytes(4, "little"))
+
+    storage = torch.FloatStorage.from_file(str(path), shared=False, size=2)
+
+    assert isinstance(storage, torch.TypedStorage)
+    assert storage.size() == 2
+    assert storage.untyped_storage().filename() == str(path)
+
+
+def test_tensor_storage_and_untyped_storage_share_pointer():
+    tensor = torch.tensor([1.0, 2.0], dtype=torch.float32)
+
+    typed = tensor.storage()
+    untyped = tensor.untyped_storage()
+
+    assert typed.data_ptr() == untyped.data_ptr()
+    assert typed.untyped_storage() is untyped
+
+
+def test_tensor_storage_mutation_roundtrips_through__typed_storage():
+    tensor = torch.tensor([1.0, 2.0], dtype=torch.float32)
+
+    tensor._typed_storage()[1] = 7.0
+
+    assert tensor.tolist() == [1.0, 7.0]
+
+
 def test_pending_storage_basic():
     from candle._dtype import float32
     from candle._storage import PendingStorage
@@ -795,3 +908,13 @@ def test_pending_storage_basic():
         pass
     else:
         raise AssertionError("expected data_ptr to raise")
+
+
+def test_typed_storage_share_memory_preserves_untyped_owner_state():
+    storage = torch.tensor([1.0, 2.0], dtype=torch.float32).storage()
+
+    shared = storage.share_memory_()
+
+    assert shared is storage
+    assert storage.untyped_storage().is_shared() is True
+    assert storage.untyped_storage().shared_memory_meta()["mechanism"] in {"file_descriptor", "file_system"}

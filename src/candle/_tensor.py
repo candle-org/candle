@@ -3,6 +3,7 @@ import numpy as np
 from ._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 from ._storage import (
     Storage,
+    _warn_typed_storage_removal,
     empty_cpu_typed_storage,
     meta_typed_storage_from_shape,
     npu_typed_storage_from_ptr,
@@ -247,6 +248,14 @@ class Tensor(_TensorBase):
         tensor.untyped_storage().nbytes() to determine storage size.
         """
         return self._storage.untyped_storage()
+
+    def _typed_storage(self):
+        """Return the TypedStorage backing this tensor (internal API)."""
+        return self._storage
+
+    def storage(self):
+        _warn_typed_storage_removal(stacklevel=2)
+        return self._storage
 
     def data_ptr(self):
         """Return the address of the first element of this tensor."""
