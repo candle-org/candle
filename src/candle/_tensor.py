@@ -12,7 +12,7 @@ from typing import Any, cast, Concatenate, TypeVar, Union
 from typing_extensions import ParamSpec
 
 import candle as torch
-import candle._C as _C
+from candle import _C
 from ._namedtensor_internals import (
     check_serializing_named_tensor,
     is_ellipsis,
@@ -761,7 +761,7 @@ class Tensor(torch._C.TensorBase):
             raise RuntimeError(
                 "post accumulate grad hooks cannot be registered on non-leaf tensors"
             )
-        if self._post_accumulate_grad_hooks is None:
+        if self._post_accumulate_grad_hooks is None:  # pylint: disable=access-member-before-definition
             self._post_accumulate_grad_hooks: dict[Any, Any] = (
                 # pyrefly: ignore [bad-assignment]
                 OrderedDict()
