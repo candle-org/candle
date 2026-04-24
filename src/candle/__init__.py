@@ -23,11 +23,50 @@ from ._dtype import DType as Dtype  # schema/type alias compatibility
 from ._device import device as Device, _default_device, get_default_device, set_default_device
 from ._device import device
 
+# -- torch.memory_format compatibility --
+class memory_format:
+    def __init__(self, name): self._name = name
+    def __repr__(self): return f"torch.{self._name}"
+    def __eq__(self, other): return isinstance(other, memory_format) and self._name == other._name
+    def __hash__(self): return hash(self._name)
+
+contiguous_format = memory_format("contiguous_format")
+channels_last = memory_format("channels_last")
+preserve_format = memory_format("preserve_format")
+
+# -- torch.layout compatibility --
+class layout:
+    def __init__(self, name): self._name = name
+    def __repr__(self): return f"torch.{self._name}"
+strided = layout("strided")
+sparse_coo = layout("sparse_coo")
+sparse_csr = layout("sparse_csr")
+sparse_csc = layout("sparse_csc")
+sparse_bsr = layout("sparse_bsr")
+sparse_bsc = layout("sparse_bsc")
+
+# -- SymInt/SymFloat/SymBool stubs --
+class SymInt(int): pass  # pylint: disable=inherit-non-class
+class SymFloat(float): pass  # pylint: disable=inherit-non-class
+class SymBool: pass
+
+# -- qscheme stubs --
+class qscheme:
+    def __init__(self, name): self._name = name
+per_tensor_affine = qscheme("per_tensor_affine")
+per_channel_affine = qscheme("per_channel_affine")
+per_channel_affine_float_qparams = qscheme("per_channel_affine_float_qparams")
+
+# -- bfloat type stub (for isinstance checks in tensor.py) --
+class bfloat: pass
+
 
 def typename(obj):
     if hasattr(obj, '__module__') and hasattr(obj, '__name__'):
         return f"{obj.__module__}.{obj.__name__}"
-    return str(obj)
+    # For instances, use the type's module and name
+    cls = type(obj)
+    return f"{cls.__module__}.{cls.__name__}"
 
 
 def is_storage(obj):
@@ -37,6 +76,8 @@ def is_storage(obj):
         hasattr(obj, '_untyped_storage') and hasattr(obj, 'dtype')
     )
 from . import _C  # must load before _tensor (storage.py needs torch._C)
+from . import _VF
+from . import _tensor_str
 from ._tensor import Tensor
 
 # Torch-level numeric constants
@@ -114,6 +155,7 @@ from ._C import (  # pylint: disable=no-name-in-module
     ByteStorage, BoolStorage, _install_typed_storage_compat,
 )
 _C._install_typed_storage_compat()
+_C._install_tensor_api()
 from ._functional import add, mul, matmul, relu, sum, all, any, argmax, argmin, count_nonzero, masked_select, flip, roll, rot90, repeat, repeat_interleave, tile, nonzero, allclose, isclose, equal, cumsum, cumprod, cummax, argsort, sort, topk, stack, cat, concat, concatenate, hstack, vstack, row_stack, dstack, column_stack, pad_sequence, block_diag, tril, triu, diag, cartesian_prod, chunk, split, vsplit, hsplit, dsplit, unbind, tril_indices, triu_indices, take, take_along_dim, index_select, gather, scatter, abs, neg, exp, log, sqrt, div, true_divide, mean, std
 from ._functional import sin, cos, tan, tanh, sigmoid, floor, ceil, round, trunc, frac
 from ._functional import pow, log2, log10, exp2, rsqrt

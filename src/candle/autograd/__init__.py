@@ -1,5 +1,5 @@
 from .function import Function
-from .engine import grad
+from .engine import backward, grad
 from . import graph
 from . import _functions
 from . import forward_ad
@@ -38,6 +38,7 @@ def Variable(*args, **kwargs):
 
 __all__ = [
     "Function",
+    "backward",
     "grad",
     "graph",
     "_functions",
