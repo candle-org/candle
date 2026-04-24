@@ -32,7 +32,7 @@ from ._dtype import (
 from ._cython._storage import CyCPUUntypedStorage  # pylint: disable=import-error,no-name-in-module
 from .storage import TypedStorage, UntypedStorage
 from ._C import typed_storage_from_numpy
-from ._C import PyTorchFileReader, PyTorchFileWriter
+from ._C import PyTorchFileReader, PyTorchFileWriter  # pylint: disable=no-name-in-module
 from ._stream import PyTorchStreamReader, PyTorchStreamWriter
 from ._tensor import Tensor as MindTensor
 

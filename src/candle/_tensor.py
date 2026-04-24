@@ -2,7 +2,11 @@ import numpy as np
 
 from ._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 from .storage import _warn_typed_storage_removal
-from ._C import Storage, empty_cpu_typed_storage, meta_typed_storage_from_shape, npu_typed_storage_from_ptr, pinned_cpu_typed_storage_from_numpy, typed_storage_from_numpy
+from ._C import (  # pylint: disable=no-name-in-module
+    Storage, empty_cpu_typed_storage, meta_typed_storage_from_shape,
+    npu_typed_storage_from_ptr, pinned_cpu_typed_storage_from_numpy,
+    typed_storage_from_numpy,
+)
 from ._device import _default_device, device as Device
 from ._dtype import float32, float16, float64, bfloat16, int8, int16, int32, int64, uint8
 from ._dtype import bool as dtype_bool
