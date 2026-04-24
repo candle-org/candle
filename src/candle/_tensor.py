@@ -1865,11 +1865,5 @@ def _convert(ret, cls):
     return ret
 
 
-# Re-export candle-specific symbols from _tensor_helpers for backward compatibility
-from ._tensor_helpers import (  # noqa: E402,F401
-    _StrideTuple,
-    _compute_strides,
-    _HookHandle,
-    _bf16_to_f32,
-    _f32_to_bf16,
-)
+# Re-export candle-specific symbols for backward compatibility
+from ._C import _StrideTuple, _compute_strides, _bf16_to_f32, _f32_to_bf16  # noqa: E402,F401
