@@ -161,7 +161,7 @@ class Tensor(torch._C.TensorBase):
             if (
                 self.is_sparse
                 or self.device.type
-                in ["lazy", "xla", "mtia", "mps", "maia", "meta", "ipu"]
+                in ["lazy", "mps", "meta", "ipu"]
                 or (
                     not torch._C._has_storage(self)
                     and self.device.type == torch._C._get_privateuse1_backend_name()
@@ -334,7 +334,7 @@ class Tensor(torch._C.TensorBase):
             torch.serialization._serialization_tls.materialize_fake_tensors
         )
 
-        if self.device.type in ["xla", "maia", "mtia"] or (
+        if (
             not torch._C._has_storage(self)
             and self.device.type == torch._C._get_privateuse1_backend_name()
         ):
@@ -1815,21 +1815,6 @@ class Tensor(torch._C.TensorBase):
             if stream is not None and stream != -1:
                 raise AssertionError("stream should be None on cpu.")
 
-        if self.device.type == "xla":
-            import torch_xla
-            import torch_xla.utils.dlpack as xla_dlpack
-
-            if (
-                len(torch_xla.real_devices()) <= 0
-                or "cuda" not in torch_xla.real_devices()[0].lower()
-            ):
-                raise RuntimeError(
-                    "Can't export to dlpack an XLA tensor that is not on CUDA."
-                )
-
-            # Does not support DLPack 1.0, yet.
-            return xla_dlpack.to_dlpack(self)
-
         if max_version is None or max_version[0] < 1:
             # Fallback to the old, unversioned variant.
             return _C._to_dlpack(self, dl_device=dl_device, copy=copy)
@@ -1857,16 +1842,6 @@ class Tensor(torch._C.TensorBase):
             device_type = DLDeviceType.kDLOneAPI
         elif self.device.type == "privateuse1":
             device_type = DLDeviceType.kDLExtDev
-        elif torch_device_type == "xla":
-            import torch_xla
-
-            if (
-                len(torch_xla.real_devices()) <= 0
-                or "cuda" not in torch_xla.real_devices()[0].lower()
-            ):
-                raise ValueError(f"Unknown device type {torch_device_type} for Dlpack")
-
-            device_type = DLDeviceType.kDLCUDA
         elif torch_device_type == "mps":
             device_type = DLDeviceType.kDLMetal
         else:
