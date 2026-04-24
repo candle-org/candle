@@ -640,8 +640,30 @@ def __getattr__(name):
 # Must be defined AFTER all storage factories so _tensor_impl can import from _C.
 # =============================================================================
 
-from ._cython._tensor_impl import TensorImpl  # pylint: disable=import-error,no-name-in-module,wrong-import-position
-from ._tensor_helpers import _StrideTuple  # noqa: E402
+from ._cython._tensor_impl import TensorImpl, _StrideTuple  # pylint: disable=import-error,no-name-in-module,wrong-import-position
+
+import numpy as _np
+
+
+def _compute_strides(shape):
+    stride = []
+    acc = 1
+    for d in reversed(shape):
+        stride.append(acc)
+        acc *= d
+    return _StrideTuple(reversed(stride))
+
+
+def _bf16_to_f32(arr):
+    u32 = arr.astype(_np.uint32) << 16
+    return u32.view(_np.float32)
+
+
+def _f32_to_bf16(arr):
+    u32 = arr.view(_np.uint32)
+    rounding_bias = (u32 >> 16) & 1
+    u32 = u32 + 0x7FFF + rounding_bias
+    return (u32 >> 16).astype(_np.uint16)
 
 
 class TensorBase(TensorImpl):
@@ -797,7 +819,6 @@ class TensorBase(TensorImpl):
         return self
 
     def is_contiguous(self, memory_format=None):
-        from ._tensor_helpers import _compute_strides
         expected = _compute_strides(self.shape)
         return self.stride == expected
 
@@ -954,7 +975,6 @@ class TensorBase(TensorImpl):
 
     def set_(self, typed_storage, storage_offset=None, size=None, stride=None):
         from .storage import TypedStorage
-        from ._tensor_helpers import _compute_strides
         if not isinstance(typed_storage, TypedStorage):
             raise TypeError("set_() currently only supports TypedStorage input")
         if storage_offset is None:
@@ -985,7 +1005,6 @@ class TensorBase(TensorImpl):
     def numpy(self):
         arr = self._numpy_view()
         if self.dtype == bfloat16:
-            from ._tensor_helpers import _bf16_to_f32
             arr = _bf16_to_f32(arr)
         return arr
 
@@ -995,7 +1014,6 @@ class TensorBase(TensorImpl):
 
     def pin_memory(self):
         storage = pinned_cpu_typed_storage_from_numpy(self._numpy_view(), self.dtype, device=self.device)
-        from ._tensor_helpers import _compute_strides
         return type(self)(storage, self.shape, _compute_strides(self.shape), 0, self.requires_grad)
 
     def is_pinned(self):
@@ -1018,8 +1036,8 @@ class TensorBase(TensorImpl):
             self._backward_hooks = OrderedDict()
             if self.grad_fn is not None and hasattr(self.grad_fn, '_register_hook_dict'):
                 self.grad_fn._register_hook_dict(self)
-        from ._tensor_helpers import _HookHandle
-        handle = _HookHandle(self._backward_hooks)
+        from .utils.hooks import RemovableHandle
+        handle = RemovableHandle(self._backward_hooks)
         self._backward_hooks[handle.id] = hook
         return handle
 
