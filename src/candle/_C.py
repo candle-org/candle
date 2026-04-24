@@ -542,6 +542,9 @@ def __getattr__(name):
     if name in ("PyTorchFileReader", "PyTorchFileWriter"):
         from ._stream import PyTorchFileReader, PyTorchFileWriter
         return locals()[name]
+    if name in ("TypedStorage", "UntypedStorage"):
+        from .storage import TypedStorage, UntypedStorage
+        return locals()[name]
     _map = {
         "FloatStorage": "_FloatStorage", "DoubleStorage": "_DoubleStorage",
         "HalfStorage": "_HalfStorage", "LongStorage": "_LongStorage",

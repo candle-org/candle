@@ -24,6 +24,12 @@ from ._device import device as Device, _default_device, get_default_device, set_
 from ._device import device
 
 
+def typename(obj):
+    if hasattr(obj, '__module__') and hasattr(obj, '__name__'):
+        return f"{obj.__module__}.{obj.__name__}"
+    return str(obj)
+
+
 def is_storage(obj):
     from ._C import StorageBase
     from .storage import _StorageBase, TypedStorage

@@ -1,7 +1,7 @@
 import pytest
 
 import candle as torch
-import candle._storage as candle_storage
+import candle._C as candle_storage
 
 
 def test_tensor_impl_declares_runtime_owned_fields():
