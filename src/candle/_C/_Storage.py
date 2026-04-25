@@ -3,7 +3,7 @@
 Contains StorageBase, backend untyped storage classes, factory functions,
 legacy storage aliases, and TypedStorage compat installation.
 """
-# pylint: disable=no-name-in-module,possibly-unused-variable
+# pylint: disable=no-name-in-module,possibly-unused-variable,import-error
 
 import abc
 import ctypes as _ctypes

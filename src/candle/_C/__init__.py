@@ -379,7 +379,7 @@ def _install_tensor_api():
     """Install Cython tensor API methods on TensorBase (called after all modules loaded)."""
     if not _HAS_CYTHON_TENSOR_API:
         return
-    from . import _tensor_api as _tensor_api_mod
+    from . import _tensor_api as _tensor_api_mod  # pylint: disable=import-self
     TensorBase._set_device_from_storage = _tensor_api_mod.tensor_set_device_from_storage
     TensorBase._set_dtype_from_storage = _tensor_api_mod.tensor_set_dtype_from_storage
     TensorBase.data = property(TensorBase.data.fget, _tensor_api_mod.tensor_set_data)
