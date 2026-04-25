@@ -9,7 +9,7 @@ function boundaries on the hot path.
 """
 
 from libc.stdint cimport int64_t, uint32_t
-from candle._cython._tensor_impl cimport TensorImpl
+from candle._C._tensor_impl cimport TensorImpl
 import os
 import inspect
 
@@ -286,7 +286,7 @@ cdef inline void _ensure_imports():
     from candle._dispatch.registry import registry
     from candle._dispatch.keys import DispatchKey, DISPATCH_KEY_PRIORITY
     from candle._backends.autograd import _strip_autograd_keys
-    from candle._cython._dispatch import FastDispatchKeySet
+    from candle._C._dispatch import FastDispatchKeySet
     from candle._tensor import Tensor
     _registry = registry
     _DispatchKey = DispatchKey

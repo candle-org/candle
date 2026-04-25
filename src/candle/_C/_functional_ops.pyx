@@ -109,17 +109,17 @@ cdef inline void _ensure_npu_refs():
     if _npu_refs_loaded:
         return
 
-    from candle._cython._npu_ops import fast_add as _nadd  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_add as _nadd  # pylint: disable=import-error,no-name-in-module
     try:
-        from candle._cython._npu_ops import fast_mul as _nmul  # pylint: disable=import-error,no-name-in-module
+        from candle._C._npu_ops import fast_mul as _nmul  # pylint: disable=import-error,no-name-in-module
     except ImportError:
         from candle._backends.npu.ops import mul as _nmul
     try:
-        from candle._cython._npu_ops import fast_sub as _nsub  # pylint: disable=import-error,no-name-in-module
+        from candle._C._npu_ops import fast_sub as _nsub  # pylint: disable=import-error,no-name-in-module
     except ImportError:
         from candle._backends.npu.ops import sub as _nsub
     try:
-        from candle._cython._npu_ops import fast_div as _ndiv  # pylint: disable=import-error,no-name-in-module
+        from candle._C._npu_ops import fast_div as _ndiv  # pylint: disable=import-error,no-name-in-module
     except ImportError:
         from candle._backends.npu.ops import div as _ndiv
     from candle.autograd.grad_mode import _GRAD_MODE_STATE as _gms

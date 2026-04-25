@@ -1,6 +1,6 @@
 """Miscellaneous element-wise operations for NPU."""
 try:
-    from candle._cython._npu_ops import (
+    from candle._C._npu_ops import (
         fast_where as _fast_where_impl,
         fast_lerp_tensor as _fast_lerp_tensor_impl,
         fast_lerp_scalar as _fast_lerp_scalar_impl,

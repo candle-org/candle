@@ -2335,14 +2335,14 @@ def test_two_tensor_two_bools_op_defers_tensor_cleanup_until_executor_destroy(tm
 
         pkg = types.ModuleType('candle')
         pkg.__path__ = [candle_path]
-        subpkg = types.ModuleType('candle._cython')
+        subpkg = types.ModuleType('candle._C')
         subpkg.__path__ = [cython_path]
         sys.modules['candle'] = pkg
-        sys.modules['candle._cython'] = subpkg
+        sys.modules['candle._C'] = subpkg
 
-        spec = importlib.util.spec_from_file_location('candle._cython._aclnn_ffi', so_path)
+        spec = importlib.util.spec_from_file_location('candle._C._aclnn_ffi', so_path)
         ffi = importlib.util.module_from_spec(spec)
-        sys.modules['candle._cython._aclnn_ffi'] = ffi
+        sys.modules['candle._C._aclnn_ffi'] = ffi
         spec.loader.exec_module(ffi)
 
         lib = ctypes.CDLL(lib_path)
@@ -2496,14 +2496,14 @@ def test_binary_op_no_alpha_defers_tensor_cleanup_until_executor_destroy(tmp_pat
 
         pkg = types.ModuleType('candle')
         pkg.__path__ = [candle_path]
-        subpkg = types.ModuleType('candle._cython')
+        subpkg = types.ModuleType('candle._C')
         subpkg.__path__ = [cython_path]
         sys.modules['candle'] = pkg
-        sys.modules['candle._cython'] = subpkg
+        sys.modules['candle._C'] = subpkg
 
-        spec = importlib.util.spec_from_file_location('candle._cython._aclnn_ffi', so_path)
+        spec = importlib.util.spec_from_file_location('candle._C._aclnn_ffi', so_path)
         ffi = importlib.util.module_from_spec(spec)
-        sys.modules['candle._cython._aclnn_ffi'] = ffi
+        sys.modules['candle._C._aclnn_ffi'] = ffi
         spec.loader.exec_module(ffi)
 
         lib = ctypes.CDLL(lib_path)
@@ -5805,14 +5805,14 @@ def _run_compiled_executor_cleanup_contract(
 
         pkg = types.ModuleType('candle')
         pkg.__path__ = [candle_path]
-        subpkg = types.ModuleType('candle._cython')
+        subpkg = types.ModuleType('candle._C')
         subpkg.__path__ = [cython_path]
         sys.modules['candle'] = pkg
-        sys.modules['candle._cython'] = subpkg
+        sys.modules['candle._C'] = subpkg
 
-        spec = importlib.util.spec_from_file_location('candle._cython._aclnn_ffi', so_path)
+        spec = importlib.util.spec_from_file_location('candle._C._aclnn_ffi', so_path)
         ffi = importlib.util.module_from_spec(spec)
-        sys.modules['candle._cython._aclnn_ffi'] = ffi
+        sys.modules['candle._C._aclnn_ffi'] = ffi
         spec.loader.exec_module(ffi)
 
         lib = ctypes.CDLL(lib_path)

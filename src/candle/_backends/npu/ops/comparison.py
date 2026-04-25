@@ -1,7 +1,7 @@
 """Comparison, logical, and bitwise operations for NPU."""
 
 try:
-    from candle._cython._npu_ops import fast_logical_not as _fast_logical_not_impl, fast_bitwise_not as _fast_bitwise_not_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_logical_not as _fast_logical_not_impl, fast_bitwise_not as _fast_bitwise_not_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_LOGICAL_NOT = True
     _HAS_FAST_BITWISE_NOT = True
 except ImportError:

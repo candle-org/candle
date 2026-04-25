@@ -10,7 +10,7 @@ from .._dispatch.registry import registry
 from .._dispatch.registration import register_autograd_kernels
 
 # -- Factory functions migrated to Cython (_cython/_autograd_ops.pyx) ----------
-from .._cython._autograd_ops import (  # pylint: disable=import-error,no-name-in-module
+from .._C._autograd_ops import (  # pylint: disable=import-error,no-name-in-module
     _strip_autograd_keys,
     _grad_context,
     _backward_dispatch_keyset,
@@ -294,7 +294,7 @@ def _as_strided_scatter_backward(grad, a, src, _saved_a, _saved_src, keyset, arg
         base_strided[...] = grad_strided
         grad_src = np.ascontiguousarray(grad_strided)
         from .._C import typed_storage_from_numpy
-        from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+        from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
         from .._dtype import from_numpy_dtype
         dtype_obj = from_numpy_dtype(grad_src.dtype)
         storage = typed_storage_from_numpy(grad_src, dtype_obj, device=grad.device)
@@ -5505,7 +5505,7 @@ def _ctc_loss_backward(grad_output, saved_lp, targets, input_lengths, target_len
         # 'none' would need per-sample grad_output, handle below
 
     from .._C import typed_storage_from_numpy
-    from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+    from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
     from .._dtype import to_numpy_dtype
 
     grad_np = grad_np.astype(to_numpy_dtype(lp_t.dtype))
@@ -5616,7 +5616,7 @@ def _special_sinc_backward(grad, _a, saved_a, keyset):
             (_np.cos(pi_x) * pi_x - _np.sin(pi_x)) / (pi * x_np * x_np)
         )
         from .._C import typed_storage_from_numpy
-        from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+        from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
         from .._dtype import to_numpy_dtype
         deriv_np = deriv_np.astype(to_numpy_dtype(saved_a.dtype))
         storage = typed_storage_from_numpy(deriv_np, saved_a.dtype, device=saved_a.device)
@@ -6092,7 +6092,7 @@ def _linalg_matrix_norm_backward(grad, _a, saved_a, keyset, args, kwargs):
             # For other norms, use numerical gradient
             deriv_np = _np.ones_like(saved_a._numpy_view())
             from .._C import typed_storage_from_numpy
-            from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+            from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
             from .._dtype import to_numpy_dtype
             deriv_np = deriv_np.astype(to_numpy_dtype(saved_a.dtype))
             storage = typed_storage_from_numpy(deriv_np, saved_a.dtype, device=saved_a.device)
@@ -6460,7 +6460,7 @@ def _autograd_linalg_svd(name):
                 # grad_A = U @ diag(grad_S) @ Vh
                 grad_a_np = U_np @ (_np.eye(S_np.shape[-1]) * grad_np[..., :S_np.shape[-1], :S_np.shape[-1]].diagonal(axis1=-2, axis2=-1)[..., None]) @ Vh_np if grad_np.ndim >= 2 else _np.zeros_like(a_np)
                 from .._C import typed_storage_from_numpy
-                from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+                from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
@@ -6507,7 +6507,7 @@ def _autograd_linalg_eigh(name):
                 grad_a_np = V_np @ (_np.eye(L_np.shape[-1]) * grad_np[..., None]) @ V_np.swapaxes(-2, -1) if grad_np.ndim >= 1 else _np.zeros_like(a_np)
 
                 from .._C import typed_storage_from_numpy
-                from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+                from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
@@ -6607,7 +6607,7 @@ def _autograd_linalg_lu(name):
                 # Simplified: return gradient through identity-like
                 grad_a_np = grad_np.copy() if grad_np.shape == a_np.shape else _np.zeros_like(a_np)
                 from .._C import typed_storage_from_numpy
-                from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+                from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
@@ -6645,7 +6645,7 @@ def _autograd_linalg_lu_factor(name):
                 grad_np = grad._numpy_view().astype(_np.float64)
                 grad_a_np = grad_np.copy() if grad_np.shape == a_np.shape else _np.zeros_like(a_np)
                 from .._C import typed_storage_from_numpy
-                from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+                from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
@@ -6708,7 +6708,7 @@ def _autograd_linalg_eig(name):
                 a_np = saved_a._numpy_view()
                 grad_a_np = _np.zeros_like(a_np)
                 from .._C import typed_storage_from_numpy
-                from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+                from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
@@ -6745,7 +6745,7 @@ def _linalg_eigvalsh_backward(grad, _a, saved_a, keyset, args, kwargs):
         grad_np = grad._numpy_view().astype(_np.float64)
         grad_a_np = V_np @ (_np.eye(L_np.shape[-1]) * grad_np[..., None]) @ V_np.swapaxes(-2, -1)
         from .._C import typed_storage_from_numpy
-        from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+        from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
         from .._dtype import to_numpy_dtype
         grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
         storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
@@ -6837,7 +6837,7 @@ def _linalg_svdvals_backward(grad, _a, saved_a, keyset):
             # Batched
             grad_a_np = U_np @ (_np.eye(k) * grad_np[..., None]) @ Vh_np
         from .._C import typed_storage_from_numpy
-        from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+        from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
         from .._dtype import to_numpy_dtype
         grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
         storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
@@ -6884,7 +6884,7 @@ def _linalg_vander_backward(grad, _a, saved_a, keyset, args, kwargs):
         for j in range(1, n):
             grad_x += j * x_np ** (j - 1) * grad_np[..., j]
         from .._C import typed_storage_from_numpy
-        from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+        from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
         from .._dtype import to_numpy_dtype
         grad_x = grad_x.astype(to_numpy_dtype(saved_a.dtype))
         storage = typed_storage_from_numpy(grad_x, saved_a.dtype, device=saved_a.device)
@@ -6931,7 +6931,7 @@ def _autograd_nanmedian(name):
                         grad_np_up = _np.expand_dims(grad_np_up, axis=dim)
                     grad_np = _np.where(mask, grad_np_up / count, 0.0)
                 from .._C import typed_storage_from_numpy
-                from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+                from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
                 from .._dtype import to_numpy_dtype
                 grad_np = grad_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_np, saved_a.dtype, device=saved_a.device)
@@ -7003,7 +7003,7 @@ def _quantile_backward(grad, _a, saved_a, keyset, args, kwargs):
                 _np.put_along_axis(grad_np, hi_idx, frac_val * _np.take(g_slice, [0], axis=dim if g_slice.ndim > 0 else 0), axis=dim)
 
         from .._C import typed_storage_from_numpy
-        from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+        from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
         from .._dtype import to_numpy_dtype
         grad_np = grad_np.astype(to_numpy_dtype(saved_a.dtype))
         storage = typed_storage_from_numpy(grad_np, saved_a.dtype, device=saved_a.device)

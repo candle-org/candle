@@ -155,7 +155,7 @@ def test_npu_event_wait_stream(monkeypatch):
 def test_runtime_get_aclrt_ffi_disables_aclgraph_on_old_cann(monkeypatch):
     import sys
     import candle._backends.npu.runtime as npu_runtime
-    import candle._cython as cython_pkg
+    import candle._C as cython_pkg
 
     calls = {}
 
@@ -173,7 +173,7 @@ def test_runtime_get_aclrt_ffi_disables_aclgraph_on_old_cann(monkeypatch):
     monkeypatch.setattr(npu_runtime.cann_discovery, "get_lib_dirs", lambda: ["/tmp/cann"])
     monkeypatch.setattr(npu_runtime.os.path, "exists", lambda p: p == "/tmp/cann/libascendcl.so")
     monkeypatch.setattr(cython_pkg, "_aclrt_ffi", fake_mod, raising=False)
-    monkeypatch.setitem(sys.modules, "candle._cython._aclrt_ffi", fake_mod)
+    monkeypatch.setitem(sys.modules, "candle._C._aclrt_ffi", fake_mod)
 
     mod = npu_runtime._get_aclrt_ffi()
 
@@ -184,7 +184,7 @@ def test_runtime_get_aclrt_ffi_disables_aclgraph_on_old_cann(monkeypatch):
 def test_runtime_get_aclrt_ffi_disables_aclgraph_for_unsupported_soc(monkeypatch):
     import sys
     import candle._backends.npu.runtime as npu_runtime
-    import candle._cython as cython_pkg
+    import candle._C as cython_pkg
 
     calls = {}
 
@@ -203,7 +203,7 @@ def test_runtime_get_aclrt_ffi_disables_aclgraph_for_unsupported_soc(monkeypatch
     monkeypatch.setattr(npu_runtime.os.path, "exists", lambda p: p == "/tmp/cann/libascendcl.so")
     monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: False)
     monkeypatch.setattr(cython_pkg, "_aclrt_ffi", fake_mod, raising=False)
-    monkeypatch.setitem(sys.modules, "candle._cython._aclrt_ffi", fake_mod)
+    monkeypatch.setitem(sys.modules, "candle._C._aclrt_ffi", fake_mod)
 
     mod = npu_runtime._get_aclrt_ffi()
 

@@ -6,7 +6,7 @@ import candle as torch
 @pytest.mark.skipif(not torch.npu.is_available(), reason="NPU not available")
 def test_npu_fast_binary_op_fallback_avoids_recursive_binary_op(monkeypatch):
     from candle._backends.npu.ops import _helpers
-    from candle._cython import _npu_ops_fallback
+    from candle._C import _npu_ops_fallback
 
     monkeypatch.setattr(_helpers, "_fast_binary_op", _npu_ops_fallback.fast_binary_op)
     monkeypatch.setattr(_helpers, "_HAS_FAST_OPS", True)

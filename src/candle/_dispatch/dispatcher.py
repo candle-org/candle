@@ -251,7 +251,7 @@ class _FunctionalizePendingOp:
 
 
 def _pending_tensor_from_spec(spec, device):
-    from .._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+    from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
     from .._C import PendingStorage
 
     storage = PendingStorage(spec.shape, spec.dtype, device)
@@ -559,15 +559,15 @@ def redispatch(name, keyset, *args, **kwargs):
 # available.  These must come AFTER the Python definitions so they override.
 # ---------------------------------------------------------------------------
 try:
-    from .._cython._dispatch import cy_prepare_kwargs as _prepare_kwargs  # noqa: F811
-    from .._cython._dispatch import cy_extract_tensors as _extract_tensors  # noqa: F811
+    from .._C._dispatch import cy_prepare_kwargs as _prepare_kwargs  # noqa: F811
+    from .._C._dispatch import cy_extract_tensors as _extract_tensors  # noqa: F811
 except ImportError:
     pass  # keep existing Python versions
 
 # Full dispatcher core: single-function dispatch (replaces both dispatch and
 # dispatch_with_keyset) — aligned with PyTorch Dispatcher::call architecture.
 try:
-    from .._cython._dispatcher_core import cy_dispatch_full as dispatch  # noqa: F811
-    from .._cython._dispatcher_core import cy_dispatch_with_keyset_fast as dispatch_with_keyset  # noqa: F811
+    from .._C._dispatcher_core import cy_dispatch_full as dispatch  # noqa: F811
+    from .._C._dispatcher_core import cy_dispatch_with_keyset_fast as dispatch_with_keyset  # noqa: F811
 except ImportError:
     pass  # keep existing Python versions

@@ -2,7 +2,7 @@
 """Cython aclgraph state machine over aclmdlRI handles."""
 
 from libc.stdint cimport uint32_t, uintptr_t
-from candle._cython cimport _aclrt_ffi
+from candle._C cimport _aclrt_ffi
 
 cdef int STATE_IDLE = 0
 cdef int STATE_CAPTURING = 1

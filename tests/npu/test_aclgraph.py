@@ -43,7 +43,7 @@ class _FakeGraphImpl:
 
 @pytest.fixture
 def fake_graph_env(monkeypatch):
-    import candle._cython._aclgraph as aclgraph_mod
+    import candle._C._aclgraph as aclgraph_mod
 
     fake_stream = _FakeStream()
     sync_calls = []
@@ -114,7 +114,7 @@ def test_npu_graph_enter_failure_restores_stream_context(fake_graph_env, monkeyp
             super().capture_begin(stream, mode)
             raise RuntimeError("capture failed")
 
-    import candle._cython._aclgraph as aclgraph_mod
+    import candle._C._aclgraph as aclgraph_mod
 
     exit_calls = []
 
@@ -145,7 +145,7 @@ def test_npu_graph_enter_failure_restores_stream_context(fake_graph_env, monkeyp
 
 
 def test_npu_graph_exit_sync_failure_still_restores_stream_context(fake_graph_env, monkeypatch):
-    import candle._cython._aclgraph as aclgraph_mod
+    import candle._C._aclgraph as aclgraph_mod
 
     exit_calls = []
 
@@ -194,7 +194,7 @@ def test_npu_graph_reset_and_debug_dump(fake_graph_env):
 
 
 def test_npu_is_current_stream_capturing(fake_graph_env, monkeypatch):
-    import candle._cython._aclrt_ffi as aclrt_ffi
+    import candle._C._aclrt_ffi as aclrt_ffi
 
     monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: True)
     monkeypatch.setattr(
@@ -207,7 +207,7 @@ def test_npu_is_current_stream_capturing(fake_graph_env, monkeypatch):
 
 
 def test_npu_is_current_stream_not_capturing(fake_graph_env, monkeypatch):
-    import candle._cython._aclrt_ffi as aclrt_ffi
+    import candle._C._aclrt_ffi as aclrt_ffi
 
     monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: True)
     monkeypatch.setattr(
@@ -220,7 +220,7 @@ def test_npu_is_current_stream_not_capturing(fake_graph_env, monkeypatch):
 
 
 def test_npu_is_current_stream_capturing_returns_false_when_aclgraph_unsupported(fake_graph_env, monkeypatch):
-    import candle._cython._aclrt_ffi as aclrt_ffi
+    import candle._C._aclrt_ffi as aclrt_ffi
 
     monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: False)
 
@@ -242,7 +242,7 @@ def test_npu_graph_invalid_capture_error_mode(fake_graph_env):
 
 
 def test_npu_graph_impl_replay_from_idle_raises():
-    from candle._cython._aclgraph import _NPUGraphImpl
+    from candle._C._aclgraph import _NPUGraphImpl
 
     impl = _NPUGraphImpl()
     with pytest.raises(RuntimeError):
@@ -250,7 +250,7 @@ def test_npu_graph_impl_replay_from_idle_raises():
 
 
 def test_npu_graph_impl_capture_end_without_begin_raises():
-    from candle._cython._aclgraph import _NPUGraphImpl
+    from candle._C._aclgraph import _NPUGraphImpl
 
     impl = _NPUGraphImpl()
     with pytest.raises(RuntimeError):
@@ -258,7 +258,7 @@ def test_npu_graph_impl_capture_end_without_begin_raises():
 
 
 def test_npu_graph_impl_abort_from_idle_raises():
-    from candle._cython._aclgraph import _NPUGraphImpl
+    from candle._C._aclgraph import _NPUGraphImpl
 
     impl = _NPUGraphImpl()
     with pytest.raises(RuntimeError):

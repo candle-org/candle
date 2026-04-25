@@ -51,7 +51,7 @@ def set_default_device(dev):
 # FastDevice is a drop-in replacement with int-based comparison.
 # ---------------------------------------------------------------------------
 try:
-    from ._cython._device import FastDevice as device  # noqa: F811
+    from ._C._device import FastDevice as device  # noqa: F811
     _default_device = device("cpu")
 except ImportError:
     pass

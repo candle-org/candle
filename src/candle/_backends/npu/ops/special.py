@@ -23,17 +23,17 @@ from .shape import contiguous, index_select
 
 
 def special_digamma(a):
-    from candle._cython._npu_ops import fast_digamma as _fast_digamma_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_digamma as _fast_digamma_impl  # pylint: disable=import-error,no-name-in-module
     return _fast_digamma_impl(a)
 
 
 def special_erfinv(a):
-    from candle._cython._npu_ops import fast_erfinv as _fast_erfinv_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_erfinv as _fast_erfinv_impl  # pylint: disable=import-error,no-name-in-module
     return _fast_erfinv_impl(a)
 
 
 def special_gammaln(a):
-    from candle._cython._npu_ops import fast_lgamma as _fast_lgamma_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_lgamma as _fast_lgamma_impl  # pylint: disable=import-error,no-name-in-module
     return _fast_lgamma_impl(a)
 
 
@@ -49,7 +49,7 @@ def special_sinc(a):
         zero = _scalar_to_npu_tensor(0.0, a)
         return where(eq(a, zero), ones, div(numer, denom))
 
-    from candle._cython._npu_ops import fast_sinc as _fast_sinc_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_sinc as _fast_sinc_impl  # pylint: disable=import-error,no-name-in-module
     return _fast_sinc_impl(a)
 
 

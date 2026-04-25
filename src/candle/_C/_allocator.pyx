@@ -445,7 +445,7 @@ cdef class FastNpuAllocator:
         cdef object block_peek = self._active.get(ptr)
         if block_peek is not None:
             try:
-                from candle._cython._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
+                from candle._C._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
                 get_tensor_desc_cache().invalidate_range(ptr, block_peek.size)
             except (ImportError, Exception):
                 pass

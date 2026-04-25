@@ -768,21 +768,21 @@ def test_serialization_uses_c_module_reader_writer_surface(tmp_path):
 
 def test_stream_module_fails_without_compiled_extension(monkeypatch):
     import candle
-    import candle._cython as cython_pkg
+    import candle._C as cython_pkg
     import candle._stream as stream_mod
 
     with monkeypatch.context() as patch:
         patch.delitem(sys.modules, "candle._stream", raising=False)
         patch.delitem(sys.modules, "candle.serialization", raising=False)
-        patch.setitem(sys.modules, "candle._cython._stream", None)
+        patch.setitem(sys.modules, "candle._C._stream", None)
         patch.delattr(cython_pkg, "_stream", raising=False)
         patch.delattr(candle, "_stream", raising=False)
         patch.delattr(candle, "serialization", raising=False)
 
-        with pytest.raises(ModuleNotFoundError, match=r"candle\._cython\._stream"):
+        with pytest.raises(ModuleNotFoundError, match=r"candle\._C\._stream"):
             importlib.import_module("candle._stream")
 
-        with pytest.raises(ModuleNotFoundError, match=r"candle\._cython\._stream"):
+        with pytest.raises(ModuleNotFoundError, match=r"candle\._C\._stream"):
             importlib.import_module("candle.serialization")
 
     importlib.reload(stream_mod)

@@ -9,7 +9,7 @@ from . import cann_discovery
 
 # Try to import the Cython FFI hot-path. Legacy Python/ctypes fallback is disabled.
 try:
-    from ..._cython import _aclnn_ffi as _ffi
+    from ..._C import _aclnn_ffi as _ffi
 except ImportError:
     _ffi = None  # pylint: disable=invalid-name
 

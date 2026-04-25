@@ -291,7 +291,7 @@ def bitwise_right_shift(a, b):
 # ---------------------------------------------------------------------------
 
 try:
-    from candle._cython._mps_ops import (  # pylint: disable=import-error,no-name-in-module
+    from candle._C._mps_ops import (  # pylint: disable=import-error,no-name-in-module
         eq, ne, lt, le, gt, ge,
         allclose, isclose, equal,
         logical_and, logical_or, logical_not, logical_xor,

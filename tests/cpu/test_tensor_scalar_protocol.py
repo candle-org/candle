@@ -24,10 +24,10 @@ def test_tensor_module_fails_without_compiled_extension():
         import sys
 
         import candle
-        import candle._cython as cython_pkg
+        import candle._C as cython_pkg
 
         sys.modules.pop("candle._tensor", None)
-        sys.modules["candle._cython._tensor_impl"] = None
+        sys.modules["candle._C._tensor_impl"] = None
         if hasattr(cython_pkg, "_tensor_impl"):
             delattr(cython_pkg, "_tensor_impl")
         if hasattr(candle, "_tensor"):
@@ -45,7 +45,7 @@ def test_tensor_module_fails_without_compiled_extension():
     )
 
     assert result.returncode != 0
-    assert "candle._cython._tensor_impl" in result.stderr
+    assert "candle._C._tensor_impl" in result.stderr
 
 
 def test_tensor_item_int_float_bool_tolist_cpu():

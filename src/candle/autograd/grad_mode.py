@@ -1,4 +1,4 @@
-from .._cython._grad_mode_state import (
+from .._C._grad_mode_state import (
     _STATE as _GRAD_MODE_STATE,
     get_enabled as _get_enabled,
     set_enabled as _set_enabled,

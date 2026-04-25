@@ -513,7 +513,7 @@ _ALLOCATORS = {}
 _AllocatorImpl = NpuAllocator
 
 try:
-    from ..._cython._allocator import FastNpuAllocator as _AllocatorImpl  # noqa: F811
+    from ..._C._allocator import FastNpuAllocator as _AllocatorImpl  # noqa: F811
 except ImportError:
     pass
 

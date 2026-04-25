@@ -410,7 +410,7 @@ def reciprocal(a):
 
 
 try:
-    from candle._cython._mps_ops import (  # pylint: disable=import-error,no-name-in-module
+    from candle._C._mps_ops import (  # pylint: disable=import-error,no-name-in-module
         add, mul, div, true_divide, sub, abs, neg, sqrt, exp, log,
         sin, cos, tan, tanh, sigmoid, floor, ceil, round, trunc, frac,
         pow, log2, log10, exp2, rsqrt, sign, square, signbit,

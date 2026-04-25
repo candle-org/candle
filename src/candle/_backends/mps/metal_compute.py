@@ -2326,7 +2326,7 @@ def _encode_roll_ctypes(enc, pipeline, input_buf, output_buf,
 # are defined above (they are imported by the Cython module at load time).
 # ---------------------------------------------------------------------------
 try:
-    from candle._cython._mps_compute import (  # pylint: disable=import-error,no-name-in-module
+    from candle._C._mps_compute import (  # pylint: disable=import-error,no-name-in-module
         get_dispatcher as _cy_get_dispatcher,
     )
     _CYTHON_DISPATCHER = True

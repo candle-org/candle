@@ -323,7 +323,7 @@ def uniform(a):
 # ---------------------------------------------------------------------------
 
 try:
-    from candle._cython._mps_ops import (  # pylint: disable=import-error,no-name-in-module
+    from candle._C._mps_ops import (  # pylint: disable=import-error,no-name-in-module
         where, lerp, addcmul, addcdiv,
         logaddexp, logaddexp2, hypot,
         remainder, fmod, heaviside,

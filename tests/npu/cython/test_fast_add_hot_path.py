@@ -57,7 +57,7 @@ def test_fast_add_reuses_cached_executor_for_same_signature(npu_device, monkeypa
     """fast_add may either hit the PTA executor cache or stay on the non-PTA path."""
     import pytest
     import candle as torch
-    import candle._cython._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+    import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
 
     if not ffi_mod.is_pta_cache_available():
         pytest.skip("PTA executor cache not available on this CANN build")

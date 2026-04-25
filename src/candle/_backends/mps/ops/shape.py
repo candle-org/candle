@@ -18,7 +18,7 @@ from ._helpers import (  # pylint: disable=no-name-in-module
     mps_typed_storage_from_numpy, _MPSUntypedStorage, TypedStorage,
     _accel,
 )
-from ...._cython._tensor_impl import cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
+from ...._C._tensor_impl import cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 
 def contiguous(a):
     if a.device.type != "mps":

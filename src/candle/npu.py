@@ -113,7 +113,7 @@ def synchronize(device=None):
     # Hard-require the Cython fast sync path, but import it lazily so `import candle`
     # remains cross-platform safe until an actual NPU API is used.
     if _cy_npu_sync is None:
-        from ._cython._npu_ops import cy_npu_synchronize as _sync  # pylint: disable=import-error,no-name-in-module
+        from ._C._npu_ops import cy_npu_synchronize as _sync  # pylint: disable=import-error,no-name-in-module
         _cy_npu_sync = _sync
 
     from ._backends.npu import runtime as npu_runtime
@@ -535,7 +535,7 @@ _ERROR_MODE_MAP = {
 
 class NPUGraph:
     def __init__(self):
-        from ._cython._aclgraph import _NPUGraphImpl  # pylint: disable=import-error,no-name-in-module
+        from ._C._aclgraph import _NPUGraphImpl  # pylint: disable=import-error,no-name-in-module
 
         self._impl = _NPUGraphImpl()
 
@@ -621,7 +621,7 @@ def is_current_stream_capturing():
     if not ops_soc.aclgraph_supported():
         return False
 
-    from ._cython import _aclrt_ffi  # pylint: disable=import-error,no-name-in-module
+    from ._C import _aclrt_ffi  # pylint: disable=import-error,no-name-in-module
 
     _ensure_initialized()
     status, _ = _aclrt_ffi.capture_get_info(current_stream()._handle)

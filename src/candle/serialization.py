@@ -29,7 +29,7 @@ from ._dtype import (
     uint8,
     to_numpy_dtype,
 )
-from ._cython._storage import CyCPUUntypedStorage  # pylint: disable=import-error,no-name-in-module
+from ._C._storage import CyCPUUntypedStorage  # pylint: disable=import-error,no-name-in-module
 from .storage import TypedStorage, UntypedStorage
 from ._C import typed_storage_from_numpy
 from ._C import PyTorchFileReader, PyTorchFileWriter  # pylint: disable=no-name-in-module

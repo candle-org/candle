@@ -8,7 +8,7 @@ from ..._functional import stack as _stack
 from ..._creation import from_numpy as _from_numpy
 
 try:
-    from ..._cython._dataloader_ops import cy_fast_collate_tensors as _cy_collate
+    from ..._C._dataloader_ops import cy_fast_collate_tensors as _cy_collate
 except ImportError:
     _cy_collate = None
 

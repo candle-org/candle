@@ -184,7 +184,7 @@ cpdef object from_metal_buffer(object metal_buf_obj, object shape, object stride
         count=numel,
     )
     cdef object typed_storage = _TypedStorage_cls(untyped, dtype, numel, data=data)
-    from candle._cython._tensor_impl import cy_make_tensor_from_storage
+    from candle._C._tensor_impl import cy_make_tensor_from_storage
     return cy_make_tensor_from_storage(typed_storage, shape_t, stride_t, 0, False)
 
 

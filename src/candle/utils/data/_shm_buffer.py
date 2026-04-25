@@ -13,7 +13,7 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
-from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+from ..._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from ..._dtype import from_numpy_dtype, to_numpy_dtype
 from ..._C import typed_storage_from_numpy
 from ..._tensor import Tensor

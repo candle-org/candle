@@ -2,7 +2,7 @@
 """Cython-owned autograd graph helpers."""
 
 import contextlib
-from candle._cython._hooks_state import get_stack
+from candle._C._hooks_state import get_stack
 
 
 cdef class GradientEdge:
