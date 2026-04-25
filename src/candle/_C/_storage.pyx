@@ -17,7 +17,7 @@ import weakref
 
 import numpy as np
 
-from candle._cython._storage_impl import StorageImpl  # pylint: disable=import-error,no-name-in-module
+from candle._C._storage_impl import StorageImpl  # pylint: disable=import-error,no-name-in-module
 
 from libc.stdint cimport int64_t
 
@@ -533,7 +533,7 @@ cdef inline void _ensure_fast_storage():
     global _FastNPUStorage_cls, _FastTypedStorage_cls
     if _FastNPUStorage_cls is not None:
         return
-    from candle._cython._npu_storage import FastNPUStorage, FastTypedStorage  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_storage import FastNPUStorage, FastTypedStorage  # pylint: disable=import-error,no-name-in-module
     _FastNPUStorage_cls = FastNPUStorage
     _FastTypedStorage_cls = FastTypedStorage
 
@@ -586,7 +586,7 @@ def cy_make_npu_tensor(int64_t device_ptr, int64_t n_elements,
     Routes through cy_make_tensor_from_storage so all tensor births share a
     single initialisation path.
     """
-    from candle._cython._tensor_impl import cy_make_tensor_from_storage
+    from candle._C._tensor_impl import cy_make_tensor_from_storage
 
     _ensure_fast_storage()
     _ensure_tensor_cls()

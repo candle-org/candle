@@ -1,4 +1,4 @@
-from ._cython._stream import (  # pylint: disable=import-error,no-name-in-module
+from ._C._stream import (  # pylint: disable=import-error,no-name-in-module
     kMinSupportedFileFormatVersion,
     kMaxSupportedFileFormatVersion,
     kMinProducedFileFormatVersion,

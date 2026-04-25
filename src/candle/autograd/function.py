@@ -1,6 +1,6 @@
 import inspect
 
-from .._cython._autograd_function import FunctionCtx, _function_apply  # pylint: disable=import-error,no-name-in-module
+from .._C._autograd_function import FunctionCtx, _function_apply  # pylint: disable=import-error,no-name-in-module
 
 
 class FunctionMeta(type):

@@ -400,7 +400,7 @@ def copy_(a, src):
 
 def erfinv_(a):
     """In-place erfinv using aclnnErfinv."""
-    from candle._cython._npu_ops import fast_erfinv_ as _fast_erfinv_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_erfinv_ as _fast_erfinv_impl  # pylint: disable=import-error,no-name-in-module
     return _fast_erfinv_impl(a)
 
 

@@ -1,6 +1,6 @@
 import numpy as np
 
-from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+from ..._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from ..._dtype import float32 as float32_dtype
 from ..._dtype import float64 as float64_dtype
 from ..._dtype import to_numpy_dtype

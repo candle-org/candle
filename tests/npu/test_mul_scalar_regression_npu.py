@@ -60,7 +60,7 @@ def test_mul_propagates_kernel_error_instead_of_falling_back(monkeypatch):
     # Patch the FFI-level binary_op_no_alpha to verify error propagation from
     # the actual execution path.
     try:
-        import candle._cython._aclnn_ffi as ffi_mod  # pylint: disable=import-error
+        import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error
         monkeypatch.setattr(ffi_mod, "binary_op_no_alpha", fail_mul)
     except (ImportError, AttributeError):
         # Fall back to patching the Python aclnn wrapper if Cython FFI unavailable

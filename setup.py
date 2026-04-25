@@ -20,12 +20,12 @@ from Cython.Build import cythonize
 # ---------------------------------------------------------------------------
 required_extensions = [
     Extension(
-        "candle._cython._stream",
-        ["src/candle/_cython/_stream.pyx"],
+        "candle._C._stream",
+        ["src/candle/_C/_stream.pyx"],
     ),
     Extension(
-        "candle._cython._future",
-        ["src/candle/_cython/_future.pyx"],
+        "candle._C._future",
+        ["src/candle/_C/_future.pyx"],
     ),
 ]
 
@@ -37,72 +37,72 @@ cross_platform_extensions = []
 if _system in ("Linux", "Darwin"):
     cross_platform_extensions = [
         Extension(
-            "candle._cython._dispatch",
-            ["src/candle/_cython/_dispatch.pyx"],
+            "candle._C._dispatch",
+            ["src/candle/_C/_dispatch.pyx"],
         ),
         Extension(
-            "candle._cython._allocator",
-            ["src/candle/_cython/_allocator.pyx"],
+            "candle._C._allocator",
+            ["src/candle/_C/_allocator.pyx"],
         ),
         Extension(
-            "candle._cython._storage",
-            ["src/candle/_cython/_storage.pyx"],
+            "candle._C._storage",
+            ["src/candle/_C/_storage.pyx"],
         ),
         Extension(
-            "candle._cython._storage_impl",
-            ["src/candle/_cython/_storage_impl.pyx"],
+            "candle._C._storage_impl",
+            ["src/candle/_C/_storage_impl.pyx"],
         ),
         Extension(
-            "candle._cython._tensor_impl",
-            ["src/candle/_cython/_tensor_impl.pyx"],
+            "candle._C._tensor_impl",
+            ["src/candle/_C/_tensor_impl.pyx"],
         ),
         Extension(
-            "candle._cython._dispatcher_core",
-            ["src/candle/_cython/_dispatcher_core.pyx"],
+            "candle._C._dispatcher_core",
+            ["src/candle/_C/_dispatcher_core.pyx"],
         ),
         Extension(
-            "candle._cython._device",
-            ["src/candle/_cython/_device.pyx"],
+            "candle._C._device",
+            ["src/candle/_C/_device.pyx"],
         ),
         Extension(
-            "candle._cython._dtype",
-            ["src/candle/_cython/_dtype.pyx"],
+            "candle._C._dtype",
+            ["src/candle/_C/_dtype.pyx"],
         ),
         Extension(
-            "candle._cython._autograd_node",
-            ["src/candle/_cython/_autograd_node.pyx"],
+            "candle._C._autograd_node",
+            ["src/candle/_C/_autograd_node.pyx"],
         ),
         Extension(
-            "candle._cython._autograd_graph",
-            ["src/candle/_cython/_autograd_graph.pyx"],
+            "candle._C._autograd_graph",
+            ["src/candle/_C/_autograd_graph.pyx"],
         ),
         Extension(
-            "candle._cython._autograd_engine",
-            ["src/candle/_cython/_autograd_engine.pyx"],
+            "candle._C._autograd_engine",
+            ["src/candle/_C/_autograd_engine.pyx"],
         ),
         Extension(
-            "candle._cython._autograd_function",
-            ["src/candle/_cython/_autograd_function.pyx"],
+            "candle._C._autograd_function",
+            ["src/candle/_C/_autograd_function.pyx"],
         ),
         Extension(
-            "candle._cython._autograd_ops",
-            ["src/candle/_cython/_autograd_ops.pyx"],
+            "candle._C._autograd_ops",
+            ["src/candle/_C/_autograd_ops.pyx"],
         ),
         Extension(
-            "candle._cython._functional_ops",
-            ["src/candle/_cython/_functional_ops.pyx"],
+            "candle._C._functional_ops",
+            ["src/candle/_C/_functional_ops.pyx"],
         ),
         Extension(
-            "candle._cython._fast_ops",
-            ["src/candle/_cython/_fast_ops.pyx"],
+            "candle._C._fast_ops",
+            ["src/candle/_C/_fast_ops.pyx"],
         ),
         Extension(
-            "candle._cython._tensor_api",
-            ["src/candle/_cython/_tensor_api.pyx"],
+            "candle._C._TensorBase",
+            ["src/candle/_C/_TensorBase.pyx"],
         ),
         Extension(
-            "candle._cython._cpu_kernels",
-            ["src/candle/_cython/_cpu_kernels.pyx"],
+            "candle._C._cpu_kernels",
+            ["src/candle/_C/_cpu_kernels.pyx"],
             extra_compile_args=["-O3", "-ffast-math"],
         ),
         Extension(
@@ -114,20 +114,20 @@ if _system in ("Linux", "Darwin"):
             ["src/candle/distributed/_c10d_gloo.pyx"],
         ),
         Extension(
-            "candle._cython._mps_helpers",
-            ["src/candle/_cython/_mps_helpers.pyx"],
+            "candle._C._mps_helpers",
+            ["src/candle/_C/_mps_helpers.pyx"],
         ),
         Extension(
-            "candle._cython._mps_compute",
-            ["src/candle/_cython/_mps_compute.pyx"],
+            "candle._C._mps_compute",
+            ["src/candle/_C/_mps_compute.pyx"],
         ),
         Extension(
-            "candle._cython._mps_ops",
-            ["src/candle/_cython/_mps_ops.pyx"],
+            "candle._C._mps_ops",
+            ["src/candle/_C/_mps_ops.pyx"],
         ),
         Extension(
-            "candle._cython._dataloader_ops",
-            ["src/candle/_cython/_dataloader_ops.pyx"],
+            "candle._C._dataloader_ops",
+            ["src/candle/_C/_dataloader_ops.pyx"],
         ),
         Extension(
             "candle._generated._functions_cy",
@@ -146,27 +146,27 @@ linux_only_extensions = []
 if _system == "Linux":
     linux_only_extensions = [
         Extension(
-            "candle._cython._aclnn_ffi",
-            ["src/candle/_cython/_aclnn_ffi.pyx"],
+            "candle._C._aclnn_ffi",
+            ["src/candle/_C/_aclnn_ffi.pyx"],
             libraries=["dl"],
         ),
         Extension(
-            "candle._cython._aclrt_ffi",
-            ["src/candle/_cython/_aclrt_ffi.pyx"],
+            "candle._C._aclrt_ffi",
+            ["src/candle/_C/_aclrt_ffi.pyx"],
             libraries=["dl"],
         ),
         Extension(
-            "candle._cython._aclgraph",
-            ["src/candle/_cython/_aclgraph.pyx"],
+            "candle._C._aclgraph",
+            ["src/candle/_C/_aclgraph.pyx"],
             libraries=["dl"],
         ),
         Extension(
-            "candle._cython._npu_ops",
-            ["src/candle/_cython/_npu_ops.pyx"],
+            "candle._C._npu_ops",
+            ["src/candle/_C/_npu_ops.pyx"],
         ),
         Extension(
-            "candle._cython._npu_storage",
-            ["src/candle/_cython/_npu_storage.pyx"],
+            "candle._C._npu_storage",
+            ["src/candle/_C/_npu_storage.pyx"],
         ),
         Extension(
             "candle.distributed._c10d_hccl",

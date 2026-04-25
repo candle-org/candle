@@ -76,6 +76,7 @@ def is_storage(obj):
         hasattr(obj, '_untyped_storage') and hasattr(obj, 'dtype')
     )
 from . import _C  # must load before _tensor (storage.py needs torch._C)
+_C._install_tensor_api()
 from . import _VF
 from . import _tensor_str
 from ._tensor import Tensor
@@ -155,7 +156,6 @@ from ._C import (  # pylint: disable=no-name-in-module
     ByteStorage, BoolStorage, _install_typed_storage_compat,
 )
 _C._install_typed_storage_compat()
-_C._install_tensor_api()
 from ._functional import add, mul, matmul, relu, sum, all, any, argmax, argmin, count_nonzero, masked_select, flip, roll, rot90, repeat, repeat_interleave, tile, nonzero, allclose, isclose, equal, cumsum, cumprod, cummax, argsort, sort, topk, stack, cat, concat, concatenate, hstack, vstack, row_stack, dstack, column_stack, pad_sequence, block_diag, tril, triu, diag, cartesian_prod, chunk, split, vsplit, hsplit, dsplit, unbind, tril_indices, triu_indices, take, take_along_dim, index_select, gather, scatter, abs, neg, exp, log, sqrt, div, true_divide, mean, std
 from ._functional import sin, cos, tan, tanh, sigmoid, floor, ceil, round, trunc, frac
 from ._functional import pow, log2, log10, exp2, rsqrt

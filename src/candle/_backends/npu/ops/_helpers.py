@@ -14,7 +14,7 @@ from .. import state as npu_state
 from .. import ops_soc
 
 try:
-    from ...._cython._npu_ops import fast_binary_op as _fast_binary_op  # pylint: disable=no-name-in-module
+    from ...._C._npu_ops import fast_binary_op as _fast_binary_op  # pylint: disable=no-name-in-module
     _HAS_FAST_OPS = True
 except ImportError:
     _HAS_FAST_OPS = False
@@ -39,7 +39,7 @@ def _storage_meta(tensor):
 
 
 def _wrap_tensor(storage, shape, stride):
-    from candle._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+    from candle._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 
     return cy_make_tensor_from_storage(storage, tuple(shape), stride, 0, False)
 

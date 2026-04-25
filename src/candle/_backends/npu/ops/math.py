@@ -18,7 +18,7 @@ from ._helpers import (
 # ---------------------------------------------------------------------------
 
 try:
-    from candle._cython._npu_ops import (
+    from candle._C._npu_ops import (
         fast_abs as _fast_abs_impl,
         fast_acos as _fast_acos_impl,
         fast_acosh as _fast_acosh_impl,

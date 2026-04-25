@@ -36,7 +36,7 @@ def _strip_autograd_keys(keyset):
 def _grad_context(_keyset=None):
     """Return a no_grad context unless create_graph mode is active."""
     from candle.autograd.grad_mode import no_grad
-    from candle._cython._autograd_engine import is_create_graph_enabled
+    from candle._C._autograd_engine import is_create_graph_enabled
 
     if is_create_graph_enabled():
         return nullcontext()
@@ -45,7 +45,7 @@ def _grad_context(_keyset=None):
 
 def _backward_dispatch_keyset(raw_keyset, autograd_keyset):
     """Choose the dispatch keyset for a backward call."""
-    from candle._cython._autograd_engine import is_create_graph_enabled
+    from candle._C._autograd_engine import is_create_graph_enabled
 
     if is_create_graph_enabled() and autograd_keyset is not None:
         return autograd_keyset
@@ -57,7 +57,7 @@ def _autograd_unary_passthrough(name):
     from candle.autograd.grad_mode import GradMode
     from candle.autograd.anomaly_mode import annotate_node_creation
     from candle._dispatch.dispatcher import current_dispatch_keyset, redispatch
-    from candle._cython._autograd_node import Node
+    from candle._C._autograd_node import Node
 
     def wrapper(a, *args, **kwargs):
         active_keyset = current_dispatch_keyset()
@@ -85,7 +85,7 @@ def _autograd_binary(name, backward_impl, *, save_inputs=True):
     from candle.autograd.grad_mode import GradMode
     from candle.autograd.anomaly_mode import annotate_node_creation
     from candle._dispatch.dispatcher import current_dispatch_keyset, redispatch
-    from candle._cython._autograd_node import Node
+    from candle._C._autograd_node import Node
 
     def wrapper(a, b):
         active_keyset = current_dispatch_keyset()
@@ -123,7 +123,7 @@ def _autograd_binary_args(name, backward_impl, *, save_inputs=True):
     from candle.autograd.grad_mode import GradMode
     from candle.autograd.anomaly_mode import annotate_node_creation
     from candle._dispatch.dispatcher import current_dispatch_keyset, redispatch
-    from candle._cython._autograd_node import Node
+    from candle._C._autograd_node import Node
 
     def wrapper(a, b, *args, **kwargs):
         active_keyset = current_dispatch_keyset()
@@ -159,7 +159,7 @@ def _autograd_unary_args(name, backward_impl, *, cpu_only=False, save_input=True
     from candle.autograd.grad_mode import GradMode
     from candle.autograd.anomaly_mode import annotate_node_creation
     from candle._dispatch.dispatcher import current_dispatch_keyset, redispatch
-    from candle._cython._autograd_node import Node
+    from candle._C._autograd_node import Node
 
     def wrapper(a, *args, **kwargs):
         active_keyset = current_dispatch_keyset()
@@ -215,7 +215,7 @@ def _autograd_norm(name, backward_impl):
     from candle.autograd.grad_mode import GradMode
     from candle.autograd.anomaly_mode import annotate_node_creation
     from candle._dispatch.dispatcher import current_dispatch_keyset, redispatch
-    from candle._cython._autograd_node import Node
+    from candle._C._autograd_node import Node
 
     def wrapper(a, *args, **kwargs):
         active_keyset = current_dispatch_keyset()

@@ -65,7 +65,7 @@ def _function_apply(cls, args, kwargs):
 
     from candle._tensor import Tensor
     from candle.autograd.grad_mode import is_grad_enabled
-    from candle._cython._autograd_node import Node, InputMetadata
+    from candle._C._autograd_node import Node, InputMetadata
     from candle.autograd.anomaly_mode import annotate_node_creation
 
     cdef tuple needs_input_grad = tuple(

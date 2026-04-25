@@ -420,7 +420,7 @@ def dropout(a, p=0.5, training=True):
 
 
 try:
-    from candle._cython._mps_ops import (  # pylint: disable=import-error,no-name-in-module
+    from candle._C._mps_ops import (  # pylint: disable=import-error,no-name-in-module
         relu, gelu, softplus, silu, leaky_relu, elu, mish, prelu,
         clamp, clamp_min, clamp_max, relu6, hardtanh, selu, celu,
         threshold, hardshrink, softshrink, rrelu,

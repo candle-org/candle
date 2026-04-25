@@ -3,7 +3,7 @@ import pytest
 
 def test_cache_hit_same_tensor(npu_device):
     import candle as torch
-    from candle._cython._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
+    from candle._C._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
     a = torch.randn(4, 4, device=npu_device)
     torch.npu.synchronize()
     cache = get_tensor_desc_cache()
@@ -15,7 +15,7 @@ def test_cache_hit_same_tensor(npu_device):
 
 def test_cache_miss_different_stride(npu_device):
     import candle as torch
-    from candle._cython._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
+    from candle._C._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
     a = torch.randn(4, 4, device=npu_device)
     torch.npu.synchronize()
     cache = get_tensor_desc_cache()
@@ -29,7 +29,7 @@ def test_cache_miss_different_stride(npu_device):
 def test_cache_invalidated_on_free(npu_device):
     import candle as torch
     import gc
-    from candle._cython._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
+    from candle._C._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
     cache = get_tensor_desc_cache()
     cache.clear()
     a = torch.randn(4, 4, device=npu_device)
@@ -44,7 +44,7 @@ def test_cache_invalidated_on_free(npu_device):
 
 def test_add_uses_cache(npu_device):
     import candle as torch
-    from candle._cython._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
+    from candle._C._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
     cache = get_tensor_desc_cache()
     cache.clear()
     a = torch.randn(4, 4, device=npu_device)

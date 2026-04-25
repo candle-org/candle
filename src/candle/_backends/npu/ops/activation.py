@@ -1,91 +1,91 @@
 """Activation functions and embedding for NPU."""
 
 try:
-    from candle._cython._npu_ops import fast_relu as _fast_relu_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_relu as _fast_relu_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_RELU = True
 except ImportError:
     _fast_relu_impl = None  # type: ignore[assignment]
     _HAS_FAST_RELU = False
 
 try:
-    from candle._cython._npu_ops import fast_hardtanh as _fast_hardtanh_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_hardtanh as _fast_hardtanh_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_HARDTANH = True
 except ImportError:
     _fast_hardtanh_impl = None  # type: ignore[assignment]
     _HAS_FAST_HARDTANH = False
 
 try:
-    from candle._cython._npu_ops import fast_dropout as _fast_dropout_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_dropout as _fast_dropout_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_DROPOUT = True
 except ImportError:
     _fast_dropout_impl = None  # type: ignore[assignment]
     _HAS_FAST_DROPOUT = False
 
 try:
-    from candle._cython._npu_ops import fast_embedding as _fast_embedding_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_embedding as _fast_embedding_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_EMBEDDING = True
 except ImportError:
     _fast_embedding_impl = None  # type: ignore[assignment]
     _HAS_FAST_EMBEDDING = False
 
 try:
-    from candle._cython._npu_ops import fast_prelu as _fast_prelu_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_prelu as _fast_prelu_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_PRELU = True
 except ImportError:
     _fast_prelu_impl = None  # type: ignore[assignment]
     _HAS_FAST_PRELU = False
 
 try:
-    from candle._cython._npu_ops import fast_softplus as _fast_softplus_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_softplus as _fast_softplus_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_SOFTPLUS = True
 except ImportError:
     _fast_softplus_impl = None  # type: ignore[assignment]
     _HAS_FAST_SOFTPLUS = False
 
 try:
-    from candle._cython._npu_ops import fast_softmax as _fast_softmax_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_softmax as _fast_softmax_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_SOFTMAX = True
 except ImportError:
     _fast_softmax_impl = None  # type: ignore[assignment]
     _HAS_FAST_SOFTMAX = False
 
 try:
-    from candle._cython._npu_ops import fast_log_softmax as _fast_log_softmax_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_log_softmax as _fast_log_softmax_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_LOG_SOFTMAX = True
 except ImportError:
     _fast_log_softmax_impl = None  # type: ignore[assignment]
     _HAS_FAST_LOG_SOFTMAX = False
 
 try:
-    from candle._cython._npu_ops import fast_leaky_relu as _fast_leaky_relu_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_leaky_relu as _fast_leaky_relu_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_LEAKY_RELU = True
 except ImportError:
     _fast_leaky_relu_impl = None  # type: ignore[assignment]
     _HAS_FAST_LEAKY_RELU = False
 
 try:
-    from candle._cython._npu_ops import fast_elu as _fast_elu_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_elu as _fast_elu_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_ELU = True
 except ImportError:
     _fast_elu_impl = None  # type: ignore[assignment]
     _HAS_FAST_ELU = False
 
 try:
-    from candle._cython._npu_ops import fast_silu as _fast_silu_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_silu as _fast_silu_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_SILU = True
 except ImportError:
     _fast_silu_impl = None  # type: ignore[assignment]
     _HAS_FAST_SILU = False
 
 try:
-    from candle._cython._npu_ops import fast_gelu as _fast_gelu_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_gelu as _fast_gelu_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_GELU = True
 except ImportError:
     _fast_gelu_impl = None  # type: ignore[assignment]
     _HAS_FAST_GELU = False
 
 try:
-    from candle._cython._npu_ops import fast_mish as _fast_mish_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_mish as _fast_mish_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_MISH = True
 except ImportError:
     _fast_mish_impl = None  # type: ignore[assignment]

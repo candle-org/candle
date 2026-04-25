@@ -5,7 +5,7 @@ import pytest
 
 class TestStorageImpl:
     def test_wrap_numpy_zero_copy(self):
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._storage_impl import StorageImpl
         arr = np.ones(12, dtype=np.float32)
         s = StorageImpl.from_numpy(arr)
         assert s.data_ptr() == arr.ctypes.data
@@ -13,27 +13,27 @@ class TestStorageImpl:
         assert s.device_type() == 0
 
     def test_cpu_alloc(self):
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._storage_impl import StorageImpl
         s = StorageImpl.alloc_cpu(64)
         assert s.nbytes() == 64
         assert s.data_ptr() != 0
         assert s.device_type() == 0
 
     def test_nbytes_matches(self):
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._storage_impl import StorageImpl
         arr = np.zeros(100, dtype=np.float64)
         s = StorageImpl.from_numpy(arr)
         assert s.nbytes() == 800
 
     def test_device_type_and_index(self):
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._storage_impl import StorageImpl
         arr = np.zeros(4, dtype=np.float32)
         s = StorageImpl.from_numpy(arr)
         assert s.device_type() == 0
         assert s.device_index() == -1
 
     def test_from_device_ptr(self):
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._storage_impl import StorageImpl
         arr = np.zeros(8, dtype=np.float32)
         ptr = arr.ctypes.data
         s = StorageImpl.from_device_ptr(ptr, 32, 0, -1, owner=arr)
@@ -43,13 +43,13 @@ class TestStorageImpl:
         assert s.device_index() == -1
 
     def test_from_device_ptr_rejects_numpy_owner_for_non_cpu(self):
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._storage_impl import StorageImpl
         arr = np.zeros(8, dtype=np.float32)
         with pytest.raises(TypeError, match="numpy-backed owner is only valid for CPU storage"):
             StorageImpl.from_device_ptr(arr.ctypes.data, arr.nbytes, 1, 0, owner=arr)
 
     def test_resizable_flag(self):
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._storage_impl import StorageImpl
         s1 = StorageImpl.alloc_cpu(64)
         assert s1.resizable() == True
         arr = np.zeros(4, dtype=np.float32)
@@ -58,7 +58,7 @@ class TestStorageImpl:
 
     def test_owner_pin_prevents_gc(self):
         import gc
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._storage_impl import StorageImpl
         arr = np.zeros(8, dtype=np.float32)
         ptr = arr.ctypes.data
         s = StorageImpl.from_device_ptr(ptr, 32, 0, -1, owner=arr)
@@ -69,7 +69,7 @@ class TestStorageImpl:
         assert s.device_index() == -1
 
     def test_alloc_cpu_zero_bytes(self):
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._storage_impl import StorageImpl
         # malloc(0) is implementation-defined; handle gracefully
         try:
             s = StorageImpl.alloc_cpu(0)
@@ -116,7 +116,7 @@ class TestCimportDispatch:
     """Verify dispatcher can read TensorImpl C fields directly via cimport."""
 
     def test_dispatch_keys_from_tensor_impl(self):
-        from candle._cython._tensor_impl import TensorImpl
+        from candle._C._tensor_impl import TensorImpl
         from candle._device import device
         from candle._dtype import float32
 
@@ -143,8 +143,8 @@ class TestViewOps:
     """View operations on TensorImpl — must share storage, not copy."""
 
     def _make_tensor(self, shape, stride=None):
-        from candle._cython._tensor_impl import TensorImpl
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._tensor_impl import TensorImpl
+        from candle._C._storage_impl import StorageImpl
         from candle._device import device
         from candle._dtype import float32
 
@@ -245,7 +245,7 @@ class TestTensorBootstrapExports:
     """_cython package should re-export tensor bootstrap helpers needed by Tensor import."""
 
     def test_cython_package_exports_tensor_bootstrap_helpers(self):
-        import candle._cython as cython_mod
+        import candle._C as cython_mod
 
         for name in (
             "tensor_set_device_from_storage",
@@ -321,8 +321,8 @@ class TestTensorFactoryInvariants:
 
     def test_cy_make_tensor_from_storage_initializes_all_core_fields(self):
         import numpy as np
-        from candle._cython._storage_impl import StorageImpl
-        from candle._cython._tensor_impl import cy_make_tensor_from_storage
+        from candle._C._storage_impl import StorageImpl
+        from candle._C._tensor_impl import cy_make_tensor_from_storage
         from candle._dtype import float32
         from candle._device import device
 
@@ -357,7 +357,7 @@ class TestTensorFactoryInvariants:
 
     def test_cy_make_view_tensor_preserves_root_base_and_metadata(self):
         import candle as torch
-        from candle._cython._tensor_impl import cy_make_view_tensor
+        from candle._C._tensor_impl import cy_make_view_tensor
 
         base = torch.arange(12, dtype=torch.float32).reshape(3, 4)
         view = cy_make_view_tensor(base, base._storage, (4, 3), (1, 4), 0)
@@ -372,7 +372,7 @@ class TestTensorFactoryInvariants:
         import candle as torch
         if not torch.npu.is_available():
             return
-        from candle._cython._storage import cy_make_npu_tensor
+        from candle._C._storage import cy_make_npu_tensor
         t = torch.ones((2, 2), dtype=torch.float16, device="npu")
         out = cy_make_npu_tensor(
             t.storage()._untyped._device_ptr,
@@ -406,15 +406,15 @@ class TestNpuOpsCimports:
 
         npu_ops_pyx = Path(__file__).resolve().parents[2] / "src/candle/_cython/_npu_ops.pyx"
         text = npu_ops_pyx.read_text(encoding="utf-8")
-        assert "from candle._cython._storage_impl cimport StorageImpl" in text
+        assert "from candle._C._storage_impl cimport StorageImpl" in text
 
 
 class TestIntegration:
     """End-to-end: StorageImpl + TensorImpl + view ops together."""
 
     def test_view_chain_all_share_storage(self):
-        from candle._cython._tensor_impl import TensorImpl
-        from candle._cython._storage_impl import StorageImpl
+        from candle._C._tensor_impl import TensorImpl
+        from candle._C._storage_impl import StorageImpl
         from candle._device import device
         from candle._dtype import float32
 
@@ -466,8 +466,8 @@ class TestTensorInitCompatibilityShell:
     def test_python_tensor_and_factory_tensor_have_same_core_metadata(self):
         import numpy as np
         import candle as torch
-        from candle._cython._storage_impl import StorageImpl
-        from candle._cython._tensor_impl import cy_make_tensor_from_storage
+        from candle._C._storage_impl import StorageImpl
+        from candle._C._tensor_impl import cy_make_tensor_from_storage
         from candle._dtype import float32
         from candle._device import device
 
@@ -801,8 +801,8 @@ class TestCrossBoundaryBirthConsistency:
     def test_shared_storage_like_birth_matches_public_metadata(self):
         import numpy as np
         import candle as torch
-        from candle._cython._storage_impl import StorageImpl
-        from candle._cython._tensor_impl import cy_make_tensor_from_storage
+        from candle._C._storage_impl import StorageImpl
+        from candle._C._tensor_impl import cy_make_tensor_from_storage
         from candle._dtype import float32
         from candle._device import device
 
@@ -870,8 +870,8 @@ class TestCallableStrideContract:
 
     def test_factory_born_tensor_stride_is_callable(self):
         import numpy as np
-        from candle._cython._storage_impl import StorageImpl
-        from candle._cython._tensor_impl import cy_make_tensor_from_storage
+        from candle._C._storage_impl import StorageImpl
+        from candle._C._tensor_impl import cy_make_tensor_from_storage
         from candle._dtype import float32
         from candle._device import device
 
@@ -904,7 +904,7 @@ class TestTensorBinaryMethodProviders:
     def test_add_is_bound_from_tensor_api(self):
         import candle as torch
 
-        assert torch.Tensor.__add__.__module__ == "candle._cython._tensor_api"
+        assert torch.Tensor.__add__.__module__ == "candle._C._tensor_api"
 
 
 class TestTensorLayoutMethodProviders:
@@ -923,7 +923,7 @@ class TestTensorLayoutMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -968,7 +968,7 @@ class TestTensorAutogradMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1012,7 +1012,7 @@ class TestTensorConversionMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1057,7 +1057,7 @@ class TestTensorIndexingMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1085,7 +1085,7 @@ class TestTensorInplaceMutationMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1141,7 +1141,7 @@ class TestTensorUnaryInplaceMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1209,7 +1209,7 @@ class TestTensorParameterizedInplaceMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1279,7 +1279,7 @@ class TestTensorInplaceLayoutViewMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1338,7 +1338,7 @@ class TestTensorIndexingWritebackMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1397,7 +1397,7 @@ class TestTensorNumpyAndPinningMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1439,7 +1439,7 @@ class TestTensorFactoryHelperMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1499,7 +1499,7 @@ class TestTensorRuntimeHelperMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1538,7 +1538,7 @@ class TestTensorPutMethodProvider:
 
     def test_put_is_bound_from_tensor_api(self):
         import candle as torch
-        assert torch.Tensor.put_.__module__ == "candle._cython._tensor_api"
+        assert torch.Tensor.put_.__module__ == "candle._C._tensor_api"
 
     def test_put_preserves_behavior(self):
         import candle as torch
@@ -1569,7 +1569,7 @@ class TestTensorDataSetterProvider:
     def test_data_setter_preserves_behavior(self):
         import candle as torch
 
-        assert torch.Tensor.data.fset.__module__ == "candle._cython._tensor_api"
+        assert torch.Tensor.data.fset.__module__ == "candle._C._tensor_api"
 
         x = torch.ones((2, 3), dtype=torch.float32)
         y = torch.zeros((2, 3), dtype=torch.float32)
@@ -1608,7 +1608,7 @@ class TestTensorMiscHelperMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1651,7 +1651,7 @@ class TestTensorWritebackConvenienceMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1698,7 +1698,7 @@ class TestTensorShapeReductionWrapperProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1743,7 +1743,7 @@ class TestTensorLogicalBitwiseWrapperProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1781,7 +1781,7 @@ class TestTensorSplitIndexingWrapperProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1833,7 +1833,7 @@ class TestTensorNumericHelperMethodProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1872,7 +1872,7 @@ class TestTensorViewSelectionWrapperProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1921,7 +1921,7 @@ class TestTensorOperatorSugarAndBaddbmmProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -1968,7 +1968,7 @@ class TestLog1pExpm1LtLeGtGeProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -2021,7 +2021,7 @@ class TestUnaryOpsProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -2111,7 +2111,7 @@ class TestOperatorSugarProviders:
         actual = {
             name
             for name in self.OPERATOR_NAMES
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == self.OPERATOR_NAMES
 
@@ -2182,7 +2182,7 @@ class TestReductionOpsProviders:
         actual = {
             name
             for name in self.REDUCTION_NAMES
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == self.REDUCTION_NAMES
 
@@ -2253,7 +2253,7 @@ class TestComparisonAndViewOpsProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -2264,7 +2264,7 @@ class TestComparisonAndViewOpsProviders:
         actual = {
             name
             for name in expected
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == expected
 
@@ -2342,7 +2342,7 @@ class TestIndexingOpsProviders:
         actual = {
             name
             for name in self.INDEXING_NAMES
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == self.INDEXING_NAMES
 
@@ -2429,7 +2429,7 @@ class TestMixedParamOpsProviders:
         actual = {
             name
             for name in self.MIXED_NAMES
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == self.MIXED_NAMES
 
@@ -2550,10 +2550,10 @@ class TestFinalBatchProviders:
 
         # Provider check via __module__ on the underlying function
         for name in ("is_floating_point", "is_complex"):
-            assert getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            assert getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         # ndim and T are properties — check fget module
-        assert torch.Tensor.ndim.fget.__module__ == "candle._cython._tensor_api"
-        assert torch.Tensor.T.fget.__module__ == "candle._cython._tensor_api"
+        assert torch.Tensor.ndim.fget.__module__ == "candle._C._tensor_api"
+        assert torch.Tensor.T.fget.__module__ == "candle._C._tensor_api"
 
     def test_dispatch_ops_are_bound_from_tensor_api(self):
         import candle as torch
@@ -2561,7 +2561,7 @@ class TestFinalBatchProviders:
         actual = {
             name
             for name in self.DISPATCH_NAMES
-            if getattr(torch.Tensor, name).__module__ == "candle._cython._tensor_api"
+            if getattr(torch.Tensor, name).__module__ == "candle._C._tensor_api"
         }
         assert actual == self.DISPATCH_NAMES
 

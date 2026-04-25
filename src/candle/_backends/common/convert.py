@@ -1,6 +1,6 @@
 import numpy as np
 
-from ..._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+from ..._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from ..._device import device as Device
 from ..._C import cuda_typed_storage_from_numpy, cuda_typed_storage_to_numpy, empty_cpu_typed_storage, empty_cuda_typed_storage, meta_typed_storage_from_shape, npu_typed_storage_from_ptr, typed_storage_from_numpy
 from ..._tensor import Tensor

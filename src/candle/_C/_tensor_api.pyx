@@ -124,14 +124,14 @@ cdef inline void _ensure_functional_squeeze_ref():
 cdef inline void _ensure_view_factory_ref():
     global _cy_make_view_tensor_fn
     if _cy_make_view_tensor_fn is None:
-        from candle._cython._tensor_impl import cy_make_view_tensor
+        from candle._C._tensor_impl import cy_make_view_tensor
         _cy_make_view_tensor_fn = cy_make_view_tensor
 
 
 cdef inline void _ensure_tensor_factory_ref():
     global _cy_make_tensor_from_storage_fn
     if _cy_make_tensor_from_storage_fn is None:
-        from candle._cython._tensor_impl import cy_make_tensor_from_storage
+        from candle._C._tensor_impl import cy_make_tensor_from_storage
         _cy_make_tensor_from_storage_fn = cy_make_tensor_from_storage
 
 

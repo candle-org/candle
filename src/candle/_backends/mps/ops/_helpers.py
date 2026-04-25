@@ -11,10 +11,10 @@ from ...._dtype import to_numpy_dtype
 from ....storage import TypedStorage
 from ...._C import mps_typed_storage_from_numpy, _MPSUntypedStorage
 from ...._tensor import Tensor
-from ...._cython._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
+from ...._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
 from .. import accelerate as _accel
 
-from candle._cython._mps_helpers import (  # pylint: disable=import-error,no-name-in-module
+from candle._C._mps_helpers import (  # pylint: disable=import-error,no-name-in-module
     can_use_gpu as _cy_can_use_gpu,
     dispatch_unary_gpu as _cy_dispatch_unary_gpu,
     dispatch_unary_predicate_gpu as _cy_dispatch_unary_predicate_gpu,

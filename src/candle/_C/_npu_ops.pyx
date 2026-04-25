@@ -10,8 +10,8 @@ in Python — this module only accelerates the metadata computation.
 
 from libc.stdint cimport int64_t, int32_t, uint64_t
 from libc.stdint cimport uintptr_t
-from candle._cython._tensor_impl cimport TensorImpl
-from candle._cython._storage_impl cimport StorageImpl
+from candle._C._tensor_impl cimport TensorImpl
+from candle._C._storage_impl cimport StorageImpl
 import importlib
 
 DEF MAX_NDIM = 16
@@ -228,8 +228,8 @@ cdef inline void _ensure_npu_imports():
     from candle._backends.npu import runtime as rt
     from candle._backends.npu import state as st
     from candle._backends.npu import allocator as _alloc_mod
-    from candle._cython._storage import cy_make_npu_tensor as _cymt  # pylint: disable=import-error,no-name-in-module
-    from candle._cython._aclrt_ffi import synchronize_stream as _ssf  # pylint: disable=import-error,no-name-in-module
+    from candle._C._storage import cy_make_npu_tensor as _cymt  # pylint: disable=import-error,no-name-in-module
+    from candle._C._aclrt_ffi import synchronize_stream as _ssf  # pylint: disable=import-error,no-name-in-module
     from candle._backends.npu.aclnn import flush_deferred_executors as _fef
     _npu_runtime = rt
     _npu_state = st
@@ -319,7 +319,7 @@ def fast_binary_op(a, b, fn, str name):
 
     # 8. Call aclnn
     if name in ("atan2", "logaddexp", "logaddexp2", "remainder", "fmod", "pow", "floor_divide", "eq", "ne", "lt", "le", "gt", "ge", "logical_and", "logical_or", "logical_xor", "bitwise_and", "bitwise_or", "bitwise_xor", "max", "maximum", "min", "minimum"):
-        from candle._cython import _aclnn_ffi as _ffi  # pylint: disable=import-error,no-name-in-module
+        from candle._C import _aclnn_ffi as _ffi  # pylint: disable=import-error,no-name-in-module
         from candle._backends.npu.aclnn import ensure_acl as _ensure_acl
 
         acl = _ensure_acl()
@@ -641,7 +641,7 @@ cdef inline void _ensure_ffi_binary() except *:
     global _pta_cache_begin_fn, _pta_cache_end_fn
     if _ffi_ref is not None:
         return
-    from candle._cython import _aclnn_ffi as _f  # pylint: disable=import-error,no-name-in-module
+    from candle._C import _aclnn_ffi as _f  # pylint: disable=import-error,no-name-in-module
     from candle._backends.npu.aclnn import _defer_executor as _def_ex, ensure_acl as _eacl
     _ffi_ref = _f
     _add_getws_ptr, _add_exec_ptr = _f.resolve_op("Add")

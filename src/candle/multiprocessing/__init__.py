@@ -4,7 +4,7 @@ import multiprocessing
 import sys
 
 from .reductions import init_reductions
-from .._cython._storage import (  # pylint: disable=import-error,no-name-in-module
+from .._C._storage import (  # pylint: disable=import-error,no-name-in-module
     cy_cleanup_shared_files as _cleanup_shared_files,
     cy_shared_files_count as _shared_files_count,
 )

@@ -16,10 +16,10 @@ from ._utils import (
 )
 
 try:
-    from ..._cython._dataloader_ops import ReorderBuffer as _CyReorderBuffer
+    from ..._C._dataloader_ops import ReorderBuffer as _CyReorderBuffer
 except ImportError:
     try:
-        from ..._cython._dataloader_ops_fallback import ReorderBuffer as _CyReorderBuffer
+        from ..._C._dataloader_ops_fallback import ReorderBuffer as _CyReorderBuffer
     except ImportError:
         _CyReorderBuffer = None
 

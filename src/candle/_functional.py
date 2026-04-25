@@ -163,7 +163,7 @@ _view_impl = _py_view
 _neg_impl = _py_neg
 
 try:
-    from ._cython._functional_ops import (
+    from ._C._functional_ops import (
         _has_torch_function as _cy_has_torch_function,
         _handle_torch_function as _cy_handle_torch_function,
         add as _cy_add,
@@ -217,7 +217,7 @@ try:
     _handle_torch_function_impl = _handle_torch_function_wrapper
 
     # Also patch the Cython module's internal references directly
-    import candle._cython._functional_ops as _cy_ops
+    import candle._C._functional_ops as _cy_ops
     _cy_ops._has_torch_function = _has_torch_function_wrapper
     _cy_ops._handle_torch_function = _handle_torch_function_wrapper
     _add_impl = _cy_add

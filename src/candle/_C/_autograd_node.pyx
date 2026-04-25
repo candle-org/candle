@@ -45,7 +45,7 @@ cdef class SavedTensor:
         self._saved_version = None if tensor is None else tensor._version_counter.value
         self._released = False
         self._hooks = None
-        from candle._cython._hooks_state import get_stack
+        from candle._C._hooks_state import get_stack
         stack = get_stack()
         self._global_hooks = stack[len(stack) - 1] if stack else None
         hooks = self._global_hooks

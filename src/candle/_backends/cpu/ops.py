@@ -2,9 +2,9 @@ import math
 import numpy as np
 
 try:
-    from ..._cython import _cpu_kernels as _ck
+    from ..._C import _cpu_kernels as _ck
 except ImportError:
-    from ..._cython import _cpu_kernels_fallback as _ck  # type: ignore[no-redef]
+    from ..._C import _cpu_kernels_fallback as _ck  # type: ignore[no-redef]
 
 from ..._dtype import bool as bool_dtype
 from ..._dtype import bfloat16 as bfloat16_dtype
@@ -18,7 +18,7 @@ from ..._dtype import from_numpy_dtype
 from ..._dtype import to_numpy_dtype
 from ..._C import typed_storage_from_numpy
 from ..._tensor import Tensor, _StrideTuple
-from ..._cython._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
+from ..._C._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 
 
 def _to_numpy(t):
