@@ -691,3 +691,6 @@ def _install_tensor_api():
     TensorBase._numpy_view = _tensor_api_mod.tensor_numpy_view
     TensorBase.pin_memory = _tensor_api_mod.tensor_pin_memory
 
+
+_install_tensor_api()
+

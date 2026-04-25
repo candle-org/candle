@@ -76,7 +76,6 @@ def is_storage(obj):
         hasattr(obj, '_untyped_storage') and hasattr(obj, 'dtype')
     )
 from . import _C  # must load before _tensor (storage.py needs torch._C)
-_C._install_tensor_api()
 from . import _VF
 from . import _tensor_str
 from ._tensor import Tensor
