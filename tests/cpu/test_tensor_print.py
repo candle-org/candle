@@ -54,3 +54,27 @@ def test_tensor_repr_npu_index():
     t = torch.ones((1,), device="npu:1")
     rep = repr(t)
     assert "device='npu:1'" in rep
+
+
+def test_printoptions_state_lives_in_tensor_str_module():
+    from candle import _tensor_str
+
+    prev = torch.get_printoptions()
+    try:
+        torch.set_printoptions(precision=2, linewidth=70)
+        opts = torch.get_printoptions()
+        assert opts["precision"] == 2
+        assert opts["linewidth"] == 70
+        assert _tensor_str.get_printoptions()["precision"] == 2
+        assert _tensor_str.get_printoptions()["linewidth"] == 70
+    finally:
+        torch.set_printoptions(**prev)
+
+
+def test_printoptions_context_restores_state():
+    prev = torch.get_printoptions()
+    with torch.printoptions(precision=2, sci_mode=True):
+        inside = torch.get_printoptions()
+        assert inside["precision"] == 2
+        assert inside["sci_mode"] is True
+    assert torch.get_printoptions() == prev
