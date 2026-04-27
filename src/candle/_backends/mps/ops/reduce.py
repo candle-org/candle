@@ -334,7 +334,7 @@ def count_nonzero(a, dim=None, keepdim=False):
             sfx = _kernel_suffix(float32_dtype)
             d.dispatch_fill(f"fill_{sfx}", buf, 1.0, numel,
                             _itemsize(float32_dtype))
-            from ...._tensor import _compute_strides
+            from ...._C import _compute_strides
             ones_t = _from_metal_buffer(buf, tuple(a.shape),
                                         _compute_strides(tuple(a.shape)),
                                         float32_dtype, a.device)
@@ -422,7 +422,7 @@ def _cumextreme_gpu(a, dim, mode):
     dispatch = d.dispatch_cummax if mode == "cummax" else d.dispatch_cummin
     dispatch(f"{mode}_{sfx}", _metal_buf(a), values_buf, indices_buf,
              outer_size, dim_size, inner_size)
-    from ...._tensor import _compute_strides
+    from ...._C import _compute_strides
     out_shape = tuple(a.shape)
     out_stride = _compute_strides(out_shape)
     values = _from_metal_buffer(values_buf, out_shape, out_stride, a.dtype, a.device)
@@ -498,7 +498,7 @@ def sort(a, dim=-1, descending=False, stable=False):
     if (_can_use_gpu(a) and a.is_contiguous()
             and a.dtype in (float32_dtype, float16_dtype)):
         values_buf, indices_buf, numel = _sort_gpu(a, dim, descending)
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         out_shape = tuple(a.shape)
         out_stride = _compute_strides(out_shape)
         values = _from_metal_buffer(values_buf, out_shape, out_stride,

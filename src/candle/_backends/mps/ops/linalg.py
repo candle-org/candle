@@ -42,7 +42,7 @@ def matmul(a, b, out=None):
                     _metal_buf(a), _metal_buf(b),
                     M, K, N, dtype_code, _itemsize(a.dtype))
                 if out_buf is not None:
-                    from ...._tensor import _compute_strides
+                    from ...._C import _compute_strides
                     out_shape = (M, N)
                     out_stride = _compute_strides(out_shape)
                     return _return(_from_metal_buffer(out_buf, out_shape, out_stride,

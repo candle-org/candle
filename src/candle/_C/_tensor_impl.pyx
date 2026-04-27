@@ -44,7 +44,7 @@ cdef object _StrideTuple_cls = None
 cdef inline object _coerce_stride_tuple(object stride):
     global _StrideTuple_cls
     if _StrideTuple_cls is None:
-        from candle._tensor import _StrideTuple
+        from candle._C import _StrideTuple
         _StrideTuple_cls = _StrideTuple
     if isinstance(stride, _StrideTuple_cls):
         return stride

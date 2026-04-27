@@ -76,7 +76,6 @@ def is_storage(obj):
         hasattr(obj, '_untyped_storage') and hasattr(obj, 'dtype')
     )
 from . import _C  # must load before _tensor (storage.py needs torch._C)
-_C._install_tensor_api()
 from . import _VF
 from . import _tensor_str
 from ._tensor import Tensor
@@ -560,7 +559,7 @@ def cond(input, p=None):
     return linalg.cond(input, p)
 
 
-from ._printing import set_printoptions, get_printoptions
+from ._printing import set_printoptions, get_printoptions, printoptions
 from ._dispatch import (
     pipeline_context,
     functionalize_context,
@@ -857,6 +856,7 @@ __all__ = [
     # printing
     "set_printoptions",
     "get_printoptions",
+    "printoptions",
     # pipeline
     "pipeline",
     "pipeline_context",

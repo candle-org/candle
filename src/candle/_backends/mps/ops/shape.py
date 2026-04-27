@@ -48,7 +48,7 @@ def flip(a, dims):
             flip_packed = struct.pack(f"{ndim}I", *flip_mask)
             d.dispatch_flip(f"flip_{sfx}", _metal_buf(a), out_buf,
                             shape_packed, flip_packed, ndim, total)
-            from ...._tensor import _compute_strides
+            from ...._C import _compute_strides
             out_shape = tuple(a.shape)
             return _from_metal_buffer(out_buf, out_shape,
                                       _compute_strides(out_shape),
@@ -90,7 +90,7 @@ def roll(a, shifts, dims=None):
             shifts_packed = struct.pack(f"{ndim}i", *shift_arr)
             d.dispatch_roll(f"roll_{sfx}", _metal_buf(a), out_buf,
                             shape_packed, shifts_packed, ndim, total)
-            from ...._tensor import _compute_strides
+            from ...._C import _compute_strides
             out_shape = tuple(a.shape)
             return _from_metal_buffer(out_buf, out_shape,
                                       _compute_strides(out_shape),
@@ -377,7 +377,7 @@ def diag(a, diagonal_offset=0):
         sz = n + (diagonal_offset if diagonal_offset >= 0 else -diagonal_offset)
         total = sz * sz
         out_buf = _alloc_output_buf(total, a.dtype)
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         out_shape = (sz, sz)
         out_stride = _compute_strides(out_shape)
         out = _from_metal_buffer(out_buf, out_shape, out_stride, a.dtype, a.device)
@@ -1111,7 +1111,7 @@ def flatten(a, start_dim=0, end_dim=-1):
         total *= s
     new_shape = tuple(s if s != -1 else total // known for s in new_shape)
     if _can_use_gpu(a) and a.is_contiguous():
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(_metal_buf(a), new_shape, _compute_strides(new_shape), a.dtype, a.device)
     # Non-contiguous GPU: make contiguous and retry
     if _can_use_gpu(a):
@@ -1125,7 +1125,7 @@ def unflatten(a, dim, sizes):
     d = dim if dim >= 0 else dim + ndim
     new_shape = a.shape[:d] + tuple(sizes) + a.shape[d + 1:]
     if _can_use_gpu(a) and a.is_contiguous():
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(_metal_buf(a), new_shape, _compute_strides(new_shape), a.dtype, a.device)
     # Non-contiguous GPU: make contiguous and retry
     if _can_use_gpu(a):

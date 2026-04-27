@@ -17,7 +17,8 @@ from ..._dtype import int64 as int64_dtype
 from ..._dtype import from_numpy_dtype
 from ..._dtype import to_numpy_dtype
 from ..._C import typed_storage_from_numpy
-from ..._tensor import Tensor, _StrideTuple
+from ..._C import _StrideTuple
+from ..._tensor import Tensor
 from ..._C._tensor_impl import cy_make_tensor_from_storage, cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 
 
@@ -35,6 +36,26 @@ def _from_numpy(arr, dtype, device):
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
+
+
+def _channels_last_stride(shape):
+    if len(shape) != 4:
+        raise RuntimeError("required rank 4 tensor to use channels_last format")
+    n, c, h, w = shape
+    return (c * h * w, 1, w * c, c)
+
+
+def _is_channels_last_stride(shape, stride):
+    if len(shape) != 4:
+        return False
+    expected = 1
+    for dim in (1, 3, 2, 0):
+        if shape[dim] == 1:
+            continue
+        if stride[dim] != expected:
+            return False
+        expected *= shape[dim]
+    return True
 
 
 def _dtype_of(value):
@@ -1327,9 +1348,18 @@ def div_(a, b):
     return a
 
 
-def contiguous(a):
+def contiguous(a, memory_format=None):
     if a.device.type != "cpu":
         raise ValueError("CPU contiguous expects CPU tensors")
+    if getattr(memory_format, "_name", None) == "channels_last":
+        if len(a.shape) != 4:
+            raise RuntimeError("required rank 4 tensor to use channels_last format")
+        if _is_channels_last_stride(a.shape, a.stride):
+            return a
+        arr = np.ascontiguousarray(np.transpose(_to_numpy(a), (0, 2, 3, 1)))
+        storage = typed_storage_from_numpy(arr.reshape(-1), a.dtype, device=a.device)
+        stride = _channels_last_stride(a.shape)
+        return cy_make_tensor_from_storage(storage, a.shape, stride, 0, False)
     arr = np.ascontiguousarray(_to_numpy(a))
     return _from_numpy(arr, a.dtype, a.device)
 
@@ -2499,7 +2529,8 @@ def norm_(a, p=2, dim=None, keepdim=False):
             dim = tuple(dim)
         out = np.linalg.norm(arr, ord=p, axis=dim, keepdims=keepdim)
     else:
-        out = np.linalg.norm(arr.ravel(), ord=p)
+        ord_value = 2 if p == "fro" else p
+        out = np.linalg.norm(arr.ravel(), ord=ord_value)
         if keepdim:
             out = np.full([1] * arr.ndim, out)
     from ..._dtype import float32 as f32
@@ -2508,6 +2539,7 @@ def norm_(a, p=2, dim=None, keepdim=False):
     if hasattr(out, "flags") and not out.flags['C_CONTIGUOUS']:
         out = np.ascontiguousarray(out)
     return _from_numpy(out, out_dtype, a.device)
+
 
 
 def prod_(a, dim=None, keepdim=False):

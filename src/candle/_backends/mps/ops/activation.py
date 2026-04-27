@@ -71,7 +71,7 @@ def leaky_relu(a, negative_slope=0.01):
                 f"leaky_relu_scalar_strided_{sfx}", _metal_buf(a), scalar,
                 out_buf, numel, list(a.shape), list(a.stride),
                 len(a.shape), scalar_fmt=_scalar_fmt(a.dtype))
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
                                   a.dtype, a.device)
     _unsupported_dtype("leaky_relu", a)
@@ -132,7 +132,7 @@ def clamp(a, min_val=None, max_val=None):
                     s_min, s_max, out_buf, numel,
                     list(a.shape), list(a.stride), len(a.shape),
                     scalar_fmt=fmt)
-            from ...._tensor import _compute_strides
+            from ...._C import _compute_strides
             return _from_metal_buffer(out_buf, a.shape,
                                       _compute_strides(a.shape),
                                       a.dtype, a.device)
@@ -161,7 +161,7 @@ def clamp_min(a, min_val):
                 f"clamp_min_scalar_strided_{sfx}", _metal_buf(a), scalar,
                 out_buf, numel, list(a.shape), list(a.stride),
                 len(a.shape), scalar_fmt=_scalar_fmt(a.dtype))
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
                                   a.dtype, a.device)
     _unsupported_dtype("clamp_min", a)
@@ -184,7 +184,7 @@ def clamp_max(a, max_val):
                 f"clamp_max_scalar_strided_{sfx}", _metal_buf(a), scalar,
                 out_buf, numel, list(a.shape), list(a.stride),
                 len(a.shape), scalar_fmt=_scalar_fmt(a.dtype))
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
                                   a.dtype, a.device)
     _unsupported_dtype("clamp_max", a)

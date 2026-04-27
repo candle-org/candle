@@ -69,7 +69,7 @@ def eq(a, b):
                 return eq(a.contiguous(), b)
         else:
             return eq(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -94,7 +94,7 @@ def ne(a, b):
                 return ne(a.contiguous(), b)
         else:
             return ne(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -119,7 +119,7 @@ def lt(a, b):
                 return lt(a.contiguous(), b)
         else:
             return lt(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -144,7 +144,7 @@ def le(a, b):
                 return le(a.contiguous(), b)
         else:
             return le(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -169,7 +169,7 @@ def gt(a, b):
                 return gt(a.contiguous(), b)
         else:
             return gt(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -194,7 +194,7 @@ def ge(a, b):
                 return ge(a.contiguous(), b)
         else:
             return ge(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
