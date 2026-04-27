@@ -67,7 +67,7 @@ def printoptions(**kwargs):
 
 
 def _str(self, *, tensor_contents=None):
-    from ._dtype import float32
+    from ._dtype import complex64, float32
     from ._device import _default_device
 
     if tensor_contents is None:
@@ -83,7 +83,7 @@ def _str(self, *, tensor_contents=None):
         data_repr = tensor_contents
 
     suffixes = []
-    if self.dtype != float32 or self.device.type == "meta":
+    if (self.dtype != float32 and self.dtype != complex64) or self.device.type == "meta":
         suffixes.append(f"dtype={repr(self.dtype)}")
     if self.device.type != _default_device.type:
         device_label = self.device.type
@@ -100,11 +100,58 @@ def _str(self, *, tensor_contents=None):
     return f"tensor({data_repr})"
 
 
+def _format_real_scalar(value, options):
+    import numpy as np
+
+    if options.sci_mode is True:
+        return np.format_float_scientific(value, precision=options.precision, unique=False)
+    if options.sci_mode is False:
+        return f"{value:.{options.precision}f}"
+    out = np.format_float_positional(
+        value,
+        precision=options.precision,
+        unique=False,
+        fractional=False,
+        trim='-'
+    )
+    if "e" not in out and "." not in out:
+        out += "."
+    return out
+
+
+def _format_complex_scalar(value, options, real_width):
+    real_str = _format_real_scalar(value.real, options).rjust(real_width)
+    imag_str = f"{abs(value.imag):.{options.precision}f}j"
+    if value.imag >= 0:
+        return f"{real_str}+{imag_str}"
+    return f"{real_str}-{imag_str}"
+
+
+def _format_complex_array(arr, options, real_width):
+    import numpy as np
+
+    if arr.ndim == 0:
+        return _format_complex_scalar(arr.item(), options, real_width)
+
+    if arr.ndim == 1:
+        items = [_format_complex_scalar(v, options, real_width) for v in arr.tolist()]
+        return "[" + ", ".join(items) + "]"
+
+    slices = [_format_complex_array(np.asarray(arr[i]), options, real_width) for i in range(arr.shape[0])]
+    joiner = ",\n" + " " * 8
+    return "[" + joiner.join(slices) + "]"
+
+
 def _format_array(arr, options):
     import numpy as np
 
+    if np.iscomplexobj(arr):
+        flat = np.asarray(arr).reshape(-1)
+        real_width = max(len(_format_real_scalar(v.real, options)) for v in flat) if flat.size else 1
+        return _format_complex_array(np.asarray(arr), options, real_width)
+
     formatter = None
-    floatmode = None
+    floatmode = "maxprec_equal"
     if options.sci_mode is True:
         def _format_float(value):
             return np.format_float_scientific(

@@ -1,4 +1,5 @@
 import candle as torch
+import torch as ref_torch
 
 
 def test_tensor_repr_cpu_default_dtype():
@@ -78,3 +79,21 @@ def test_printoptions_context_restores_state():
         assert inside["precision"] == 2
         assert inside["sci_mode"] is True
     assert torch.get_printoptions() == prev
+
+
+def test_dense_vector_repr_matches_local_torch():
+    c = torch.tensor([1.23456, 2.0, -3.5], dtype=torch.float32)
+    r = ref_torch.tensor([1.23456, 2.0, -3.5], dtype=ref_torch.float32)
+    assert repr(c) == repr(r)
+
+
+def test_dense_matrix_repr_matches_local_torch():
+    c = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32)
+    r = ref_torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=ref_torch.float32)
+    assert repr(c) == repr(r)
+
+
+def test_complex_repr_matches_local_torch():
+    c = torch.tensor([1 + 2j, -3 + 0.5j], dtype=torch.complex64)
+    r = ref_torch.tensor([1 + 2j, -3 + 0.5j], dtype=ref_torch.complex64)
+    assert repr(c) == repr(r)
