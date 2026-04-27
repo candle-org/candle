@@ -144,7 +144,7 @@ if _HAS_CYTHON_TENSOR_API:
 
     # Re-export the 11 tensor bootstrap helpers that contract tests expect
     # directly on candle._C (analogous to torch._C)._tensor_api helpers
-    import candle._C._tensor_api as _tapi
+    import candle._C._tensor_api as _tapi  # pylint: disable=import-error  # pylint: disable=import-error
 
     tensor_set_device_from_storage = _tapi.tensor_set_device_from_storage
     tensor_set_dtype_from_storage = _tapi.tensor_set_dtype_from_storage
