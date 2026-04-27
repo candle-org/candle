@@ -8,6 +8,18 @@ while preserving the existing Python fallback behavior in ``candle._tensor``.
 
 import numpy as np
 
+
+def _bf16_to_f32_local(arr):
+    u32 = arr.astype(np.uint32) << 16
+    return u32.view(np.float32)
+
+
+def _f32_to_bf16_local(arr):
+    u32 = arr.view(np.uint32)
+    rounding_bias = (u32 >> 16) & 1
+    u32 = u32 + 0x7FFF + rounding_bias
+    return (u32 >> 16).astype(np.uint16)
+
 cdef object _BaseTensor = None
 cdef object _Device = None
 cdef object _from_name_fn = None
@@ -138,8 +150,8 @@ cdef inline void _ensure_tensor_factory_ref():
 cdef inline void _ensure_hook_handle_ref():
     global _HookHandle_cls
     if _HookHandle_cls is None:
-        from candle._tensor import _HookHandle
-        _HookHandle_cls = _HookHandle
+        from candle.utils.hooks import RemovableHandle
+        _HookHandle_cls = RemovableHandle
 
 
 cdef inline void _ensure_grad_mode_ref():
@@ -191,7 +203,6 @@ cdef inline void _ensure_conversion_refs():
             pinned_cpu_typed_storage_from_numpy,
         )
         from candle._dtype import to_numpy_dtype, bfloat16
-        from candle._tensor import _bf16_to_f32, _f32_to_bf16
         from candle._backends.npu.ops._helpers import _cast_tensor_dtype
         from candle import npu as npu_api
 
@@ -201,8 +212,8 @@ cdef inline void _ensure_conversion_refs():
         _pinned_cpu_typed_storage_from_numpy_fn = pinned_cpu_typed_storage_from_numpy
         _to_numpy_dtype_fn = to_numpy_dtype
         _bfloat16_dtype = bfloat16
-        _bf16_to_f32_fn = _bf16_to_f32
-        _f32_to_bf16_fn = _f32_to_bf16
+        _bf16_to_f32_fn = _bf16_to_f32_local
+        _f32_to_bf16_fn = _f32_to_bf16_local
         _cast_tensor_dtype_npu_fn = _cast_tensor_dtype
         _npu_available_fn = npu_api.is_available
 
@@ -320,10 +331,6 @@ def tensor_set_data(self, new_data):
     _ensure_base()
     if not isinstance(new_data, _BaseTensor):
         raise TypeError(f"data must be a Tensor, got {type(new_data).__name__}")
-    if new_data.shape != self.shape:
-        raise RuntimeError(f"shape mismatch: expected {self.shape}, got {new_data.shape}")
-    if new_data.dtype != self.dtype:
-        raise RuntimeError(f"dtype mismatch: expected {self.dtype}, got {new_data.dtype}")
     self.cy_set_data_runtime_truth_from(new_data)
 
 
@@ -502,6 +509,11 @@ def tensor_to(self, *args, **kwargs):
             copy=copy,
             memory_format=memory_format,
         )
+
+    if getattr(memory_format, "_name", None) == "channels_last":
+        if result.device.type != "cpu":
+            raise NotImplementedError("channels_last memory_format is currently only supported on CPU tensors")
+        result = result.contiguous(memory_format=memory_format)
 
     if result is self and dtype is None and device is None:
         return self
@@ -691,12 +703,21 @@ def tensor_view(self, *shape):
 
 
 def tensor_is_contiguous(self, memory_format=None):
+    if getattr(memory_format, "_name", None) == "channels_last":
+        return _is_channels_last_stride_tuple(self.shape, self.stride)
     cdef tuple expected
     expected = _contiguous_stride_tuple(self.shape)
     return self.stride == expected
 
 
 def tensor_contiguous(self, memory_format=None):
+    if getattr(memory_format, "_name", None) == "channels_last":
+        if len(self.shape) != 4:
+            raise RuntimeError("required rank 4 tensor to use channels_last format")
+        if self.is_contiguous(memory_format=memory_format):
+            return self
+        _ensure_dispatch_ref()
+        return _dispatch_fn("contiguous", self.device.type, self, memory_format=memory_format)
     if self.is_contiguous(memory_format=memory_format):
         return self
     _ensure_dispatch_ref()
@@ -752,12 +773,21 @@ def tensor_as_strided(self, size, stride, storage_offset=None):
 
 
 def tensor_is_contiguous(self, memory_format=None):
+    if getattr(memory_format, "_name", None) == "channels_last":
+        return _is_channels_last_stride_tuple(self.shape, self.stride)
     cdef tuple expected
     expected = _contiguous_stride_tuple(self.shape)
     return self.stride == expected
 
 
 def tensor_contiguous(self, memory_format=None):
+    if getattr(memory_format, "_name", None) == "channels_last":
+        if len(self.shape) != 4:
+            raise RuntimeError("required rank 4 tensor to use channels_last format")
+        if self.is_contiguous(memory_format=memory_format):
+            return self
+        _ensure_dispatch_ref()
+        return _dispatch_fn("contiguous", self.device.type, self, memory_format=memory_format)
     if self.is_contiguous(memory_format=memory_format):
         return self
     _ensure_dispatch_ref()
@@ -1409,9 +1439,7 @@ def tensor_pin_memory(self):
     _ensure_tensor_factory_ref()
     if self.device.type != "cpu":
         raise RuntimeError("pin_memory only supports CPU tensors")
-    if not _npu_available_fn():
-        raise RuntimeError("Cannot access accelerator device when none is available.")
-    if self.is_pinned():
+    if not _npu_available_fn() or self.is_pinned():
         return self
     storage = _pinned_cpu_typed_storage_from_numpy_fn(self._numpy_view(), self.dtype, device=self.device)
     return _cy_make_tensor_from_storage_fn(storage, self.shape, self.stride, self.offset, self.requires_grad)
@@ -2386,6 +2414,16 @@ def tensor_rmatmul(self, other):
     return _dispatch_fn("matmul", self.device.type, other, self)
 
 
+def tensor_rlshift(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("bitwise_left_shift", self.device.type, other, self)
+
+
+def tensor_rrshift(self, other):
+    _ensure_dispatch_ref()
+    return _dispatch_fn("bitwise_right_shift", self.device.type, other, self)
+
+
 def tensor_and(self, other):
     _ensure_dispatch_ref()
     try:
@@ -2459,8 +2497,10 @@ def tensor_var_mean_method(self, dim=None, keepdim=False, unbiased=True):
     return _dispatch_fn("var_mean", self.device.type, self, dim=dim, keepdim=keepdim, unbiased=unbiased)
 
 
-def tensor_norm_method(self, p=2, dim=None, keepdim=False):
+def tensor_norm_method(self, p="fro", dim=None, keepdim=False, *, dtype=None):
     _ensure_dispatch_ref()
+    if dtype is not None:
+        return _dispatch_fn("norm", self.device.type, self, p=p, dim=dim, keepdim=keepdim, dtype=dtype)
     return _dispatch_fn("norm", self.device.type, self, p=p, dim=dim, keepdim=keepdim)
 
 
@@ -3097,3 +3137,29 @@ cdef inline tuple _contiguous_stride_tuple(tuple shape):
         strides[i] = acc
         acc *= shape[i]
     return tuple(strides)
+
+
+cdef inline tuple _channels_last_stride_tuple(tuple shape):
+    cdef Py_ssize_t n
+    cdef Py_ssize_t c
+    cdef Py_ssize_t h
+    cdef Py_ssize_t w
+    if len(shape) != 4:
+        raise RuntimeError("required rank 4 tensor to use channels_last format")
+    n, c, h, w = shape
+    return (c * h * w, 1, w * c, c)
+
+
+cdef inline bint _is_channels_last_stride_tuple(object shape, object stride):
+    cdef tuple order = (1, 3, 2, 0)
+    cdef Py_ssize_t expected = 1
+    cdef Py_ssize_t dim
+    if len(shape) != 4:
+        return False
+    for dim in order:
+        if shape[dim] == 1:
+            continue
+        if stride[dim] != expected:
+            return False
+        expected *= shape[dim]
+    return True

@@ -42,7 +42,7 @@ def _can_use_gpu(t):
 
 def _empty_like(t):
     """Return an empty contiguous tensor with the same shape/dtype/device."""
-    from ...._tensor import _compute_strides
+    from ...._C import _compute_strides
     shape = tuple(t.shape)
     stride = tuple(_compute_strides(shape))
     buf = _cy_alloc_output_buf(max(t.numel(), 1), t.dtype)
@@ -177,7 +177,7 @@ def _gpu_reduce_single_dim(a, dim, op_name, keepdim):
                           outer, reduce_size, inner, out_numel)
 
     out_shape = _cy_reduce_shape(tuple(a.shape), dim, keepdim)
-    from ...._tensor import _compute_strides
+    from ...._C import _compute_strides
     out_stride = tuple(_compute_strides(out_shape))
 
     if op_name in ("argmax", "argmin"):

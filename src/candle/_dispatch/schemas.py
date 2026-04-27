@@ -402,10 +402,11 @@ def register_schemas():
         "sin", "cos", "tan", "tanh", "sigmoid", "floor", "ceil", "round", "trunc", "frac",
         "log2", "log10", "exp2", "rsqrt", "reciprocal", "sign", "signbit", "isnan", "isinf", "isfinite",
         "sinh", "cosh", "asinh", "acosh", "atanh", "erf", "erfc", "softplus",
-        "relu6", "contiguous", "gelu", "silu", "mish",
+        "relu6", "gelu", "silu", "mish",
         "square",
     ))
     registry.register_schema("hardtanh", "hardtanh(Tensor input, Scalar min_val=-1.0, Scalar max_val=1.0) -> Tensor")
+    registry.register_schema("contiguous", "contiguous(Tensor input, *, MemoryFormat? memory_format=None) -> Tensor")
     registry.register_schema("softmax", "softmax(Tensor input, int dim=-1, Dtype? dtype=None) -> Tensor")
     registry.register_schema("log_softmax", "log_softmax(Tensor input, int dim=-1, Dtype? dtype=None) -> Tensor")
     registry.register_schema("dropout", "dropout(Tensor input, float p=0.5, bool training=True) -> Tensor")
@@ -472,7 +473,7 @@ def register_schemas():
             "unexpected": "{name}() received an invalid combination of arguments - got {got}, but expected one of:\n * (Tensor input, tuple of ints dim, bool unbiased = True, bool keepdim = False, *, Tensor out = None)\n * (Tensor input, tuple of ints dim = None, *, Number correction = None, bool keepdim = False, Tensor out = None)\n * (Tensor input, bool unbiased = True)\n      didn't match because some of the keywords were incorrect: dim\n * (Tensor input, tuple of names dim, bool unbiased = True, bool keepdim = False, *, Tensor out = None)\n * (Tensor input, tuple of names dim, *, Number correction = None, bool keepdim = False, Tensor out = None)\n",
         },
     )
-    registry.register_schema("norm", "norm(Tensor input, Any p=2, int[]? dim=None, bool keepdim=False) -> Tensor")
+    registry.register_schema("norm", "norm(Tensor input, Any p=2, int[]? dim=None, bool keepdim=False, *, Dtype? dtype=None) -> Tensor")
     registry.register_error_overrides(
         "norm",
         {

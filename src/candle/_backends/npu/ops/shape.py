@@ -3002,7 +3002,7 @@ def _validate_as_strided_storage_npu(a, size, stride, offset):
 
 def as_strided_npu(a, size, stride, storage_offset=None):
     """In-place metadata modification — same semantics as CPU as_strided_."""
-    from ...._tensor import _StrideTuple
+    from ...._C import _StrideTuple
     offset = a.offset if storage_offset is None else int(storage_offset)
     size = tuple(int(s) for s in size)
     stride = tuple(int(s) for s in stride)

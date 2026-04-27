@@ -569,7 +569,7 @@ cdef inline void _ensure_tensor_cls():
     global _StrideTuple_cls
     if _StrideTuple_cls is not None:
         return
-    from candle._tensor import _StrideTuple
+    from candle._C import _StrideTuple
     _StrideTuple_cls = _StrideTuple
 
 

@@ -1016,11 +1016,43 @@ def tensor(data, *, dtype=None, device=None, requires_grad=False):
     return dispatch("tensor", dev, data, dtype=dtype, requires_grad=requires_grad)
 
 
+def _unsupported_memory_format(name, memory_format):
+    raise TypeError(
+        f"{name}() received an invalid combination of arguments - memory_format {memory_format} is not supported"
+    )
+
+
+def _apply_output_memory_format(output, *, memory_format=None, source=None):
+    name = getattr(memory_format, "_name", None)
+
+    if memory_format is None:
+        if source is not None and source.is_contiguous(memory_format=getattr(__import__('candle'), 'channels_last')):
+            return output.contiguous(memory_format=getattr(__import__('candle'), 'channels_last'))
+        return output
+
+    if name == "contiguous_format":
+        return output
+
+    if name == "channels_last":
+        return output.contiguous(memory_format=memory_format)
+
+    if name == "preserve_format":
+        if source is None:
+            raise RuntimeError("unsupported memory format Preserve")
+        if source.is_contiguous(memory_format=getattr(__import__('candle'), 'channels_last')):
+            return output.contiguous(memory_format=getattr(__import__('candle'), 'channels_last'))
+        return output
+
+    return output
+
+
 def zeros(*shape, dtype=None, device=None, memory_format=None):
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = shape[0]
+    if memory_format is not None:
+        _unsupported_memory_format("zeros", memory_format)
     dev = _as_device(device)
-    return dispatch("zeros", dev, shape, dtype=dtype, memory_format=memory_format)
+    return dispatch("zeros", dev, shape, dtype=dtype)
 
 
 def zeros_like(input, *, dtype=None, device=None, memory_format=None):
@@ -1028,35 +1060,43 @@ def zeros_like(input, *, dtype=None, device=None, memory_format=None):
         dtype = input.dtype
     if device is None:
         device = input.device
-    return zeros(input.shape, dtype=dtype, device=device, memory_format=memory_format)
+    out = zeros(input.shape, dtype=dtype, device=device)
+    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
 
 
 def ones(*shape, dtype=None, device=None, memory_format=None):
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = shape[0]
+    if memory_format is not None:
+        _unsupported_memory_format("ones", memory_format)
     dev = _as_device(device)
-    return dispatch("ones", dev, shape, dtype=dtype, memory_format=memory_format)
+    return dispatch("ones", dev, shape, dtype=dtype)
 
 
 def empty(*shape, dtype=None, device=None, memory_format=None):
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = shape[0]
     dev = _as_device(device)
-    return dispatch("empty", dev, shape, dtype=dtype, memory_format=memory_format)
+    out = dispatch("empty", dev, shape, dtype=dtype, memory_format=None)
+    return _apply_output_memory_format(out, memory_format=memory_format)
 
 
 def randn(*shape, dtype=None, device=None, memory_format=None, generator=None):
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = shape[0]
+    if memory_format is not None:
+        _unsupported_memory_format("randn", memory_format)
     dev = _as_device(device)
-    return dispatch("randn", dev, shape, dtype=dtype, memory_format=memory_format, generator=generator)
+    return dispatch("randn", dev, shape, dtype=dtype, generator=generator)
 
 
 def rand(*shape, dtype=None, device=None, memory_format=None, generator=None):
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = shape[0]
+    if memory_format is not None:
+        _unsupported_memory_format("rand", memory_format)
     dev = _as_device(device)
-    return dispatch("rand", dev, shape, dtype=dtype, memory_format=memory_format, generator=generator)
+    return dispatch("rand", dev, shape, dtype=dtype, generator=generator)
 
 
 def randint(low, high=None, size=None, *, dtype=None, device=None, requires_grad=False, generator=None):
@@ -1323,7 +1363,8 @@ def ones_like(input, *, dtype=None, device=None, memory_format=None):
         dtype = input.dtype
     if device is None:
         device = input.device
-    return ones(input.shape, dtype=dtype, device=device, memory_format=memory_format)
+    out = ones(input.shape, dtype=dtype, device=device)
+    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
 
 
 def empty_like(input, *, dtype=None, device=None, memory_format=None):
@@ -1331,7 +1372,8 @@ def empty_like(input, *, dtype=None, device=None, memory_format=None):
         dtype = input.dtype
     if device is None:
         device = input.device
-    return empty(input.shape, dtype=dtype, device=device, memory_format=memory_format)
+    out = empty(input.shape, dtype=dtype, device=device)
+    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
 
 
 def full_like(input, fill_value, *, dtype=None, device=None, memory_format=None):
@@ -1339,7 +1381,8 @@ def full_like(input, fill_value, *, dtype=None, device=None, memory_format=None)
         dtype = input.dtype
     if device is None:
         device = input.device
-    return full(input.shape, fill_value, dtype=dtype, device=device)
+    out = full(input.shape, fill_value, dtype=dtype, device=device)
+    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
 
 
 def randn_like(input, *, dtype=None, device=None, memory_format=None, generator=None):
@@ -1347,7 +1390,8 @@ def randn_like(input, *, dtype=None, device=None, memory_format=None, generator=
         dtype = input.dtype
     if device is None:
         device = input.device
-    return randn(input.shape, dtype=dtype, device=device, memory_format=memory_format, generator=generator)
+    out = randn(input.shape, dtype=dtype, device=device, generator=generator)
+    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
 
 
 def rand_like(input, *, dtype=None, device=None, memory_format=None, generator=None):
@@ -1355,7 +1399,8 @@ def rand_like(input, *, dtype=None, device=None, memory_format=None, generator=N
         dtype = input.dtype
     if device is None:
         device = input.device
-    return rand(input.shape, dtype=dtype, device=device, memory_format=memory_format, generator=generator)
+    out = rand(input.shape, dtype=dtype, device=device, generator=generator)
+    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
 
 
 def randint_like(input, low=0, high=None, *, dtype=None, device=None, memory_format=None):

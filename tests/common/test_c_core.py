@@ -404,7 +404,7 @@ class TestNpuOpsCimports:
     def test_npu_ops_cimports_storage_impl(self):
         from pathlib import Path
 
-        npu_ops_pyx = Path(__file__).resolve().parents[2] / "src/candle/_cython/_npu_ops.pyx"
+        npu_ops_pyx = Path(__file__).resolve().parents[2] / "src/candle/_C/_npu_ops.pyx"
         text = npu_ops_pyx.read_text(encoding="utf-8")
         assert "from candle._C._storage_impl cimport StorageImpl" in text
 
@@ -949,6 +949,39 @@ class TestTensorLayoutMethodProviders:
         assert view.shape == (3, 2)
         assert view.stride() == (1, 3)
         assert view._storage is base._storage
+
+    def test_tensor_api_layout_methods_support_channels_last_cpu(self):
+        import candle as torch
+
+        x = torch.randn(2, 3, 4, 5)
+        assert x.is_contiguous() is True
+        assert x.is_contiguous(memory_format=torch.channels_last) is False
+
+        y = x.contiguous(memory_format=torch.channels_last)
+        assert y.shape == (2, 3, 4, 5)
+        assert y.stride() == (60, 1, 15, 3)
+        assert y.is_contiguous() is False
+        assert y.is_contiguous(memory_format=torch.channels_last) is True
+        assert y.contiguous(memory_format=torch.channels_last) is y
+        assert y.contiguous().shape == x.shape
+        assert y.contiguous().stride() == x.stride()
+
+        z = x.to(memory_format=torch.channels_last)
+        assert z.stride() == (60, 1, 15, 3)
+        assert z.is_contiguous(memory_format=torch.channels_last) is True
+
+        a = torch.randn(6)
+        assert a.is_contiguous(memory_format=torch.channels_last) is False
+        try:
+            a.contiguous(memory_format=torch.channels_last)
+            assert False, "expected rank-4 channels_last error"
+        except RuntimeError as e:
+            assert "required rank 4 tensor" in str(e)
+        try:
+            a.to(memory_format=torch.channels_last)
+            assert False, "expected rank-4 channels_last error"
+        except RuntimeError as e:
+            assert "required rank 4 tensor" in str(e)
 
 
 class TestTensorAutogradMethodProviders:
@@ -1579,17 +1612,13 @@ class TestTensorDataSetterProvider:
         assert x.offset == 0
         assert x._version_counter.value == 1
 
-        try:
-            x.data = torch.ones((3, 2), dtype=torch.float32)
-            assert False, "expected shape mismatch"
-        except RuntimeError as e:
-            assert "shape mismatch" in str(e)
+        x.data = torch.ones((3, 2), dtype=torch.float32)
+        assert x.shape == (3, 2)
+        assert x.dtype == torch.float32
 
-        try:
-            x.data = torch.ones((2, 3), dtype=torch.float64)
-            assert False, "expected dtype mismatch"
-        except RuntimeError as e:
-            assert "dtype mismatch" in str(e)
+        x.data = torch.ones((2, 3), dtype=torch.float64)
+        assert x.shape == (2, 3)
+        assert x.dtype == torch.float64
 
 
 class TestTensorMiscHelperMethodProviders:

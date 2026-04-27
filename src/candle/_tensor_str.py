@@ -67,7 +67,7 @@ def printoptions(**kwargs):
 
 
 def _str(self, *, tensor_contents=None):
-    from ._dtype import complex64, float32
+    from ._dtype import complex64, float32, int64
     from ._device import _default_device
 
     if tensor_contents is None:
@@ -83,7 +83,7 @@ def _str(self, *, tensor_contents=None):
         data_repr = tensor_contents
 
     suffixes = []
-    if (self.dtype != float32 and self.dtype != complex64) or self.device.type == "meta":
+    if (self.dtype not in (float32, complex64, int64)) or self.device.type == "meta":
         suffixes.append(f"dtype={repr(self.dtype)}")
     if self.device.type != _default_device.type:
         device_label = self.device.type
@@ -171,6 +171,9 @@ def _format_array(arr, options):
         "floatmode": floatmode,
     }
     try:
-        return np.array2string(arr, max_line_width=options.linewidth, **kwargs)
+        result = np.array2string(arr, max_line_width=options.linewidth, **kwargs)
     except TypeError:
-        return np.array2string(arr, linewidth=options.linewidth, **kwargs)
+        result = np.array2string(arr, linewidth=options.linewidth, **kwargs)
+    # Torch uses double-space before ellipsis; match its summarization separator
+    result = result.replace(", ...", ",  ...")
+    return result

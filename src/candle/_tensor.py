@@ -43,7 +43,7 @@ def _handle_torch_function_and_wrap_type_error_to_not_implemented(
             # See https://github.com/pytorch/pytorch/issues/75462
             sargs = self, *args
             if has_torch_function(sargs):
-                return handle_torch_function(wrapped, sargs, self, *args, **kwargs)
+                return handle_torch_function(wrapped, sargs, *sargs, **kwargs)
             return f(self, *args, **kwargs)
         except TypeError:
             return NotImplemented
@@ -161,7 +161,7 @@ class Tensor(torch._C.TensorBase):
             if (
                 self.is_sparse
                 or self.device.type
-                in ["lazy", "mps", "meta", "ipu"]
+                in ["lazy", "xla", "mtia", "mps", "maia", "meta", "ipu"]
                 or (
                     not torch._C._has_storage(self)
                     and self.device.type == torch._C._get_privateuse1_backend_name()
@@ -334,7 +334,7 @@ class Tensor(torch._C.TensorBase):
             torch.serialization._serialization_tls.materialize_fake_tensors
         )
 
-        if (
+        if self.device.type in ["xla", "maia", "mtia"] or (
             not torch._C._has_storage(self)
             and self.device.type == torch._C._get_privateuse1_backend_name()
         ):
@@ -660,7 +660,8 @@ class Tensor(torch._C.TensorBase):
 
         return index(self, positions, dims)
 
-    def register_hook(self, hook):
+    register_hook = _C._add_docstr(
+        _C.TensorBase.register_hook,
         r"""Registers a backward hook.
 
         The hook will be called every time a gradient with respect to the
@@ -692,24 +693,8 @@ class Tensor(torch._C.TensorBase):
             [torch.FloatTensor of size (3,)]
 
             >>> h.remove()  # removes the hook
-        """
-        if has_torch_function_unary(self):
-            return handle_torch_function(Tensor.register_hook, (self,), self, hook)
-        if not self.requires_grad:
-            raise RuntimeError(
-                "cannot register a hook on a tensor that doesn't require gradient"
-            )
-        if self._backward_hooks is None:
-            self._backward_hooks = OrderedDict()
-            if self.grad_fn is not None:
-                if hasattr(self.grad_fn, '_register_hook_dict'):
-                    self.grad_fn._register_hook_dict(self)
-
-        from torch.utils.hooks import RemovableHandle
-
-        handle = RemovableHandle(self._backward_hooks)
-        self._backward_hooks[handle.id] = hook
-        return handle
+        """,
+    )
 
     def register_post_accumulate_grad_hook(self, hook):
         r"""Registers a backward hook that runs after grad accumulation.
@@ -894,20 +879,6 @@ class Tensor(torch._C.TensorBase):
         else:
             return self.flip(0)
 
-    def norm(
-        self,
-        p: float | str | None = "fro",
-        dim=None,
-        keepdim=False,
-        dtype=None,
-    ):
-        r"""See :func:`torch.linalg.norm`"""
-        if has_torch_function_unary(self):
-            return handle_torch_function(
-                Tensor.norm, (self,), self, p=p, dim=dim, keepdim=keepdim, dtype=dtype
-            )
-        return torch.norm(self, p, dim, keepdim, dtype=dtype)
-
     def solve(self, other):
         from torch._linalg_utils import solve
 
@@ -1050,27 +1021,6 @@ class Tensor(torch._C.TensorBase):
 
         return Resize.apply(self, tensor.size())
 
-    def split(self, split_size, dim=0):
-        r"""See :func:`torch.split`"""
-        if has_torch_function_unary(self):
-            return handle_torch_function(
-                Tensor.split, (self,), self, split_size, dim=dim
-            )
-        if isinstance(split_size, Tensor):
-            try:
-                split_size = int(split_size)
-            except ValueError:
-                pass
-
-        if isinstance(split_size, (int, torch.SymInt)):
-            return torch._VF.split(self, split_size, dim)  # type: ignore[attr-defined]
-        else:
-            return torch._VF.split_with_sizes(
-                self,
-                split_size,
-                dim,
-            )
-
     def unique(self, sorted=True, return_inverse=False, return_counts=False, dim=None):
         r"""Returns the unique elements of the input tensor.
 
@@ -1113,15 +1063,9 @@ class Tensor(torch._C.TensorBase):
         )
 
     @_handle_torch_function_and_wrap_type_error_to_not_implemented
-    def __rsub__(self, other: Union["Tensor", int, float, bool, complex]) -> "Tensor":
-        return _C._VariableFunctions.rsub(self, other)
-
-    @_handle_torch_function_and_wrap_type_error_to_not_implemented
     def __rdiv__(self, other: Union["Tensor", int, float, bool, complex]) -> "Tensor":
         return self.reciprocal() * other
 
-    __rtruediv__ = __rdiv__
-    __itruediv__ = _C.TensorBase.__idiv__
 
     # pyrefly: ignore [bad-override]
     __pow__ = cast(
@@ -1138,10 +1082,6 @@ class Tensor(torch._C.TensorBase):
         _C.TensorBase.pow_
     )
 
-    @_handle_torch_function_and_wrap_type_error_to_not_implemented
-    def __rmod__(self, other: Union["Tensor", int, float, bool, complex]) -> "Tensor":
-        return torch.remainder(other, self)
-
     def __format__(self, format_spec):
         if has_torch_function_unary(self):
             return handle_torch_function(Tensor.__format__, (self,), self, format_spec)
@@ -1150,36 +1090,6 @@ class Tensor(torch._C.TensorBase):
             # requires gradients to a python number. It is ok for formatting.
             return self.detach().item().__format__(format_spec)
         return object.__format__(self, format_spec)
-
-    @_handle_torch_function_and_wrap_type_error_to_not_implemented
-    def __rpow__(self, other: Union["Tensor", int, float, bool, complex]) -> "Tensor":
-        return torch.pow(other, self)
-
-    @_handle_torch_function_and_wrap_type_error_to_not_implemented
-    def __floordiv__(self, other: Union["Tensor", int, float, bool]) -> "Tensor":  # type: ignore[override]
-        # TODO(rec): the superclass says it accepts complex here,
-        # but torch.floor_divide says it doesn't.
-        return torch.floor_divide(self, other)
-
-    @_handle_torch_function_and_wrap_type_error_to_not_implemented
-    def __rfloordiv__(self, other: Union["Tensor", int, float, bool]) -> "Tensor":  # type: ignore[override]
-        return torch.floor_divide(other, self)
-
-    @_handle_torch_function_and_wrap_type_error_to_not_implemented
-    def __rlshift__(
-        self, other: Union["Tensor", int, float, bool, complex]
-    ) -> "Tensor":
-        return torch.bitwise_left_shift(other, self)
-
-    @_handle_torch_function_and_wrap_type_error_to_not_implemented
-    def __rrshift__(
-        self, other: Union["Tensor", int, float, bool, complex]
-    ) -> "Tensor":
-        return torch.bitwise_right_shift(other, self)
-
-    @_handle_torch_function_and_wrap_type_error_to_not_implemented
-    def __rmatmul__(self, other: "Tensor") -> "Tensor":
-        return torch.matmul(other, self)
 
     __pos__ = _C.TensorBase.positive
     __neg__ = _C.TensorBase.neg
@@ -1433,28 +1343,6 @@ class Tensor(torch._C.TensorBase):
         return super().align_to(
             [name for name in names if not is_ellipsis(name)], ellipsis_idx
         )
-
-    def unflatten(self, dim, sizes):  # type: ignore[override]
-        r"""
-        unflatten(dim, sizes) -> Tensor
-
-        See :func:`torch.unflatten`.
-
-        """
-        if has_torch_function_unary(self):
-            return handle_torch_function(Tensor.unflatten, (self,), self, dim, sizes)
-
-        if not sizes:
-            raise RuntimeError("unflatten: sizes must be non-empty")
-
-        names = None
-        if isinstance(sizes, OrderedDict) or (
-            isinstance(sizes, (tuple, list)) and isinstance(sizes[0], (tuple, list))
-        ):
-            names, sizes = unzip_namedshape(sizes)
-            return super().unflatten(dim, sizes, names)
-        else:
-            return super().unflatten(dim, sizes)
 
     def rename_(self, *names, **rename_map):
         """In-place version of :meth:`~Tensor.rename`."""
@@ -1863,7 +1751,3 @@ def _convert(ret, cls):
         ret = type(ret)(_convert(r, cls) for r in ret)
 
     return ret
-
-
-# Re-export candle-specific symbols for backward compatibility
-from ._C import _StrideTuple, _compute_strides, _bf16_to_f32, _f32_to_bf16  # noqa: E402,F401

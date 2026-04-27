@@ -97,6 +97,10 @@ if _system in ("Linux", "Darwin"):
             ["src/candle/_C/_fast_ops.pyx"],
         ),
         Extension(
+            "candle._C._tensor_api",
+            ["src/candle/_C/_tensor_api.pyx"],
+        ),
+        Extension(
             "candle._C._TensorBase",
             ["src/candle/_C/_TensorBase.pyx"],
         ),

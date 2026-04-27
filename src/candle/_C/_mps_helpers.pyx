@@ -79,7 +79,8 @@ cdef inline void _ensure_runtime():
     global _buffer_contents_fn, _get_runtime_fn, _get_dispatcher_fn
     if _compute_strides_fn is not None:
         return
-    from candle._tensor import _compute_strides, Tensor
+    from candle._C import _compute_strides
+    from candle._tensor import Tensor
     _compute_strides_fn = _compute_strides
     _Tensor_cls = Tensor
     from candle._C import (

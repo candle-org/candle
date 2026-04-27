@@ -8,6 +8,29 @@ _tensor_api.pyx are installed via _install_tensor_api() after import.
 from ._tensor_impl cimport TensorImpl
 from ._tensor_impl import _StrideTuple, cy_init_tensor_fields
 
+import numpy as _np
+
+
+def _compute_strides(shape):
+    stride = []
+    acc = 1
+    for d in reversed(shape):
+        stride.append(acc)
+        acc *= d
+    return _StrideTuple(reversed(stride))
+
+
+def _bf16_to_f32(arr):
+    u32 = arr.astype(_np.uint32) << 16
+    return u32.view(_np.float32)
+
+
+def _f32_to_bf16(arr):
+    u32 = arr.view(_np.uint32)
+    rounding_bias = (u32 >> 16) & 1
+    u32 = u32 + 0x7FFF + rounding_bias
+    return (u32 >> 16).astype(_np.uint16)
+
 
 class TensorBase(TensorImpl):
     """torch._C.TensorBase equivalent.
@@ -59,10 +82,6 @@ class TensorBase(TensorImpl):
     def data(self, new_data):
         if not isinstance(new_data, TensorBase):
             raise TypeError(f"data must be a Tensor, got {type(new_data).__name__}")
-        if new_data.shape != self.shape:
-            raise RuntimeError(f"shape mismatch: expected {self.shape}, got {new_data.shape}")
-        if new_data.dtype != self.dtype:
-            raise RuntimeError(f"dtype mismatch: expected {self.dtype}, got {new_data.dtype}")
         self.cy_set_data_runtime_truth_from(new_data)
 
     @classmethod
@@ -161,7 +180,6 @@ class TensorBase(TensorImpl):
         return self
 
     def is_contiguous(self, memory_format=None):
-        from candle._C import _compute_strides
         expected = _compute_strides(self.shape)
         return self.stride == expected
 
@@ -318,7 +336,6 @@ class TensorBase(TensorImpl):
 
     def set_(self, typed_storage, storage_offset=None, size=None, stride=None):
         from candle.storage import TypedStorage
-        from candle._C import _compute_strides
         if not isinstance(typed_storage, TypedStorage):
             raise TypeError("set_() currently only supports TypedStorage input")
         if storage_offset is None:
@@ -331,6 +348,33 @@ class TensorBase(TensorImpl):
                 size = (total,)
         if stride is None:
             stride = _compute_strides(size)
+
+        storage_offset = int(storage_offset)
+        size = tuple(int(dim) for dim in size)
+        stride = tuple(int(step) for step in stride)
+
+        if len(size) != len(stride):
+            raise RuntimeError(
+                f"mismatch in length of strides and shape: {len(stride)} != {len(size)}"
+            )
+
+        required = 0
+        if size and all(dim > 0 for dim in size):
+            max_index = storage_offset
+            for dim, step in zip(size, stride):
+                if dim > 0:
+                    max_index += (dim - 1) * step
+            required = max_index + 1
+
+        storage_size = typed_storage._size()
+        if required > storage_size:
+            itemsize = self.dtype.itemsize if getattr(self, 'dtype', None) is not None else typed_storage.dtype.itemsize
+            raise RuntimeError(
+                f"setStorage: sizes {list(size)}, strides {list(stride)}, storage offset {storage_offset}, "
+                f"and itemsize {itemsize} requiring a storage size of {required * itemsize} are out of bounds "
+                f"for storage of size {storage_size * itemsize}"
+            )
+
         self.cy_set_runtime_truth(typed_storage, size, stride, storage_offset)
         return self
 
@@ -347,7 +391,6 @@ class TensorBase(TensorImpl):
         pass
 
     def numpy(self):
-        from candle._C import _bf16_to_f32
         from candle._dtype import bfloat16
         arr = self._numpy_view()
         if self.dtype == bfloat16:
@@ -359,7 +402,7 @@ class TensorBase(TensorImpl):
         _backward(self, gradient, retain_graph, create_graph, inputs=inputs)
 
     def pin_memory(self):
-        from candle._C import pinned_cpu_typed_storage_from_numpy, _compute_strides
+        from candle._C import pinned_cpu_typed_storage_from_numpy
         storage = pinned_cpu_typed_storage_from_numpy(self._numpy_view(), self.dtype, device=self.device)
         return type(self)(storage, self.shape, _compute_strides(self.shape), 0, self.requires_grad)
 
@@ -540,3 +583,321 @@ class TensorBase(TensorImpl):
 
 
 _TensorBase = TensorBase
+
+
+def _install_tensor_api(TensorBase):
+    """Install Cython tensor API methods on TensorBase."""
+    from . import _tensor_api as _tensor_api_mod
+    TensorBase._set_device_from_storage = _tensor_api_mod.tensor_set_device_from_storage
+    TensorBase._set_dtype_from_storage = _tensor_api_mod.tensor_set_dtype_from_storage
+    TensorBase.data = property(TensorBase.data.fget, _tensor_api_mod.tensor_set_data)
+    TensorBase.__delattr__ = _tensor_api_mod.tensor_delattr
+    TensorBase._fw_get = _tensor_api_mod.tensor_fw_get
+    TensorBase._fw_set = _tensor_api_mod.tensor_fw_set
+    TensorBase._fw_clear = _tensor_api_mod.tensor_fw_clear
+    TensorBase._fw_has = _tensor_api_mod.tensor_fw_has
+    TensorBase.untyped_storage = _tensor_api_mod.tensor_untyped_storage
+    TensorBase.record_stream = _tensor_api_mod.tensor_record_stream
+    TensorBase.is_pinned = _tensor_api_mod.tensor_is_pinned
+
+    TensorBase.__add__ = _tensor_api_mod.tensor_add
+    TensorBase.__sub__ = _tensor_api_mod.tensor_sub
+    TensorBase.__mul__ = _tensor_api_mod.tensor_mul
+    TensorBase.__matmul__ = _tensor_api_mod.tensor_matmul
+    TensorBase.__getitem__ = _tensor_api_mod.tensor_getitem
+    TensorBase.__setitem__ = _tensor_api_mod.tensor_setitem
+    TensorBase.__iadd__ = _tensor_api_mod.tensor_iadd
+    TensorBase.__isub__ = _tensor_api_mod.tensor_isub
+    TensorBase.__imul__ = _tensor_api_mod.tensor_imul
+    TensorBase.__itruediv__ = _tensor_api_mod.tensor_itruediv
+    TensorBase.__neg__ = _tensor_api_mod.tensor_neg
+    TensorBase.neg = _tensor_api_mod.tensor_neg
+
+    TensorBase.clone = _tensor_api_mod.tensor_clone
+    TensorBase.detach = _tensor_api_mod.tensor_detach
+    TensorBase.detach_ = _tensor_api_mod.tensor_detach_
+    TensorBase.to = _tensor_api_mod.tensor_to
+    TensorBase._to_dtype = _tensor_api_mod.tensor_to_dtype
+    TensorBase.cpu = _tensor_api_mod.tensor_cpu
+    TensorBase.npu = _tensor_api_mod.tensor_npu
+    TensorBase.mps = _tensor_api_mod.tensor_mps
+    TensorBase.cuda = _tensor_api_mod.tensor_cuda
+    TensorBase.backward = _tensor_api_mod.tensor_backward
+    TensorBase.relu = _tensor_api_mod.tensor_relu
+    TensorBase.is_contiguous = _tensor_api_mod.tensor_is_contiguous
+    TensorBase.contiguous = _tensor_api_mod.tensor_contiguous
+    TensorBase.reshape = _tensor_api_mod.tensor_reshape
+    TensorBase.transpose = _tensor_api_mod.tensor_transpose
+    TensorBase.view = _tensor_api_mod.tensor_view
+    TensorBase.flatten = _tensor_api_mod.tensor_flatten
+    TensorBase.t = _tensor_api_mod.tensor_t
+    TensorBase.as_strided = _tensor_api_mod.tensor_as_strided
+    TensorBase.size = _tensor_api_mod.tensor_size
+    TensorBase.dim = _tensor_api_mod.tensor_dim
+
+    TensorBase.retain_grad = _tensor_api_mod.tensor_retain_grad
+    TensorBase.requires_grad_ = _tensor_api_mod.tensor_requires_grad_
+    TensorBase.register_hook = _tensor_api_mod.tensor_register_hook
+
+    TensorBase._is_view = _tensor_api_mod.tensor_is_view
+    TensorBase._check_inplace = _tensor_api_mod.tensor_check_inplace
+
+    TensorBase.add_ = _tensor_api_mod.tensor_add_
+    TensorBase.mul_ = _tensor_api_mod.tensor_mul_
+    TensorBase.relu_ = _tensor_api_mod.tensor_relu_
+    TensorBase.zero_ = _tensor_api_mod.tensor_zero_
+    TensorBase.fill_ = _tensor_api_mod.tensor_fill_
+    TensorBase.copy_ = _tensor_api_mod.tensor_copy_
+
+    TensorBase.abs_ = _tensor_api_mod.tensor_abs_
+    TensorBase.neg_ = _tensor_api_mod.tensor_neg_
+    TensorBase.exp_ = _tensor_api_mod.tensor_exp_
+    TensorBase.log_ = _tensor_api_mod.tensor_log_
+    TensorBase.log2_ = _tensor_api_mod.tensor_log2_
+    TensorBase.log10_ = _tensor_api_mod.tensor_log10_
+    TensorBase.sqrt_ = _tensor_api_mod.tensor_sqrt_
+    TensorBase.sin_ = _tensor_api_mod.tensor_sin_
+    TensorBase.cos_ = _tensor_api_mod.tensor_cos_
+    TensorBase.tan_ = _tensor_api_mod.tensor_tan_
+    TensorBase.tanh_ = _tensor_api_mod.tensor_tanh_
+    TensorBase.sigmoid_ = _tensor_api_mod.tensor_sigmoid_
+    TensorBase.floor_ = _tensor_api_mod.tensor_floor_
+    TensorBase.ceil_ = _tensor_api_mod.tensor_ceil_
+    TensorBase.round_ = _tensor_api_mod.tensor_round_
+    TensorBase.trunc_ = _tensor_api_mod.tensor_trunc_
+    TensorBase.pow_ = _tensor_api_mod.tensor_pow_
+    TensorBase.reciprocal_ = _tensor_api_mod.tensor_reciprocal_
+    TensorBase.erfinv_ = _tensor_api_mod.tensor_erfinv_
+
+    TensorBase.sub_ = _tensor_api_mod.tensor_sub_
+    TensorBase.clamp_ = _tensor_api_mod.tensor_clamp_
+    TensorBase.uniform_ = _tensor_api_mod.tensor_uniform_
+    TensorBase.normal_ = _tensor_api_mod.tensor_normal_
+    TensorBase.random_ = _tensor_api_mod.tensor_random_
+    TensorBase.randint_ = _tensor_api_mod.tensor_randint_
+    TensorBase.bernoulli_ = _tensor_api_mod.tensor_bernoulli_
+    TensorBase.exponential_ = _tensor_api_mod.tensor_exponential_
+    TensorBase.log_normal_ = _tensor_api_mod.tensor_log_normal_
+    TensorBase.cauchy_ = _tensor_api_mod.tensor_cauchy_
+    TensorBase.geometric_ = _tensor_api_mod.tensor_geometric_
+
+    TensorBase.transpose_ = _tensor_api_mod.tensor_transpose_
+    TensorBase.t_ = _tensor_api_mod.tensor_t_
+    TensorBase.squeeze_ = _tensor_api_mod.tensor_squeeze_
+    TensorBase.unsqueeze_ = _tensor_api_mod.tensor_unsqueeze_
+    TensorBase.as_strided_ = _tensor_api_mod.tensor_as_strided_
+    TensorBase.swapdims_ = _tensor_api_mod.tensor_swapdims_
+    TensorBase.swapaxes_ = _tensor_api_mod.tensor_swapaxes_
+
+    TensorBase.scatter_add = _tensor_api_mod.tensor_scatter_add
+    TensorBase.index_fill = _tensor_api_mod.tensor_index_fill
+    TensorBase.index_copy = _tensor_api_mod.tensor_index_copy
+    TensorBase.index_add = _tensor_api_mod.tensor_index_add
+    TensorBase.put_ = _tensor_api_mod.tensor_put_
+    TensorBase.scatter_ = _tensor_api_mod.tensor_scatter_
+    TensorBase.scatter_add_ = _tensor_api_mod.tensor_scatter_add_
+    TensorBase.masked_fill_ = _tensor_api_mod.tensor_masked_fill_
+    TensorBase.masked_scatter_ = _tensor_api_mod.tensor_masked_scatter_
+    TensorBase.index_put_ = _tensor_api_mod.tensor_index_put_
+    TensorBase.index_copy_ = _tensor_api_mod.tensor_index_copy_
+    TensorBase.index_fill_ = _tensor_api_mod.tensor_index_fill_
+    TensorBase.index_add_ = _tensor_api_mod.tensor_index_add_
+
+    TensorBase.new_empty = _tensor_api_mod.tensor_new_empty
+    TensorBase.new_tensor = _tensor_api_mod.tensor_new_tensor
+    TensorBase.new_empty_strided = _tensor_api_mod.tensor_new_empty_strided
+    TensorBase._ones_like = _tensor_api_mod.tensor_ones_like
+    TensorBase.new_ones = _tensor_api_mod.tensor_new_ones
+    TensorBase.new_zeros = _tensor_api_mod.tensor_new_zeros
+    TensorBase.new_full = _tensor_api_mod.tensor_new_full
+    TensorBase.div_ = _tensor_api_mod.tensor_div_
+    TensorBase.unflatten = _tensor_api_mod.tensor_unflatten
+    TensorBase.bitwise_and_ = _tensor_api_mod.tensor_bitwise_and_
+    TensorBase.bitwise_or_ = _tensor_api_mod.tensor_bitwise_or_
+    TensorBase.bitwise_xor_ = _tensor_api_mod.tensor_bitwise_xor_
+    TensorBase.type = _tensor_api_mod.tensor_type
+    TensorBase.type_as = _tensor_api_mod.tensor_type_as
+    TensorBase.reshape_as = _tensor_api_mod.tensor_reshape_as
+    TensorBase.permute = _tensor_api_mod.tensor_permute
+    TensorBase.mean = _tensor_api_mod.tensor_mean
+    TensorBase.std = _tensor_api_mod.tensor_std
+    TensorBase.repeat = _tensor_api_mod.tensor_repeat
+    TensorBase.tile = _tensor_api_mod.tensor_tile
+    TensorBase.flip = _tensor_api_mod.tensor_flip
+    TensorBase.logsumexp = _tensor_api_mod.tensor_logsumexp
+    TensorBase.trace = _tensor_api_mod.tensor_trace
+    TensorBase.det = _tensor_api_mod.tensor_det
+    TensorBase.matrix_power = _tensor_api_mod.tensor_matrix_power
+    TensorBase.dist = _tensor_api_mod.tensor_dist
+    TensorBase.renorm = _tensor_api_mod.tensor_renorm
+    TensorBase.nansum = _tensor_api_mod.tensor_nansum
+    TensorBase.nanmean = _tensor_api_mod.tensor_nanmean
+    TensorBase.argwhere = _tensor_api_mod.tensor_argwhere
+    TensorBase.baddbmm = _tensor_api_mod.tensor_baddbmm
+    TensorBase.vsplit = _tensor_api_mod.tensor_vsplit
+    TensorBase.hsplit = _tensor_api_mod.tensor_hsplit
+    TensorBase.dsplit = _tensor_api_mod.tensor_dsplit
+    TensorBase.take_along_dim = _tensor_api_mod.tensor_take_along_dim
+    TensorBase.cummin = _tensor_api_mod.tensor_cummin
+    TensorBase.log1p = _tensor_api_mod.tensor_log1p
+    TensorBase.expm1 = _tensor_api_mod.tensor_expm1
+    TensorBase.lt = _tensor_api_mod.tensor_lt
+    TensorBase.le = _tensor_api_mod.tensor_le
+    TensorBase.gt = _tensor_api_mod.tensor_gt
+    TensorBase.ge = _tensor_api_mod.tensor_ge
+    TensorBase.abs = _tensor_api_mod.tensor_abs
+    TensorBase.exp = _tensor_api_mod.tensor_exp
+    TensorBase.log = _tensor_api_mod.tensor_log
+    TensorBase.sqrt = _tensor_api_mod.tensor_sqrt
+    TensorBase.sin = _tensor_api_mod.tensor_sin
+    TensorBase.cos = _tensor_api_mod.tensor_cos
+    TensorBase.tan = _tensor_api_mod.tensor_tan
+    TensorBase.tanh = _tensor_api_mod.tensor_tanh
+    TensorBase.sigmoid = _tensor_api_mod.tensor_sigmoid
+    TensorBase.floor = _tensor_api_mod.tensor_floor
+    TensorBase.ceil = _tensor_api_mod.tensor_ceil
+    TensorBase.round = _tensor_api_mod.tensor_round
+    TensorBase.trunc = _tensor_api_mod.tensor_trunc
+    TensorBase.frac = _tensor_api_mod.tensor_frac
+    TensorBase.log2 = _tensor_api_mod.tensor_log2
+    TensorBase.log10 = _tensor_api_mod.tensor_log10
+    TensorBase.exp2 = _tensor_api_mod.tensor_exp2
+    TensorBase.rsqrt = _tensor_api_mod.tensor_rsqrt
+    TensorBase.sign = _tensor_api_mod.tensor_sign
+    TensorBase.signbit = _tensor_api_mod.tensor_signbit
+    TensorBase.square = _tensor_api_mod.tensor_square
+    TensorBase.isnan = _tensor_api_mod.tensor_isnan
+    TensorBase.isinf = _tensor_api_mod.tensor_isinf
+    TensorBase.isfinite = _tensor_api_mod.tensor_isfinite
+    TensorBase.sinh = _tensor_api_mod.tensor_sinh
+    TensorBase.cosh = _tensor_api_mod.tensor_cosh
+    TensorBase.asinh = _tensor_api_mod.tensor_asinh
+    TensorBase.acosh = _tensor_api_mod.tensor_acosh
+    TensorBase.atanh = _tensor_api_mod.tensor_atanh
+    TensorBase.erf = _tensor_api_mod.tensor_erf
+    TensorBase.erfc = _tensor_api_mod.tensor_erfc
+    TensorBase.reciprocal = _tensor_api_mod.tensor_reciprocal
+    TensorBase.tril = _tensor_api_mod.tensor_tril
+    TensorBase.triu = _tensor_api_mod.tensor_triu
+    TensorBase.diag = _tensor_api_mod.tensor_diag
+    TensorBase.add = _tensor_api_mod.tensor_add_method
+    TensorBase.sub = _tensor_api_mod.tensor_sub_method
+    TensorBase.mul = _tensor_api_mod.tensor_mul_method
+    TensorBase.div = _tensor_api_mod.tensor_div_method
+    TensorBase.pow = _tensor_api_mod.tensor_pow_method
+    TensorBase.matmul = _tensor_api_mod.tensor_matmul_method
+    TensorBase.__rsub__ = _tensor_api_mod.tensor_rsub
+    TensorBase.__rmul__ = _tensor_api_mod.tensor_rmul
+    TensorBase.__truediv__ = _tensor_api_mod.tensor_truediv
+    TensorBase.__rtruediv__ = _tensor_api_mod.tensor_rtruediv
+    TensorBase.__pow__ = _tensor_api_mod.tensor_pow_op
+    TensorBase.__rpow__ = _tensor_api_mod.tensor_rpow
+    TensorBase.__floordiv__ = _tensor_api_mod.tensor_floordiv
+    TensorBase.__rfloordiv__ = _tensor_api_mod.tensor_rfloordiv
+    TensorBase.__mod__ = _tensor_api_mod.tensor_mod
+    TensorBase.__rmod__ = _tensor_api_mod.tensor_rmod
+    TensorBase.__rmatmul__ = _tensor_api_mod.tensor_rmatmul
+    TensorBase.__rlshift__ = _tensor_api_mod.tensor_rlshift
+    TensorBase.__rrshift__ = _tensor_api_mod.tensor_rrshift
+    TensorBase.__and__ = _tensor_api_mod.tensor_and
+    TensorBase.__or__ = _tensor_api_mod.tensor_or
+    TensorBase.__xor__ = _tensor_api_mod.tensor_xor
+    TensorBase.all = _tensor_api_mod.tensor_all_method
+    TensorBase.any = _tensor_api_mod.tensor_any_method
+    TensorBase.sum = _tensor_api_mod.tensor_sum_method
+    TensorBase.prod = _tensor_api_mod.tensor_prod_method
+    TensorBase.var = _tensor_api_mod.tensor_var_method
+    TensorBase.var_mean = _tensor_api_mod.tensor_var_mean_method
+    TensorBase.norm = _tensor_api_mod.tensor_norm_method
+    TensorBase.count_nonzero = _tensor_api_mod.tensor_count_nonzero_method
+    TensorBase.cumsum = _tensor_api_mod.tensor_cumsum_method
+    TensorBase.cumprod = _tensor_api_mod.tensor_cumprod_method
+    TensorBase.cummax = _tensor_api_mod.tensor_cummax_method
+    TensorBase.argsort = _tensor_api_mod.tensor_argsort_method
+    TensorBase.sort = _tensor_api_mod.tensor_sort_method
+    TensorBase.topk = _tensor_api_mod.tensor_topk_method
+    TensorBase.eq = _tensor_api_mod.tensor_eq_method
+    TensorBase.ne = _tensor_api_mod.tensor_ne_method
+    TensorBase.allclose = _tensor_api_mod.tensor_allclose_method
+    TensorBase.isclose = _tensor_api_mod.tensor_isclose_method
+    TensorBase.equal = _tensor_api_mod.tensor_equal_method
+    TensorBase.view_as = _tensor_api_mod.tensor_view_as
+    TensorBase.expand = _tensor_api_mod.tensor_expand_method
+    TensorBase.expand_as = _tensor_api_mod.tensor_expand_as_method
+    TensorBase.expand_copy = _tensor_api_mod.tensor_expand_copy_method
+    TensorBase.narrow = _tensor_api_mod.tensor_narrow_method
+    TensorBase.select = _tensor_api_mod.tensor_select_method
+    TensorBase.unfold = _tensor_api_mod.tensor_unfold_method
+    TensorBase.moveaxis = _tensor_api_mod.tensor_moveaxis_method
+    TensorBase.swapdims = _tensor_api_mod.tensor_swapdims_method
+    TensorBase.swapaxes = _tensor_api_mod.tensor_swapaxes_method
+    TensorBase.gather = _tensor_api_mod.tensor_gather_method
+    TensorBase.scatter = _tensor_api_mod.tensor_scatter_method
+    TensorBase.index_select = _tensor_api_mod.tensor_index_select_method
+    TensorBase.take = _tensor_api_mod.tensor_take_method
+    TensorBase.masked_fill = _tensor_api_mod.tensor_masked_fill_method
+    TensorBase.masked_select = _tensor_api_mod.tensor_masked_select_method
+    TensorBase.index_put = _tensor_api_mod.tensor_index_put_method
+    TensorBase.slice = _tensor_api_mod.tensor_slice_method
+    TensorBase.slice_copy = _tensor_api_mod.tensor_slice_copy_method
+    TensorBase.slice_scatter = _tensor_api_mod.tensor_slice_scatter_method
+    TensorBase.nonzero = _tensor_api_mod.tensor_nonzero_method
+    TensorBase.sum_to_size = _tensor_api_mod.tensor_sum_to_size_method
+    TensorBase.softplus = _tensor_api_mod.tensor_softplus_method
+    TensorBase.clamp = _tensor_api_mod.tensor_clamp_method
+    TensorBase.relu6 = _tensor_api_mod.tensor_relu6_method
+    TensorBase.hardtanh = _tensor_api_mod.tensor_hardtanh_method
+    TensorBase.min = _tensor_api_mod.tensor_min_method
+    TensorBase.max = _tensor_api_mod.tensor_max_method
+    TensorBase.amin = _tensor_api_mod.tensor_amin_method
+    TensorBase.amax = _tensor_api_mod.tensor_amax_method
+    TensorBase.addmm = _tensor_api_mod.tensor_addmm_method
+    TensorBase.bmm = _tensor_api_mod.tensor_bmm_method
+    TensorBase.mm = _tensor_api_mod.tensor_mm_method
+    TensorBase.chunk = _tensor_api_mod.tensor_chunk_method
+    TensorBase.split = _tensor_api_mod.tensor_split_method
+    TensorBase.roll = _tensor_api_mod.tensor_roll_method
+    TensorBase.rot90 = _tensor_api_mod.tensor_rot90_method
+    TensorBase.addcdiv = _tensor_api_mod.tensor_addcdiv_method
+    TensorBase.addcmul = _tensor_api_mod.tensor_addcmul_method
+    TensorBase.hypot = _tensor_api_mod.tensor_hypot_method
+    TensorBase.lerp = _tensor_api_mod.tensor_lerp_method
+    TensorBase.atan2 = _tensor_api_mod.tensor_atan2_method
+    TensorBase.asin = _tensor_api_mod.tensor_asin_method
+    TensorBase.acos = _tensor_api_mod.tensor_acos_method
+    TensorBase.atan = _tensor_api_mod.tensor_atan_method
+    TensorBase.as_strided_copy = _tensor_api_mod.tensor_as_strided_copy_method
+    TensorBase.as_strided_scatter = _tensor_api_mod.tensor_as_strided_scatter_method
+    TensorBase.multinomial = _tensor_api_mod.tensor_multinomial_method
+    TensorBase.ndim = property(_tensor_api_mod.tensor_ndim_fget)
+    TensorBase.T = property(_tensor_api_mod.tensor_T_fget)
+    TensorBase.is_floating_point = _tensor_api_mod.tensor_is_floating_point
+    TensorBase.is_complex = _tensor_api_mod.tensor_is_complex
+    TensorBase.clamp_min = _tensor_api_mod.tensor_clamp_min_method
+    TensorBase.clamp_max = _tensor_api_mod.tensor_clamp_max_method
+    TensorBase.fmin = _tensor_api_mod.tensor_fmin_method
+    TensorBase.fmax = _tensor_api_mod.tensor_fmax_method
+    TensorBase.where = _tensor_api_mod.tensor_where_method
+    TensorBase.logaddexp = _tensor_api_mod.tensor_logaddexp_method
+    TensorBase.logaddexp2 = _tensor_api_mod.tensor_logaddexp2_method
+    TensorBase.remainder = _tensor_api_mod.tensor_remainder_method
+    TensorBase.fmod = _tensor_api_mod.tensor_fmod_method
+    TensorBase.squeeze = _tensor_api_mod.tensor_squeeze_method
+    TensorBase.unsqueeze = _tensor_api_mod.tensor_unsqueeze_method
+    TensorBase.argmax = _tensor_api_mod.tensor_argmax_method
+    TensorBase.argmin = _tensor_api_mod.tensor_argmin_method
+    TensorBase.logical_and = _tensor_api_mod.tensor_logical_and
+    TensorBase.logical_or = _tensor_api_mod.tensor_logical_or
+    TensorBase.logical_xor = _tensor_api_mod.tensor_logical_xor
+    TensorBase.logical_not = _tensor_api_mod.tensor_logical_not
+    TensorBase.bitwise_and = _tensor_api_mod.tensor_bitwise_and
+    TensorBase.bitwise_or = _tensor_api_mod.tensor_bitwise_or
+    TensorBase.bitwise_xor = _tensor_api_mod.tensor_bitwise_xor
+    TensorBase.bitwise_not = _tensor_api_mod.tensor_bitwise_not
+    TensorBase.movedim = _tensor_api_mod.tensor_movedim
+    TensorBase.diagonal = _tensor_api_mod.tensor_diagonal
+    TensorBase.unbind = _tensor_api_mod.tensor_unbind
+
+    TensorBase.numpy = _tensor_api_mod.tensor_numpy
+    TensorBase._numpy_view = _tensor_api_mod.tensor_numpy_view
+    TensorBase.pin_memory = _tensor_api_mod.tensor_pin_memory

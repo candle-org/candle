@@ -559,7 +559,7 @@ def cond(input, p=None):
     return linalg.cond(input, p)
 
 
-from ._printing import set_printoptions, get_printoptions
+from ._printing import set_printoptions, get_printoptions, printoptions
 from ._dispatch import (
     pipeline_context,
     functionalize_context,
@@ -856,6 +856,7 @@ __all__ = [
     # printing
     "set_printoptions",
     "get_printoptions",
+    "printoptions",
     # pipeline
     "pipeline",
     "pipeline_context",

@@ -285,7 +285,7 @@ def isin(elements, test_elements):
         te_flat = test_elements.contiguous().reshape((-1,))
         n_test = te_flat.numel()
         if n_test == 0:
-            from candle._tensor import _compute_strides
+            from candle._C import _compute_strides
             out_buf = _alloc_output_buf(max(elements.numel(), 1), bool_dtype)
             _get_dispatcher().dispatch_fill("fill_u8", out_buf, 0, max(elements.numel(), 1), scalar_fmt="B")
             return _from_metal_buffer(

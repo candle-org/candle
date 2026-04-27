@@ -99,7 +99,7 @@ def batch_norm(input, running_mean, running_var, weight=None, bias=None,
             var_buf, weight_buf, bias_buf, out_buf,
             C, spatial_size, float(eps), has_weight, has_bias, total)
 
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         out_shape = tuple(input.shape)
         out_stride = _compute_strides(out_shape)
         return _from_metal_buffer(out_buf, out_shape, out_stride, input.dtype, input.device)
@@ -227,7 +227,7 @@ def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
             f"layer_norm_{sfx}", _metal_buf(input), weight_buf, bias_buf,
             out_buf, outer_size, inner_size, float(eps), has_weight, has_bias)
 
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         out_shape = tuple(input.shape)
         out_stride = _compute_strides(out_shape)
         return _from_metal_buffer(out_buf, out_shape, out_stride, input.dtype, input.device)
@@ -341,7 +341,7 @@ def rms_norm(input, normalized_shape, weight=None, eps=1e-6):
             f"rms_norm_{sfx}", _metal_buf(input), weight_buf,
             out_buf, outer_size, inner_size, float(eps), has_weight)
 
-        from ...._tensor import _compute_strides
+        from ...._C import _compute_strides
         out_shape = tuple(input.shape)
         out_stride = _compute_strides(out_shape)
         return _from_metal_buffer(out_buf, out_shape, out_stride, input.dtype, input.device)

@@ -514,7 +514,7 @@ cpdef object leaky_relu(object a, object negative_slope=0.01):
                 f"leaky_relu_scalar_strided_{sfx}", _metal_buf(a), scalar,
                 out_buf, numel, list(a.shape), list(a.stride),
                 len(a.shape), scalar_fmt=_scalar_fmt(a.dtype))
-        from candle._tensor import _compute_strides
+        from candle._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
                                   a.dtype, a.device)
     _unsupported_dtype("leaky_relu", a)
@@ -578,7 +578,7 @@ cpdef object clamp(object a, object min_val=None, object max_val=None):
                     s_min, s_max, out_buf, numel,
                     list(a.shape), list(a.stride), len(a.shape),
                     scalar_fmt=fmt)
-            from candle._tensor import _compute_strides
+            from candle._C import _compute_strides
             return _from_metal_buffer(out_buf, a.shape,
                                       _compute_strides(a.shape),
                                       a.dtype, a.device)
@@ -608,7 +608,7 @@ cpdef object clamp_min(object a, object min_val):
                 f"clamp_min_scalar_strided_{sfx}", _metal_buf(a), scalar,
                 out_buf, numel, list(a.shape), list(a.stride),
                 len(a.shape), scalar_fmt=_scalar_fmt(a.dtype))
-        from candle._tensor import _compute_strides
+        from candle._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
                                   a.dtype, a.device)
     _unsupported_dtype("clamp_min", a)
@@ -632,7 +632,7 @@ cpdef object clamp_max(object a, object max_val):
                 f"clamp_max_scalar_strided_{sfx}", _metal_buf(a), scalar,
                 out_buf, numel, list(a.shape), list(a.stride),
                 len(a.shape), scalar_fmt=_scalar_fmt(a.dtype))
-        from candle._tensor import _compute_strides
+        from candle._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape),
                                   a.dtype, a.device)
     _unsupported_dtype("clamp_max", a)
@@ -902,7 +902,7 @@ cpdef object eq(object a, object b):
                 return eq(a.contiguous(), b)
         else:
             return eq(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from candle._tensor import _compute_strides
+        from candle._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -928,7 +928,7 @@ cpdef object ne(object a, object b):
                 return ne(a.contiguous(), b)
         else:
             return ne(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from candle._tensor import _compute_strides
+        from candle._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -954,7 +954,7 @@ cpdef object lt(object a, object b):
                 return lt(a.contiguous(), b)
         else:
             return lt(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from candle._tensor import _compute_strides
+        from candle._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -980,7 +980,7 @@ cpdef object le(object a, object b):
                 return le(a.contiguous(), b)
         else:
             return le(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from candle._tensor import _compute_strides
+        from candle._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -1006,7 +1006,7 @@ cpdef object gt(object a, object b):
                 return gt(a.contiguous(), b)
         else:
             return gt(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from candle._tensor import _compute_strides
+        from candle._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -1032,7 +1032,7 @@ cpdef object ge(object a, object b):
                 return ge(a.contiguous(), b)
         else:
             return ge(a.contiguous(), b.contiguous() if isinstance(b, Tensor) else b)
-        from candle._tensor import _compute_strides
+        from candle._C import _compute_strides
         return _from_metal_buffer(out_buf, a.shape, _compute_strides(a.shape), bool_dtype, a.device)
     if a.numel() == 0:
         return _empty_like(a)
@@ -1803,7 +1803,7 @@ def isin(elements, test_elements):
         te_flat = test_elements.contiguous().reshape((-1,))
         n_test = te_flat.numel()
         if n_test == 0:
-            from candle._tensor import _compute_strides
+            from candle._C import _compute_strides
             out_buf = _alloc_output_buf(max(elements.numel(), 1), bool_dtype)
             _get_dispatcher().dispatch_fill("fill_u8", out_buf, 0, max(elements.numel(), 1), scalar_fmt="B")
             return _from_metal_buffer(
@@ -2153,7 +2153,7 @@ def count_nonzero(a, dim=None, keepdim=False):
             sfx = _kernel_suffix(float32_dtype)
             d.dispatch_fill(f"fill_{sfx}", buf, 1.0, numel,
                             _itemsize(float32_dtype))
-            from candle._tensor import _compute_strides
+            from candle._C import _compute_strides
             ones_t = _from_metal_buffer(buf, tuple(a.shape),
                                         _compute_strides(tuple(a.shape)),
                                         float32_dtype, a.device)
@@ -2241,7 +2241,7 @@ def _cumextreme_gpu(a, dim, mode):
     dispatch = d.dispatch_cummax if mode == "cummax" else d.dispatch_cummin
     dispatch(f"{mode}_{sfx}", _metal_buf(a), values_buf, indices_buf,
              outer_size, dim_size, inner_size)
-    from candle._tensor import _compute_strides
+    from candle._C import _compute_strides
     out_shape = tuple(a.shape)
     out_stride = _compute_strides(out_shape)
     values = _from_metal_buffer(values_buf, out_shape, out_stride, a.dtype, a.device)
@@ -2317,7 +2317,7 @@ def sort(a, dim=-1, descending=False, stable=False):
     if (_can_use_gpu(a) and a.is_contiguous()
             and a.dtype in (float32_dtype, float16_dtype)):
         values_buf, indices_buf, numel = _sort_gpu(a, dim, descending)
-        from candle._tensor import _compute_strides
+        from candle._C import _compute_strides
         out_shape = tuple(a.shape)
         out_stride = _compute_strides(out_shape)
         values = _from_metal_buffer(values_buf, out_shape, out_stride,

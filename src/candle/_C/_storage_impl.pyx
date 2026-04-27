@@ -34,7 +34,7 @@ cdef class StorageImpl:
         s._device_type = 0
         s._device_index = -1
         s._owner = arr
-        s._resizable = not shared and filename is None
+        s._resizable = False
         s._shared = shared
         s._filename = filename
         s._sharing_mechanism = sharing_mechanism
