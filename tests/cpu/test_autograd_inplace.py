@@ -160,8 +160,6 @@ def test_t_noop_on_unbind_output_still_checks_multi_view_creation_meta():
 
 
 def test_inplace_dispatch_bumps_version_once():
-    import candle as torch
-
     x = torch.ones((2, 2), dtype=torch.float32)
     before = x._version_counter.value
     x.add_(1.0)

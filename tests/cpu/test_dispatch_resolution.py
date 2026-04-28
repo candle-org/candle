@@ -39,8 +39,6 @@ def test_dispatch_prefers_cuda_over_cpu(monkeypatch):
 
 
 def test_dispatch_core_preserves_kernel_resolution():
-    import candle as torch
-
     x = torch.tensor([1.0, 2.0], dtype=torch.float32)
     y = torch.tensor([3.0, 4.0], dtype=torch.float32)
     out = x.add(y)
