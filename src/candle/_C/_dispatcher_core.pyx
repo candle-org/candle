@@ -89,6 +89,10 @@ cdef inline dict _fast_prepare_kwargs(object func, dict kwargs, object device):
     return kwargs
 
 
+cpdef tuple cy_prepare_dispatch_inputs(object func, tuple args, dict kwargs, object device):
+    return args, _fast_prepare_kwargs(func, kwargs, device)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch context stack — MUST share with dispatcher.py's _DISPATCH_STATE
 # ---------------------------------------------------------------------------

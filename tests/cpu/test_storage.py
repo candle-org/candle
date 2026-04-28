@@ -114,7 +114,7 @@ def test_typed_storage_tensor_index_raises_like_torch():
     try:
         _ = storage[torch.tensor(0)]
     except RuntimeError as exc:
-        assert str(exc) == "can't index a <class 'candle.storage.TypedStorage'> with <class 'candle._tensor.Tensor'>"
+        assert str(exc) == "can't index a <class 'candle.storage.TypedStorage'> with <class 'torch.Tensor'>"
     else:
         raise AssertionError("expected RuntimeError for tensor typed storage index")
 
@@ -134,7 +134,7 @@ def test_typed_storage_tensor_setitem_raises_like_torch():
     try:
         storage[torch.tensor(0)] = 1.0
     except RuntimeError as exc:
-        assert str(exc) == "can't index a <class 'candle.storage.TypedStorage'> with <class 'candle._tensor.Tensor'>"
+        assert str(exc) == "can't index a <class 'candle.storage.TypedStorage'> with <class 'torch.Tensor'>"
     else:
         raise AssertionError("expected RuntimeError for tensor typed storage setitem")
 

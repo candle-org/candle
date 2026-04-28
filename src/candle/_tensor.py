@@ -315,10 +315,7 @@ class Tensor(torch._C.TensorBase):
 
     # For internal use only, to avoid raising deprecation warning
     def _typed_storage(self):
-        untyped_storage = self.untyped_storage()
-        return torch.TypedStorage(
-            wrap_storage=untyped_storage, dtype=self.dtype, _internal=True
-        )
+        return self._storage
 
     def _reduce_ex_internal(self, proto):
         check_serializing_named_tensor(self)
@@ -628,6 +625,11 @@ class Tensor(torch._C.TensorBase):
                 create_graph=create_graph,
                 inputs=inputs,
             )
+        if getattr(self, "_pending", False):
+            from candle._dispatch.pipeline import current_pipeline
+            pipe = current_pipeline()
+            if pipe is not None:
+                pipe.flush()
         torch.autograd.backward(
             self, gradient, retain_graph, create_graph, inputs=inputs
         )

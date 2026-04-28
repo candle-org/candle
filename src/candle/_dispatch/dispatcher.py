@@ -15,6 +15,7 @@ from ..profiler.profiler import is_profiler_enabled, dispatch_op_enter, dispatch
 
 
 _DISPATCH_STATE = threading.local()
+_cy_prepare_dispatch_inputs = None
 
 
 def _state_stack():
@@ -61,6 +62,9 @@ def _accepts_device(func):
 
 
 def _prepare_kwargs(func, kwargs, device):
+    if _cy_prepare_dispatch_inputs is not None:
+        _, prepared_kwargs = _cy_prepare_dispatch_inputs(func, (), kwargs, device)
+        return prepared_kwargs
     if not kwargs:
         kwargs = {}
     filtered = {k: v for k, v in kwargs.items() if k != "device"}
@@ -183,7 +187,7 @@ class _PendingOp:
         else:
             self._copy_result(self.out, result)
         if self.schema_obj is not None:
-            from .._C._dispatcher_core import cy_finalize_dispatch_result
+            from .._C._dispatcher_core import cy_finalize_dispatch_result  # pylint: disable=import-error,no-name-in-module
             cy_finalize_dispatch_result(result, self.args, self.kwargs, self.schema_obj)
 
     def enter_dispatch_context(self):
@@ -427,7 +431,7 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
                 f"could not find kernel for op {name} with keys {[k.name for k in _key_order(keyset)]}"
             )
             raise _wrap_dispatch_error(exc, alias_name, dispatch_device) from exc
-        impl_kwargs = _prepare_kwargs(kernel, kwargs, dispatch_device)
+        _, impl_kwargs = _cy_prepare_dispatch_inputs(kernel, args, kwargs, dispatch_device) if _cy_prepare_dispatch_inputs is not None else (args, _prepare_kwargs(kernel, kwargs, dispatch_device))
         token = None
         if is_profiler_enabled():
             token = dispatch_op_enter(alias_name, dispatch_device, args, impl_kwargs)
@@ -441,7 +445,7 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
             if token is not None:
                 dispatch_op_exit(token)
         if entry.schema_obj is not None:
-            from .._C._dispatcher_core import cy_finalize_dispatch_result
+            from .._C._dispatcher_core import cy_finalize_dispatch_result  # pylint: disable=import-error,no-name-in-module
             result = cy_finalize_dispatch_result(result, args, impl_kwargs, entry.schema_obj)
 
         level = forward_ad._current_level()
@@ -500,7 +504,7 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
         meta = entry.kernels.get(DispatchKey.Meta)
         if meta is None:
             raise RuntimeError(f"pipeline requires meta kernel for op {name}")
-        meta_kwargs = _prepare_kwargs(meta, kwargs, dispatch_device)
+        _, meta_kwargs = _cy_prepare_dispatch_inputs(meta, args, kwargs, dispatch_device) if _cy_prepare_dispatch_inputs is not None else (args, _prepare_kwargs(meta, kwargs, dispatch_device))
         spec = meta(*args, **meta_kwargs)
         out = _pending_from_meta(spec, dispatch_device)
         if isinstance(out, (tuple, list)):
@@ -512,7 +516,7 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
         impl, impl_key = _kernel_for_entry(entry, backend_keys)
         if impl is None:
             raise RuntimeError(f"pipeline requires backend kernel for op {name}")
-        impl_kwargs = _prepare_kwargs(impl, kwargs, dispatch_device)
+        _, impl_kwargs = _cy_prepare_dispatch_inputs(impl, args, kwargs, dispatch_device) if _cy_prepare_dispatch_inputs is not None else (args, _prepare_kwargs(impl, kwargs, dispatch_device))
         pipe.record(
             _PendingOp(
                 impl,
@@ -563,7 +567,7 @@ def redispatch(name, keyset, *args, **kwargs):
 # available.  These must come AFTER the Python definitions so they override.
 # ---------------------------------------------------------------------------
 try:
-    from .._C._dispatch import cy_prepare_kwargs as _prepare_kwargs  # noqa: F811
+    from .._C._dispatcher_core import cy_prepare_dispatch_inputs as _cy_prepare_dispatch_inputs  # noqa: F811
     from .._C._dispatch import cy_extract_tensors as _extract_tensors  # noqa: F811
 except ImportError:
     pass  # keep existing Python versions

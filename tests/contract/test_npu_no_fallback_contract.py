@@ -44,7 +44,7 @@ class _FakeAcl:
 
 
 def _compiled_cython_extension_path(repo_root, stem):
-    cython_dir = repo_root / 'src/candle/_cython'
+    cython_dir = repo_root / 'src/candle/_C'
     for suffix in importlib.machinery.EXTENSION_SUFFIXES:
         candidate = cython_dir / f'{stem}{suffix}'
         if candidate.exists():
