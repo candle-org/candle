@@ -182,7 +182,9 @@ class _PendingOp:
                 self._copy_result(pending, item)
         else:
             self._copy_result(self.out, result)
-        _bump_versions(self.schema_obj, self.args, self.kwargs)
+        if self.schema_obj is not None:
+            from .._C._dispatcher_core import cy_finalize_dispatch_result
+            cy_finalize_dispatch_result(result, self.args, self.kwargs, self.schema_obj)
 
     def enter_dispatch_context(self):
         _push_dispatch_context(self.keyset, self.key)
@@ -438,7 +440,9 @@ def dispatch_with_keyset(name, keyset, dispatch_device, *args, **kwargs):
             _pop_dispatch_context()
             if token is not None:
                 dispatch_op_exit(token)
-        _bump_versions(entry.schema_obj, args, impl_kwargs)
+        if entry.schema_obj is not None:
+            from .._C._dispatcher_core import cy_finalize_dispatch_result
+            result = cy_finalize_dispatch_result(result, args, impl_kwargs, entry.schema_obj)
 
         level = forward_ad._current_level()
         if level >= 0:
