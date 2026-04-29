@@ -67,7 +67,9 @@ def printoptions(**kwargs):
 
 
 def _str(self, *, tensor_contents=None):
-    from ._dtype import complex64, float32, int64
+    from . import get_default_dtype
+    from ._dtype import bool as bool_dtype
+    from ._dtype import complex64, complex128, float64, int64
     from ._device import _default_device
 
     if tensor_contents is None:
@@ -82,18 +84,26 @@ def _str(self, *, tensor_contents=None):
     else:
         data_repr = tensor_contents
 
+    default_dtype = get_default_dtype()
+    default_complex_dtype = complex128 if default_dtype is float64 else complex64
+    has_default_dtype = self.dtype in (default_dtype, default_complex_dtype, int64, bool_dtype)
+
     suffixes = []
-    if (self.dtype not in (float32, complex64, int64)) or self.device.type == "meta":
-        suffixes.append(f"dtype={repr(self.dtype)}")
     if self.device.type != _default_device.type:
         device_label = self.device.type
         if self.device.type == "npu":
             device_label = str(self.device)
         suffixes.append(f"device='{device_label}'")
-    if self.requires_grad:
-        suffixes.append("requires_grad=True")
+    if self.device.type == "meta":
+        suffixes.append("size=" + str(tuple(self.shape)))
+        if self.dtype != default_dtype:
+            suffixes.append(f"dtype={repr(self.dtype)}")
+    elif not has_default_dtype:
+        suffixes.append(f"dtype={repr(self.dtype)}")
     if self.grad_fn is not None:
         suffixes.append(f"grad_fn=<{type(self.grad_fn).__name__}>")
+    elif self.requires_grad:
+        suffixes.append("requires_grad=True")
 
     if suffixes:
         return f"tensor({data_repr}, {', '.join(suffixes)})"
