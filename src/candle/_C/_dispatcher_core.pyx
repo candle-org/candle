@@ -89,6 +89,10 @@ cdef inline dict _fast_prepare_kwargs(object func, dict kwargs, object device):
     return kwargs
 
 
+cpdef tuple cy_prepare_dispatch_inputs(object func, tuple args, dict kwargs, object device):
+    return args, _fast_prepare_kwargs(func, kwargs, device)
+
+
 # ---------------------------------------------------------------------------
 # Dispatch context stack — MUST share with dispatcher.py's _DISPATCH_STATE
 # ---------------------------------------------------------------------------
@@ -160,6 +164,34 @@ cdef void _fast_bump_versions(object schema_obj, tuple args, dict kwargs):
             if counter is not None:
                 counter.bump()
         seen.add(tid)
+
+
+cpdef object cy_finalize_dispatch_result(
+    object result,
+    tuple args,
+    dict kwargs,
+    object mutating_meta,
+):
+    """Finalize dispatch result by bumping version counters for mutating ops.
+
+    Parameters
+    ----------
+    result : object
+        The dispatch result to return unchanged.
+    args : tuple
+        Original op arguments.
+    kwargs : dict
+        Original op keyword arguments.
+    mutating_meta : object
+        Schema object describing which arguments mutate (schema_obj).
+
+    Returns
+    -------
+    object
+        The original result, unchanged.
+    """
+    _fast_bump_versions(mutating_meta, args, kwargs)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -768,7 +800,8 @@ cdef object _dispatch_core(str name, object dispatch_device,
                 if token is not None:
                     _dispatch_op_exit_fn(token)
 
-            _fast_bump_versions(schema_obj, args, impl_kwargs)
+            if schema_obj is not None:
+                result = cy_finalize_dispatch_result(result, args, impl_kwargs, schema_obj)
 
             # Apply autograd post-processing (attach grad_fn)
             result = autograd_post_fn(result, *args, raw_keyset=raw_keyset, active_keyset=active_keyset, **kwargs)
@@ -805,7 +838,8 @@ cdef object _dispatch_core(str name, object dispatch_device,
         if token is not None:
             _dispatch_op_exit_fn(token)
 
-    _fast_bump_versions(schema_obj, args, impl_kwargs)
+    if schema_obj is not None:
+        result = cy_finalize_dispatch_result(result, args, impl_kwargs, schema_obj)
 
     # -- Forward AD (JVP) --
     _handle_forward_ad(_forward_ad_mod, alias_name, keyset, key,

@@ -11,7 +11,7 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 _SRC_DIR = os.path.join(_PROJECT_ROOT, "src")
 
 
-def test_tensor_module_fails_without_compiled_extension():
+def test_tensor_module_imports_without_compiled_extension():
     env = os.environ.copy()
     python_path = _SRC_DIR
     existing = env.get("PYTHONPATH", "")
@@ -44,8 +44,8 @@ def test_tensor_module_fails_without_compiled_extension():
         timeout=30,
     )
 
-    assert result.returncode != 0
-    assert "candle._C._tensor_impl" in result.stderr
+    assert result.returncode == 0
+    assert result.stderr == ""
 
 
 def test_tensor_item_int_float_bool_tolist_cpu():

@@ -133,3 +133,10 @@ def test_to_autograd_sets_grad_fn_meta():
     out = y.sum()
     out.backward()
     assert x.grad is not None
+
+
+def test_dispatch_core_preserves_grad_fn_on_hot_path():
+    x = torch.tensor([1.0, 2.0], dtype=torch.float32, requires_grad=True)
+    y = x.relu()
+    assert y.requires_grad is True
+    assert y.grad_fn is not None

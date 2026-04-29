@@ -375,7 +375,10 @@ def pinned_cpu_typed_storage_from_numpy(arr, dtype, device=None):
     from ._storage import CyPinnedCPUUntypedStorage
     arr = _np.ascontiguousarray(arr, dtype=to_numpy_dtype(dtype))
     size = int(arr.nbytes)
-    host_ptr = _npu_runtime.alloc_host(size)
+    try:
+        host_ptr = _npu_runtime.alloc_host(size)
+    except (RuntimeError, ModuleNotFoundError, OSError) as exc:
+        raise RuntimeError("Pinned memory not available") from exc
     buf = _np.ctypeslib.as_array((_ctypes.c_uint8 * size).from_address(int(host_ptr)))
     buf[:] = arr.view(_np.uint8).reshape(-1)
     raw = _np.frombuffer(buf, dtype=_np.uint8)
