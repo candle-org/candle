@@ -23,7 +23,8 @@ def test_tensor_repr_meta_includes_device():
     assert rep.startswith("tensor(")
     assert "..." in rep
     assert "device='meta'" in rep
-    assert "dtype=torch.float32" in rep
+    assert "size=(2, 2)" in rep
+    assert "dtype=" not in rep
 
 
 def test_tensor_repr_respects_precision():
@@ -145,3 +146,25 @@ def test_scientific_mode_matches_local_torch():
     finally:
         torch.set_printoptions(**prev_c)
         ref_set(**prev_r)
+
+
+def test_meta_tensor_repr_matches_local_torch():
+    c = torch.empty((2, 2), device="meta")
+    r = ref_torch.empty((2, 2), device="meta")
+    assert repr(c) == repr(r)
+
+
+def test_bool_tensor_repr_matches_local_torch():
+    c = torch.tensor([True, False], dtype=torch.bool)
+    r = ref_torch.tensor([True, False], dtype=ref_torch.bool)
+    assert repr(c) == repr(r)
+
+
+def test_non_leaf_grad_suffix_matches_torch_shape():
+    c = torch.tensor([1.0], requires_grad=True) + 1
+    r = ref_torch.tensor([1.0], requires_grad=True) + 1
+    c_repr = repr(c)
+    r_repr = repr(r)
+    assert "grad_fn=<" in c_repr
+    assert "requires_grad=True" not in r_repr
+    assert "requires_grad=True" not in c_repr
