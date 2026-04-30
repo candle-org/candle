@@ -1017,42 +1017,35 @@ def tensor(data, *, dtype=None, device=None, requires_grad=False):
 
 
 def _unsupported_memory_format(name, memory_format):
+    if memory_format is None:
+        return
+    fmt_name = getattr(memory_format, "_name", None)
+    if fmt_name in ("channels_last", "contiguous_format"):
+        return
     raise TypeError(
         f"{name}() received an invalid combination of arguments - memory_format {memory_format} is not supported"
     )
 
 
-def _apply_output_memory_format(output, *, memory_format=None, source=None):
+def _clone_with_memory_format(output, *, source=None, memory_format=None):
     name = getattr(memory_format, "_name", None)
-
-    if memory_format is None:
-        if source is not None and source.is_contiguous(memory_format=getattr(__import__('candle'), 'channels_last')):
-            return output.contiguous(memory_format=getattr(__import__('candle'), 'channels_last'))
+    if memory_format is None or name == "preserve_format":
+        if source is not None:
+            from . import channels_last
+            if source.is_contiguous(memory_format=channels_last):
+                return output.clone(memory_format=channels_last)
         return output
-
     if name == "contiguous_format":
         return output
-
-    if name == "channels_last":
-        return output.contiguous(memory_format=memory_format)
-
-    if name == "preserve_format":
-        if source is None:
-            raise RuntimeError("unsupported memory format Preserve")
-        if source.is_contiguous(memory_format=getattr(__import__('candle'), 'channels_last')):
-            return output.contiguous(memory_format=getattr(__import__('candle'), 'channels_last'))
-        return output
-
-    return output
+    return output.clone(memory_format=memory_format)
 
 
 def zeros(*shape, dtype=None, device=None, memory_format=None):
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = shape[0]
-    if memory_format is not None:
-        _unsupported_memory_format("zeros", memory_format)
+    _unsupported_memory_format("zeros", memory_format)
     dev = _as_device(device)
-    return dispatch("zeros", dev, shape, dtype=dtype)
+    return dispatch("zeros", dev, shape, dtype=dtype, memory_format=memory_format)
 
 
 def zeros_like(input, *, dtype=None, device=None, memory_format=None):
@@ -1061,42 +1054,39 @@ def zeros_like(input, *, dtype=None, device=None, memory_format=None):
     if device is None:
         device = input.device
     out = zeros(input.shape, dtype=dtype, device=device)
-    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
+    return _clone_with_memory_format(out, source=input, memory_format=memory_format)
 
 
 def ones(*shape, dtype=None, device=None, memory_format=None):
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = shape[0]
-    if memory_format is not None:
-        _unsupported_memory_format("ones", memory_format)
+    _unsupported_memory_format("ones", memory_format)
     dev = _as_device(device)
-    return dispatch("ones", dev, shape, dtype=dtype)
+    return dispatch("ones", dev, shape, dtype=dtype, memory_format=memory_format)
 
 
 def empty(*shape, dtype=None, device=None, memory_format=None):
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = shape[0]
+    _unsupported_memory_format("empty", memory_format)
     dev = _as_device(device)
-    out = dispatch("empty", dev, shape, dtype=dtype, memory_format=None)
-    return _apply_output_memory_format(out, memory_format=memory_format)
+    return dispatch("empty", dev, shape, dtype=dtype, memory_format=memory_format)
 
 
 def randn(*shape, dtype=None, device=None, memory_format=None, generator=None):
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = shape[0]
-    if memory_format is not None:
-        _unsupported_memory_format("randn", memory_format)
+    _unsupported_memory_format("randn", memory_format)
     dev = _as_device(device)
-    return dispatch("randn", dev, shape, dtype=dtype, generator=generator)
+    return dispatch("randn", dev, shape, dtype=dtype, memory_format=memory_format, generator=generator)
 
 
 def rand(*shape, dtype=None, device=None, memory_format=None, generator=None):
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = shape[0]
-    if memory_format is not None:
-        _unsupported_memory_format("rand", memory_format)
+    _unsupported_memory_format("rand", memory_format)
     dev = _as_device(device)
-    return dispatch("rand", dev, shape, dtype=dtype, generator=generator)
+    return dispatch("rand", dev, shape, dtype=dtype, memory_format=memory_format, generator=generator)
 
 
 def randint(low, high=None, size=None, *, dtype=None, device=None, requires_grad=False, generator=None):
@@ -1364,7 +1354,7 @@ def ones_like(input, *, dtype=None, device=None, memory_format=None):
     if device is None:
         device = input.device
     out = ones(input.shape, dtype=dtype, device=device)
-    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
+    return _clone_with_memory_format(out, source=input, memory_format=memory_format)
 
 
 def empty_like(input, *, dtype=None, device=None, memory_format=None):
@@ -1373,7 +1363,7 @@ def empty_like(input, *, dtype=None, device=None, memory_format=None):
     if device is None:
         device = input.device
     out = empty(input.shape, dtype=dtype, device=device)
-    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
+    return _clone_with_memory_format(out, source=input, memory_format=memory_format)
 
 
 def full_like(input, fill_value, *, dtype=None, device=None, memory_format=None):
@@ -1382,7 +1372,7 @@ def full_like(input, fill_value, *, dtype=None, device=None, memory_format=None)
     if device is None:
         device = input.device
     out = full(input.shape, fill_value, dtype=dtype, device=device)
-    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
+    return _clone_with_memory_format(out, source=input, memory_format=memory_format)
 
 
 def randn_like(input, *, dtype=None, device=None, memory_format=None, generator=None):
@@ -1391,7 +1381,7 @@ def randn_like(input, *, dtype=None, device=None, memory_format=None, generator=
     if device is None:
         device = input.device
     out = randn(input.shape, dtype=dtype, device=device, generator=generator)
-    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
+    return _clone_with_memory_format(out, source=input, memory_format=memory_format)
 
 
 def rand_like(input, *, dtype=None, device=None, memory_format=None, generator=None):
@@ -1400,7 +1390,7 @@ def rand_like(input, *, dtype=None, device=None, memory_format=None, generator=N
     if device is None:
         device = input.device
     out = rand(input.shape, dtype=dtype, device=device, generator=generator)
-    return _apply_output_memory_format(out, memory_format=memory_format, source=input)
+    return _clone_with_memory_format(out, source=input, memory_format=memory_format)
 
 
 def randint_like(input, low=0, high=None, *, dtype=None, device=None, memory_format=None):
@@ -1408,7 +1398,8 @@ def randint_like(input, low=0, high=None, *, dtype=None, device=None, memory_for
         dtype = input.dtype
     if device is None:
         device = input.device
-    return randint(low, high, size=input.shape, dtype=dtype, device=device)
+    out = randint(low, high, size=input.shape, dtype=dtype, device=device)
+    return _clone_with_memory_format(out, source=input, memory_format=memory_format)
 
 
 def rms_norm(input, normalized_shape, weight=None, eps=1e-6):

@@ -17,8 +17,16 @@ def _contiguous_stride(shape):
     return tuple(reversed(stride))
 
 
-def _meta_tensor(shape, dtype, device):
-    stride = _contiguous_stride(shape)
+def _channels_last_stride(shape):
+    if len(shape) != 4:
+        raise RuntimeError("required rank 4 tensor to use channels_last format")
+    _, c, h, w = shape
+    return (c * h * w, 1, w * c, c)
+
+
+def _meta_tensor(shape, dtype, device, stride=None):
+    if stride is None:
+        stride = _contiguous_stride(shape)
     storage = meta_typed_storage_from_shape(shape, dtype)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, False)
 
@@ -572,7 +580,9 @@ def _meta_nonzero_meta(a, as_tuple=False):
 
 
 
-def _meta_contiguous_meta(a):
+def _meta_contiguous_meta(a, memory_format=None):
+    if getattr(memory_format, "_name", None) == "channels_last":
+        return _meta_tensor(a.shape, a.dtype, a.device, _channels_last_stride(a.shape))
     return _meta_tensor(a.shape, a.dtype, a.device)
 
 

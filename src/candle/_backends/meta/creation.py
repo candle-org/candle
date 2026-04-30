@@ -14,6 +14,22 @@ def _contiguous_stride(shape):
     return tuple(reversed(stride))
 
 
+def _channels_last_stride(shape):
+    if len(shape) != 4:
+        raise RuntimeError("required rank 4 tensor to use channels_last format")
+    _, c, h, w = shape
+    return (c * h * w, 1, w * c, c)
+
+
+def _resolve_stride(shape, memory_format):
+    name = getattr(memory_format, "_name", None)
+    if name in (None, "contiguous_format"):
+        return _contiguous_stride(shape)
+    if name == "channels_last":
+        return _channels_last_stride(shape)
+    raise RuntimeError(f"unsupported memory format {memory_format}")
+
+
 def tensor_create_meta(data, dtype=None, device=None, requires_grad=False):
     arr = np.array(data, dtype=to_numpy_dtype(dtype))
     stride = tuple(np.array(arr.strides) // arr.itemsize)
@@ -23,21 +39,21 @@ def tensor_create_meta(data, dtype=None, device=None, requires_grad=False):
 
 def zeros_create_meta(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
     shape = tuple(shape)
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     storage = meta_typed_storage_from_shape(shape, dtype, device=device)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
 def ones_create_meta(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
     shape = tuple(shape)
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     storage = meta_typed_storage_from_shape(shape, dtype, device=device)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
 def empty_create_meta(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
     shape = tuple(shape)
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     storage = meta_typed_storage_from_shape(shape, dtype, device=device)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
@@ -88,11 +104,11 @@ def range_create_meta(start, end, step=1, dtype=None, device=None):
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
-def randn_create_meta(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+def randn_create_meta(shape, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     storage = meta_typed_storage_from_shape(shape, dtype, device=device)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
