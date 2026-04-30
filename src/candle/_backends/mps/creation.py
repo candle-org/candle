@@ -78,7 +78,8 @@ def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
-def full_create(shape, fill_value, dtype=None, device=None):
+def full_create(shape, fill_value, dtype=None, device=None, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     shape = tuple(shape)
     arr = np.full(shape, fill_value, dtype=to_numpy_dtype(dtype))
     storage = mps_typed_storage_from_numpy(arr.ravel(), dtype, device=device)
@@ -191,7 +192,8 @@ def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_form
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
-def randint_create(low, high=None, size=None, dtype=None, device=None, requires_grad=False, generator=None, **kwargs):
+def randint_create(low, high=None, size=None, dtype=None, device=None, requires_grad=False, generator=None, memory_format=None, **kwargs):
+    _reject_unsupported_memory_format(memory_format)
     from ..._dtype import int32 as i32, int64 as i64
     if high is None:
         low, high = 0, low

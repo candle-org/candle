@@ -251,7 +251,7 @@ def register_schemas():
     registry.register_schema("empty", "empty(int[] size, *, Dtype? dtype=None, Device? device=None, MemoryFormat? memory_format=None) -> Tensor")
     registry.register_schema("arange", "arange(Scalar start, Scalar end, Scalar step=1, Dtype? dtype=None) -> Tensor")
     registry.register_schema("linspace", "linspace(Scalar start, Scalar end, int steps, Dtype? dtype=None) -> Tensor")
-    registry.register_schema("full", "full(int[] size, Scalar fill_value, Dtype? dtype=None) -> Tensor")
+    registry.register_schema("full", "full(int[] size, Scalar fill_value, Dtype? dtype=None, MemoryFormat? memory_format=None) -> Tensor")
     registry.register_schema("logspace", "logspace(Scalar start, Scalar end, int steps, Dtype? dtype=None) -> Tensor")
     registry.register_schema("eye", "eye(int n, int? m=None, Dtype? dtype=None, Tensor? out=None) -> Tensor")
     registry.register_schema("range", "range(Scalar start, Scalar end, Scalar step=1, Dtype? dtype=None) -> Tensor")
@@ -552,7 +552,7 @@ def register_schemas():
     registry.register_schema("randint_", "randint_(Tensor(a!) self, int low, int? high=None, *, Generator? generator=None) -> Tensor")
 
     # New creation ops
-    registry.register_schema("randint", "randint(int low, int? high=None, int[]? size=None, Dtype? dtype=None, bool requires_grad=False, Generator? generator=None) -> Tensor")
+    registry.register_schema("randint", "randint(int low, int? high=None, int[]? size=None, Dtype? dtype=None, bool requires_grad=False, Generator? generator=None, MemoryFormat? memory_format=None) -> Tensor")
     registry.register_schema("randperm", "randperm(int n, Dtype? dtype=None, bool requires_grad=False, Generator? generator=None) -> Tensor")
 
     # random_ in-place op

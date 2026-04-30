@@ -395,6 +395,21 @@ class TestCreationMemoryFormat:
         assert x.stride() == (60, 1, 15, 3)
         assert x.is_contiguous(memory_format=torch.channels_last) is True
 
+    def test_randint_supports_channels_last(self):
+        x = torch.randint(10, (2, 3, 4, 5), memory_format=torch.channels_last)
+        assert x.stride() == (60, 1, 15, 3)
+        assert x.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_full_supports_channels_last(self):
+        x = torch.full((2, 3, 4, 5), 1.0, memory_format=torch.channels_last)
+        assert x.stride() == (60, 1, 15, 3)
+        assert x.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_meta_full_supports_channels_last(self):
+        x = torch.full((2, 3, 4, 5), 1.0, device="meta", memory_format=torch.channels_last)
+        assert x.stride() == (60, 1, 15, 3)
+        assert x.is_contiguous(memory_format=torch.channels_last) is True
+
     def test_ones_like_preserves_channels_last_by_default(self):
         base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
         out = torch.ones_like(base)
@@ -422,6 +437,18 @@ class TestCreationMemoryFormat:
     def test_randint_like_preserves_channels_last_by_default(self):
         base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
         out = torch.randint_like(base, high=10)
+        assert out.stride() == (60, 1, 15, 3)
+        assert out.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_like_creation_memory_format_is_applied_during_creation(self, monkeypatch):
+        base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+
+        def _fail_clone(*args, **kwargs):
+            raise AssertionError("like creation should not relayout by cloning after allocation")
+
+        monkeypatch.setattr(type(base), "clone", _fail_clone)
+
+        out = torch.zeros_like(base)
         assert out.stride() == (60, 1, 15, 3)
         assert out.is_contiguous(memory_format=torch.channels_last) is True
 
