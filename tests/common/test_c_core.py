@@ -983,6 +983,29 @@ class TestTensorLayoutMethodProviders:
         except RuntimeError as e:
             assert "required rank 4 tensor" in str(e)
 
+    def test_tensor_api_clone_memory_format_channels_last_cpu(self):
+        import candle as torch
+
+        x = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+        y = x.clone(memory_format=torch.contiguous_format)
+        z = x.clone(memory_format=torch.preserve_format)
+
+        assert y.stride() == (60, 20, 5, 1)
+        assert y.is_contiguous() is True
+        assert y.is_contiguous(memory_format=torch.channels_last) is False
+        assert z.stride() == (60, 1, 15, 3)
+        assert z.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_tensor_api_to_memory_format_supports_meta_channels_last_metadata(self):
+        import candle as torch
+
+        x = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+        y = x.to("meta", memory_format=torch.channels_last)
+
+        assert y.device.type == "meta"
+        assert y.stride() == (60, 1, 15, 3)
+        assert y.is_contiguous(memory_format=torch.channels_last) is True
+
 
 class TestTensorAutogradMethodProviders:
     """Autograd state Tensor methods should be served from the Cython tensor API layer."""
@@ -1507,6 +1530,27 @@ class TestTensorFactoryHelperMethodProviders:
 
         assert base.type() == "torch.Float32Tensor"
         assert base.type(torch.float64).dtype == torch.float64
+
+    def test_new_empty_rejects_memory_format(self):
+        import candle as torch
+
+        base = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        with pytest.raises(TypeError, match="memory_format"):
+            base.new_empty((2, 2), memory_format=torch.channels_last)
+
+    def test_new_ones_rejects_memory_format(self):
+        import candle as torch
+
+        base = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        with pytest.raises(TypeError, match="memory_format"):
+            base.new_ones((2, 2), memory_format=torch.channels_last)
+
+    def test_new_zeros_rejects_memory_format(self):
+        import candle as torch
+
+        base = torch.arange(6, dtype=torch.float32).reshape(2, 3)
+        with pytest.raises(TypeError, match="memory_format"):
+            base.new_zeros((2, 2), memory_format=torch.channels_last)
 
 
 

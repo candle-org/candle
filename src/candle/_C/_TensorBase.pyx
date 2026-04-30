@@ -535,9 +535,9 @@ class TensorBase(TensorImpl):
         from candle._functional import neg as neg_dispatch
         return neg_dispatch(self)
 
-    def clone(self):
-        from candle._functional import clone as clone_dispatch
-        return clone_dispatch(self)
+    def clone(self, *, memory_format=None):
+        from . import _tensor_api as _tensor_api_mod
+        return _tensor_api_mod.tensor_clone(self, memory_format=memory_format)
 
     def to(self, *args, **kwargs):
         from candle._functional import to as to_dispatch

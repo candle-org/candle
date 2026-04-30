@@ -431,8 +431,62 @@ def tensor_neg(self):
     return _neg_fn(self)
 
 
-def tensor_clone(self):
+cdef inline object _normalize_memory_format(object memory_format):
+    cdef object name
+    if memory_format is None:
+        return None
+    name = getattr(memory_format, "_name", None)
+    if name in ("contiguous_format", "channels_last", "preserve_format"):
+        return memory_format
+    raise TypeError(
+        f"received an invalid combination of arguments - memory_format {memory_format} is not supported"
+    )
+
+
+cdef inline object _memory_format_name(object memory_format):
+    if memory_format is None:
+        return None
+    return getattr(memory_format, "_name", None)
+
+
+def tensor_clone(self, *, memory_format=None):
+    cdef object fmt_name
+    cdef object out
+    cdef object _cl
+
     _ensure_functional_refs()
+
+    memory_format = _normalize_memory_format(memory_format)
+    fmt_name = _memory_format_name(memory_format)
+
+    # Determine effective format: preserve_format/None inherits source layout.
+    if fmt_name == "preserve_format" or memory_format is None:
+        out = _to_dispatch_fn(self, self.device, copy=True)
+        if _is_channels_last_stride_tuple(self.shape, self.stride):
+            # Source was channels_last — relayout the copy.
+            import candle as _candle_mod
+            _cl = getattr(_candle_mod, "channels_last", None)
+            if _cl is not None:
+                out = out.contiguous(memory_format=_cl)
+        return out
+
+    if fmt_name == "contiguous_format":
+        # Always produce a contiguous (row-major) tensor.
+        out = _to_dispatch_fn(self, self.device, copy=True)
+        if _is_channels_last_stride_tuple(out.shape, out.stride):
+            out = out.contiguous()
+        return out
+
+    if fmt_name == "channels_last":
+        # Produce a channels_last copy regardless of source layout.
+        out = _to_dispatch_fn(self, self.device, copy=True)
+        import candle as _candle_mod
+        _cl = getattr(_candle_mod, "channels_last", None)
+        if _cl is not None:
+            out = out.contiguous(memory_format=_cl)
+        return out
+
+    # Unknown memory_format — plain copy.
     return _to_dispatch_fn(self, self.device, copy=True)
 
 
@@ -464,6 +518,8 @@ def tensor_to(self, *args, **kwargs):
     cdef object result = self
     cdef object arg
     cdef object dt
+    cdef object fmt_name
+    cdef object target_device
 
     _ensure_device_ref()
     _ensure_dtype_ref()
@@ -473,7 +529,8 @@ def tensor_to(self, *args, **kwargs):
 
     non_blocking = kwargs.get("non_blocking", False)
     copy = kwargs.get("copy", False)
-    memory_format = kwargs.get("memory_format", None)
+    memory_format = _normalize_memory_format(kwargs.get("memory_format", None))
+    fmt_name = _memory_format_name(memory_format)
 
     for arg in args:
         if isinstance(arg, _Device):
@@ -497,6 +554,14 @@ def tensor_to(self, *args, **kwargs):
     if "dtype" in kwargs:
         dtype = kwargs["dtype"]
 
+    target_device = device if device is not None else self.device
+    if (
+        fmt_name == "channels_last"
+        or (fmt_name == "preserve_format" and _is_channels_last_stride_tuple(self.shape, self.stride))
+    ):
+        if target_device.type not in ("cpu", "meta"):
+            raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
+
     if dtype is not None and dtype != self.dtype:
         result = result._to_dtype(dtype)
 
@@ -510,12 +575,22 @@ def tensor_to(self, *args, **kwargs):
             memory_format=memory_format,
         )
 
-    if getattr(memory_format, "_name", None) == "channels_last":
-        if result.device.type != "cpu":
-            raise NotImplementedError("channels_last memory_format is currently only supported on CPU tensors")
+    if fmt_name == "channels_last":
         result = result.contiguous(memory_format=memory_format)
 
-    if result is self and dtype is None and device is None:
+    if fmt_name == "preserve_format":
+        # preserve_format: keep the source tensor's current memory layout.
+        if _is_channels_last_stride_tuple(self.shape, self.stride):
+            import candle as _candle_mod
+            _cl = getattr(_candle_mod, "channels_last", None)
+            if _cl is not None:
+                result = result.contiguous(memory_format=_cl)
+        # else: result is already contiguous (default), nothing to do.
+
+    if fmt_name == "contiguous_format" and _is_channels_last_stride_tuple(result.shape, result.stride):
+        result = result.contiguous()
+
+    if result is self and dtype is None and device is None and fmt_name != "contiguous_format":
         return self
     return result
 
@@ -702,74 +777,6 @@ def tensor_view(self, *shape):
     return v
 
 
-def tensor_is_contiguous(self, memory_format=None):
-    if getattr(memory_format, "_name", None) == "channels_last":
-        return _is_channels_last_stride_tuple(self.shape, self.stride)
-    cdef tuple expected
-    expected = _contiguous_stride_tuple(self.shape)
-    return self.stride == expected
-
-
-def tensor_contiguous(self, memory_format=None):
-    if getattr(memory_format, "_name", None) == "channels_last":
-        if len(self.shape) != 4:
-            raise RuntimeError("required rank 4 tensor to use channels_last format")
-        if self.is_contiguous(memory_format=memory_format):
-            return self
-        _ensure_dispatch_ref()
-        return _dispatch_fn("contiguous", self.device.type, self, memory_format=memory_format)
-    if self.is_contiguous(memory_format=memory_format):
-        return self
-    _ensure_dispatch_ref()
-    return _dispatch_fn("contiguous", self.device.type, self)
-
-
-def tensor_flatten(self, start_dim=0, end_dim=-1):
-    cdef Py_ssize_t ndim = len(self.shape)
-    cdef Py_ssize_t i
-    cdef Py_ssize_t flattened = 1
-    cdef tuple new_shape
-
-    if self.requires_grad:
-        _ensure_dispatch_ref()
-        return _dispatch_fn("flatten", self.device.type, self, start_dim, end_dim)
-    if ndim == 0:
-        return self.reshape((1,))
-    if start_dim < 0:
-        start_dim += ndim
-    if end_dim < 0:
-        end_dim += ndim
-    if start_dim < 0 or start_dim >= ndim:
-        raise IndexError("Dimension out of range")
-    if end_dim < 0 or end_dim >= ndim:
-        raise IndexError("Dimension out of range")
-    if start_dim > end_dim:
-        raise RuntimeError("flatten() has invalid args: start_dim cannot come after end_dim")
-
-    for i in range(start_dim, end_dim + 1):
-        flattened *= self.shape[i]
-    new_shape = self.shape[:start_dim] + (flattened,) + self.shape[end_dim + 1:]
-    return self.reshape(new_shape)
-
-
-def tensor_t(self):
-    cdef Py_ssize_t ndim = len(self.shape)
-    cdef object v
-    if ndim > 2:
-        raise RuntimeError(f"t() expects a tensor with <= 2 dimensions, but self is {ndim}D")
-    if ndim < 2:
-        return self
-    if self.requires_grad:
-        _ensure_dispatch_ref()
-        return _dispatch_fn("transpose", self.device.type, self, 0, 1)
-    v = self.cy_transpose(0, 1)
-    return _annotate_transpose_view(self, v)
-
-
-def tensor_as_strided(self, size, stride, storage_offset=None):
-    cdef object offset = storage_offset if storage_offset is not None else self.offset
-    _ensure_view_factory_ref()
-    return _cy_make_view_tensor_fn(self, self._storage, tuple(size), tuple(stride), offset)
 
 
 def tensor_is_contiguous(self, memory_format=None):
@@ -782,6 +789,8 @@ def tensor_is_contiguous(self, memory_format=None):
 
 def tensor_contiguous(self, memory_format=None):
     if getattr(memory_format, "_name", None) == "channels_last":
+        if self.device.type not in ("cpu", "meta"):
+            raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
         if len(self.shape) != 4:
             raise RuntimeError("required rank 4 tensor to use channels_last format")
         if self.is_contiguous(memory_format=memory_format):
@@ -1445,10 +1454,12 @@ def tensor_pin_memory(self):
     return _cy_make_tensor_from_storage_fn(storage, self.shape, self.stride, self.offset, self.requires_grad)
 
 
-def tensor_new_empty(self, size, *, dtype=None, device=None, requires_grad=False):
+def tensor_new_empty(self, size, *, dtype=None, device=None, requires_grad=False, memory_format=None):
     from candle._creation import empty
     cdef object dt = dtype if dtype is not None else self.dtype
     cdef object dev = device if device is not None else self.device
+    if memory_format is not None:
+        raise TypeError("new_empty() got an unexpected keyword argument 'memory_format'")
     return empty(size, dtype=dt, device=dev)
 
 
@@ -1502,21 +1513,25 @@ def tensor_ones_like(self):
     return tensor
 
 
-def tensor_new_ones(self, size, dtype=None, device=None):
+def tensor_new_ones(self, size, dtype=None, device=None, memory_format=None):
     from candle._creation import ones
     if dtype is None:
         dtype = self.dtype
     if device is None:
         device = self.device
+    if memory_format is not None:
+        raise TypeError("new_ones() got an unexpected keyword argument 'memory_format'")
     return ones(size, dtype=dtype, device=device)
 
 
-def tensor_new_zeros(self, size, dtype=None, device=None):
+def tensor_new_zeros(self, size, dtype=None, device=None, memory_format=None):
     from candle._creation import zeros
     if dtype is None:
         dtype = self.dtype
     if device is None:
         device = self.device
+    if memory_format is not None:
+        raise TypeError("new_zeros() got an unexpected keyword argument 'memory_format'")
     return zeros(size, dtype=dtype, device=device)
 
 

@@ -15,6 +15,13 @@ def _contiguous_stride(shape):
     return tuple(reversed(stride))
 
 
+def _reject_unsupported_memory_format(memory_format):
+    name = getattr(memory_format, "_name", None)
+    if name in (None, "contiguous_format"):
+        return
+    raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
+
+
 def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_format=None):
     arr = np.array(data, dtype=to_numpy_dtype(dtype))
     storage = cuda_typed_storage_from_numpy(arr, dtype, device=device)
@@ -23,6 +30,7 @@ def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_for
 
 
 def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
@@ -32,6 +40,7 @@ def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_for
 
 
 def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
@@ -41,6 +50,7 @@ def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_form
 
 
 def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)

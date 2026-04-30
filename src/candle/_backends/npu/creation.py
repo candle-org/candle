@@ -15,6 +15,13 @@ def _wrap_tensor(storage, shape, stride, requires_grad):
     return cy_make_tensor_from_storage(storage, tuple(shape), stride, 0, requires_grad)
 
 
+def _reject_unsupported_memory_format(memory_format):
+    name = getattr(memory_format, "_name", None)
+    if name in (None, "contiguous_format"):
+        return
+    raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
+
+
 def _require_inplace_one_zero():
     if not aclnn.ones_zero_symbols_ok():
         raise RuntimeError("aclnnInplaceOne/Zero not available")
@@ -31,6 +38,7 @@ def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_for
 
 
 def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     runtime = npu_runtime.get_runtime((device.index if hasattr(device, "index") else None) or 0)
     stream = npu_state.current_stream((device.index if hasattr(device, "index") else None) or 0)
     _require_inplace_one_zero()
@@ -47,6 +55,7 @@ def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_for
 
 
 def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     runtime = npu_runtime.get_runtime((device.index if hasattr(device, "index") else None) or 0)
     stream = npu_state.current_stream((device.index if hasattr(device, "index") else None) or 0)
     _require_inplace_one_zero()
@@ -63,6 +72,7 @@ def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_form
 
 
 def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     runtime = npu_runtime.get_runtime((device.index if hasattr(device, "index") else None) or 0)
     stream = npu_state.current_stream((device.index if hasattr(device, "index") else None) or 0)
     if isinstance(shape, int):
@@ -78,6 +88,7 @@ def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_for
 
 def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
     """Create a tensor filled with random numbers from N(0,1) on NPU."""
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
@@ -91,6 +102,7 @@ def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_for
 
 def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
     """Create a tensor filled with random numbers from U(0,1) on NPU."""
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
@@ -274,30 +286,36 @@ def scalar_tensor_create(data, dtype=None, device=None, requires_grad=False):
 
 
 def zeros_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     return zeros_create(other.shape, dtype=dtype or other.dtype, device=device or other.device,
                        requires_grad=requires_grad)
 
 
 def ones_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     return ones_create(other.shape, dtype=dtype or other.dtype, device=device or other.device,
                       requires_grad=requires_grad)
 
 
 def full_like_create(other, fill_value, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     return full_create(other.shape, fill_value, dtype=dtype or other.dtype, device=device or other.device)
 
 
 def empty_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     return empty_create(other.shape, dtype=dtype or other.dtype, device=device or other.device,
                        requires_grad=requires_grad)
 
 
 def randn_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
+    _reject_unsupported_memory_format(memory_format)
     return randn_create(other.shape, dtype=dtype or other.dtype, device=device or other.device,
                        requires_grad=requires_grad, generator=generator)
 
 
 def rand_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
+    _reject_unsupported_memory_format(memory_format)
     return rand_create(other.shape, dtype=dtype or other.dtype, device=device or other.device,
                       requires_grad=requires_grad, generator=generator)
 
@@ -344,6 +362,7 @@ def randint_create(low, high=None, size=None, dtype=None, device=None, requires_
 
 
 def new_empty_create(tensor, shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     if shape is None:
         shape = ()
     return empty_create(shape, dtype=dtype or tensor.dtype, device=device or tensor.device,
@@ -357,6 +376,7 @@ def new_full_create(tensor, shape, fill_value, dtype=None, device=None, requires
 
 
 def new_zeros_create(tensor, shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     if shape is None:
         shape = ()
     return zeros_create(shape, dtype=dtype or tensor.dtype, device=device or tensor.device,
@@ -364,6 +384,7 @@ def new_zeros_create(tensor, shape, dtype=None, device=None, requires_grad=False
 
 
 def new_ones_create(tensor, shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     if shape is None:
         shape = ()
     return ones_create(shape, dtype=dtype or tensor.dtype, device=device or tensor.device,
@@ -493,6 +514,7 @@ def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_for
 
 
 def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     runtime = npu_runtime.get_runtime((device.index if hasattr(device, "index") else None) or 0)
     stream = npu_state.current_stream((device.index if hasattr(device, "index") else None) or 0)
     _require_inplace_one_zero()
@@ -509,6 +531,7 @@ def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_for
 
 
 def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     runtime = npu_runtime.get_runtime((device.index if hasattr(device, "index") else None) or 0)
     stream = npu_state.current_stream((device.index if hasattr(device, "index") else None) or 0)
     _require_inplace_one_zero()
@@ -525,6 +548,7 @@ def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_form
 
 
 def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     runtime = npu_runtime.get_runtime((device.index if hasattr(device, "index") else None) or 0)
     stream = npu_state.current_stream((device.index if hasattr(device, "index") else None) or 0)
     if isinstance(shape, int):
@@ -540,6 +564,7 @@ def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_for
 
 def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
     """Create a tensor filled with random numbers from N(0,1) on NPU."""
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
@@ -553,6 +578,7 @@ def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_for
 
 def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
     """Create a tensor filled with random numbers from U(0,1) on NPU."""
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)

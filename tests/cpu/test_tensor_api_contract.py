@@ -353,7 +353,7 @@ class TestCreationMemoryFormat:
         assert x.is_contiguous(memory_format=torch.channels_last) is True
 
     def test_empty_rejects_preserve_format(self):
-        with pytest.raises(RuntimeError, match="unsupported memory format Preserve"):
+        with pytest.raises(TypeError, match="memory_format"):
             torch.empty((2, 3, 4, 5), memory_format=torch.preserve_format)
 
     def test_empty_like_preserves_channels_last_by_default(self):
@@ -375,21 +375,75 @@ class TestCreationMemoryFormat:
         assert out.is_contiguous() is True
         assert out.is_contiguous(memory_format=torch.channels_last) is False
 
-    def test_zeros_rejects_memory_format(self):
-        with pytest.raises(TypeError):
-            torch.zeros((2, 3, 4, 5), memory_format=torch.channels_last)
+    def test_zeros_supports_channels_last(self):
+        x = torch.zeros((2, 3, 4, 5), memory_format=torch.channels_last)
+        assert x.stride() == (60, 1, 15, 3)
+        assert x.is_contiguous(memory_format=torch.channels_last) is True
 
-    def test_ones_rejects_memory_format(self):
-        with pytest.raises(TypeError):
-            torch.ones((2, 3, 4, 5), memory_format=torch.channels_last)
+    def test_ones_supports_channels_last(self):
+        x = torch.ones((2, 3, 4, 5), memory_format=torch.channels_last)
+        assert x.stride() == (60, 1, 15, 3)
+        assert x.is_contiguous(memory_format=torch.channels_last) is True
 
-    def test_randn_rejects_memory_format(self):
-        with pytest.raises(TypeError):
-            torch.randn((2, 3, 4, 5), memory_format=torch.channels_last)
+    def test_randn_supports_channels_last(self):
+        x = torch.randn((2, 3, 4, 5), memory_format=torch.channels_last)
+        assert x.stride() == (60, 1, 15, 3)
+        assert x.is_contiguous(memory_format=torch.channels_last) is True
 
-    def test_rand_rejects_memory_format(self):
-        with pytest.raises(TypeError):
-            torch.rand((2, 3, 4, 5), memory_format=torch.channels_last)
+    def test_rand_supports_channels_last(self):
+        x = torch.rand((2, 3, 4, 5), memory_format=torch.channels_last)
+        assert x.stride() == (60, 1, 15, 3)
+        assert x.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_ones_like_preserves_channels_last_by_default(self):
+        base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+        out = torch.ones_like(base)
+        assert out.stride() == (60, 1, 15, 3)
+        assert out.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_randn_like_preserves_channels_last_by_default(self):
+        base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+        out = torch.randn_like(base)
+        assert out.stride() == (60, 1, 15, 3)
+        assert out.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_ones_like_contiguous_format_from_channels_last(self):
+        base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+        out = torch.ones_like(base, memory_format=torch.contiguous_format)
+        assert out.stride() == (60, 20, 5, 1)
+        assert out.is_contiguous() is True
+
+    def test_rand_like_contiguous_format_from_channels_last(self):
+        base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+        out = torch.rand_like(base, memory_format=torch.contiguous_format)
+        assert out.stride() == (60, 20, 5, 1)
+        assert out.is_contiguous() is True
+
+    def test_randint_like_preserves_channels_last_by_default(self):
+        base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+        out = torch.randint_like(base, high=10)
+        assert out.stride() == (60, 1, 15, 3)
+        assert out.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_clone_channels_last_from_contiguous(self):
+        base = torch.empty((2, 3, 4, 5))
+        out = base.clone(memory_format=torch.channels_last)
+        assert out.stride() == (60, 1, 15, 3)
+        assert out.is_contiguous() is False
+        assert out.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_clone_preserve_format_from_channels_last(self):
+        base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+        out = base.clone(memory_format=torch.preserve_format)
+        assert out.stride() == (60, 1, 15, 3)
+        assert out.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_clone_contiguous_format_from_channels_last(self):
+        base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+        out = base.clone(memory_format=torch.contiguous_format)
+        assert out.stride() == (60, 20, 5, 1)
+        assert out.is_contiguous() is True
+        assert out.is_contiguous(memory_format=torch.channels_last) is False
 
     def test_basic(self):
         a = torch.tensor([-1.0, 0.0, 2.0])

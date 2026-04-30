@@ -14,6 +14,22 @@ def _contiguous_stride(shape):
     return tuple(reversed(stride))
 
 
+def _channels_last_stride(shape):
+    if len(shape) != 4:
+        raise RuntimeError("required rank 4 tensor to use channels_last format")
+    _, c, h, w = shape
+    return (c * h * w, 1, w * c, c)
+
+
+def _resolve_stride(shape, memory_format):
+    name = getattr(memory_format, "_name", None)
+    if name in (None, "contiguous_format"):
+        return _contiguous_stride(shape)
+    if name == "channels_last":
+        return _channels_last_stride(shape)
+    raise RuntimeError(f"unsupported memory format {memory_format}")
+
+
 def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_format=None):
     arr = np.array(data, dtype=to_numpy_dtype(dtype))
     storage = typed_storage_from_numpy(arr, dtype, device=device)
@@ -26,7 +42,7 @@ def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_for
         shape = (shape,)
     shape = tuple(shape)
     storage = typed_storage_from_numpy(np.zeros(shape, dtype=to_numpy_dtype(dtype)), dtype, device=device)
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
@@ -35,7 +51,7 @@ def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_form
         shape = (shape,)
     shape = tuple(shape)
     storage = typed_storage_from_numpy(np.ones(shape, dtype=to_numpy_dtype(dtype)), dtype, device=device)
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
@@ -44,7 +60,7 @@ def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_for
         shape = (shape,)
     shape = tuple(shape)
     storage = typed_storage_from_numpy(np.empty(shape, dtype=to_numpy_dtype(dtype)), dtype, device=device)
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
@@ -112,7 +128,7 @@ def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_for
         arr = np.array(arr)
     arr = arr.astype(to_numpy_dtype(dtype))
     storage = typed_storage_from_numpy(arr, dtype, device=device)
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
@@ -128,7 +144,7 @@ def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_form
         arr = np.array(arr)
     arr = arr.astype(to_numpy_dtype(dtype))
     storage = typed_storage_from_numpy(arr, dtype, device=device)
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 

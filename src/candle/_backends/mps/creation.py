@@ -16,6 +16,13 @@ def _contiguous_stride(shape):
     return tuple(reversed(stride))
 
 
+def _reject_unsupported_memory_format(memory_format):
+    name = getattr(memory_format, "_name", None)
+    if name in (None, "contiguous_format"):
+        return
+    raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
+
+
 def _get_mps_generator(generator=None):
     """Return an MPS Philox generator (user-provided or default)."""
     if generator is not None and hasattr(generator, 'device') and generator.device.type == 'mps':
@@ -39,6 +46,7 @@ def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_for
 
 
 def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
@@ -49,6 +57,7 @@ def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_for
 
 
 def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
@@ -59,6 +68,7 @@ def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_form
 
 
 def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
@@ -118,6 +128,7 @@ def range_create(start, end, step=1, dtype=None, device=None):
 
 
 def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
@@ -149,6 +160,7 @@ def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_for
 
 
 def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
+    _reject_unsupported_memory_format(memory_format)
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
