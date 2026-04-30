@@ -56,19 +56,34 @@ def test_contiguous_format_to_makes_channels_last_tensor_row_major():
 
 def test_backend_creation_functions_reject_channels_last_before_allocation():
     creation_cases = (
-        (mps_creation, "mps", ("empty_create", "zeros_create", "ones_create", "randn_create", "rand_create")),
+        (mps_creation, "mps", ("empty_create", "zeros_create", "ones_create", "randn_create", "rand_create", "randint_create")),
         (cuda_creation, "cuda", ("empty_create", "zeros_create", "ones_create")),
-        (npu_creation, "npu", ("empty_create", "zeros_create", "ones_create", "randn_create", "rand_create")),
+        (npu_creation, "npu", ("empty_create", "zeros_create", "ones_create", "randn_create", "rand_create", "randint_create", "full_create")),
     )
     for creation_module, device_type, names in creation_cases:
         for name in names:
             create = getattr(creation_module, name)
             with pytest.raises(NotImplementedError, match="channels_last|memory format"):
-                create(
-                    (2, 3, 4, 5),
-                    device=device(device_type),
-                    memory_format=torch.channels_last,
-                )
+                if name == "full_create":
+                    create(
+                        (2, 3, 4, 5),
+                        1.0,
+                        device=device(device_type),
+                        memory_format=torch.channels_last,
+                    )
+                elif name == "randint_create":
+                    create(
+                        10,
+                        size=(2, 3, 4, 5),
+                        device=device(device_type),
+                        memory_format=torch.channels_last,
+                    )
+                else:
+                    create(
+                        (2, 3, 4, 5),
+                        device=device(device_type),
+                        memory_format=torch.channels_last,
+                    )
 
 
 def test_npu_like_and_new_creation_helpers_reject_channels_last_before_allocation():

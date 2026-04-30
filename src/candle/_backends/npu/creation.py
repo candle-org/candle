@@ -170,7 +170,8 @@ def arange_create(start, end, step=1, dtype=None, device=None):
     return _wrap_tensor(storage, shape, stride, requires_grad=False)
 
 
-def full_create(shape, fill_value, dtype=None, device=None):
+def full_create(shape, fill_value, dtype=None, device=None, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     dtype = _resolve_dtype(dtype)
     if isinstance(shape, int):
         shape = (shape,)
@@ -340,7 +341,8 @@ def randperm_create(n, dtype=None, device=None, requires_grad=False, generator=N
     return _wrap_tensor(storage, shape, stride, requires_grad=False)
 
 
-def randint_create(low, high=None, size=None, dtype=None, device=None, requires_grad=False, generator=None, **kwargs):
+def randint_create(low, high=None, size=None, dtype=None, device=None, requires_grad=False, generator=None, memory_format=None, **kwargs):
+    _reject_unsupported_memory_format(memory_format)
     if high is None:
         low, high = 0, low
     if size is None:
@@ -646,7 +648,8 @@ def arange_create(start, end, step=1, dtype=None, device=None):
     return _wrap_tensor(storage, shape, stride, requires_grad=False)
 
 
-def full_create(shape, fill_value, dtype=None, device=None):
+def full_create(shape, fill_value, dtype=None, device=None, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
     dtype = _resolve_dtype(dtype)
     if isinstance(shape, int):
         shape = (shape,)
@@ -751,8 +754,9 @@ def range_create(start, end, step=1, dtype=None, device=None):
     return _wrap_tensor(storage, shape, stride, requires_grad=False)
 
 
-def randint_create(low, high=None, size=None, dtype=None, device=None, requires_grad=False, generator=None, **kwargs):
+def randint_create(low, high=None, size=None, dtype=None, device=None, requires_grad=False, generator=None, memory_format=None, **kwargs):
     """Create a tensor filled with random integers from [low, high) on NPU."""
+    _reject_unsupported_memory_format(memory_format)
     from ..._dtype import int64 as int64_dtype, float32 as f32
     if high is None:
         low, high = 0, low

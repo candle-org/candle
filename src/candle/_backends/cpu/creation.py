@@ -78,14 +78,14 @@ def linspace_create(start, end, steps, dtype=None, device=None):
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
-def full_create(shape, fill_value, dtype=None, device=None):
+def full_create(shape, fill_value, dtype=None, device=None, memory_format=None):
     shape = tuple(shape)
     storage = typed_storage_from_numpy(
         np.full(shape, fill_value, dtype=to_numpy_dtype(dtype)),
         dtype,
         device=device,
     )
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, False)
 
 
@@ -148,7 +148,7 @@ def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_form
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
-def randint_create(low, high=None, size=None, dtype=None, device=None, requires_grad=False, generator=None, **kwargs):
+def randint_create(low, high=None, size=None, dtype=None, device=None, requires_grad=False, generator=None, memory_format=None, **kwargs):
     """torch.randint(low=0, high, size, ...) — fills with random integers from [low, high)."""
     from ..._dtype import int64 as int64_dtype
     if high is None:
@@ -163,7 +163,7 @@ def randint_create(low, high=None, size=None, dtype=None, device=None, requires_
     arr = rng.randint(int(low), int(high), size=size).astype(np.int64)
     out_dtype = dtype if dtype is not None else int64_dtype
     storage = typed_storage_from_numpy(arr, out_dtype, device=device)
-    stride = _contiguous_stride(size)
+    stride = _resolve_stride(size, memory_format)
     return cy_make_tensor_from_storage(storage, size, stride, 0, requires_grad)
 
 

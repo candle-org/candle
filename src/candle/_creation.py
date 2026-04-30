@@ -100,10 +100,10 @@ def linspace(start, end, steps, dtype=None, device=None, requires_grad=False):
     return _apply_requires_grad(out, requires_grad)
 
 
-def full(*args, dtype=None, device=None, requires_grad=False):
+def full(*args, dtype=None, device=None, requires_grad=False, memory_format=None):
     if dtype is None:
         dtype = _get_default_dtype()
-    out = full_dispatch(*args, dtype=dtype, device=device)
+    out = full_dispatch(*args, dtype=dtype, device=device, memory_format=memory_format)
     return _apply_requires_grad(out, requires_grad)
 
 
@@ -141,11 +141,11 @@ def rand(*shape, dtype=None, device=None, memory_format=None, generator=None, re
     return _apply_requires_grad(out, requires_grad)
 
 
-def randint(low, high=None, size=None, *, dtype=None, device=None, generator=None):
+def randint(low, high=None, size=None, *, dtype=None, device=None, generator=None, memory_format=None):
     if size is None and isinstance(high, (tuple, list)):
         size = high
         high = None
-    return randint_dispatch(low, high=high, size=size, dtype=dtype, device=device, generator=generator)
+    return randint_dispatch(low, high=high, size=size, dtype=dtype, device=device, generator=generator, memory_format=memory_format)
 
 
 def randperm(n, *, dtype=None, device=None, generator=None):

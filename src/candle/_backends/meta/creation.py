@@ -72,9 +72,9 @@ def linspace_create_meta(start, end, steps, dtype=None, device=None):
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
-def full_create_meta(shape, fill_value, dtype=None, device=None):
+def full_create_meta(shape, fill_value, dtype=None, device=None, memory_format=None):
     shape = tuple(shape)
-    stride = _contiguous_stride(shape)
+    stride = _resolve_stride(shape, memory_format)
     storage = meta_typed_storage_from_shape(shape, dtype, device=device)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, False)
 
