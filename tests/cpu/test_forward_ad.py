@@ -16,6 +16,21 @@ def test_forward_ad_state_lives_in_compiled_c_boundary():
     assert forward_ad.temporarily_disable.__module__ == "candle._C._forward_ad"
 
 
+def test_forward_ad_dual_helpers_live_in_compiled_c_boundary():
+    assert forward_ad.make_dual.__module__ == "candle._C._forward_ad"
+    assert forward_ad.unpack_dual.__module__ == "candle._C._forward_ad"
+
+
+def test_forward_ad_unpack_dual_requires_registered_public_type():
+    x = candle.rand(2)
+    _forward_ad.set_unpacked_dual_type(None)
+    try:
+        with pytest.raises(RuntimeError, match="UnpackedDualTensor"):
+            _forward_ad.unpack_dual(x)
+    finally:
+        _forward_ad.set_unpacked_dual_type(forward_ad.UnpackedDualTensor)
+
+
 def test_forward_ad_level_stack_is_thread_local():
     parent_states = []
     child_states = []

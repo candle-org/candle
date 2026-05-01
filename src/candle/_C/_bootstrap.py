@@ -260,8 +260,11 @@ try:
         get_jvp,
         get_tangent,
         is_level_disabled,
+        make_dual,
         register_jvp,
+        set_unpacked_dual_type,
         temporarily_disable,
+        unpack_dual,
     )
     _HAS_CYTHON_FORWARD_AD = True
 except ImportError:
