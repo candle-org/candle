@@ -4,10 +4,24 @@
 Provides FunctionCtx (the ctx object passed to forward/backward),
 and the core Function.apply() execution path.
 
-FunctionMeta (the metaclass that detects old-style vs new-style forward)
-stays in Python because inspect.signature() interop is simpler there.
+FunctionMeta detects old-style vs new-style forward declarations at subclass creation time.
 """
 
+
+
+class FunctionMeta(type):
+    """Metaclass that detects old-style (ctx as first param) vs new-style forward."""
+
+    def __init__(cls, name, bases, attrs):
+        import inspect
+
+        super().__init__(name, bases, attrs)
+        if "forward" in attrs:
+            sig = inspect.signature(attrs["forward"])
+            params = list(sig.parameters.keys())
+            cls._new_style = not (params and params[0] == "ctx")
+        else:
+            cls._new_style = False
 
 cdef class FunctionCtx:
     """Context object passed to Function.forward() for saving state needed by backward()."""

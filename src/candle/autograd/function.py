@@ -1,24 +1,8 @@
-import inspect
-
-from .._C._autograd_function import FunctionCtx, _function_apply  # pylint: disable=import-error,no-name-in-module
-
-
-class FunctionMeta(type):
-    """Metaclass that detects old-style (ctx as first param) vs new-style forward."""
-
-    def __init__(cls, name, bases, attrs):
-        super().__init__(name, bases, attrs)
-        if "forward" in attrs:
-            sig = inspect.signature(attrs["forward"])
-            params = list(sig.parameters.keys())
-            # Old-style: forward(ctx, ...) where first param is named 'ctx'
-            # New-style: forward(...) with no 'ctx' first param
-            if params and params[0] == "ctx":
-                cls._new_style = False
-            else:
-                cls._new_style = True
-        else:
-            cls._new_style = False
+from .._C._autograd_function import (  # pylint: disable=import-error,no-name-in-module
+    FunctionCtx,
+    FunctionMeta,
+    _function_apply,
+)
 
 
 class Function(metaclass=FunctionMeta):
