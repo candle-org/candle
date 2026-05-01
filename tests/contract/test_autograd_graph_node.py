@@ -1,7 +1,15 @@
+import importlib.machinery
 import weakref
+
 import pytest
 import candle as torch
+from candle._C import _autograd_graph
 from candle.autograd.graph import Node
+
+
+def test_autograd_graph_node_lives_in_compiled_c_boundary():
+    assert isinstance(_autograd_graph.__loader__, importlib.machinery.ExtensionFileLoader)
+    assert Node.__module__ == "candle._C._autograd_graph"
 
 
 def test_autograd_graph_node_virtual_base():
@@ -9,6 +17,11 @@ def test_autograd_graph_node_virtual_base():
     y = (x * x).sum()
     assert isinstance(y.grad_fn, Node)
     assert issubclass(type(y.grad_fn), Node)
+
+
+def test_autograd_graph_node_subclasscheck_requires_type():
+    with pytest.raises(TypeError):
+        issubclass(object(), Node)
 
 
 def test_autograd_graph_node_exposes_saved_tensors():
