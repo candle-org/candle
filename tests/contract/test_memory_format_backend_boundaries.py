@@ -107,3 +107,78 @@ def test_npu_like_and_new_creation_helpers_reject_channels_last_before_allocatio
     for create, args in helper_cases:
         with pytest.raises(NotImplementedError, match="channels_last|memory format"):
             create(*args, memory_format=torch.channels_last)
+
+def test_dispatch_like_creation_rejects_channels_last_before_allocation(monkeypatch):
+    class _FakeTensor:
+        shape = (2, 3, 4, 5)
+        dtype = torch.float32
+
+        def __init__(self, device_type):
+            self.device = device(device_type)
+
+    def _fail_alloc(*args, **kwargs):
+        raise AssertionError("like creation should reject before device allocation")
+
+    monkeypatch.setattr(npu_creation.npu_runtime, "_alloc_device", _fail_alloc)
+
+    for create, device_type in (
+        (torch.zeros_like, "npu"),
+        (torch.ones_like, "mps"),
+        (torch.empty_like, "cuda"),
+    ):
+        with pytest.raises(NotImplementedError, match="channels_last|memory format"):
+            create(_FakeTensor(device_type), memory_format=torch.channels_last)
+
+def test_backend_like_creation_helpers_reject_channels_last_before_delegate(monkeypatch):
+    class _FakeTensor:
+        shape = (2, 3, 4, 5)
+        dtype = torch.float32
+
+        def __init__(self, device_type):
+            self.device = device(device_type)
+
+    helper_cases = (
+        (mps_creation, "zeros_create", "zeros_like_create", _FakeTensor("mps"), ()),
+        (cuda_creation, "zeros_create", "zeros_like_create", _FakeTensor("cuda"), ()),
+        (npu_creation, "randint_create", "randint_like_create", _FakeTensor("npu"), (10,)),
+    )
+    for creation_module, delegate_name, helper_name, base, args in helper_cases:
+        def _fail_delegate(*_args, **_kwargs):
+            raise AssertionError("like helper should reject before delegating")
+
+        monkeypatch.setattr(creation_module, delegate_name, _fail_delegate)
+        create = getattr(creation_module, helper_name)
+        with pytest.raises(NotImplementedError, match="channels_last|memory format"):
+            create(base, *args, memory_format=torch.channels_last)
+
+
+def test_backend_creation_functions_reject_preserve_format_as_invalid_memory_format():
+    creation_cases = (
+        (mps_creation, "mps", ("empty_create", "zeros_create", "ones_create", "randn_create", "rand_create", "randint_create")),
+        (cuda_creation, "cuda", ("empty_create", "zeros_create", "ones_create")),
+        (npu_creation, "npu", ("empty_create", "zeros_create", "ones_create", "randn_create", "rand_create", "randint_create", "full_create")),
+    )
+    for creation_module, device_type, names in creation_cases:
+        for name in names:
+            create = getattr(creation_module, name)
+            with pytest.raises(TypeError, match="memory_format"):
+                if name == "full_create":
+                    create(
+                        (2, 3, 4, 5),
+                        1.0,
+                        device=device(device_type),
+                        memory_format=torch.preserve_format,
+                    )
+                elif name == "randint_create":
+                    create(
+                        10,
+                        size=(2, 3, 4, 5),
+                        device=device(device_type),
+                        memory_format=torch.preserve_format,
+                    )
+                else:
+                    create(
+                        (2, 3, 4, 5),
+                        device=device(device_type),
+                        memory_format=torch.preserve_format,
+                    )

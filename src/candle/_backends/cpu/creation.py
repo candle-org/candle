@@ -27,7 +27,17 @@ def _resolve_stride(shape, memory_format):
         return _contiguous_stride(shape)
     if name == "channels_last":
         return _channels_last_stride(shape)
-    raise RuntimeError(f"unsupported memory format {memory_format}")
+    raise TypeError(f"unsupported memory_format {memory_format}")
+
+
+def _resolve_like_memory_format(other, memory_format):
+    name = getattr(memory_format, "_name", None)
+    if memory_format is None or name == "preserve_format":
+        if len(other.shape) == 4 and tuple(other.stride) == _channels_last_stride(other.shape):
+            from ... import channels_last
+            return channels_last
+        return None
+    return memory_format
 
 
 def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_format=None):
@@ -177,3 +187,86 @@ def randperm_create(n, dtype=None, device=None, requires_grad=False, generator=N
     storage = typed_storage_from_numpy(arr, out_dtype, device=device)
     stride = _contiguous_stride(arr.shape)
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, requires_grad)
+
+def zeros_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    return zeros_create(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+    )
+
+
+def ones_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    return ones_create(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+    )
+
+
+def empty_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    return empty_create(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+    )
+
+
+def full_like_create(other, fill_value, dtype=None, device=None, requires_grad=False, memory_format=None):
+    return full_create(
+        other.shape,
+        fill_value,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+    )
+
+
+def randn_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
+    return randn_create(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+        generator=generator,
+    )
+
+
+def rand_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
+    return rand_create(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+        generator=generator,
+    )
+
+
+def randint_like_create(
+    other,
+    low=0,
+    high=None,
+    dtype=None,
+    device=None,
+    requires_grad=False,
+    memory_format=None,
+    generator=None,
+):
+    return randint_create(
+        low,
+        high=high,
+        size=other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+        generator=generator,
+    )

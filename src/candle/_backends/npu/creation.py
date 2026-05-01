@@ -19,7 +19,9 @@ def _reject_unsupported_memory_format(memory_format):
     name = getattr(memory_format, "_name", None)
     if name in (None, "contiguous_format"):
         return
-    raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
+    if name == "channels_last":
+        raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
+    raise TypeError(f"unsupported memory_format {memory_format}")
 
 
 def _require_inplace_one_zero():
@@ -791,3 +793,25 @@ def randperm_create(n, dtype=None, device=None, requires_grad=False, generator=N
     """Create a random permutation of integers from 0 to n-1 on NPU."""
     from .ops import randperm as randperm_op
     return randperm_op(n, dtype=dtype, device=device, generator=generator)
+
+def randint_like_create(
+    other,
+    low=0,
+    high=None,
+    dtype=None,
+    device=None,
+    requires_grad=False,
+    memory_format=None,
+    generator=None,
+):
+    _reject_unsupported_memory_format(memory_format)
+    return randint_create(
+        low,
+        high=high,
+        size=other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=memory_format,
+        generator=generator,
+    )

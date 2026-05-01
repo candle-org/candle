@@ -5,6 +5,13 @@ from ..._dispatch.registry import registry
 from .creation import (
     arange_create,
     empty_create,
+    zeros_like_create,
+    randint_like_create,
+    randn_like_create,
+    rand_like_create,
+    ones_like_create,
+    full_like_create,
+    empty_like_create,
     eye_create,
     full_create,
     linspace_create,
@@ -470,6 +477,13 @@ registry.register("to", "mps", convert_backend.to_device)
 # ---------------------------------------------------------------------------
 registry.register("tensor", "mps", tensor_create)
 registry.register("zeros", "mps", zeros_create)
+registry.register("zeros_like", "mps", zeros_like_create)
+registry.register("ones_like", "mps", ones_like_create)
+registry.register("empty_like", "mps", empty_like_create)
+registry.register("full_like", "mps", full_like_create)
+registry.register("randn_like", "mps", randn_like_create)
+registry.register("rand_like", "mps", rand_like_create)
+registry.register("randint_like", "mps", randint_like_create)
 registry.register("ones", "mps", ones_create)
 registry.register("empty", "mps", empty_create)
 registry.register("arange", "mps", arange_create)
