@@ -1,6 +1,19 @@
+import importlib.machinery
 import threading
 
 import candle as torch
+from candle._C import _grad_mode_state
+
+
+def test_grad_mode_state_lives_in_compiled_c_boundary():
+    assert isinstance(
+        _grad_mode_state.__loader__,
+        importlib.machinery.ExtensionFileLoader,
+    )
+    assert torch.no_grad.__module__ == "candle._C._grad_mode_state"
+    assert torch.enable_grad.__module__ == "candle._C._grad_mode_state"
+    assert torch.set_grad_enabled.__module__ == "candle._C._grad_mode_state"
+    assert torch.inference_mode.__module__ == "candle._C._grad_mode_state"
 
 
 def test_no_grad_is_thread_local():

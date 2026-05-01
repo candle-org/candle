@@ -89,6 +89,7 @@ _HAS_CYTHON_AUTOGRAD_GRAPH = False
 _HAS_CYTHON_AUTOGRAD_ENGINE = False
 _HAS_CYTHON_AUTOGRAD_FUNCTION = False
 _HAS_CYTHON_AUTOGRAD_OPS = False
+_HAS_CYTHON_GRAD_MODE_STATE = False
 _HAS_CYTHON_FUNCTIONAL_OPS = False
 _HAS_CYTHON_FAST_OPS = False
 _HAS_CYTHON_TENSOR_API = False
@@ -226,6 +227,24 @@ try:
     _HAS_CYTHON_AUTOGRAD_OPS = True
 except ImportError:
     _HAS_CYTHON_AUTOGRAD_OPS = False
+
+try:
+    from ._grad_mode_state import (  # noqa: F401
+        GradMode,
+        current_creation_mode,
+        enable_grad,
+        get_creation_mode,
+        get_enabled,
+        inference_mode,
+        is_grad_enabled,
+        no_grad,
+        set_creation_mode,
+        set_enabled,
+        set_grad_enabled,
+    )
+    _HAS_CYTHON_GRAD_MODE_STATE = True
+except ImportError:
+    _HAS_CYTHON_GRAD_MODE_STATE = False
 
 try:
     from ._functional_ops import (  # noqa: F401
