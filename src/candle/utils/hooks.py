@@ -1,5 +1,7 @@
 """Minimal torch.utils.hooks stub for candle compatibility."""
 
+import warnings
+
 
 class RemovableHandle:
     """A handle which provides the capability to remove a hook."""
@@ -18,3 +20,9 @@ class RemovableHandle:
 
     def __setstate__(self, state):
         self.id, self.hooks_dict = state
+
+
+def warn_if_has_hooks(tensor):
+    hooks = getattr(tensor, "_backward_hooks", None)
+    if hooks:
+        warnings.warn("backward hooks are not serialized", stacklevel=2)

@@ -320,7 +320,7 @@ class Tensor(torch._C.TensorBase):
     def _reduce_ex_internal(self, proto):
         check_serializing_named_tensor(self)
 
-        from torch.utils.hooks import warn_if_has_hooks
+        from candle.utils.hooks import warn_if_has_hooks
 
         # See Note [Don't serialize hooks]
         warn_if_has_hooks(self)
@@ -754,7 +754,7 @@ class Tensor(torch._C.TensorBase):
                 OrderedDict()
             )
 
-        from torch.utils.hooks import RemovableHandle
+        from candle.utils.hooks import RemovableHandle
 
         handle = RemovableHandle(self._post_accumulate_grad_hooks)
         self._post_accumulate_grad_hooks[handle.id] = hook
@@ -882,22 +882,22 @@ class Tensor(torch._C.TensorBase):
             return self.flip(0)
 
     def solve(self, other):
-        from torch._linalg_utils import solve
+        from candle._linalg_utils import solve
 
         return solve(self, other)
 
     def lstsq(self, other):
-        from torch._linalg_utils import lstsq
+        from candle._linalg_utils import lstsq
 
         return lstsq(self, other)
 
     def eig(self, eigenvectors=False):
-        from torch._linalg_utils import eig
+        from candle._linalg_utils import eig
 
         return eig(self, eigenvectors=eigenvectors)
 
     def symeig(self, eigenvectors=False):
-        from torch._linalg_utils import _symeig
+        from candle._linalg_utils import _symeig
 
         return _symeig(self, eigenvectors=eigenvectors)
 
@@ -1011,7 +1011,7 @@ class Tensor(torch._C.TensorBase):
         if has_torch_function_unary(self):
             return handle_torch_function(Tensor.resize, (self,), self, *sizes)
         warnings.warn("non-inplace resize is deprecated", stacklevel=2)
-        from torch.autograd._functions import Resize
+        from candle.autograd._functions import Resize
 
         return Resize.apply(self, sizes)
 
@@ -1019,7 +1019,7 @@ class Tensor(torch._C.TensorBase):
         if has_torch_function_variadic(self, tensor):
             return handle_torch_function(Tensor.resize_as, (self, tensor), self, tensor)
         warnings.warn("non-inplace resize_as is deprecated", stacklevel=2)
-        from torch.autograd._functions import Resize
+        from candle.autograd._functions import Resize
 
         return Resize.apply(self, tensor.size())
 
@@ -1512,19 +1512,13 @@ class Tensor(torch._C.TensorBase):
               If any two dimensions have the same stride, swapping these dimensions won't
               change how data is accessed, leading to multiple correct dimension orders.
             """
-            from torch.fx.experimental.symbolic_shapes import guard_or_false
-
             sizes = tensor.size()
             strides = tensor.stride()
 
-            # Check if there are any duplicate strides
             has_duplicate_strides = any(
-                guard_or_false(earlier == later)
-                for earlier, later in itertools.pairwise(strides)
+                earlier == later for earlier, later in itertools.pairwise(strides)
             )
-
-            # Check if there are any singleton dimensions
-            has_singleton_dims = any(guard_or_false(size == 1) for size in sizes)
+            has_singleton_dims = any(size == 1 for size in sizes)
 
             return has_duplicate_strides or has_singleton_dims
 
@@ -1542,7 +1536,7 @@ class Tensor(torch._C.TensorBase):
                 "The tensor does not have unique dim order, or cannot map to exact one of the given memory formats."
             )
 
-        import torch._prims_common as utils
+        from . import _prims_common as utils
 
         out_perm, raise_ambiguity = (
             utils.compute_elementwise_output_logical_to_physical_perm(
@@ -1715,7 +1709,7 @@ class Tensor(torch._C.TensorBase):
         if has_torch_function_unary(self):
             return handle_torch_function(Tensor.__dlpack_device__, (self,), self)
 
-        from torch.utils.dlpack import DLDeviceType
+        from candle.utils.dlpack import DLDeviceType
 
         device = self.device
         idx = device.index if device.index is not None else 0
