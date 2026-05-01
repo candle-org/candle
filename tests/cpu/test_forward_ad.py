@@ -1,6 +1,65 @@
+import importlib.machinery
+import threading
+
 import pytest
 import candle
+from candle._C import _forward_ad
 from candle.autograd import forward_ad
+
+
+def test_forward_ad_state_lives_in_compiled_c_boundary():
+    assert isinstance(_forward_ad.__loader__, importlib.machinery.ExtensionFileLoader)
+    assert forward_ad.enter_dual_level.__module__ == "candle._C._forward_ad"
+    assert forward_ad.exit_dual_level.__module__ == "candle._C._forward_ad"
+    assert forward_ad.get_jvp.__module__ == "candle._C._forward_ad"
+    assert forward_ad.register_jvp.__module__ == "candle._C._forward_ad"
+    assert forward_ad.temporarily_disable.__module__ == "candle._C._forward_ad"
+
+
+def test_forward_ad_level_stack_is_thread_local():
+    parent_states = []
+    child_states = []
+
+    with forward_ad.dual_level() as parent_level:
+        parent_states.append((parent_level, forward_ad._current_level()))
+
+        def _worker():
+            child_states.append(forward_ad._current_level())
+            with forward_ad.dual_level() as child_level:
+                child_states.append((child_level, forward_ad._current_level()))
+            child_states.append(forward_ad._current_level())
+
+        t = threading.Thread(target=_worker)
+        t.start()
+        t.join()
+        parent_states.append(forward_ad._current_level())
+
+    assert parent_states == [(0, 0), 0]
+    assert child_states == [-1, (0, 0), -1]
+
+
+def test_forward_ad_disabled_levels_are_thread_local():
+    child_states = []
+
+    with forward_ad.dual_level() as level:
+        with forward_ad.temporarily_disable(level):
+            assert forward_ad.is_level_disabled(level) is True
+
+            def _worker():
+                child_states.append(forward_ad.is_level_disabled(level))
+
+            t = threading.Thread(target=_worker)
+            t.start()
+            t.join()
+
+    assert child_states == [False]
+
+
+def test_forward_ad_jvp_registry_is_shared_with_dispatcher():
+    sentinel = object()
+    forward_ad.register_jvp("__test_forward_ad_registry__", sentinel)
+    assert _forward_ad.get_jvp("__test_forward_ad_registry__") is sentinel
+    assert forward_ad.get_jvp("__test_forward_ad_registry__") is sentinel
 
 
 def test_forward_ad_level_stack_and_make_unpack():
