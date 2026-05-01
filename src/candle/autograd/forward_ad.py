@@ -12,8 +12,11 @@ from .._C._forward_ad import (  # pylint: disable=import-error,no-name-in-module
     get_jvp,
     get_tangent,
     is_level_disabled,
+    make_dual,
     register_jvp,
+    set_unpacked_dual_type,
     temporarily_disable,
+    unpack_dual,
 )
 
 
@@ -63,43 +66,7 @@ def _reshape_jvp(x, shape, *, _tangents):
     return tangent.reshape(shape)
 
 
-def _validate_tangent(tensor, tangent):
-    if not (tensor.is_floating_point() or tensor.is_complex()):
-        raise ValueError(
-            f"Expected primal to be floating point or complex, but got: {tensor.dtype}"
-        )
-    if not (tangent.is_floating_point() or tangent.is_complex()):
-        raise ValueError(
-            f"Expected tangent to be floating point or complex, but got: {tangent.dtype}"
-        )
-    if tensor.shape != tangent.shape:
-        raise RuntimeError(
-            f"Expected tangent to have the same shape as primal, but got: {tangent.shape}"
-        )
-    if tensor.dtype != tangent.dtype:
-        raise RuntimeError(
-            f"Expected tangent to have the same dtype as primal, but got: {tangent.dtype}"
-        )
-
-
-def make_dual(tensor, tangent, *, level=None):
-    if level is None:
-        level = _current_level()
-    if level < 0:
-        raise RuntimeError(
-            "Trying to create a dual Tensor for forward AD but no level exists, make sure to enter_dual_level() first."
-        )
-    _validate_tangent(tensor, tangent)
-    tensor._fw_set(level, tangent)
-    return tensor
-
-
-def unpack_dual(tensor, *, level=None):
-    if level is None:
-        level = _current_level()
-    if level < 0:
-        return UnpackedDualTensor(tensor, None)
-    return UnpackedDualTensor(tensor, get_tangent(tensor, level))
+set_unpacked_dual_type(UnpackedDualTensor)
 
 
 __all__ = [

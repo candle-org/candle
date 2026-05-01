@@ -5,6 +5,12 @@ import threading
 
 _STATE = threading.local()
 _JVP_RULES = {}
+_UNPACKED_DUAL_TYPE = None
+
+
+def set_unpacked_dual_type(unpacked_dual_type):
+    global _UNPACKED_DUAL_TYPE
+    _UNPACKED_DUAL_TYPE = unpacked_dual_type
 
 
 def _level_stack():
@@ -91,3 +97,45 @@ class dual_level:
     def __exit__(self, exc_type, exc, tb):
         exit_dual_level(level=self.level)
         return False
+
+
+def _validate_tangent(tensor, tangent):
+    if not (tensor.is_floating_point() or tensor.is_complex()):
+        raise ValueError(
+            f"Expected primal to be floating point or complex, but got: {tensor.dtype}"
+        )
+    if not (tangent.is_floating_point() or tangent.is_complex()):
+        raise ValueError(
+            f"Expected tangent to be floating point or complex, but got: {tangent.dtype}"
+        )
+    if tensor.shape != tangent.shape:
+        raise RuntimeError(
+            f"Expected tangent to have the same shape as primal, but got: {tangent.shape}"
+        )
+    if tensor.dtype != tangent.dtype:
+        raise RuntimeError(
+            f"Expected tangent to have the same dtype as primal, but got: {tangent.dtype}"
+        )
+
+
+def make_dual(tensor, tangent, *, level=None):
+    if level is None:
+        level = _current_level()
+    if level < 0:
+        raise RuntimeError(
+            "Trying to create a dual Tensor for forward AD but no level exists, make sure to enter_dual_level() first."
+        )
+    _validate_tangent(tensor, tangent)
+    tensor._fw_set(level, tangent)
+    return tensor
+
+
+def unpack_dual(tensor, *, level=None):
+    unpacked_dual_type = _UNPACKED_DUAL_TYPE
+    if unpacked_dual_type is None:
+        raise RuntimeError("UnpackedDualTensor type has not been registered")
+    if level is None:
+        level = _current_level()
+    if level < 0:
+        return unpacked_dual_type(tensor, None)
+    return unpacked_dual_type(tensor, get_tangent(tensor, level))
