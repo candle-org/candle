@@ -90,6 +90,7 @@ _HAS_CYTHON_AUTOGRAD_ENGINE = False
 _HAS_CYTHON_AUTOGRAD_FUNCTION = False
 _HAS_CYTHON_AUTOGRAD_OPS = False
 _HAS_CYTHON_GRAD_MODE_STATE = False
+_HAS_CYTHON_FORWARD_AD = False
 _HAS_CYTHON_FUNCTIONAL_OPS = False
 _HAS_CYTHON_FAST_OPS = False
 _HAS_CYTHON_TENSOR_API = False
@@ -245,6 +246,26 @@ try:
     _HAS_CYTHON_GRAD_MODE_STATE = True
 except ImportError:
     _HAS_CYTHON_GRAD_MODE_STATE = False
+
+try:
+    from ._forward_ad import (  # noqa: F401
+        _JVP_RULES,
+        _STATE as _FORWARD_AD_STATE,
+        _current_level,
+        _disabled_levels,
+        _level_stack,
+        dual_level,
+        enter_dual_level,
+        exit_dual_level,
+        get_jvp,
+        get_tangent,
+        is_level_disabled,
+        register_jvp,
+        temporarily_disable,
+    )
+    _HAS_CYTHON_FORWARD_AD = True
+except ImportError:
+    _HAS_CYTHON_FORWARD_AD = False
 
 try:
     from ._functional_ops import (  # noqa: F401

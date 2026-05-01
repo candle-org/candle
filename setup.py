@@ -93,6 +93,10 @@ if _system in ("Linux", "Darwin"):
             ["src/candle/_C/_grad_mode_state.pyx"],
         ),
         Extension(
+            "candle._C._forward_ad",
+            ["src/candle/_C/_forward_ad.pyx"],
+        ),
+        Extension(
             "candle._C._functional_ops",
             ["src/candle/_C/_functional_ops.pyx"],
         ),
