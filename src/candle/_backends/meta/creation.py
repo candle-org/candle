@@ -27,7 +27,17 @@ def _resolve_stride(shape, memory_format):
         return _contiguous_stride(shape)
     if name == "channels_last":
         return _channels_last_stride(shape)
-    raise RuntimeError(f"unsupported memory format {memory_format}")
+    raise TypeError(f"unsupported memory_format {memory_format}")
+
+
+def _resolve_like_memory_format(other, memory_format):
+    name = getattr(memory_format, "_name", None)
+    if memory_format is None or name == "preserve_format":
+        if len(other.shape) == 4 and tuple(other.stride) == _channels_last_stride(other.shape):
+            from ... import channels_last
+            return channels_last
+        return None
+    return memory_format
 
 
 def tensor_create_meta(data, dtype=None, device=None, requires_grad=False):
@@ -113,6 +123,79 @@ def randn_create_meta(shape, dtype=None, device=None, requires_grad=False, memor
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
 
+def zeros_like_create_meta(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    return zeros_create_meta(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+    )
+
+
+def ones_like_create_meta(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    return ones_create_meta(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+    )
+
+
+def empty_like_create_meta(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    return empty_create_meta(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+    )
+
+
+def full_like_create_meta(other, fill_value, dtype=None, device=None, requires_grad=False, memory_format=None):
+    return full_create_meta(
+        other.shape,
+        fill_value,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+    )
+
+
+def randn_like_create_meta(other, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
+    return randn_create_meta(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+        generator=generator,
+    )
+
+
+def rand_like_create_meta(other, dtype=None, device=None, requires_grad=False, memory_format=None, generator=None):
+    return randn_create_meta(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+        generator=generator,
+    )
+
+
+def randint_like_create_meta(other, low=0, high=None, dtype=None, device=None, requires_grad=False, memory_format=None):
+    del low, high
+    return empty_create_meta(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=_resolve_like_memory_format(other, memory_format),
+    )
+
+
 __all__ = [
     "tensor_create_meta",
     "zeros_create_meta",
@@ -125,4 +208,11 @@ __all__ = [
     "eye_create_meta",
     "range_create_meta",
     "randn_create_meta",
+    "randint_like_create_meta",
+    "rand_like_create_meta",
+    "randn_like_create_meta",
+    "full_like_create_meta",
+    "empty_like_create_meta",
+    "ones_like_create_meta",
+    "zeros_like_create_meta",
 ]

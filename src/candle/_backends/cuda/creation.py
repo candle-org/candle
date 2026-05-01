@@ -19,7 +19,9 @@ def _reject_unsupported_memory_format(memory_format):
     name = getattr(memory_format, "_name", None)
     if name in (None, "contiguous_format"):
         return
-    raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
+    if name == "channels_last":
+        raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
+    raise TypeError(f"unsupported memory_format {memory_format}")
 
 
 def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_format=None):
@@ -63,3 +65,46 @@ def full_create(shape, fill_value, dtype=None, device=None):
     arr = np.full(shape, fill_value, dtype=to_numpy_dtype(dtype))
     storage = cuda_typed_storage_from_numpy(arr, dtype, device=device)
     return cy_make_tensor_from_storage(storage, shape, _contiguous_stride(shape), 0, False)
+
+def zeros_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
+    return zeros_create(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=memory_format,
+    )
+
+
+def ones_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
+    return ones_create(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=memory_format,
+    )
+
+
+def empty_like_create(other, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
+    return empty_create(
+        other.shape,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        requires_grad=requires_grad,
+        memory_format=memory_format,
+    )
+
+
+def full_like_create(other, fill_value, dtype=None, device=None, requires_grad=False, memory_format=None):
+    _reject_unsupported_memory_format(memory_format)
+    return full_create(
+        other.shape,
+        fill_value,
+        dtype=dtype or other.dtype,
+        device=device or other.device,
+        memory_format=memory_format,
+    )

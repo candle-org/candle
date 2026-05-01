@@ -4,6 +4,13 @@ from ..._dispatch.registry import registry
 from .creation import (
     arange_create_meta,
     empty_create_meta,
+    zeros_like_create_meta,
+    randint_like_create_meta,
+    rand_like_create_meta,
+    randn_like_create_meta,
+    ones_like_create_meta,
+    full_like_create_meta,
+    empty_like_create_meta,
     full_create_meta,
     eye_create_meta,
     linspace_create_meta,
@@ -200,6 +207,13 @@ registry.register("to", "meta", convert_backend.to_device)
 
 registry.register("tensor", "meta", tensor_create_meta)
 registry.register("zeros", "meta", zeros_create_meta)
+registry.register("zeros_like", "meta", zeros_like_create_meta)
+registry.register("ones_like", "meta", ones_like_create_meta)
+registry.register("empty_like", "meta", empty_like_create_meta)
+registry.register("full_like", "meta", full_like_create_meta)
+registry.register("randint_like", "meta", randint_like_create_meta)
+registry.register("rand_like", "meta", rand_like_create_meta)
+registry.register("randn_like", "meta", randn_like_create_meta)
 registry.register("ones", "meta", ones_create_meta)
 registry.register("empty", "meta", empty_create_meta)
 registry.register("arange", "meta", arange_create_meta)

@@ -356,6 +356,13 @@ class TestCreationMemoryFormat:
         with pytest.raises(TypeError, match="memory_format"):
             torch.empty((2, 3, 4, 5), memory_format=torch.preserve_format)
 
+    def test_creation_wrappers_do_not_define_python_memory_format_validator(self):
+        assert hasattr(torch._functional, "_unsupported_memory_format") is False
+
+        out = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+        assert out.stride() == (60, 1, 15, 3)
+        assert out.is_contiguous(memory_format=torch.channels_last) is True
+
     def test_empty_like_preserves_channels_last_by_default(self):
         base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
         out = torch.empty_like(base)
@@ -451,6 +458,24 @@ class TestCreationMemoryFormat:
         out = torch.zeros_like(base)
         assert out.stride() == (60, 1, 15, 3)
         assert out.is_contiguous(memory_format=torch.channels_last) is True
+
+    def test_like_creation_does_not_resolve_preserve_format_in_python(self, monkeypatch):
+        base = torch.empty((2, 3, 4, 5), memory_format=torch.channels_last)
+
+        def _fail_is_contiguous(*args, **kwargs):
+            raise AssertionError("like creation should leave memory_format policy to creation backends")
+
+        monkeypatch.setattr(type(base), "is_contiguous", _fail_is_contiguous)
+
+        out = torch.zeros_like(base)
+        assert out.stride() == (60, 1, 15, 3)
+
+    def test_meta_random_like_preserves_channels_last_by_default(self):
+        base = torch.empty((2, 3, 4, 5), device="meta", memory_format=torch.channels_last)
+        for create in (torch.rand_like, torch.randn_like, lambda x: torch.randint_like(x, high=10)):
+            out = create(base)
+            assert out.stride() == (60, 1, 15, 3)
+            assert out.is_contiguous(memory_format=torch.channels_last) is True
 
     def test_clone_channels_last_from_contiguous(self):
         base = torch.empty((2, 3, 4, 5))
