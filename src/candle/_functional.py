@@ -1864,7 +1864,7 @@ def square(a):
 # ---------------------------------------------------------------------------
 
 def clone(a, *, memory_format=None):
-    return a.clone(memory_format=memory_format) if memory_format else a.clone()
+    return a.clone(memory_format=memory_format)
 
 
 def detach(a):
@@ -1872,7 +1872,7 @@ def detach(a):
 
 
 def contiguous(a, memory_format=None):
-    return a.contiguous(memory_format=memory_format) if memory_format else a.contiguous()
+    return a.contiguous(memory_format=memory_format)
 
 
 def index_add(a, dim, index, source, *, alpha=1.0):

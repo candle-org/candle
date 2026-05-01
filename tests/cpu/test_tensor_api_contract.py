@@ -11,6 +11,8 @@ Coverage:
   5. backward
   6. Property stability: .grad, .shape, .device, .dtype
 """
+import builtins
+
 import pytest
 import candle as torch
 from candle._tensor import Tensor
@@ -1250,6 +1252,156 @@ def test_size_and_dim_contracts():
     assert a.dim() == 2
     with pytest.raises(IndexError):
         a.size(2)
+
+
+class _MemoryFormatRecorder:
+    seen = object()
+
+    def clone(self, *, memory_format):
+        self.seen = memory_format
+        return self
+
+    def contiguous(self, memory_format):
+        self.seen = memory_format
+        return self
+
+
+def test_top_level_clone_passes_none_memory_format():
+    x = _MemoryFormatRecorder()
+    assert torch.clone(x) is x
+    assert x.seen is None
+
+
+def test_top_level_contiguous_passes_none_memory_format():
+    x = _MemoryFormatRecorder()
+    assert torch.contiguous(x) is x
+    assert x.seen is None
+
+
+def test_dim_order_uses_candle_prims_common(monkeypatch):
+    real_import = builtins.__import__
+
+    def reject_external_torch_prims(name, *args, **kwargs):
+        if name == "torch._prims_common":
+            raise AssertionError("dim_order should use candle._prims_common")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_external_torch_prims)
+
+    assert torch.empty((2, 3, 4, 5)).dim_order() == (0, 1, 2, 3)
+
+
+def test_dim_order_ambiguity_check_does_not_import_torch_fx(monkeypatch):
+    real_import = builtins.__import__
+
+    def reject_external_torch_fx(name, *args, **kwargs):
+        if name == "torch.fx.experimental.symbolic_shapes":
+            raise AssertionError("dim_order should not import torch.fx")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_external_torch_fx)
+
+    assert torch.empty((2, 3, 4, 5)).dim_order(ambiguity_check=True) == (0, 1, 2, 3)
+
+
+def test_register_post_accumulate_grad_hook_uses_candle_hooks(monkeypatch):
+    real_import = builtins.__import__
+
+    def reject_external_torch_hooks(name, *args, **kwargs):
+        if name == "torch.utils.hooks":
+            raise AssertionError("register_post_accumulate_grad_hook should use candle.utils.hooks")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_external_torch_hooks)
+
+    x = torch.tensor([1.0], requires_grad=True)
+    x._post_accumulate_grad_hooks = None
+    handle = x.register_post_accumulate_grad_hook(lambda grad: None)
+    assert handle.id in x._post_accumulate_grad_hooks
+    handle.remove()
+    assert handle.id not in x._post_accumulate_grad_hooks
+
+
+def test_reduce_ex_uses_candle_hook_warning(monkeypatch):
+    real_import = builtins.__import__
+
+    def reject_external_torch_hooks(name, *args, **kwargs):
+        if name == "torch.utils.hooks":
+            raise AssertionError("Tensor.__reduce_ex__ should use candle.utils.hooks")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_external_torch_hooks)
+
+    x = torch.tensor([1.0])
+    with pytest.raises(AttributeError, match="_serialization_tls"):
+        x._reduce_ex_internal(4)
+
+
+def test_dlpack_device_uses_candle_enum(monkeypatch):
+    real_import = builtins.__import__
+
+    def reject_external_torch_dlpack(name, *args, **kwargs):
+        if name == "torch.utils.dlpack":
+            raise AssertionError("Tensor.__dlpack_device__ should not import torch.utils.dlpack")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_external_torch_dlpack)
+
+    device_type, index = torch.tensor([1.0]).__dlpack_device__()
+    assert int(device_type) == 1
+    assert index == 0
+
+
+def test_legacy_tensor_linalg_methods_use_candle_linalg(monkeypatch):
+    real_import = builtins.__import__
+
+    def reject_external_torch_linalg_utils(name, *args, **kwargs):
+        if name == "torch._linalg_utils":
+            raise AssertionError("legacy Tensor linalg methods should not import torch._linalg_utils")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_external_torch_linalg_utils)
+
+    a = torch.tensor([[3.0, 1.0], [1.0, 2.0]])
+    b = torch.tensor([[9.0], [8.0]])
+    assert b.solve(a).shape == (2, 1)
+    assert b.lstsq(a).solution.shape == (2, 1)
+    assert a.eig(eigenvectors=True)[0].shape == (2,)
+    assert a.symeig(eigenvectors=True)[0].shape == (2,)
+
+
+def test_tensor_resize_uses_candle_resize_helper(monkeypatch):
+    real_import = builtins.__import__
+
+    def reject_external_torch_resize(name, *args, **kwargs):
+        if name == "torch.autograd._functions":
+            raise AssertionError("Tensor.resize should not import torch.autograd._functions")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_external_torch_resize)
+
+    x = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    out = x.resize(2, 2)
+    assert out.shape == (2, 2)
+    assert out.tolist() == [[1.0, 2.0], [3.0, 4.0]]
+    assert out is not x
+
+
+def test_tensor_resize_as_uses_candle_resize_helper(monkeypatch):
+    real_import = builtins.__import__
+
+    def reject_external_torch_resize(name, *args, **kwargs):
+        if name == "torch.autograd._functions":
+            raise AssertionError("Tensor.resize_as should not import torch.autograd._functions")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", reject_external_torch_resize)
+
+    x = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    out = x.resize_as(torch.empty((2, 2)))
+    assert out.shape == (2, 2)
+    assert out.tolist() == [[1.0, 2.0], [3.0, 4.0]]
+    assert out is not x
 
 
 # ===========================================================================
