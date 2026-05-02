@@ -1,6 +1,9 @@
+import importlib.machinery
+
 import pytest
 import numpy as np
 import candle as torch
+from candle._C import _autograd_function
 from candle.autograd import Function
 from candle.autograd.engine import backward, grad
 
@@ -12,6 +15,11 @@ from candle.autograd.engine import backward, grad
 def _allclose(t, expected, atol=1e-6):
     arr = t._numpy_view().flatten()
     return np.allclose(arr, expected, atol=atol)
+
+
+def test_function_meta_lives_in_compiled_c_boundary():
+    assert isinstance(_autograd_function.__loader__, importlib.machinery.ExtensionFileLoader)
+    assert type(Function).__module__ == "candle._C._autograd_function"
 
 
 # ---------------------------------------------------------------------------
