@@ -2,6 +2,7 @@ from .._C._autograd_function import (  # pylint: disable=import-error,no-name-in
     FunctionCtx,
     FunctionMeta,
     _function_apply,
+    once_differentiable,
 )
 
 
@@ -30,10 +31,3 @@ class Function(metaclass=FunctionMeta):
 
 class InplaceFunction(Function):
     pass
-
-
-def once_differentiable(fn):
-    def wrapper(*args, **kwargs):
-        return fn(*args, **kwargs)
-
-    return wrapper

@@ -4,7 +4,7 @@ import pytest
 import numpy as np
 import candle as torch
 from candle._C import _autograd_function
-from candle.autograd import Function
+from candle.autograd import Function, function
 from candle.autograd.engine import backward, grad
 
 
@@ -20,6 +20,10 @@ def _allclose(t, expected, atol=1e-6):
 def test_function_meta_lives_in_compiled_c_boundary():
     assert isinstance(_autograd_function.__loader__, importlib.machinery.ExtensionFileLoader)
     assert type(Function).__module__ == "candle._C._autograd_function"
+
+
+def test_once_differentiable_lives_in_compiled_c_boundary():
+    assert function.once_differentiable.__module__ == "candle._C._autograd_function"
 
 
 # ---------------------------------------------------------------------------
