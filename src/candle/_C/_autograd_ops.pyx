@@ -55,7 +55,7 @@ def _backward_dispatch_keyset(raw_keyset, autograd_keyset):
 def _autograd_unary_passthrough(name):
     """Wrapper factory for ops that just pass through to device and record grad_fn."""
     from candle.autograd.grad_mode import GradMode
-    from candle.autograd.anomaly_mode import annotate_node_creation
+    from candle._C._autograd_engine import annotate_node_creation
     from candle._dispatch.dispatcher import current_dispatch_keyset, redispatch
     from candle._C._autograd_node import Node
 
@@ -83,7 +83,7 @@ def _autograd_unary_passthrough(name):
 def _autograd_binary(name, backward_impl, *, save_inputs=True):
     """Wrapper factory for binary ops (two tensor inputs, no extra args)."""
     from candle.autograd.grad_mode import GradMode
-    from candle.autograd.anomaly_mode import annotate_node_creation
+    from candle._C._autograd_engine import annotate_node_creation
     from candle._dispatch.dispatcher import current_dispatch_keyset, redispatch
     from candle._C._autograd_node import Node
 
@@ -121,7 +121,7 @@ def _autograd_binary(name, backward_impl, *, save_inputs=True):
 def _autograd_binary_args(name, backward_impl, *, save_inputs=True):
     """Wrapper factory for binary ops with extra positional/keyword args."""
     from candle.autograd.grad_mode import GradMode
-    from candle.autograd.anomaly_mode import annotate_node_creation
+    from candle._C._autograd_engine import annotate_node_creation
     from candle._dispatch.dispatcher import current_dispatch_keyset, redispatch
     from candle._C._autograd_node import Node
 
@@ -157,7 +157,7 @@ def _autograd_binary_args(name, backward_impl, *, save_inputs=True):
 def _autograd_unary_args(name, backward_impl, *, cpu_only=False, save_input=True):
     """Wrapper factory for unary ops with extra positional/keyword args."""
     from candle.autograd.grad_mode import GradMode
-    from candle.autograd.anomaly_mode import annotate_node_creation
+    from candle._C._autograd_engine import annotate_node_creation
     from candle._dispatch.dispatcher import current_dispatch_keyset, redispatch
     from candle._C._autograd_node import Node
 
@@ -213,7 +213,7 @@ def _autograd_norm(name, backward_impl):
     Also tracks weight and bias as Node inputs so their gradients propagate.
     """
     from candle.autograd.grad_mode import GradMode
-    from candle.autograd.anomaly_mode import annotate_node_creation
+    from candle._C._autograd_engine import annotate_node_creation
     from candle._dispatch.dispatcher import current_dispatch_keyset, redispatch
     from candle._C._autograd_node import Node
 

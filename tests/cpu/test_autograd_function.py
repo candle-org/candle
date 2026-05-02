@@ -3,7 +3,7 @@ import importlib.machinery
 import pytest
 import numpy as np
 import candle as torch
-from candle._C import _autograd_function
+from candle._C import _autograd_engine, _autograd_function
 from candle.autograd import Function, function
 from candle.autograd.engine import backward, grad
 
@@ -24,6 +24,15 @@ def test_function_meta_lives_in_compiled_c_boundary():
 
 def test_once_differentiable_lives_in_compiled_c_boundary():
     assert function.once_differentiable.__module__ == "candle._C._autograd_function"
+
+
+def test_anomaly_helpers_live_in_compiled_c_boundary():
+    import candle.autograd.anomaly_mode as anomaly_mode
+
+    assert anomaly_mode.annotate_node_creation.__module__ == "candle._C._autograd_engine"
+    assert anomaly_mode.report_anomaly.__module__ == "candle._C._autograd_engine"
+    assert anomaly_mode.annotate_node_creation is _autograd_engine.annotate_node_creation
+    assert anomaly_mode.report_anomaly is _autograd_engine.report_anomaly
 
 
 # ---------------------------------------------------------------------------

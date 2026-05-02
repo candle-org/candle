@@ -338,7 +338,7 @@ class CustomOpHandle:
         def autograd_wrapper(*args, **kwargs):
             from .autograd.function import FunctionCtx
             from .autograd.node import Node
-            from .autograd.anomaly_mode import annotate_node_creation
+            from ._C._autograd_engine import annotate_node_creation  # pylint: disable=import-error,no-name-in-module
             from .autograd.grad_mode import is_grad_enabled
             from ._dispatch.dispatcher import redispatch, current_dispatch_keyset
             from ._tensor import Tensor
