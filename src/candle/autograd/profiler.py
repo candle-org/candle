@@ -1,19 +1,6 @@
-from contextlib import contextmanager
-
-
-def emit_itt(*args, **kwargs):  # noqa: ARG001
-    return None
-
-
-def emit_nvtx(*args, **kwargs):  # noqa: ARG001
-    return None
-
-
-@contextmanager
-def profile(*args, **kwargs):  # noqa: ARG001
-    yield None
-
-
-@contextmanager
-def record_function(*args, **kwargs):  # noqa: ARG001
-    yield None
+from .._C._autograd_profiler import (  # pylint: disable=import-error,no-name-in-module
+    emit_itt,
+    emit_nvtx,
+    profile,
+    record_function,
+)
