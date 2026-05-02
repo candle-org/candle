@@ -600,6 +600,11 @@ class TestHelperAndGradBirthConsistency:
         assert b._device_type == ref._device_type
         assert b._dispatch_keys == ref._dispatch_keys
 
+    def test_reduce_grad_lives_in_compiled_c_boundary(self):
+        from candle.autograd.utils import reduce_grad
+
+        assert reduce_grad.__module__ == "candle._C._autograd_utils"
+
     def test_reduce_grad_cpu_birth_matches_public_metadata(self):
         import candle as torch
         from candle.autograd.utils import reduce_grad
