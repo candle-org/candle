@@ -1,3 +1,12 @@
+def test_autograd_profiler_shims_live_in_compiled_c_boundary():
+    import candle.autograd.profiler as autograd_profiler
+
+    assert autograd_profiler.emit_itt.__module__ == "candle._C._autograd_profiler"
+    assert autograd_profiler.emit_nvtx.__module__ == "candle._C._autograd_profiler"
+    assert autograd_profiler.profile.__module__ == "candle._C._autograd_profiler"
+    assert autograd_profiler.record_function.__module__ == "candle._C._autograd_profiler"
+
+
 import inspect
 import os
 import json
