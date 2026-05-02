@@ -200,12 +200,12 @@ cdef class _GraphTask:
             return nullcontext()
         return no_grad()
 
-    def _accumulate_tensor_grad(self, tensor, grad):
+    def _accumulate_tensor_grad(self, tensor, grad, mark_create_graph=True, apply_hooks=True):
         cdef bint should_touch_leaf
         cdef object acc_node
         cdef bint should_accumulate_into_grad
         cdef object prev
-        cdef bint preserve_reference
+        cdef object stored_grad
 
         should_touch_leaf = (
             self.inputs is None or tensor.grad_fn is not None or id(tensor) in self.input_ids
@@ -213,11 +213,12 @@ cdef class _GraphTask:
         if not should_touch_leaf:
             return grad
 
-        grad = _apply_hooks(tensor, grad)
+        if apply_hooks:
+            grad = _apply_hooks(tensor, grad)
         acc_node = getattr(tensor, "_accumulate_grad_node", None)
         if acc_node is not None:
             grad = acc_node.apply_prehooks(grad)
-        if self.create_graph and grad is not None:
+        if mark_create_graph and self.create_graph and grad is not None:
             grad.requires_grad = True
         should_accumulate_into_grad = (
             self.accumulate_grad and (
@@ -229,7 +230,12 @@ cdef class _GraphTask:
         if should_accumulate_into_grad:
             if tensor.grad_fn is None or getattr(tensor, "_retain_grad", False):
                 if tensor.grad is None:
-                    tensor.grad = grad
+                    if tensor.grad_fn is None:
+                        stored_grad = grad.clone()
+                        stored_grad.requires_grad = False
+                        tensor.grad = stored_grad
+                    else:
+                        tensor.grad = grad
                 else:
                     preserve_reference = not self.create_graph
                     if getattr(tensor.grad, "is_sparse", False) and not getattr(grad, "is_sparse", False):
@@ -421,6 +427,7 @@ def _run_backward(
     accumulate_grad,
     inputs=None,
     allow_unused=False,
+    materialize_grads=False,
 ):
     cdef _GraphTask task = _GraphTask(
         _build_dependencies(outputs, inputs),
@@ -442,7 +449,12 @@ def _run_backward(
                 continue
             grad = _apply_hooks(out, grad)
             if out.grad_fn is None:
-                task._accumulate_tensor_grad(out, grad)
+                task._accumulate_tensor_grad(
+                    out,
+                    grad,
+                    mark_create_graph=False,
+                    apply_hooks=False,
+                )
             else:
                 task._accumulate_node_grad(out.grad_fn, grad)
         task.run()
@@ -454,10 +466,16 @@ def _run_backward(
     results = []
     for inp in inputs:
         grad_val = task.grads_map.get(inp)
-        if grad_val is None and not allow_unused:
-            raise RuntimeError(
-                "One of the differentiated Tensors appears to not have been used in the graph."
-            )
+        if grad_val is None:
+            if materialize_grads:
+                from candle._functional import zeros_like
+                grad_val = zeros_like(inp)
+                if create_graph:
+                    grad_val.requires_grad = True
+            elif not allow_unused:
+                raise RuntimeError(
+                    "One of the differentiated Tensors appears to not have been used in the graph."
+                )
         results.append(grad_val)
     return tuple(results)
 
@@ -480,19 +498,36 @@ def backward(tensor, grad=None, retain_graph=False, create_graph=False, inputs=N
     )
 
 
-def grad(outputs, inputs, grad_outputs=None, retain_graph=None, create_graph=False, allow_unused=False):
+def grad(
+    outputs,
+    inputs,
+    grad_outputs=None,
+    retain_graph=None,
+    create_graph=False,
+    allow_unused=None,
+    materialize_grads=False,
+):
     cdef object outs
     cdef object ins
+    materialize_grads = bool(materialize_grads)
+    if materialize_grads:
+        if allow_unused is False:
+            raise ValueError(
+                "Expected allow_unused to be True or not passed when "
+                "materialize_grads=True, but got: allow_unused=False."
+            )
+        allow_unused = True
+    elif allow_unused is None:
+        allow_unused = False
     if retain_graph is None:
         retain_graph = create_graph
     outs = outputs if isinstance(outputs, (tuple, list)) else (outputs,)
     ins = inputs if isinstance(inputs, (tuple, list)) else (inputs,)
-    if all(out.grad_fn is None and not out.requires_grad for out in outs):
-        if allow_unused:
-            return tuple(None for _ in ins)
-        raise RuntimeError(
-            "element 0 of tensors does not require grad and does not have a grad_fn"
-        )
+    for i, out in enumerate(outs):
+        if out.grad_fn is None and not out.requires_grad:
+            raise RuntimeError(
+                f"element {i} of tensors does not require grad and does not have a grad_fn"
+            )
     if grad_outputs is None:
         grad_outputs = []
         for out in outs:
@@ -504,6 +539,14 @@ def grad(outputs, inputs, grad_outputs=None, retain_graph=None, create_graph=Fal
         grad_outputs = grad_outputs if isinstance(grad_outputs, (tuple, list)) else (grad_outputs,)
         if len(grad_outputs) != len(outs):
             raise RuntimeError("grad_outputs must be the same length as outputs")
+    if (
+        len(outs) == 1
+        and len(ins) == 1
+        and outs[0] is ins[0]
+        and outs[0].grad_fn is None
+        and grad_outputs[0] is not None
+    ):
+        return (_apply_hooks(outs[0], grad_outputs[0]),)
     return _run_backward(
         outs,
         grad_outputs,
@@ -512,4 +555,5 @@ def grad(outputs, inputs, grad_outputs=None, retain_graph=None, create_graph=Fal
         accumulate_grad=False,
         inputs=ins,
         allow_unused=allow_unused,
+        materialize_grads=materialize_grads,
     )
