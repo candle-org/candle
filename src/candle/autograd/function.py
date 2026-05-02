@@ -1,6 +1,7 @@
 from .._C._autograd_function import (  # pylint: disable=import-error,no-name-in-module
     FunctionCtx,
     FunctionMeta,
+    _apply_custom_op_autograd,
     _function_apply,
     once_differentiable,
 )

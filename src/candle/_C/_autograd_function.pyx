@@ -212,6 +212,118 @@ def _function_apply(cls, args, kwargs):
     return output
 
 
+def _apply_custom_op_autograd(backward_fn, args, output, *, setup_context=None, name=None):
+    import weakref
+
+    from candle._tensor import Tensor
+    from candle._C._autograd_node import Node, InputMetadata
+    from candle._C._autograd_engine import annotate_node_creation
+
+    cdef FunctionCtx ctx = FunctionCtx()
+    ctx._needs_input_grad = tuple(
+        isinstance(a, Tensor) and a.requires_grad for a in args
+    )
+
+    if setup_context is not None:
+        setup_context(ctx, args, output)
+
+    cdef set dirty = ctx._dirty
+    cdef object dirty_obj
+    cdef set seen_dirty_ids
+    cdef object dirty_id
+    if dirty:
+        seen_dirty_ids = set()
+        for dirty_obj in args:
+            if isinstance(dirty_obj, Tensor) and id(dirty_obj) in dirty:
+                dirty_id = id(dirty_obj)
+                if dirty_id in seen_dirty_ids:
+                    continue
+                dirty_obj._bump_version()
+                seen_dirty_ids.add(dirty_id)
+
+    cdef list input_tensors = [a for a in args if isinstance(a, Tensor) and a.requires_grad]
+    cdef bint materialize = ctx._materialize_grads
+    cdef set non_diff = ctx._non_differentiable
+    cdef object o
+    cdef object node
+    cdef object node_holder
+    cdef object first_saved_list = None
+    cdef tuple outputs
+    cdef list differentiable_outputs = []
+    cdef int diff_index
+    cdef object node_name = name or f"{getattr(backward_fn, '__name__', 'CustomOp')}Backward"
+
+    if isinstance(output, Tensor):
+        def _backward(grad):
+            if materialize and grad is None:
+                from candle._functional import zeros_like
+                grad = zeros_like(output)
+            return backward_fn(ctx, grad)
+
+        node = Node(_backward, input_tensors, name=node_name)
+        annotate_node_creation(node)
+        node._input_metadata = [InputMetadata(t) for t in input_tensors]
+
+        if ctx._to_save is not None:
+            node.save_for_backward(*ctx._to_save)
+            ctx._saved_tensors = node._saved_tensors_list
+
+        _mark_output(output, non_diff, node, Tensor, 0)
+        return output
+
+    if isinstance(output, tuple):
+        outputs = output
+        for o in outputs:
+            if isinstance(o, Tensor) and id(o) not in non_diff:
+                differentiable_outputs.append(o)
+
+        for diff_index, o in enumerate(differentiable_outputs):
+            node_holder = {}
+
+            def _backward(grad, _output=o, _diff_index=diff_index, _diff_outputs=tuple(differentiable_outputs), _node_holder=node_holder):
+                cdef list backward_grads
+                cdef int i
+                cdef object _node
+                if materialize and grad is None:
+                    from candle._functional import zeros_like
+                    grad = zeros_like(_output)
+                backward_grads = []
+                for i, _out in enumerate(_diff_outputs):
+                    if i == _diff_index:
+                        backward_grads.append(grad)
+                    elif materialize:
+                        from candle._functional import zeros_like
+                        backward_grads.append(zeros_like(_out))
+                    else:
+                        backward_grads.append(None)
+                if ctx._to_save is not None:
+                    _node = _node_holder["node"]
+                    ctx._saved_tensors = _node._saved_tensors_list
+                return backward_fn(ctx, *backward_grads)
+
+            node = Node(_backward, input_tensors, name=node_name)
+            annotate_node_creation(node)
+            node._input_metadata = [InputMetadata(t) for t in input_tensors]
+
+            if ctx._to_save is not None:
+                node.save_for_backward(*ctx._to_save)
+                if first_saved_list is None:
+                    first_saved_list = node._saved_tensors_list
+
+            node_holder["node"] = weakref.proxy(node)
+            _mark_output(o, non_diff, node, Tensor, diff_index)
+
+        for o in outputs:
+            if not (isinstance(o, Tensor) and id(o) not in non_diff):
+                _mark_output(o, non_diff, None, Tensor, 0)
+
+        if first_saved_list is not None:
+            ctx._saved_tensors = first_saved_list
+        return output
+
+    return output
+
+
 cdef void _mark_output(object o, set non_diff, object node, object Tensor, int output_nr=0):
     """Mark a single output tensor with grad_fn / non-differentiable."""
     cdef object view_meta

@@ -336,20 +336,16 @@ class CustomOpHandle:
         qualname = self._qualname
 
         def autograd_wrapper(*args, **kwargs):
-            from .autograd.function import FunctionCtx
-            from .autograd.node import Node
-            from ._C._autograd_engine import annotate_node_creation  # pylint: disable=import-error,no-name-in-module
+            from .autograd.function import _apply_custom_op_autograd
             from .autograd.grad_mode import is_grad_enabled
             from ._dispatch.dispatcher import redispatch, current_dispatch_keyset
             from ._tensor import Tensor
 
-            # Check if any input requires grad
             needs_grad = any(
                 isinstance(a, Tensor) and a.requires_grad
                 for a in args
             ) and is_grad_enabled()
 
-            # Strip autograd keys and redispatch
             keyset = current_dispatch_keyset()
             inner_keyset = keyset.without(_AUTOGRAD_KEYS)
             output = redispatch(qualname, inner_keyset, *args, **kwargs)
@@ -357,41 +353,13 @@ class CustomOpHandle:
             if not needs_grad:
                 return output
 
-            # Build autograd graph
-            ctx = FunctionCtx()
-            input_tensors = [a for a in args if isinstance(a, Tensor) and a.requires_grad]
-            ctx._needs_input_grad = tuple(
-                isinstance(a, Tensor) and a.requires_grad for a in args
+            return _apply_custom_op_autograd(
+                backward_fn,
+                args,
+                output,
+                setup_context=setup_context,
+                name=f"{backward_fn.__name__}Backward",
             )
-
-            if setup_context is not None:
-                setup_context(ctx, args, output)
-
-            materialize = ctx._materialize_grads
-
-            def _backward(grad):
-                if materialize and grad is None:
-                    from ._functional import zeros_like
-                    grad = zeros_like(output)
-                return backward_fn(ctx, grad)
-
-            node = Node(_backward, input_tensors, name=f"{backward_fn.__name__}Backward")
-            annotate_node_creation(node)
-
-            if ctx._to_save is not None:
-                node.save_for_backward(*ctx._to_save)
-                ctx._saved_tensors = node._saved_tensors_list
-
-            if isinstance(output, Tensor):
-                output.grad_fn = node
-                output.requires_grad = True
-            elif isinstance(output, tuple):
-                for o in output:
-                    if isinstance(o, Tensor):
-                        o.grad_fn = node
-                        o.requires_grad = True
-
-            return output
 
         # Register the autograd wrapper for all autograd dispatch keys
         for key in (DispatchKey.Autograd, DispatchKey.AutogradCPU,
