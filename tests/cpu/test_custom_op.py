@@ -245,3 +245,74 @@ class TestRegisterAutograd:
         x = torch.tensor([3.0])  # no requires_grad
         y = no_grad_op(x)
         assert y.grad_fn is None
+
+    def test_autograd_multi_output_uses_distinct_output_slots(self):
+        @custom_op("testns::split_pair", mutates_args=(), device_types="cpu")
+        def split_pair(x: Tensor):
+            return x.clone(), x.clone()
+
+        def bwd(ctx, grad_a, grad_b):
+            if grad_a is None:
+                grad_a = torch.zeros_like(ctx.saved_tensors[0])
+            if grad_b is None:
+                grad_b = torch.zeros_like(ctx.saved_tensors[0])
+            return (grad_a + grad_b,)
+
+        def setup(ctx, inputs, output):
+            (x,) = inputs
+            ctx.save_for_backward(x)
+
+        split_pair.register_autograd(bwd, setup_context=setup)
+
+        x = torch.tensor([3.0], requires_grad=True)
+        a, b = split_pair(x)
+
+        assert a.output_nr == 0
+        assert b.output_nr == 1
+
+        backward(b.sum())
+        assert _allclose(x.grad, [1.0])
+
+    def test_autograd_mark_non_differentiable_clears_grad_fn(self):
+        @custom_op("testns::nondiff", mutates_args=(), device_types="cpu")
+        def nondiff(x: Tensor):
+            return x.clone()
+
+        def setup(ctx, inputs, output):
+            ctx.mark_non_differentiable(output)
+
+        def bwd(ctx, grad_output):
+            raise AssertionError("backward should not run for non-differentiable output")
+
+        nondiff.register_autograd(bwd, setup_context=setup)
+
+        x = torch.tensor([2.0], requires_grad=True)
+        y = nondiff(x)
+
+        assert y.grad_fn is None
+        assert y.requires_grad is False
+
+    def test_autograd_set_materialize_grads_false_preserves_none_for_missing_output_grad(self):
+        seen = {}
+
+        @custom_op("testns::pair_materialize", mutates_args=(), device_types="cpu")
+        def pair_materialize(x: Tensor):
+            return x.clone(), x.clone()
+
+        def setup(ctx, inputs, output):
+            ctx.set_materialize_grads(False)
+
+        def bwd(ctx, grad_a, grad_b):
+            seen["grad_a_is_none"] = grad_a is None
+            seen["grad_b_is_none"] = grad_b is None
+            grad_a = torch.zeros((1,)) if grad_a is None else grad_a
+            grad_b = torch.zeros((1,)) if grad_b is None else grad_b
+            return (grad_a + grad_b,)
+
+        pair_materialize.register_autograd(bwd, setup_context=setup)
+
+        x = torch.tensor([4.0], requires_grad=True)
+        a, b = pair_materialize(x)
+        backward(a.sum())
+
+        assert seen == {"grad_a_is_none": False, "grad_b_is_none": True}
