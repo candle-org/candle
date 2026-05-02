@@ -23,6 +23,13 @@ class FunctionMeta(type):
         else:
             cls._new_style = False
 
+
+def once_differentiable(fn):
+    def wrapper(*args, **kwargs):
+        return fn(*args, **kwargs)
+
+    return wrapper
+
 cdef class FunctionCtx:
     """Context object passed to Function.forward() for saving state needed by backward()."""
     cdef public object _to_save
