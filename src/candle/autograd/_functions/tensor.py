@@ -1,31 +1,11 @@
-import operator
-from functools import reduce
+"""Public shell for built-in autograd Function classes.
 
-from ..function import Function
+The runtime owner is ``candle._C._autograd_functions``; this module is only a
+thin re-export so that ``candle.autograd._functions.tensor.Resize`` (the public
+name PyTorch users expect) keeps working.
+"""
+
+from ..._C._autograd_functions import Resize  # pylint: disable=import-error,no-name-in-module
 
 
-class Resize(Function):
-    @staticmethod
-    def forward(ctx, tensor, sizes):
-        ctx.sizes = tuple(sizes)
-        ctx.numel = reduce(operator.mul, ctx.sizes, 1)
-        if tensor.numel() != ctx.numel:
-            raise RuntimeError(
-                (
-                    "requested resize to {} ({} elements in total), "
-                    "but the given tensor has a size of {} ({} elements). "
-                    "autograd's resize can only change the shape of a given "
-                    "tensor, while preserving the number of elements. "
-                ).format(
-                    "x".join(map(str, ctx.sizes)),
-                    ctx.numel,
-                    "x".join(map(str, tensor.size())),
-                    tensor.numel(),
-                )
-            )
-        ctx.input_sizes = tensor.size()
-        return tensor.contiguous().view(*ctx.sizes)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return grad_output.contiguous().view(ctx.input_sizes), None
+__all__ = ["Resize"]
