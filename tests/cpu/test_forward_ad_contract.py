@@ -6,6 +6,16 @@ from candle.autograd import forward_ad
 
 
 @pytest.mark.parametrize(
+    "op_name",
+    ["add", "mul", "sum", "mean", "view", "reshape", "neg", "exp", "sin", "cos", "tanh"],
+)
+def test_forward_ad_default_jvp_rules_live_in_compiled_c_boundary(op_name):
+    rule = forward_ad.get_jvp(op_name)
+    assert rule is not None
+    assert rule.__module__ == "candle._C._forward_ad"
+
+
+@pytest.mark.parametrize(
     ("op_name", "expected_fn"),
     [
         ("neg", lambda x, tx: -tx),
