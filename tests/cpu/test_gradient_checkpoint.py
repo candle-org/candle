@@ -7,7 +7,12 @@ import numpy as np
 import candle as torch
 import candle.nn as nn
 import candle.nn.functional as F
+import candle.utils.checkpoint as checkpoint_mod
 from candle.utils.checkpoint import checkpoint, checkpoint_sequential
+
+
+def test_checkpoint_node_lives_in_compiled_c_boundary():
+    assert checkpoint_mod._CheckpointNode.__module__ == "candle._C._autograd_checkpoint"
 
 
 def _make_mlp():
