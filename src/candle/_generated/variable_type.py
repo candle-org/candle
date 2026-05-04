@@ -4350,88 +4350,6 @@ def sqrt_autograd(self_, **_kwargs):
     return result
 
 
-def squeeze_autograd(self_, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("squeeze", raw_keyset, self_, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def squeeze_dim_autograd(self_, dim, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("squeeze", raw_keyset, self_, dim, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeDimBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def squeeze_dims_autograd(self_, dim, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("squeeze", raw_keyset, self_, dim, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeDimsBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def squeeze__autograd(self_, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("squeeze_", raw_keyset, self_, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def squeeze__dim_autograd(self_, dim, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("squeeze_", raw_keyset, self_, dim, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeDimBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def squeeze__dims_autograd(self_, dim, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("squeeze_", raw_keyset, self_, dim, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeDimsBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def std_correction_autograd(self_, dim=None, correction=None, keepdim=False, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -12624,70 +12542,6 @@ def sqrt_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
     return result
 
 
-def squeeze_autograd_post(result, self_, *_squeeze_args, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def squeeze_dim_autograd_post(result, self_, dim, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeDimBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def squeeze_dims_autograd_post(result, self_, dim, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeDimsBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def squeeze__autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def squeeze__dim_autograd_post(result, self_, dim, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeDimBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def squeeze__dims_autograd_post(result, self_, dim, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SqueezeDimsBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def std_correction_autograd_post(result, self_, dim=None, correction=None, keepdim=False, *, raw_keyset, active_keyset, **_kwargs):
     if GradMode.enabled and (self_.requires_grad):
         grad_fn = _F.StdCorrectionBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
@@ -17783,35 +17637,6 @@ def fft_rfftn_autograd_post(result, input, s=None, dim=None, norm=None, *, raw_k
 
 
 
-def flatten_autograd(input, start_dim=0, end_dim=-1, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("flatten", raw_keyset, input, start_dim, end_dim, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.FlattenBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._start_dim = start_dim
-        grad_fn._end_dim = end_dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def flatten_autograd_post(result, input, start_dim=0, end_dim=-1, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.FlattenBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._start_dim = start_dim
-        grad_fn._end_dim = end_dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def floor_divide_autograd(self, other, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -18660,35 +18485,6 @@ def moveaxis_autograd_post(result, input, source, destination, *, raw_keyset, ac
 
 
 
-def movedim_autograd(input, source, destination, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("movedim", raw_keyset, input, source, destination, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.MovedimBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._source = source
-        grad_fn._destination = destination
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def movedim_autograd_post(result, input, source, destination, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.MovedimBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._source = source
-        grad_fn._destination = destination
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def nanmean_autograd(input, dim=None, keepdim=False, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -18743,37 +18539,6 @@ def nanquantile_autograd_post(result, input, q, dim=None, keepdim=False, *, raw_
         grad_fn._q = q
         grad_fn._dim = dim
         grad_fn._keepdim = keepdim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def narrow_autograd(input, dim, start, length, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("narrow", raw_keyset, input, dim, start, length, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.NarrowBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dim = dim
-        grad_fn._start = start
-        grad_fn._length = length
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def narrow_autograd_post(result, input, dim, start, length, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.NarrowBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dim = dim
-        grad_fn._start = start
-        grad_fn._length = length
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
@@ -19590,35 +19355,6 @@ def true_divide_autograd_post(result, self, other, *, raw_keyset, active_keyset,
         grad_fn = _F.True_divideBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
         grad_fn._save(other=other, self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def unflatten_autograd(input, dim, sizes, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("unflatten", raw_keyset, input, dim, sizes, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.UnflattenBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dim = dim
-        grad_fn._sizes = sizes
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def unflatten_autograd_post(result, input, dim, sizes, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.UnflattenBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dim = dim
-        grad_fn._sizes = sizes
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result

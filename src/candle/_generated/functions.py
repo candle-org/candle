@@ -10674,90 +10674,6 @@ class SqrtBackward0(Node):
             grad_self = _sqrt_backward_helper(grad, result, keyset)
         return (grad_self,)
 
-class SqueezeBackward0(Node):
-    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
-        super().__init__(None, inputs, name='SqueezeBackward0')
-        self._raw_keyset = raw_keyset
-        self._active_keyset = active_keyset
-        self._saved_self_idx = None
-        self._dim = None
-
-    def _save(self, *, self_=None):
-        tensors = []
-        if self_ is not None:
-            self._saved_self_idx = len(tensors)
-            tensors.append(self_)
-        if tensors:
-            super().save_for_backward(*tensors)
-        if self._saved_self_idx is not None:
-            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
-
-    def backward(self, grad):
-        from .._dispatch.dispatcher import current_dispatch_keyset
-        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
-        _saved = self.saved_tensors()
-        self_ = _saved[self._saved_self_idx]
-        dim = self._dim
-        with _grad_context(keyset):
-            grad_self = redispatch("reshape", keyset, grad, self_.shape)
-        return (grad_self,)
-
-class SqueezeDimBackward0(Node):
-    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
-        super().__init__(None, inputs, name='SqueezeDimBackward0')
-        self._raw_keyset = raw_keyset
-        self._active_keyset = active_keyset
-        self._saved_self_idx = None
-        self._dim = None
-
-    def _save(self, *, self_=None):
-        tensors = []
-        if self_ is not None:
-            self._saved_self_idx = len(tensors)
-            tensors.append(self_)
-        if tensors:
-            super().save_for_backward(*tensors)
-        if self._saved_self_idx is not None:
-            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
-
-    def backward(self, grad):
-        from .._dispatch.dispatcher import current_dispatch_keyset
-        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
-        _saved = self.saved_tensors()
-        self_ = _saved[self._saved_self_idx]
-        dim = self._dim
-        with _grad_context(keyset):
-            grad_self = _unsqueeze_to_backward_helper(grad, dim, self_.shape, keyset)
-        return (grad_self,)
-
-class SqueezeDimsBackward0(Node):
-    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
-        super().__init__(None, inputs, name='SqueezeDimsBackward0')
-        self._raw_keyset = raw_keyset
-        self._active_keyset = active_keyset
-        self._saved_self_idx = None
-        self._dim = None
-
-    def _save(self, *, self_=None):
-        tensors = []
-        if self_ is not None:
-            self._saved_self_idx = len(tensors)
-            tensors.append(self_)
-        if tensors:
-            super().save_for_backward(*tensors)
-        if self._saved_self_idx is not None:
-            self._saved_fields['self'] = self._saved_tensors_list[self._saved_self_idx]
-
-    def backward(self, grad):
-        from .._dispatch.dispatcher import current_dispatch_keyset
-        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
-        _saved = self.saved_tensors()
-        self_ = _saved[self._saved_self_idx]
-        dim = self._dim
-        with _grad_context(keyset):
-            grad_self = _unsqueeze_to_backward_helper(grad, dim, self_.shape, keyset)
-        return (grad_self,)
-
 class StdCorrectionBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         super().__init__(None, inputs, name='StdCorrectionBackward0')
@@ -22243,37 +22159,6 @@ class Fft_rfftnBackward0(Node):
         return (grad_input,)
 
 
-class FlattenBackward0(Node):
-    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
-        super().__init__(None, inputs, name='FlattenBackward0')
-        self._raw_keyset = raw_keyset
-        self._active_keyset = active_keyset
-        self._saved_input_idx = None
-        self._start_dim = None
-        self._end_dim = None
-
-    def _save(self, *, input_=None):
-        tensors = []
-        if input_ is not None:
-            self._saved_input_idx = len(tensors)
-            tensors.append(input_)
-        if tensors:
-            super().save_for_backward(*tensors)
-        if self._saved_input_idx is not None:
-            self._saved_fields['input'] = self._saved_tensors_list[self._saved_input_idx]
-
-    def backward(self, grad):
-        from .._dispatch.dispatcher import current_dispatch_keyset
-        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
-        _saved = self.saved_tensors()
-        input_ = _saved[self._saved_input_idx]
-        start_dim = self._start_dim
-        end_dim = self._end_dim
-        with _grad_context(keyset):
-            grad_input = redispatch("reshape", keyset, grad, input_.shape)
-        return (grad_input,)
-
-
 class Floor_divideBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         super().__init__(None, inputs, name='Floor_divideBackward0')
@@ -23242,37 +23127,6 @@ class MoveaxisBackward0(Node):
         return (grad_input,)
 
 
-class MovedimBackward0(Node):
-    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
-        super().__init__(None, inputs, name='MovedimBackward0')
-        self._raw_keyset = raw_keyset
-        self._active_keyset = active_keyset
-        self._saved_input_idx = None
-        self._source = None
-        self._destination = None
-
-    def _save(self, *, input_=None):
-        tensors = []
-        if input_ is not None:
-            self._saved_input_idx = len(tensors)
-            tensors.append(input_)
-        if tensors:
-            super().save_for_backward(*tensors)
-        if self._saved_input_idx is not None:
-            self._saved_fields['input'] = self._saved_tensors_list[self._saved_input_idx]
-
-    def backward(self, grad):
-        from .._dispatch.dispatcher import current_dispatch_keyset
-        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
-        _saved = self.saved_tensors()
-        input_ = _saved[self._saved_input_idx]
-        source = self._source
-        destination = self._destination
-        with _grad_context(keyset):
-            grad_input = _movedim_backward_helper(grad, input_, source, destination, keyset)
-        return (grad_input,)
-
-
 class NanmeanBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         super().__init__(None, inputs, name='NanmeanBackward0')
@@ -23334,39 +23188,6 @@ class NanquantileBackward0(Node):
         keepdim = self._keepdim
         with _grad_context(keyset):
             grad_input = _quantile_backward_helper(grad, input_, q, dim, keepdim, keyset)
-        return (grad_input,)
-
-
-class NarrowBackward0(Node):
-    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
-        super().__init__(None, inputs, name='NarrowBackward0')
-        self._raw_keyset = raw_keyset
-        self._active_keyset = active_keyset
-        self._saved_input_idx = None
-        self._dim = None
-        self._start = None
-        self._length = None
-
-    def _save(self, *, input_=None):
-        tensors = []
-        if input_ is not None:
-            self._saved_input_idx = len(tensors)
-            tensors.append(input_)
-        if tensors:
-            super().save_for_backward(*tensors)
-        if self._saved_input_idx is not None:
-            self._saved_fields['input'] = self._saved_tensors_list[self._saved_input_idx]
-
-    def backward(self, grad):
-        from .._dispatch.dispatcher import current_dispatch_keyset
-        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
-        _saved = self.saved_tensors()
-        input_ = _saved[self._saved_input_idx]
-        dim = self._dim
-        start = self._start
-        length = self._length
-        with _grad_context(keyset):
-            grad_input = _narrow_backward_helper(grad, input_, dim, start, length, keyset)
         return (grad_input,)
 
 
@@ -24263,37 +24084,6 @@ class True_divideBackward0(Node):
         with _grad_context(keyset):
             grad_self, grad_other = _div_backward_all(grad, self_, other, keyset)
         return (grad_self, grad_other,)
-
-
-class UnflattenBackward0(Node):
-    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
-        super().__init__(None, inputs, name='UnflattenBackward0')
-        self._raw_keyset = raw_keyset
-        self._active_keyset = active_keyset
-        self._saved_input_idx = None
-        self._dim = None
-        self._sizes = None
-
-    def _save(self, *, input_=None):
-        tensors = []
-        if input_ is not None:
-            self._saved_input_idx = len(tensors)
-            tensors.append(input_)
-        if tensors:
-            super().save_for_backward(*tensors)
-        if self._saved_input_idx is not None:
-            self._saved_fields['input'] = self._saved_tensors_list[self._saved_input_idx]
-
-    def backward(self, grad):
-        from .._dispatch.dispatcher import current_dispatch_keyset
-        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)
-        _saved = self.saved_tensors()
-        input_ = _saved[self._saved_input_idx]
-        dim = self._dim
-        sizes = self._sizes
-        with _grad_context(keyset):
-            grad_input = redispatch("reshape", keyset, grad, input_.shape)
-        return (grad_input,)
 
 
 class VstackBackward0(Node):
