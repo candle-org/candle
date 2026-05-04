@@ -813,8 +813,12 @@ def tensor_flatten(self, start_dim=0, end_dim=-1):
     cdef object meta
 
     input_shape = tuple(self.shape)
+    # Call the bare functional reshape (no autograd dispatch) so that views with
+    # requires_grad=True do not also pick up a ReshapeBackward0 grad_fn. The
+    # engine-level rebase via _rev_view_func is the sole owner of backward.
+    _ensure_functional_refs()
     if ndim == 0:
-        result = self.reshape((1,))
+        result = _reshape_dispatch_fn(self, (1,))
         meta = getattr(result, "_view_meta", None)
         if meta is not None:
             meta = dict(meta)
@@ -836,7 +840,7 @@ def tensor_flatten(self, start_dim=0, end_dim=-1):
     for i in range(start_dim, end_dim + 1):
         flattened *= self.shape[i]
     new_shape = self.shape[:start_dim] + (flattened,) + self.shape[end_dim + 1:]
-    result = self.reshape(new_shape)
+    result = _reshape_dispatch_fn(self, new_shape)
     meta = getattr(result, "_view_meta", None)
     if meta is not None:
         meta = dict(meta)
@@ -1588,10 +1592,13 @@ def tensor_unflatten(self, dim, sizes):
         dim += ndim
     input_shape = tuple(self.shape)
     new_shape = self.shape[:dim] + tuple(sizes) + self.shape[dim + 1:]
-    # Use reshape (not view) so non-contiguous input falls back to a copy
-    # instead of raising. PyTorch's unflatten has the same conditional-view
-    # semantics.
-    result = self.reshape(new_shape)
+    # Use the bare functional reshape (no autograd dispatch) so views with
+    # requires_grad=True do not also pick up a ReshapeBackward0 grad_fn.
+    # Engine-level rebase via _rev_view_func is the sole owner of backward.
+    # PyTorch's unflatten has the same conditional-view semantics — non-
+    # contiguous input falls back to a copy via reshape rather than raising.
+    _ensure_functional_refs()
+    result = _reshape_dispatch_fn(self, new_shape)
     meta = getattr(result, "_view_meta", None)
     if meta is not None:
         meta = dict(meta)
@@ -1953,8 +1960,6 @@ def tensor_movedim(self, source, destination):
     cdef tuple input_shape
 
     _ensure_dispatch_ref()
-    if self.requires_grad:
-        return _dispatch_fn("movedim", self.device.type, self, source, destination)
 
     ndim = len(self.shape)
     if isinstance(source, int):
@@ -2686,8 +2691,6 @@ def tensor_narrow_method(self, dim, start, length):
     cdef tuple input_shape
 
     _ensure_dispatch_ref()
-    if self.requires_grad:
-        return _dispatch_fn("narrow", self.device.type, self, dim, start, length)
 
     ndim = len(self.shape)
     d = dim if dim >= 0 else dim + ndim
