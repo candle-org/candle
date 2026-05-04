@@ -1,17 +1,12 @@
-"""Version counter for tensor mutation tracking.
+"""Public shell for the standalone autograd ``VersionCounter``.
 
-This module provides ``VersionCounter`` for contexts that do not use
-``TensorImpl`` as a base. The ``_VersionCounterProxy`` used by
-``TensorImpl`` is provided by the compiled ``_tensor_impl`` extension.
+Mirrors torch.autograd's exposure of ``VersionCounter``; the runtime owner
+is ``candle._C._tensor_impl`` (which already hosts ``_VersionCounterProxy``
+for tensors backed by ``TensorImpl``).  This module is only a thin re-export
+so that ``candle.autograd.version_counter.VersionCounter`` keeps working.
 """
 
+from .._C._tensor_impl import VersionCounter  # pylint: disable=import-error,no-name-in-module
 
-class VersionCounter:
-    """Standalone version counter (used when TensorImpl is not the base)."""
-    __slots__ = ("value",)
 
-    def __init__(self, value=0):
-        self.value = int(value)
-
-    def bump(self):
-        self.value += 1
+__all__ = ["VersionCounter"]

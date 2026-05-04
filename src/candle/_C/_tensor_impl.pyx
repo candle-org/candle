@@ -736,3 +736,19 @@ cdef class _VersionCounterProxy:
 
     cpdef void bump(self):
         self._impl._version_value += 1
+
+
+# -------------------------------------------------------------------
+# Standalone VersionCounter — used in contexts that do not have a
+# TensorImpl as a base.  Mirrors torch's Variable._version field shape.
+# -------------------------------------------------------------------
+
+class VersionCounter:
+    """Standalone version counter (used when TensorImpl is not the base)."""
+    __slots__ = ("value",)
+
+    def __init__(self, value=0):
+        self.value = int(value)
+
+    def bump(self):
+        self.value += 1
