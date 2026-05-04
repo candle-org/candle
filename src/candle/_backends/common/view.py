@@ -195,7 +195,28 @@ def narrow(a, dim, start, length, *, creation_kind=None):
     new_shape[d] = int(length)
     new_offset = a.offset + int(start) * a.stride[d]
     base = _get_base(a)
-    return _make_view(base, tuple(new_shape), a.stride, new_offset, "narrow", source=a, creation_kind=creation_kind)
+    input_shape = a.shape
+    start_int = int(start)
+    length_int = int(length)
+
+    def _narrow_view_func(new_base, _dim=d, _start=start_int, _len=length_int):
+        return new_base.narrow(_dim, _start, _len)
+
+    def _narrow_rev_view_func(grad_view, _shape=input_shape, _dim=d, _start=start_int, _len=length_int):
+        # Pad grad_view back to input_shape with zeros at non-narrow positions.
+        # Mirrors NarrowBackward0 / _narrow_backward_helper.
+        # pylint: disable=import-outside-toplevel
+        from candle import zeros as _zeros
+        grad_input = _zeros(_shape, dtype=grad_view.dtype, device=grad_view.device)
+        grad_input.narrow(_dim, _start, _len).copy_(grad_view)
+        return grad_input
+
+    return _make_view(
+        base, tuple(new_shape), a.stride, new_offset, "narrow",
+        source=a, creation_kind=creation_kind,
+        view_func=_narrow_view_func,
+        rev_view_func=_narrow_rev_view_func,
+    )
 
 
 def select(a, dim, index, *, creation_kind=None):

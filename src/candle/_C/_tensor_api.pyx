@@ -2636,6 +2636,7 @@ def tensor_narrow_method(self, dim, start, length):
     cdef object creation_mode
     cdef object creation_kind
     cdef object v
+    cdef tuple input_shape
 
     _ensure_dispatch_ref()
     if self.requires_grad:
@@ -2646,6 +2647,7 @@ def tensor_narrow_method(self, dim, start, length):
     new_shape = list(self.shape)
     new_shape[d] = int(length)
     new_offset = self.offset + int(start) * self.stride[d]
+    input_shape = tuple(self.shape)
     v = self.cy_as_strided(tuple(new_shape), tuple(self.stride), new_offset)
 
     source_view_meta = getattr(self, "_view_meta", None) or {}
@@ -2665,7 +2667,25 @@ def tensor_narrow_method(self, dim, start, length):
         "creation_mode": creation_mode,
         "creation_kind": creation_kind,
     }
+    _attach_narrow_view_funcs(v, int(d), int(start), int(length), input_shape)
     return v
+
+
+def _attach_narrow_view_funcs(result, dim, start, length, input_shape):
+    """Attach view_func/rev_view_func for narrow so engine rebase owns grad."""
+    def _narrow_view_func(new_base, _dim=dim, _start=start, _len=length):
+        return new_base.narrow(_dim, _start, _len)
+
+    def _narrow_rev_view_func(grad_view, _shape=input_shape, _dim=dim, _start=start, _len=length):
+        # Pad grad_view back to input_shape with zeros at non-narrow positions.
+        # pylint: disable=import-outside-toplevel
+        from candle import zeros as _zeros
+        grad_input = _zeros(_shape, dtype=grad_view.dtype, device=grad_view.device)
+        grad_input.narrow(_dim, _start, _len).copy_(grad_view)
+        return grad_input
+
+    result._view_func = _narrow_view_func
+    result._rev_view_func = _narrow_rev_view_func
 
 
 def tensor_select_method(self, dim, index):
