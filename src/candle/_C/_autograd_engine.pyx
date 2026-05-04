@@ -312,21 +312,40 @@ cdef class _GraphTask:
             grad = acc_node.apply_prehooks(grad)
         if mark_create_graph and self.create_graph and grad is not None:
             grad.requires_grad = True
-        # PyTorch-aligned view-rebase: if the leaf is a view that carries a
-        # _rev_view_func, redirect grad accumulation onto its base.
-        # Only fire on TRUE leaves (no grad_fn). When a view also has a
-        # grad_fn (e.g., split's narrow-view outputs wrapped by SplitBackward),
-        # backward must flow through grad_fn alone — the view-rebase path
-        # would double-accumulate onto the base.
+        # PyTorch-aligned view-rebase: if the tensor is a view that carries a
+        # _rev_view_func, transform grad via _rev_view_func before forwarding
+        # so the next_fn (= base.grad_fn, inherited via cy_view) receives the
+        # base-shaped grad.
+        # Two firing modes:
+        #   1. True leaf view (no grad_fn): walk the _base chain via recursion.
+        #   2. Non-leaf view that INHERITED grad_fn from base (e.g. flatten on
+        #      a non-leaf): transform grad in place AND let the base run its
+        #      own retain_grad/hook bookkeeping, then let the caller forward
+        #      the reshaped grad to next_fn = base.grad_fn.
+        # When grad_fn was OVERRIDDEN (e.g., split's narrow-view outputs
+        # wrapped by SplitBackward), grad_fn is NOT base.grad_fn — backward
+        # must flow through the override alone, so we skip the rebase.
         base = getattr(tensor, "_base", None)
         rev_func = getattr(tensor, "_rev_view_func", None)
-        if tensor.grad_fn is None and base is not None and rev_func is not None:
-            grad = rev_func(grad)
-            return self._accumulate_tensor_grad(
-                base, grad,
-                mark_create_graph=mark_create_graph,
-                apply_hooks=False,
-            )
+        if base is not None and rev_func is not None:
+            if tensor.grad_fn is None:
+                grad = rev_func(grad)
+                return self._accumulate_tensor_grad(
+                    base, grad,
+                    mark_create_graph=mark_create_graph,
+                    apply_hooks=False,
+                )
+            if tensor.grad_fn is getattr(base, "grad_fn", None):
+                # Inherited grad_fn: reshape grad to base shape so next_fn
+                # receives a correctly shaped grad. Recurse on base with
+                # apply_hooks=False so retain_grad / hook bookkeeping fires
+                # at base scope (mirrors PyTorch's view-aware accumulator).
+                grad = rev_func(grad)
+                return self._accumulate_tensor_grad(
+                    base, grad,
+                    mark_create_graph=mark_create_graph,
+                    apply_hooks=False,
+                )
         should_accumulate_into_grad = (
             self.accumulate_grad and (
                 self.inputs is None
