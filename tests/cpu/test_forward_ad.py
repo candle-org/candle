@@ -145,6 +145,23 @@ def test_calculate_shape_util_basic():
     assert grad_shape == (5, 10)
 
 
+def test_autograd_init_helpers_live_in_compiled_c_boundary():
+    """The autograd public-shell helpers (_calculate_shape, kineto_available,
+    Variable) should be owned by the compiled _C boundary, not defined in
+    the Python public shell candle/autograd/__init__.py."""
+    import candle.autograd as autograd
+    from candle._C import _autograd_engine
+
+    assert autograd._calculate_shape.__module__ == "candle._C._autograd_engine"
+    assert autograd.kineto_available.__module__ == "candle._C._autograd_engine"
+    assert autograd.Variable.__module__ == "candle._C._autograd_engine"
+
+    # And the public names must be re-exports of the compiled definitions.
+    assert autograd._calculate_shape is _autograd_engine._calculate_shape
+    assert autograd.kineto_available is _autograd_engine.kineto_available
+    assert autograd.Variable is _autograd_engine.Variable
+
+
 def test_forward_ad_mul_jvp():
     x = candle.rand(2)
     y = candle.rand(2)

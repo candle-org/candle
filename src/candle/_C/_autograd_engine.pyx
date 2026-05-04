@@ -134,6 +134,48 @@ def evaluating_node(node):
         pop_evaluating_node()
 
 
+def _calculate_shape(output, grad, is_grads_batched):
+    """Compute (output_shape, grad_shape) used by the engine when validating
+    user-supplied grad arguments.
+
+    Mirrors torch.autograd.__init__._calculate_shape: GradientEdge inputs
+    pull their declared shape from input metadata, regular tensors expose
+    ``.shape`` directly, and batched grads strip the leading batch dim.
+    """
+    from candle.autograd import graph  # pylint: disable=import-outside-toplevel
+    if isinstance(output, graph.GradientEdge):
+        if is_grads_batched:
+            raise RuntimeError("Batched grads are not supported with GradientEdge")
+        out_shape = output.node._input_metadata[output.output_nr].shape
+        return out_shape, grad.shape
+    if is_grads_batched:
+        return output.shape, grad.shape[1:]
+    return output.shape, grad.shape
+
+
+def kineto_available():
+    """Return whether kineto profiler integration is available.
+
+    Candle does not link kineto, so this is always ``False``.
+    Kept as a torch-compatible shim used by external profiler integrations.
+    """
+    return False
+
+
+def Variable(*args, **kwargs):  # pylint: disable=invalid-name
+    """Compatibility shim for ``torch.autograd.Variable``.
+
+    Variable is a deprecated alias in PyTorch; in candle we only support the
+    Tensor-passthrough form ``Variable(tensor)`` and reject the legacy
+    constructor signature.
+    """
+    from candle._tensor import Tensor  # pylint: disable=import-outside-toplevel
+
+    if len(args) == 1 and not kwargs and isinstance(args[0], Tensor):
+        return args[0]
+    raise NotImplementedError("candle.autograd.Variable only supports Tensor passthrough")
+
+
 def annotate_node_creation(node):
     if not is_anomaly_enabled():
         return
