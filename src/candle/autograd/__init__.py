@@ -1,56 +1,42 @@
-from .function import Function
-from .engine import backward, grad
-from . import graph
-from . import _functions
-from . import forward_ad
-from . import profiler
-from . import profiler_util
-from . import functional
+"""Public shell for ``candle.autograd``.
+
+Mirrors ``torch.autograd``'s public surface; runtime/mechanism lives in
+``candle._C``.  This module only re-exports public names so that the typical
+``import candle.autograd as autograd`` user gets the same API torch users
+expect.
+"""
+
+from .._C._autograd_engine import (  # pylint: disable=import-error,no-name-in-module
+    Variable,
+    _calculate_shape,
+    kineto_available,
+)
 from .anomaly_mode import (
     detect_anomaly,
-    set_detect_anomaly,
-    is_anomaly_enabled,
     is_anomaly_check_nan_enabled,
+    is_anomaly_enabled,
+    set_detect_anomaly,
 )
+from .engine import backward, grad
+from .function import Function
+from . import _functions, forward_ad, functional, graph, profiler, profiler_util
 
-
-def _calculate_shape(output, grad, is_grads_batched):
-    if isinstance(output, graph.GradientEdge):
-        if is_grads_batched:
-            raise RuntimeError("Batched grads are not supported with GradientEdge")
-        out_shape = output.node._input_metadata[output.output_nr].shape
-        return out_shape, grad.shape
-    if is_grads_batched:
-        return output.shape, grad.shape[1:]
-    return output.shape, grad.shape
-
-
-def kineto_available():
-    return False
-
-
-def Variable(*args, **kwargs):
-    from .._tensor import Tensor
-
-    if len(args) == 1 and isinstance(args[0], Tensor):
-        return args[0]
-    raise NotImplementedError("candle.autograd.Variable only supports Tensor passthrough")
 
 __all__ = [
     "Function",
+    "Variable",
+    "_calculate_shape",
+    "_functions",
     "backward",
+    "detect_anomaly",
+    "forward_ad",
+    "functional",
     "grad",
     "graph",
-    "_functions",
-    "forward_ad",
+    "is_anomaly_check_nan_enabled",
+    "is_anomaly_enabled",
+    "kineto_available",
     "profiler",
     "profiler_util",
-    "functional",
-    "_calculate_shape",
-    "detect_anomaly",
     "set_detect_anomaly",
-    "is_anomaly_enabled",
-    "is_anomaly_check_nan_enabled",
-    "kineto_available",
-    "Variable",
 ]
