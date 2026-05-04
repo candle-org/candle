@@ -89,6 +89,10 @@ if _system in ("Linux", "Darwin"):
             ["src/candle/_C/_autograd_function.pyx"],
         ),
         Extension(
+            "candle._C._autograd_functions",
+            ["src/candle/_C/_autograd_functions.pyx"],
+        ),
+        Extension(
             "candle._C._autograd_ops",
             ["src/candle/_C/_autograd_ops.pyx"],
         ),

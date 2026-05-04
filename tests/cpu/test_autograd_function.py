@@ -410,6 +410,33 @@ def test_autograd_resize_apply_roundtrip_shape():
     assert x.grad.shape == (2,)
 
 
+def test_resize_function_lives_in_compiled_c_boundary():
+    """The built-in Resize autograd Function should be owned by the compiled _C boundary."""
+    import candle.autograd as autograd
+
+    Resize = autograd._functions.Resize
+    assert Resize.__module__ == "candle._C._autograd_functions"
+    # forward / backward staticmethods should also be defined inside the
+    # compiled module, not the Python public shell.
+    assert Resize.forward.__module__ == "candle._C._autograd_functions"
+    assert Resize.backward.__module__ == "candle._C._autograd_functions"
+
+
+def test_resize_function_module_is_extension():
+    """candle._C._autograd_functions must be a real compiled extension."""
+    from candle._C import _autograd_functions
+
+    assert isinstance(_autograd_functions.__loader__, importlib.machinery.ExtensionFileLoader)
+
+
+def test_resize_function_python_shell_only_reexports():
+    """The Python public shell candle.autograd._functions.tensor must be a thin
+    re-export of the compiled Resize, not the owner of the class definition."""
+    from candle.autograd._functions import tensor as tensor_shell
+
+    assert tensor_shell.Resize.__module__ == "candle._C._autograd_functions"
+
+
 def test_gradient_accumulation_sparse_reference_behavior():
     def sparse_grad():
         grad = torch.sparse_coo_tensor(
