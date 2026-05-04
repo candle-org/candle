@@ -7,7 +7,8 @@ def _get_base(tensor):
     return tensor._base if tensor._base is not None else tensor
 
 
-def _make_view(base, shape, stride, offset, op, source=None, *, creation_kind=None):
+def _make_view(base, shape, stride, offset, op, source=None, *, creation_kind=None,
+               view_func=None, rev_view_func=None):
     source_view_meta = getattr(source, "_view_meta", None) or {}
     creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
     inherited_kind = source_view_meta.get("creation_kind")
@@ -29,6 +30,8 @@ def _make_view(base, shape, stride, offset, op, source=None, *, creation_kind=No
         "creation_mode": creation_mode,
         "creation_kind": creation_kind,
     }
+    view._view_func = view_func
+    view._rev_view_func = rev_view_func
     return view
 
 
