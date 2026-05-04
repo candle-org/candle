@@ -11,7 +11,7 @@ Land six PyTorch `VIEW_FUNCTIONS` / `RETURNS_VIEWS_OF_INPUT` ops — `contiguous
 
 The work is split into two PRs to keep blast radius small:
 
-* **1B-A (this spec, this PR):** make the **forward** path of the three currently-copying ops (`contiguous`, `flatten`, `unflatten`) match PyTorch's conditional-view semantics. No autograd or codegen changes.
+* **1B-A (this spec, this PR):** make the **forward** path of the three currently-copying ops (`contiguous`, `flatten`, `unflatten`) match PyTorch's conditional semantics. `contiguous` returns `self` when already contiguous; `flatten`/`unflatten` return real views when view-compatible. No autograd or codegen changes.
 * **1B-B (separate spec, separate PR):** wire all 6 ops into `view_func` / `rev_view_func`, drop their hand-added `*Backward0` classes from `_generated/`.
 
 This document specifies **1B-A only**. 1B-B will get its own design doc when 1B-A is merged.
@@ -36,7 +36,11 @@ So the 6 ops divide naturally:
 * 3 ops (`narrow`, `squeeze`, `movedim`) already produce a real view in candle. Forward is correct. They are "forward-clean, autograd-pending."
 * 3 ops (`contiguous`, `flatten`, `unflatten`) still always allocate a fresh storage and copy. Forward is wrong vs torch. They need a forward fix before any view-tracking wiring will work — you cannot rebase a gradient onto a view that isn't actually a view.
 
-**1B-A fixes the forward path of the second group.** It does not touch autograd. After 1B-A all 6 ops produce real views when the input is contiguous (or otherwise view-compatible), but their Backward classes still run unchanged.
+**1B-A fixes the forward path of the second group.** It does not touch autograd. After 1B-A:
+
+* `contiguous(a)` returns `a` itself when `a` is already contiguous (matching torch's identity behavior); otherwise the existing copy path runs.
+* `flatten(a, ...)` and `unflatten(a, ...)` return real views (via `_make_view`) when `a` is contiguous; otherwise the existing copy path runs.
+* All 6 ops' Backward classes still run unchanged — autograd routing is 1B-B's job.
 
 ## Why split 1B into 1B-A + 1B-B
 
@@ -52,8 +56,9 @@ Mixing both into one PR would mean a 6-op forward semantic change *and* an autog
 **In scope:**
 
 * Backend forward path for `contiguous`, `flatten`, `unflatten` on CPU, MPS, and NPU.
-* Make each return a real view (via `_make_view`) when the input's existing layout already satisfies the op's contract. Otherwise keep the copy path.
-* New test file `tests/cpu/test_view_fastpath.py` covering view-share semantics and the still-copy fallback.
+* `contiguous`: when input is already contiguous in the requested format, return the input itself (`return a`).
+* `flatten` / `unflatten`: when input is contiguous, return a real view via `_make_view`. Otherwise keep the copy path.
+* New test file `tests/cpu/test_view_fastpath.py` covering the three behaviors above.
 
 **Out of scope (deferred to 1B-B):**
 
@@ -69,15 +74,14 @@ Each of the three ops gets a **view fast-path** under specific conditions; other
 ### `contiguous(a, memory_format=None)`
 
 * `memory_format` is `None` or `contiguous_format` (default):
-  * If `a.is_contiguous()`: return a view with the same shape/stride/offset (essentially `a`, but constructed through `_make_view` so it carries view metadata). This matches PyTorch's `t.contiguous()` returning `self` when already contiguous.
+  * If `a.is_contiguous()`: **return `a` directly** (matching torch's `t.contiguous()` returning `self` for already-contiguous inputs — same Python identity, no `_make_view` wrap).
 * `memory_format` is `channels_last`:
   * Already handled correctly: existing path returns `a` when `_is_channels_last_stride(...)` matches. No change needed.
 * Otherwise: keep the existing copy path (`np.ascontiguousarray` on CPU, `aclnnInplaceCopy`-equivalent on NPU, `_dispatch_unary_gpu(a, "identity")` on MPS).
 
 The functional contract is "guaranteed contiguous output." The view fast-path satisfies that contract because the input is already contiguous.
 
-> **Open question — return `a` directly vs. `_make_view`.**
-> Today, when the input is already contiguous, the cpu and mps `contiguous` paths return `a` itself (no metadata wrap). Going through `_make_view` produces a *new* tensor that shares storage. PyTorch's `t.contiguous()` returns `self` (same Python object) for already-contiguous inputs. To match torch's identity behavior we should **return `a` directly** in the fast-path — not wrap through `_make_view`. The wrap-through-`_make_view` form would only be needed if 1B-B's `view_func`/`rev_view_func` wiring requires distinct view metadata, in which case 1B-B can revisit. For 1B-A the right call is **return `a`**.
+Note that today the cpu `contiguous` path **does not** short-circuit to `return a` even when the input is already contiguous in default format — it always allocates via `np.ascontiguousarray`. That's the bug 1B-A fixes for cpu. The mps `contiguous` already returns `a` on the fast-path (line 23) and is correct as-is.
 
 ### `flatten(a, start_dim=0, end_dim=-1)`
 
@@ -100,14 +104,18 @@ When the input is not contiguous: keep the existing copy path.
 
 ### Common pattern across the 3 ops
 
+For `flatten` and `unflatten`:
+
 ```python
 if a.is_contiguous():
     base = _get_base(a)
-    return _make_view(base, new_shape, new_stride, a.offset, op_name, source=a)
+    return _make_view(base, new_shape, _contiguous_stride(new_shape), a.offset, op_name, source=a)
 # else: existing copy path stays unchanged
 ```
 
-with `op_name` set to `"contiguous"`, `"flatten"`, or `"unflatten"`. `view_func` and `rev_view_func` are not passed (default `None`) — 1B-A leaves the autograd path unchanged. Note: for `contiguous` specifically, the open-question above proposes returning `a` directly instead of going through `_make_view`. That decision is locked in as **return `a`** for 1B-A.
+with `op_name` set to `"flatten"` or `"unflatten"`. `view_func` and `rev_view_func` are not passed (default `None`) — 1B-A leaves the autograd path unchanged.
+
+For `contiguous` the fast-path is simpler — `return a` directly (no `_make_view` wrap). Output is the same Python object as the input, matching torch's `t.contiguous() is t` identity when already contiguous.
 
 ## Per-backend changes
 
@@ -133,41 +141,46 @@ with `op_name` set to `"contiguous"`, `"flatten"`, or `"unflatten"`. `view_func`
 
 ## What changes in observable behavior
 
-After 1B-A, calling `contiguous` / `flatten` / `unflatten` on a contiguous input returns a tensor that **shares storage** with the input. Concretely:
+After 1B-A:
 
-* `out.storage().data_ptr() == a.storage().data_ptr()` (was: a fresh allocation).
-* `out._base is a` (was: `None`).
-* Mutating `out` mutates `a`, and vice versa, on the contiguous fast-path. PyTorch behaves the same way.
+* `contiguous(a)` when `a` is already contiguous returns `a` itself (`out is a`). Was: a fresh copy with new storage.
+* `flatten(a, ...)` / `unflatten(a, ...)` when `a` is contiguous return a view: `out.storage().data_ptr() == a.storage().data_ptr()`, `out._base is _get_base(a)`. Was: a fresh copy.
+* For non-contiguous input, all three ops still allocate and copy as before.
+* Mutating the fast-path output mutates the input's storage, and vice versa. PyTorch behaves the same way.
 
-Code that called `contiguous()` *to defensively detach storage* relied on undocumented behavior — torch never guaranteed that. Anything that wants a real copy should call `.clone()`. We expect very little candle code to depend on the old detach side-effect, but the regression test suite will surface it.
+Code that called `contiguous()` / `flatten()` / `unflatten()` *to defensively detach storage* relied on undocumented behavior — torch never guaranteed that. Anything that wants a real copy should call `.clone()`. We expect very little candle code to depend on the old detach side-effect, but the regression test suite will surface it.
 
 ## Test plan
 
 New file: `tests/cpu/test_view_fastpath.py`. Tests cover:
 
-1. **Storage sharing on contiguous fast-path:**
-   * `t = torch.randn(3, 4); u = t.contiguous(); assert u.storage().data_ptr() == t.storage().data_ptr()`
+1. **`contiguous` returns self on the fast-path:**
+   * `t = torch.randn(3, 4); u = t.contiguous(); assert u is t`
+   * `t = torch.randn(3, 4).t(); u = t.contiguous(); assert u is not t and u.storage().data_ptr() != t.storage().data_ptr()` (non-contiguous still copies)
+
+2. **`flatten` / `unflatten` storage sharing on contiguous fast-path:**
    * `t = torch.randn(3, 4); u = t.flatten(); assert u.storage().data_ptr() == t.storage().data_ptr()`
    * `t = torch.randn(2, 6); u = t.unflatten(1, (2, 3)); assert u.storage().data_ptr() == t.storage().data_ptr()`
 
-2. **Mutation propagates through the fast-path view:**
-   * `u = t.flatten(); u[0] = 99.0; assert t.flatten()[0].item() == 99.0`
-   * Same for `unflatten` and (where applicable) `contiguous` of an already-contiguous input.
+3. **Mutation propagates through the fast-path view:**
+   * `t = torch.randn(3, 4); u = t.flatten(); u[0] = 99.0; assert t.view(-1)[0].item() == 99.0`
+   * Same for `unflatten`.
 
-3. **Copy fallback still produces an independent allocation when input is non-contiguous:**
-   * `t = torch.randn(4, 4).t()` (non-contiguous) `; u = t.contiguous(); assert u.storage().data_ptr() != t.storage().data_ptr()`
-   * Same for non-contiguous `flatten`.
+4. **Copy fallback still produces an independent allocation when input is non-contiguous:**
+   * `t = torch.randn(4, 4).t()` (non-contiguous) `; u = t.flatten(); assert u.storage().data_ptr() != t.storage().data_ptr()`
+   * Same for `unflatten`.
 
-4. **`_base` and `_view_meta` are populated on the fast-path:**
-   * `u._base is t` (or its existing base).
-   * `u._view_meta["op"] in {"contiguous","flatten","unflatten"}`.
+5. **`_base` and `_view_meta` are populated on the `flatten`/`unflatten` fast-path:**
+   * `u._base is _get_base(t)` (resolves via `_make_view`'s `_get_base` call).
+   * `u._view_meta["op"] in {"flatten", "unflatten"}`.
    * `u._view_func is None and u._rev_view_func is None` (1B-A doesn't wire those).
+   * For `contiguous` fast-path: `u is t`, so `u._view_meta` reflects `t`'s pre-existing meta (no new view created) — there's no new view metadata to assert here.
 
-5. **Backward through fast-path still works** (this is the safety net for "we didn't break the existing autograd path"):
+6. **Backward through fast-path still works** (this is the safety net for "we didn't break the existing autograd path"):
    * `t = torch.randn(3, 4, requires_grad=True); u = t.flatten(); u.sum().backward(); assert torch.allclose(t.grad, torch.ones_like(t))`
-   * Same for `contiguous` and `unflatten`. (The existing `*Backward0` classes still run and do identity-grad — the result must be unchanged.)
+   * Same for `unflatten`. For `contiguous` on already-contiguous input the existing tests already cover this since the function is now a true no-op.
 
-6. **`memory_format=channels_last` for `contiguous` is unchanged:**
+7. **`memory_format=channels_last` for `contiguous` is unchanged:**
    * Existing tests in `tests/cpu/test_*memory_format*` already cover this. No new test needed; the change must not regress them.
 
 ## Files touched
