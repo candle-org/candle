@@ -808,9 +808,17 @@ def tensor_flatten(self, start_dim=0, end_dim=-1):
     cdef Py_ssize_t i
     cdef Py_ssize_t flattened = 1
     cdef tuple new_shape
+    cdef object result
+    cdef object meta
 
     if ndim == 0:
-        return self.reshape((1,))
+        result = self.reshape((1,))
+        meta = getattr(result, "_view_meta", None)
+        if meta is not None:
+            meta = dict(meta)
+            meta["op"] = "flatten"
+            result._view_meta = meta
+        return result
     if start_dim < 0:
         start_dim += ndim
     if end_dim < 0:
@@ -825,7 +833,13 @@ def tensor_flatten(self, start_dim=0, end_dim=-1):
     for i in range(start_dim, end_dim + 1):
         flattened *= self.shape[i]
     new_shape = self.shape[:start_dim] + (flattened,) + self.shape[end_dim + 1:]
-    return self.reshape(new_shape)
+    result = self.reshape(new_shape)
+    meta = getattr(result, "_view_meta", None)
+    if meta is not None:
+        meta = dict(meta)
+        meta["op"] = "flatten"
+        result._view_meta = meta
+    return result
 
 
 def tensor_t(self):
@@ -1550,9 +1564,22 @@ def tensor_div_(self, other):
 
 def tensor_unflatten(self, dim, sizes):
     cdef Py_ssize_t ndim = len(self.shape)
+    cdef tuple new_shape
+    cdef object result
+    cdef object meta
     if dim < 0:
         dim += ndim
-    return self.view(self.shape[:dim] + tuple(sizes) + self.shape[dim + 1:])
+    new_shape = self.shape[:dim] + tuple(sizes) + self.shape[dim + 1:]
+    # Use reshape (not view) so non-contiguous input falls back to a copy
+    # instead of raising. PyTorch's unflatten has the same conditional-view
+    # semantics.
+    result = self.reshape(new_shape)
+    meta = getattr(result, "_view_meta", None)
+    if meta is not None:
+        meta = dict(meta)
+        meta["op"] = "unflatten"
+        result._view_meta = meta
+    return result
 
 
 def tensor_bitwise_and_(self, other):
