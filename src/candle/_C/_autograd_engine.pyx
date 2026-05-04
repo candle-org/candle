@@ -314,9 +314,13 @@ cdef class _GraphTask:
             grad.requires_grad = True
         # PyTorch-aligned view-rebase: if the leaf is a view that carries a
         # _rev_view_func, redirect grad accumulation onto its base.
+        # Only fire on TRUE leaves (no grad_fn). When a view also has a
+        # grad_fn (e.g., split's narrow-view outputs wrapped by SplitBackward),
+        # backward must flow through grad_fn alone — the view-rebase path
+        # would double-accumulate onto the base.
         base = getattr(tensor, "_base", None)
         rev_func = getattr(tensor, "_rev_view_func", None)
-        if base is not None and rev_func is not None:
+        if tensor.grad_fn is None and base is not None and rev_func is not None:
             grad = rev_func(grad)
             return self._accumulate_tensor_grad(
                 base, grad,

@@ -42,7 +42,12 @@ def test_autograd_flatten_propagates_grad_to_base_tensor():
 
     y = x.flatten()
 
-    assert y.grad_fn is not None
+    # After 1B-B, flatten on a contiguous tensor is a pure view: it carries
+    # _view_func / _rev_view_func so the engine rebases gradient onto the
+    # base directly, with no FlattenBackward0 grad_fn. This mirrors PyTorch.
+    assert y._base is x
+    assert callable(y._view_func)
+    assert callable(y._rev_view_func)
 
     y[0].backward()
 
