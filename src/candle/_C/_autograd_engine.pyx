@@ -296,6 +296,8 @@ cdef class _GraphTask:
         cdef bint should_accumulate_into_grad
         cdef object prev
         cdef object stored_grad
+        cdef object base
+        cdef object rev_func
 
         should_touch_leaf = (
             self.inputs is None or tensor.grad_fn is not None or id(tensor) in self.input_ids
@@ -310,6 +312,17 @@ cdef class _GraphTask:
             grad = acc_node.apply_prehooks(grad)
         if mark_create_graph and self.create_graph and grad is not None:
             grad.requires_grad = True
+        # PyTorch-aligned view-rebase: if the leaf is a view that carries a
+        # _rev_view_func, redirect grad accumulation onto its base.
+        base = getattr(tensor, "_base", None)
+        rev_func = getattr(tensor, "_rev_view_func", None)
+        if base is not None and rev_func is not None:
+            grad = rev_func(grad)
+            return self._accumulate_tensor_grad(
+                base, grad,
+                mark_create_graph=mark_create_graph,
+                apply_hooks=False,
+            )
         should_accumulate_into_grad = (
             self.accumulate_grad and (
                 self.inputs is None

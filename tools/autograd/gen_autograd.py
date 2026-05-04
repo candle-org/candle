@@ -15,6 +15,7 @@ def main(yaml_path: str | Path, output_dir: str | Path) -> None:
     from .gen_functions import gen_functions, gen_functions_pyx
     from .gen_variable_type import gen_variable_type, gen_variable_type_pyx
     from .gen_registration import gen_registration
+    from .gen_view_funcs import gen_view_funcs
 
     yaml_path = Path(yaml_path)
     output_dir = Path(output_dir)
@@ -30,6 +31,7 @@ def main(yaml_path: str | Path, output_dir: str | Path) -> None:
         "registration.py": gen_registration(infos),
         "_functions_cy.pyx": gen_functions_pyx(infos),
         "_variable_type_cy.pyx": gen_variable_type_pyx(infos),
+        "view_funcs.py": gen_view_funcs(),
     }
 
     for name, content in files.items():
