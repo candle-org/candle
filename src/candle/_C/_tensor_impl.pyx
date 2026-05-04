@@ -492,6 +492,8 @@ cdef class TensorImpl:
         view._base = self._base if self._base is not None else self
         view._vc_proxy = None
         view._view_meta = None
+        view._view_func = None
+        view._rev_view_func = None
         view._pending = False
         view._retain_grad = False
         view._backward_hooks = None
@@ -638,6 +640,8 @@ cpdef void cy_init_tensor_fields(
     t.grad_fn = grad_fn
     t._base = base
     t._view_meta = view_meta
+    t._view_func = None
+    t._rev_view_func = None
     t._pending = pending
     t._retain_grad = retain_grad
     t._backward_hooks = backward_hooks

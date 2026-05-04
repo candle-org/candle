@@ -29,6 +29,8 @@ cdef class TensorImpl:
     cdef public int64_t _version_value
     cdef public object _base
     cdef public object _view_meta
+    cdef public object _view_func
+    cdef public object _rev_view_func
     cdef public bint _pending
     cdef public bint _retain_grad
     cdef public int _output_nr
