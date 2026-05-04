@@ -159,7 +159,22 @@ def squeeze(a, dim=None):
         shape = [p[0] for p in pairs]
         stride = [p[1] for p in pairs]
     base = _get_base(a)
-    return _make_view(base, shape, stride, a.offset, "squeeze", source=a)
+    input_shape = a.shape
+
+    def _squeeze_view_func(new_base, _dim=dim):
+        if _dim is None:
+            return new_base.squeeze()
+        return new_base.squeeze(_dim)
+
+    def _squeeze_rev_view_func(grad_view, _shape=input_shape):
+        return grad_view.reshape(_shape)
+
+    return _make_view(
+        base, shape, stride, a.offset, "squeeze",
+        source=a,
+        view_func=_squeeze_view_func,
+        rev_view_func=_squeeze_rev_view_func,
+    )
 
 
 def unsqueeze(a, dim):
