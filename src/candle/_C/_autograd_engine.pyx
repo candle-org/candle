@@ -2,7 +2,7 @@
 """Cython-owned autograd backward engine and hot-path state helpers."""
 
 from collections import deque
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import sys
 import threading
 import traceback
@@ -14,6 +14,21 @@ from candle.autograd.grad_mode import no_grad
 
 cdef object _GRAPH_STATE = threading.local()
 cdef object _ANOMALY_STATE = threading.local()
+
+
+_ANOMALY_ENABLE_WARNING = (
+    "Anomaly Detection has been enabled. This mode will increase the runtime "
+    "and should only be enabled for debugging."
+)
+
+
+class _AnomalyConfig:
+    """Internal anomaly-mode config record pushed onto the anomaly state stack."""
+    __slots__ = ("enabled", "check_nan")
+
+    def __init__(self, enabled, check_nan):
+        self.enabled = bool(enabled)
+        self.check_nan = bool(check_nan)
 
 
 cdef list _graph_task_stack():
@@ -84,6 +99,39 @@ def pop_evaluating_node():
     if not stack:
         return None
     return stack.pop()
+
+
+@contextmanager
+def detect_anomaly(check_nan=True):
+    """Enable autograd anomaly detection for the duration of the context."""
+    warnings.warn(_ANOMALY_ENABLE_WARNING, UserWarning)
+    push_anomaly_config(_AnomalyConfig(True, check_nan))
+    try:
+        yield
+    finally:
+        pop_anomaly_config()
+
+
+@contextmanager
+def set_detect_anomaly(mode, check_nan=True):
+    """Set autograd anomaly detection mode for the duration of the context."""
+    if mode:
+        warnings.warn(_ANOMALY_ENABLE_WARNING, UserWarning)
+    push_anomaly_config(_AnomalyConfig(mode, check_nan))
+    try:
+        yield
+    finally:
+        pop_anomaly_config()
+
+
+@contextmanager
+def evaluating_node(node):
+    """Mark ``node`` as the currently evaluating backward node for anomaly tracking."""
+    push_evaluating_node(node)
+    try:
+        yield
+    finally:
+        pop_evaluating_node()
 
 
 def annotate_node_creation(node):

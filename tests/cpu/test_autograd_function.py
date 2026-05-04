@@ -35,6 +35,32 @@ def test_anomaly_helpers_live_in_compiled_c_boundary():
     assert anomaly_mode.report_anomaly is _autograd_engine.report_anomaly
 
 
+def test_anomaly_mode_shell_lives_in_compiled_c_boundary():
+    """The anomaly_mode public API (config + contextmanagers) should be owned
+    by the compiled boundary, not defined in the Python public shell."""
+    import candle.autograd.anomaly_mode as anomaly_mode
+
+    # _AnomalyConfig is the runtime-internal config object pushed onto the
+    # anomaly state stack; its definition belongs in the compiled module.
+    assert anomaly_mode._AnomalyConfig.__module__ == "candle._C._autograd_engine"
+
+    # The user-facing context managers must come from the compiled module too.
+    assert anomaly_mode.detect_anomaly.__module__ == "candle._C._autograd_engine"
+    assert anomaly_mode.set_detect_anomaly.__module__ == "candle._C._autograd_engine"
+    assert anomaly_mode.evaluating_node.__module__ == "candle._C._autograd_engine"
+
+
+def test_anomaly_mode_context_managers_are_reexports():
+    """anomaly_mode.detect_anomaly et al. must be the same object exposed by
+    candle._C._autograd_engine — i.e. a re-export, not a Python-defined wrapper."""
+    import candle.autograd.anomaly_mode as anomaly_mode
+
+    assert anomaly_mode.detect_anomaly is _autograd_engine.detect_anomaly
+    assert anomaly_mode.set_detect_anomaly is _autograd_engine.set_detect_anomaly
+    assert anomaly_mode.evaluating_node is _autograd_engine.evaluating_node
+    assert anomaly_mode._AnomalyConfig is _autograd_engine._AnomalyConfig
+
+
 # ---------------------------------------------------------------------------
 # 1. Old-style Function (ctx as first param)
 # ---------------------------------------------------------------------------
