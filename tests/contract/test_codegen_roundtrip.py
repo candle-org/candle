@@ -27,6 +27,7 @@ _GENERATED_FILES = (
     "registration.py",
     "_functions_cy.pyx",
     "_variable_type_cy.pyx",
+    "view_funcs.py",
 )
 
 
