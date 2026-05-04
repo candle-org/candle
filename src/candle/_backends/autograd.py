@@ -80,30 +80,6 @@ def _autograd_unary(name, backward_impl, *, cpu_only=False, save_input=True):
     return wrapper
 
 
-def _autograd_view(name, backward_impl):
-    def wrapper(a, *args):
-        active_keyset = current_dispatch_keyset()
-        raw_keyset = _strip_autograd_keys(active_keyset)
-        out = redispatch(name, raw_keyset, a, *args)
-        if GradMode.enabled and a.requires_grad:
-            node_holder = {}
-
-            def _backward(grad):
-                saved_a = node_holder["node"].saved_tensors()[0]
-                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
-                return backward_impl(grad, a, saved_a, args, backward_keyset)
-
-            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
-            annotate_node_creation(node)
-            node_holder["node"] = weakref.proxy(node)
-            node.save_for_backward(a)
-            out.grad_fn = node
-            out.requires_grad = True
-        return out
-
-    return wrapper
-
-
 def _autograd_inplace(name, backward_impl, *, cpu_only=False, save_input=True):
     def wrapper(a, *args):
         active_keyset = current_dispatch_keyset()
@@ -315,12 +291,6 @@ def _inplace_relu_backward(grad, _a, saved_a, _args, keyset):
         mask = redispatch("sign", keyset, redispatch("relu", keyset, saved_a))
         grad_input = redispatch("mul", keyset, grad, mask)
         return (grad_input,)
-
-
-def _inplace_zero_backward(_grad, _a, _saved_a, _args, _keyset):
-    return (None,)
-
-
 
 
 def _contiguous_backward(grad, _a, _saved_a, _keyset):
@@ -7169,7 +7139,6 @@ for _entry in (
     ("add_", lambda: _autograd_inplace("add_", _inplace_binary_backward, save_input=True)),
     ("mul_", lambda: _autograd_inplace("mul_", _inplace_binary_backward, save_input=True)),
     ("relu_", lambda: _autograd_inplace("relu_", _inplace_relu_backward, save_input=True)),
-    ("zero_", lambda: _autograd_inplace("zero_", _inplace_zero_backward, save_input=False)),
     ("sub_", lambda: _autograd_inplace("sub_", _inplace_sub_backward, save_input=False)),
     ("div_", lambda: _autograd_inplace("div_", _inplace_div_backward, save_input=True)),
     ("clamp_", lambda: _autograd_inplace("clamp_", _inplace_clamp_backward, save_input=True)),
