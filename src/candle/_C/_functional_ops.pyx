@@ -672,15 +672,19 @@ def squeeze(a, dim=None):
     cdef object creation_mode
     cdef object creation_kind
     cdef object v
+    cdef object input_shape
 
     _ensure_base()
     _ensure_dispatch()
 
     if not _is_base_tensor(a):
         return _dispatch_fn("squeeze", a.device.type, a, dim)
-    if getattr(a, "requires_grad", False):
-        return _dispatch_fn("squeeze", a.device.type, a, dim)
 
+    # 1B-B: requires_grad path also takes the fast view path. After 1B-B's
+    # dispatch-registration deletion, there is no autograd kernel to look up
+    # for squeeze; the engine view-rebase block owns gradient flow via the
+    # _view_func / _rev_view_func attached below.
+    input_shape = tuple(a.shape)
     shape = list(a.shape)
     stride = list(a.stride)
     if dim is not None:
@@ -727,7 +731,22 @@ def squeeze(a, dim=None):
         "creation_mode": creation_mode,
         "creation_kind": creation_kind,
     }
+    _attach_squeeze_view_funcs(v, dim, input_shape)
     return v
+
+
+def _attach_squeeze_view_funcs(result, dim, input_shape):
+    """Attach view_func/rev_view_func for squeeze so engine rebase owns grad."""
+    def _squeeze_view_func(new_base, _dim=dim):
+        if _dim is None:
+            return new_base.squeeze()
+        return new_base.squeeze(_dim)
+
+    def _squeeze_rev_view_func(grad_view, _shape=input_shape):
+        return grad_view.reshape(_shape)
+
+    result._view_func = _squeeze_view_func
+    result._rev_view_func = _squeeze_rev_view_func
 
 
 def unsqueeze(a, dim):

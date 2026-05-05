@@ -159,7 +159,22 @@ def squeeze(a, dim=None):
         shape = [p[0] for p in pairs]
         stride = [p[1] for p in pairs]
     base = _get_base(a)
-    return _make_view(base, shape, stride, a.offset, "squeeze", source=a)
+    input_shape = a.shape
+
+    def _squeeze_view_func(new_base, _dim=dim):
+        if _dim is None:
+            return new_base.squeeze()
+        return new_base.squeeze(_dim)
+
+    def _squeeze_rev_view_func(grad_view, _shape=input_shape):
+        return grad_view.reshape(_shape)
+
+    return _make_view(
+        base, shape, stride, a.offset, "squeeze",
+        source=a,
+        view_func=_squeeze_view_func,
+        rev_view_func=_squeeze_rev_view_func,
+    )
 
 
 def unsqueeze(a, dim):
@@ -180,7 +195,28 @@ def narrow(a, dim, start, length, *, creation_kind=None):
     new_shape[d] = int(length)
     new_offset = a.offset + int(start) * a.stride[d]
     base = _get_base(a)
-    return _make_view(base, tuple(new_shape), a.stride, new_offset, "narrow", source=a, creation_kind=creation_kind)
+    input_shape = a.shape
+    start_int = int(start)
+    length_int = int(length)
+
+    def _narrow_view_func(new_base, _dim=d, _start=start_int, _len=length_int):
+        return new_base.narrow(_dim, _start, _len)
+
+    def _narrow_rev_view_func(grad_view, _shape=input_shape, _dim=d, _start=start_int, _len=length_int):
+        # Pad grad_view back to input_shape with zeros at non-narrow positions.
+        # Mirrors NarrowBackward0 / _narrow_backward_helper.
+        # pylint: disable=import-outside-toplevel
+        from candle import zeros as _zeros
+        grad_input = _zeros(_shape, dtype=grad_view.dtype, device=grad_view.device)
+        grad_input.narrow(_dim, _start, _len).copy_(grad_view)
+        return grad_input
+
+    return _make_view(
+        base, tuple(new_shape), a.stride, new_offset, "narrow",
+        source=a, creation_kind=creation_kind,
+        view_func=_narrow_view_func,
+        rev_view_func=_narrow_rev_view_func,
+    )
 
 
 def select(a, dim, index, *, creation_kind=None):

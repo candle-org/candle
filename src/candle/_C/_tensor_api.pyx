@@ -808,16 +808,23 @@ def tensor_flatten(self, start_dim=0, end_dim=-1):
     cdef Py_ssize_t i
     cdef Py_ssize_t flattened = 1
     cdef tuple new_shape
+    cdef tuple input_shape
     cdef object result
     cdef object meta
 
+    input_shape = tuple(self.shape)
+    # Call the bare functional reshape (no autograd dispatch) so that views with
+    # requires_grad=True do not also pick up a ReshapeBackward0 grad_fn. The
+    # engine-level rebase via _rev_view_func is the sole owner of backward.
+    _ensure_functional_refs()
     if ndim == 0:
-        result = self.reshape((1,))
+        result = _reshape_dispatch_fn(self, (1,))
         meta = getattr(result, "_view_meta", None)
         if meta is not None:
             meta = dict(meta)
             meta["op"] = "flatten"
             result._view_meta = meta
+        _attach_flatten_view_funcs(result, 0, 0, input_shape)
         return result
     if start_dim < 0:
         start_dim += ndim
@@ -833,13 +840,26 @@ def tensor_flatten(self, start_dim=0, end_dim=-1):
     for i in range(start_dim, end_dim + 1):
         flattened *= self.shape[i]
     new_shape = self.shape[:start_dim] + (flattened,) + self.shape[end_dim + 1:]
-    result = self.reshape(new_shape)
+    result = _reshape_dispatch_fn(self, new_shape)
     meta = getattr(result, "_view_meta", None)
     if meta is not None:
         meta = dict(meta)
         meta["op"] = "flatten"
         result._view_meta = meta
+    _attach_flatten_view_funcs(result, int(start_dim), int(end_dim), input_shape)
     return result
+
+
+def _attach_flatten_view_funcs(result, start_dim, end_dim, input_shape):
+    """Attach view_func/rev_view_func for flatten so engine rebase owns grad."""
+    def _flatten_view_func(new_base, _start=start_dim, _end=end_dim):
+        return new_base.flatten(_start, _end)
+
+    def _flatten_rev_view_func(grad_view, _shape=input_shape):
+        return grad_view.reshape(_shape)
+
+    result._view_func = _flatten_view_func
+    result._rev_view_func = _flatten_rev_view_func
 
 
 def tensor_t(self):
@@ -1565,21 +1585,39 @@ def tensor_div_(self, other):
 def tensor_unflatten(self, dim, sizes):
     cdef Py_ssize_t ndim = len(self.shape)
     cdef tuple new_shape
+    cdef tuple input_shape
     cdef object result
     cdef object meta
     if dim < 0:
         dim += ndim
+    input_shape = tuple(self.shape)
     new_shape = self.shape[:dim] + tuple(sizes) + self.shape[dim + 1:]
-    # Use reshape (not view) so non-contiguous input falls back to a copy
-    # instead of raising. PyTorch's unflatten has the same conditional-view
-    # semantics.
-    result = self.reshape(new_shape)
+    # Use the bare functional reshape (no autograd dispatch) so views with
+    # requires_grad=True do not also pick up a ReshapeBackward0 grad_fn.
+    # Engine-level rebase via _rev_view_func is the sole owner of backward.
+    # PyTorch's unflatten has the same conditional-view semantics — non-
+    # contiguous input falls back to a copy via reshape rather than raising.
+    _ensure_functional_refs()
+    result = _reshape_dispatch_fn(self, new_shape)
     meta = getattr(result, "_view_meta", None)
     if meta is not None:
         meta = dict(meta)
         meta["op"] = "unflatten"
         result._view_meta = meta
+    _attach_unflatten_view_funcs(result, int(dim), tuple(sizes), input_shape)
     return result
+
+
+def _attach_unflatten_view_funcs(result, dim, sizes, input_shape):
+    """Attach view_func/rev_view_func for unflatten so engine rebase owns grad."""
+    def _unflatten_view_func(new_base, _dim=dim, _sizes=sizes):
+        return new_base.unflatten(_dim, _sizes)
+
+    def _unflatten_rev_view_func(grad_view, _shape=input_shape):
+        return grad_view.reshape(_shape)
+
+    result._view_func = _unflatten_view_func
+    result._rev_view_func = _unflatten_rev_view_func
 
 
 def tensor_bitwise_and_(self, other):
@@ -1919,10 +1957,9 @@ def tensor_movedim(self, source, destination):
     cdef object creation_mode
     cdef object creation_kind
     cdef object v
+    cdef tuple input_shape
 
     _ensure_dispatch_ref()
-    if self.requires_grad:
-        return _dispatch_fn("movedim", self.device.type, self, source, destination)
 
     ndim = len(self.shape)
     if isinstance(source, int):
@@ -1950,6 +1987,7 @@ def tensor_movedim(self, source, destination):
     for dst_idx in dst_order:
         order.insert(destination_tuple[dst_idx], source_tuple[dst_idx])
 
+    input_shape = tuple(self.shape)
     shape = [self.shape[d] for d in order]
     stride = [self.stride[d] for d in order]
     v = self.cy_as_strided(tuple(shape), tuple(stride), self.offset)
@@ -1971,7 +2009,21 @@ def tensor_movedim(self, source, destination):
         "creation_mode": creation_mode,
         "creation_kind": creation_kind,
     }
+    _attach_movedim_view_funcs(v, source_tuple, destination_tuple, input_shape)
     return v
+
+
+def _attach_movedim_view_funcs(result, source_tuple, destination_tuple, input_shape):
+    """Attach view_func/rev_view_func for movedim so engine rebase owns grad."""
+    def _movedim_view_func(new_base, _src=source_tuple, _dst=destination_tuple):
+        return new_base.movedim(_src, _dst)
+
+    def _movedim_rev_view_func(grad_view, _src=source_tuple, _dst=destination_tuple):
+        # Inverse: move axes from destination back to source.
+        return grad_view.movedim(_dst, _src)
+
+    result._view_func = _movedim_view_func
+    result._rev_view_func = _movedim_rev_view_func
 
 
 def tensor_diagonal(self, offset=0, dim1=0, dim2=1):
@@ -2636,16 +2688,16 @@ def tensor_narrow_method(self, dim, start, length):
     cdef object creation_mode
     cdef object creation_kind
     cdef object v
+    cdef tuple input_shape
 
     _ensure_dispatch_ref()
-    if self.requires_grad:
-        return _dispatch_fn("narrow", self.device.type, self, dim, start, length)
 
     ndim = len(self.shape)
     d = dim if dim >= 0 else dim + ndim
     new_shape = list(self.shape)
     new_shape[d] = int(length)
     new_offset = self.offset + int(start) * self.stride[d]
+    input_shape = tuple(self.shape)
     v = self.cy_as_strided(tuple(new_shape), tuple(self.stride), new_offset)
 
     source_view_meta = getattr(self, "_view_meta", None) or {}
@@ -2665,7 +2717,25 @@ def tensor_narrow_method(self, dim, start, length):
         "creation_mode": creation_mode,
         "creation_kind": creation_kind,
     }
+    _attach_narrow_view_funcs(v, int(d), int(start), int(length), input_shape)
     return v
+
+
+def _attach_narrow_view_funcs(result, dim, start, length, input_shape):
+    """Attach view_func/rev_view_func for narrow so engine rebase owns grad."""
+    def _narrow_view_func(new_base, _dim=dim, _start=start, _len=length):
+        return new_base.narrow(_dim, _start, _len)
+
+    def _narrow_rev_view_func(grad_view, _shape=input_shape, _dim=dim, _start=start, _len=length):
+        # Pad grad_view back to input_shape with zeros at non-narrow positions.
+        # pylint: disable=import-outside-toplevel
+        from candle import zeros as _zeros
+        grad_input = _zeros(_shape, dtype=grad_view.dtype, device=grad_view.device)
+        grad_input.narrow(_dim, _start, _len).copy_(grad_view)
+        return grad_input
+
+    result._view_func = _narrow_view_func
+    result._rev_view_func = _narrow_rev_view_func
 
 
 def tensor_select_method(self, dim, index):

@@ -45,8 +45,8 @@ def test_flatten_shares_storage_when_input_is_contiguous():
     assert u._base is not None
     assert u._view_meta is not None
     assert u._view_meta["op"] == "flatten"
-    assert u._view_func is None
-    assert u._rev_view_func is None
+    assert callable(u._view_func)
+    assert callable(u._rev_view_func)
 
 
 def test_flatten_view_mutation_propagates_to_input():
@@ -74,8 +74,8 @@ def test_unflatten_shares_storage_when_input_is_contiguous():
     assert u._base is not None
     assert u._view_meta is not None
     assert u._view_meta["op"] == "unflatten"
-    assert u._view_func is None
-    assert u._rev_view_func is None
+    assert callable(u._view_func)
+    assert callable(u._rev_view_func)
 
 
 def test_unflatten_view_mutation_propagates_to_input():

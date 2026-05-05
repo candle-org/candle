@@ -1624,6 +1624,12 @@
   self: grad / (2 * result.conj())
   result: auto_element_wise
 
+# View-tracked ops (1B-B): squeeze / squeeze_ / squeeze.dim / squeeze.dims /
+# squeeze_.dim / squeeze_.dims gradients flow via view rebase
+# (_view_func/_rev_view_func wired in src/candle/_backends/common/view.py).
+# The generator MUST NOT emit *Backward0 classes or *_autograd wrappers
+# for these entries. flatten/unflatten/movedim/narrow are not in this
+# yaml file but follow the same rule.
 - name: squeeze(Tensor(a) self) -> Tensor(a)
   self: unsqueeze_to(grad, self.sym_sizes())
   result: auto_linear
