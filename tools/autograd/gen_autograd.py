@@ -9,6 +9,8 @@ import argparse
 import sys
 from pathlib import Path
 
+_PRESERVE_IN_PLACE_FILES = {"functions.py", "variable_type.py", "registration.py"}
+
 
 def main(yaml_path: str | Path, output_dir: str | Path) -> None:
     from .load_derivatives import load_derivatives
@@ -23,19 +25,23 @@ def main(yaml_path: str | Path, output_dir: str | Path) -> None:
 
     infos = load_derivatives(yaml_path)
     print(f"Loaded {len(infos)} derivative entries from {yaml_path}")
+    autograd_infos = [info for info in infos if not info.view_autograd]
 
     # Generate files
     files = {
-        "functions.py": gen_functions(infos),
-        "variable_type.py": gen_variable_type(infos),
-        "registration.py": gen_registration(infos),
-        "_functions_cy.pyx": gen_functions_pyx(infos),
-        "_variable_type_cy.pyx": gen_variable_type_pyx(infos),
+        "functions.py": gen_functions(autograd_infos),
+        "variable_type.py": gen_variable_type(autograd_infos),
+        "registration.py": gen_registration(autograd_infos),
+        "_functions_cy.pyx": gen_functions_pyx(autograd_infos),
+        "_variable_type_cy.pyx": gen_variable_type_pyx(autograd_infos),
         "view_funcs.py": gen_view_funcs(),
     }
 
     for name, content in files.items():
         dest = output_dir / name
+        if name in _PRESERVE_IN_PLACE_FILES and dest.exists():
+            print(f"  {name} — preserved")
+            continue
         # Only write if content changed
         if dest.exists() and dest.read_text() == content:
             print(f"  {name} — unchanged")

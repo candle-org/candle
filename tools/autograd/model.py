@@ -42,6 +42,7 @@ class DifferentiabilityInfo:
     returns: list[Return]
     output_differentiability: list[bool] | None = None
     non_differentiable: set[str] = field(default_factory=set)
+    view_autograd: bool = False
 
     @property
     def op_name(self) -> str:
