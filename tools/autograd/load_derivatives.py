@@ -140,6 +140,7 @@ def _parse_entry(entry: dict) -> DifferentiabilityInfo:
         returns=returns,
         output_differentiability=output_diff,
         non_differentiable=non_diff,
+        view_autograd=bool(entry.get("view_autograd", False)),
     )
 
 
@@ -150,14 +151,14 @@ def _iter_derivative_items(entry: dict) -> list[tuple[str, object]]:
         return [
             (key, value)
             for key, value in entry.items()
-            if key not in ("name", "output_differentiability", "save_inputs", "dispatch")
+            if key not in ("name", "output_differentiability", "save_inputs", "dispatch", "view_autograd")
         ]
 
     default_dispatch = dispatch.get("Default", {})
     return list(default_dispatch.items()) + [
         (key, value)
         for key, value in entry.items()
-        if key not in ("name", "output_differentiability", "save_inputs", "dispatch")
+        if key not in ("name", "output_differentiability", "save_inputs", "dispatch", "view_autograd")
     ]
 
 
