@@ -21033,9 +21033,9 @@ class Batch_normBackward0(Node):
         return (grad_input,)
 
 
-class Broadcast_toBackward0(Node):
+class BroadcastToBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
-        super().__init__(None, inputs, name='Broadcast_toBackward0')
+        super().__init__(None, inputs, name='BroadcastToBackward0')
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
         self._saved_input_idx = None
@@ -21060,6 +21060,9 @@ class Broadcast_toBackward0(Node):
         with _grad_context(keyset):
             grad_input = reduce_grad(grad, input_.shape)
         return (grad_input,)
+
+
+Broadcast_toBackward0 = BroadcastToBackward0
 
 
 class CdistBackward0(Node):

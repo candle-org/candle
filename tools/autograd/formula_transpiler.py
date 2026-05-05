@@ -68,6 +68,8 @@ _SPECIAL_CALLS = {
     "div_tensor_self_backward": lambda args: f'_div_tensor_self_backward_helper({", ".join([*args, "keyset"])})',
     "div_tensor_other_backward": lambda args: f'_div_tensor_other_backward_helper({", ".join([*args, "keyset"])})',
     "matmul_backward": lambda args: f'_matmul_backward_helper({", ".join([*args, "keyset"])})',
+    "movedim_backward": lambda args: f'_movedim_backward_helper({", ".join([*args, "keyset"])})',
+    "tile_backward": lambda args: f'_tile_backward_helper({", ".join([*args, "keyset"])})',
     "gelu_backward": lambda args: f'_gelu_backward_helper({", ".join([*args, "keyset"])})',
     "unsqueeze_to": lambda args: f'_unsqueeze_to_backward_helper({", ".join([*args, "keyset"])})',
     "sum_to": lambda args: f'_sum_to_backward_helper({", ".join([*args, "keyset"])})',

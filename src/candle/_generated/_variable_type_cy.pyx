@@ -558,6 +558,52 @@ def matmul_autograd(self_, other, **_kwargs):
     return result
 
 
+def broadcast_to_autograd(input_, shape, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("broadcast_to", raw_keyset, input_, shape, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.BroadcastToBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._shape = shape
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def moveaxis_autograd(input_, source, destination, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("moveaxis", raw_keyset, input_, source, destination, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.MoveaxisBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._source = source
+        grad_fn._destination = destination
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def tile_autograd(input_, dims, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("tile", raw_keyset, input_, dims, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.TileBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._dims = dims
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def cat_autograd(tensors, dim=0, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
@@ -10201,6 +10247,43 @@ def matmul_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_
         grad_fn = _F.MatmulBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
         grad_fn._save(other=other, self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def broadcast_to_autograd_post(result, input_, shape, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.BroadcastToBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._shape = shape
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def moveaxis_autograd_post(result, input_, source, destination, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.MoveaxisBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._source = source
+        grad_fn._destination = destination
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def tile_autograd_post(result, input_, dims, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.TileBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._dims = dims
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
