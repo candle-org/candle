@@ -23410,9 +23410,9 @@ class Relu6Backward0(Node):
         return (grad_self,)
 
 
-class Repeat_interleaveBackward0(Node):
+class RepeatInterleaveBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
-        super().__init__(None, inputs, name='Repeat_interleaveBackward0')
+        super().__init__(None, inputs, name='RepeatInterleaveBackward0')
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
         self._saved_input_idx = None
@@ -23439,6 +23439,9 @@ class Repeat_interleaveBackward0(Node):
         with _grad_context(keyset):
             grad_input = _repeat_interleave_backward_helper(grad, input_, repeats, dim, keyset)
         return (grad_input,)
+
+
+Repeat_interleaveBackward0 = RepeatInterleaveBackward0
 
 
 class Rms_normBackward0(Node):

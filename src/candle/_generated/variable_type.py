@@ -18686,33 +18686,6 @@ def relu6_autograd_post(result, self, *, raw_keyset, active_keyset, **_kwargs):
 
 
 
-def repeat_interleave_autograd(input, repeats, dim=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("repeat_interleave", raw_keyset, input, repeats, dim, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Repeat_interleaveBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._repeats = repeats
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def repeat_interleave_autograd_post(result, input, repeats, dim=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Repeat_interleaveBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._repeats = repeats
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
 
 
 def rms_norm_autograd(input, normalized_shape, weight, eps=1e-6, **_kwargs):

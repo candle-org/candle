@@ -44,6 +44,7 @@ _FORMULA_BUILTINS = {
     "reduce_grad",
     "movedim_backward",
     "tile_backward",
+    "repeat_interleave_backward",
     "maybe_multiply",
     "handle_r_to_c",
     "redispatch",

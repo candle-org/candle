@@ -102,6 +102,21 @@ def test_autograd_tile_reduces_grad_to_input_shape():
     assert x.grad.tolist() == [[2.0, 2.0, 2.0]]
 
 
+def test_autograd_repeat_interleave_reduces_grad_to_input_shape():
+    from candle._dispatch.dispatcher import dispatch
+
+    x = torch.tensor([1.0, 2.0, 3.0])
+    x.requires_grad = True
+
+    y = dispatch("repeat_interleave", x.device.type, x, 2, 0)
+    assert type(y.grad_fn).__name__ == "RepeatInterleaveBackward0"
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (3,)
+    assert x.grad.tolist() == [2.0, 2.0, 2.0]
+
+
 def test_autograd_core_nn_ops_keep_graph():
     import candle.nn.functional as F
 
