@@ -56,6 +56,52 @@ def test_autograd_flatten_propagates_grad_to_base_tensor():
     assert x.grad.tolist() == [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
 
 
+def test_autograd_broadcast_to_reduces_grad_to_input_shape():
+    from candle._dispatch.dispatcher import dispatch
+
+    x = torch.tensor([[1.0, 2.0, 3.0]])
+    x.requires_grad = True
+
+    y = dispatch("broadcast_to", x.device.type, x, (2, 3))
+    assert type(y.grad_fn).__name__ == "BroadcastToBackward0"
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (1, 3)
+    assert x.grad.tolist() == [[2.0, 2.0, 2.0]]
+
+
+def test_autograd_moveaxis_rebases_grad_to_input_axes():
+    from candle._dispatch.dispatcher import dispatch
+
+    x = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    x.requires_grad = True
+
+    y = dispatch("moveaxis", x.device.type, x, 0, 1)
+    assert type(y.grad_fn).__name__ == "MoveaxisBackward0"
+    mask = torch.tensor([[0.0, 0.0], [0.0, 0.0], [0.0, 1.0]])
+    (y * mask).sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (2, 3)
+    assert x.grad.tolist() == [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def test_autograd_tile_reduces_grad_to_input_shape():
+    from candle._dispatch.dispatcher import dispatch
+
+    x = torch.tensor([[1.0, 2.0, 3.0]])
+    x.requires_grad = True
+
+    y = dispatch("tile", x.device.type, x, (2, 1))
+    assert type(y.grad_fn).__name__ == "TileBackward0"
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (1, 3)
+    assert x.grad.tolist() == [[2.0, 2.0, 2.0]]
+
+
 def test_autograd_core_nn_ops_keep_graph():
     import candle.nn.functional as F
 

@@ -383,6 +383,15 @@
 - name: matmul(Tensor self, Tensor other) -> Tensor
   self, other: matmul_backward(grad, self, other, grad_input_mask)
 
+- name: broadcast_to(Tensor input, SymInt[] shape) -> Tensor
+  input: reduce_grad(grad, input.sym_sizes())
+
+- name: moveaxis(Tensor input, int[] source, int[] destination) -> Tensor
+  input: movedim_backward(grad, input, source, destination)
+
+- name: tile(Tensor input, int[] dims) -> Tensor
+  input: tile_backward(grad, input, dims)
+
 - name: cat(Tensor[] tensors, int dim=0) -> Tensor
   tensors: cat_tensors_backward(grad, to_args_sizes_symint(tensors), to_args_scalartypes(tensors), dim)
   result: cat_jvp(tensors, dim)

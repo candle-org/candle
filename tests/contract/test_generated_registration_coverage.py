@@ -120,6 +120,9 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.diff_autograd" in legacy
     assert "_VT_PY.contiguous_autograd" in legacy
     assert "_VT_PY.softmax_autograd" in legacy
+    assert "_VT_PY.broadcast_to_autograd" not in legacy
+    assert "_VT_PY.moveaxis_autograd" not in legacy
+    assert "_VT_PY.tile_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -127,4 +130,7 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     head = text.split("# === UPSTREAM LEGACY REGISTRATIONS ===", 1)[0]
     assert "_VT.abs_autograd" in head
     assert "_VT.matmul_autograd" in head
+    assert "_VT.broadcast_to_autograd" in head
+    assert "_VT.moveaxis_autograd" in head
+    assert "_VT.tile_autograd" in head
     assert "_VT.relu_autograd" in head

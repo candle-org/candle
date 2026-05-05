@@ -16615,32 +16615,6 @@ def batch_norm_autograd_post(result, input, running_mean, running_var, weight, b
 
 
 
-def broadcast_to_autograd(input, shape, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("broadcast_to", raw_keyset, input, shape, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Broadcast_toBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._shape = shape
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def broadcast_to_autograd_post(result, input, shape, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Broadcast_toBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._shape = shape
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 
 def cdist_autograd(x1, x2, p=2.0, **_kwargs):
     active_keyset = current_dispatch_keyset()
@@ -18456,35 +18430,6 @@ def max_pool3d_autograd_post(result, self, kernel_size, stride, padding=None, di
 
 
 
-def moveaxis_autograd(input, source, destination, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("moveaxis", raw_keyset, input, source, destination, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.MoveaxisBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._source = source
-        grad_fn._destination = destination
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def moveaxis_autograd_post(result, input, source, destination, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.MoveaxisBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._source = source
-        grad_fn._destination = destination
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def nanmean_autograd(input, dim=None, keepdim=False, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -19302,33 +19247,6 @@ def tensordot_autograd_post(result, self, other, dims=2, *, raw_keyset, active_k
         grad_fn = _F.TensordotBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
         grad_fn._save(other=other, self_=self)
-        grad_fn._dims = dims
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def tile_autograd(input, dims, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("tile", raw_keyset, input, dims, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.TileBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dims = dims
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def tile_autograd_post(result, input, dims, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.TileBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
         grad_fn._dims = dims
         result.grad_fn = grad_fn
         result.requires_grad = True

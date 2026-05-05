@@ -2386,6 +2386,86 @@ class MatmulBackward0(_Node):
             grad_self, grad_other = _matmul_backward_helper(grad, self_, other, grad_input_mask, keyset)
         return (grad_self, grad_other,)
 
+class BroadcastToBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='BroadcastToBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_input_idx = None
+        self._shape = None
+
+    def _save(self, *, input_=None):
+        tensors = []
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
+        shape = self._shape
+        with _grad_context(keyset):
+            grad_input = _cy_not_implemented("BroadcastToBackward0: input")
+        return (grad_input,)
+
+class MoveaxisBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='MoveaxisBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_input_idx = None
+        self._source = None
+        self._destination = None
+
+    def _save(self, *, input_=None):
+        tensors = []
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
+        source = self._source
+        destination = self._destination
+        with _grad_context(keyset):
+            grad_input = _movedim_backward_helper(grad, input_, source, destination, keyset)
+        return (grad_input,)
+
+class TileBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='TileBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_input_idx = None
+        self._dims = None
+
+    def _save(self, *, input_=None):
+        tensors = []
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
+        dims = self._dims
+        with _grad_context(keyset):
+            grad_input = _tile_backward_helper(grad, input_, dims, keyset)
+        return (grad_input,)
+
 class CatBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         _ensure_refs()
@@ -19523,6 +19603,7 @@ Atanh_Backward0 = AtanhBackward0
 As_stridedBackward0 = AsStridedBackward0
 As_strided_Backward0 = AsStridedBackward0
 Bernoulli_Backward0 = BernoulliTensorBackward0
+Broadcast_toBackward0 = BroadcastToBackward0
 Cauchy_Backward0 = CauchyBackward0
 Linalg_cholesky_exBackward0 = LinalgCholeskyExBackward0
 Cholesky_solveBackward0 = CholeskySolveBackward0
