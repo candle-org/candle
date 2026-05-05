@@ -2466,6 +2466,34 @@ class TileBackward0(_Node):
             grad_input = _tile_backward_helper(grad, input_, dims, keyset)
         return (grad_input,)
 
+class RepeatInterleaveBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='RepeatInterleaveBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_input_idx = None
+        self._repeats = None
+        self._dim = None
+
+    def _save(self, *, input_=None):
+        tensors = []
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
+        repeats = self._repeats
+        dim = self._dim
+        with _grad_context(keyset):
+            grad_input = _repeat_interleave_backward_helper(grad, input_, repeats, dim, keyset)
+        return (grad_input,)
+
 class CatBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         _ensure_refs()
@@ -19604,6 +19632,7 @@ As_stridedBackward0 = AsStridedBackward0
 As_strided_Backward0 = AsStridedBackward0
 Bernoulli_Backward0 = BernoulliTensorBackward0
 Broadcast_toBackward0 = BroadcastToBackward0
+Repeat_interleaveBackward0 = RepeatInterleaveBackward0
 Cauchy_Backward0 = CauchyBackward0
 Linalg_cholesky_exBackward0 = LinalgCholeskyExBackward0
 Cholesky_solveBackward0 = CholeskySolveBackward0

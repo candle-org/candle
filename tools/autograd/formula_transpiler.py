@@ -70,6 +70,7 @@ _SPECIAL_CALLS = {
     "matmul_backward": lambda args: f'_matmul_backward_helper({", ".join([*args, "keyset"])})',
     "movedim_backward": lambda args: f'_movedim_backward_helper({", ".join([*args, "keyset"])})',
     "tile_backward": lambda args: f'_tile_backward_helper({", ".join([*args, "keyset"])})',
+    "repeat_interleave_backward": lambda args: f'_repeat_interleave_backward_helper({", ".join([*args, "keyset"])})',
     "gelu_backward": lambda args: f'_gelu_backward_helper({", ".join([*args, "keyset"])})',
     "unsqueeze_to": lambda args: f'_unsqueeze_to_backward_helper({", ".join([*args, "keyset"])})',
     "sum_to": lambda args: f'_sum_to_backward_helper({", ".join([*args, "keyset"])})',

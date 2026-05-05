@@ -604,6 +604,22 @@ def tile_autograd(input_, dims, **_kwargs):
     return result
 
 
+def repeat_interleave_autograd(input_, repeats, dim=None, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("repeat_interleave", raw_keyset, input_, repeats, dim, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.RepeatInterleaveBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._repeats = repeats
+        grad_fn._dim = dim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def cat_autograd(tensors, dim=0, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
@@ -10284,6 +10300,19 @@ def tile_autograd_post(result, input_, dims, *, raw_keyset, active_keyset, **_kw
         _annotate_node_creation(grad_fn)
         grad_fn._save(input_=input_)
         grad_fn._dims = dims
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def repeat_interleave_autograd_post(result, input_, repeats, dim=None, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.RepeatInterleaveBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._repeats = repeats
+        grad_fn._dim = dim
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
