@@ -1632,20 +1632,6 @@ def frexp_tensor_autograd(self_, **_kwargs):
     return result
 
 
-def gather_autograd(input, dim, index, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("gather", raw_keyset, input, dim, index, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.GatherBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(index=index, input_=input)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def ge__scalar_autograd(self_, other, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -10376,17 +10362,6 @@ def frexp_tensor_autograd_post(result, self_, *, raw_keyset, active_keyset, **_k
         result[0].requires_grad = True
         result[1].grad_fn = grad_fn
         result[1].requires_grad = True
-    return result
-
-
-def gather_autograd_post(result, input, dim, index, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.GatherBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(index=index, input_=input)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
     return result
 
 
