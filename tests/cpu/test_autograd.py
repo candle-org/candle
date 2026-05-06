@@ -283,3 +283,84 @@ def test_autograd_cumsum_propagates_grad_to_input():
     assert x.grad is not None
     assert x.grad.shape == (4,)
     assert x.grad.tolist() == [4.0, 3.0, 2.0, 1.0]
+
+
+def test_autograd_cummax_propagates_grad_to_selected_inputs():
+    x = torch.tensor([1.0, 3.0, 2.0, 5.0])
+    x.requires_grad = True
+
+    values, indices = torch.cummax(x, 0)
+    assert type(values.grad_fn).__name__ == "CummaxBackward0"
+    assert indices.requires_grad is False
+    values.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (4,)
+    assert x.grad.tolist() == [1.0, 2.0, 0.0, 1.0]
+
+
+def test_autograd_max_pool2d_propagates_grad_to_max_positions():
+    x = torch.tensor([[[[1.0, 4.0], [3.0, 2.0]]]])
+    x.requires_grad = True
+
+    y = torch.nn.functional.max_pool2d(x, kernel_size=2)
+    assert type(y.grad_fn).__name__ == "MaxPool2dBackward0"
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (1, 1, 2, 2)
+    assert x.grad.tolist() == [[[[0.0, 1.0], [0.0, 0.0]]]]
+
+
+def test_autograd_prod_propagates_grad_to_factors():
+    x = torch.tensor([2.0, 3.0, 4.0])
+    x.requires_grad = True
+
+    y = torch.prod(x)
+    assert type(y.grad_fn).__name__ == "ProdBackward0"
+    y.backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (3,)
+    assert x.grad.tolist() == [12.0, 8.0, 6.0]
+
+
+def test_autograd_repeat_reduces_grad_to_input_shape():
+    x = torch.tensor([1.0, 2.0, 3.0])
+    x.requires_grad = True
+
+    y = x.repeat(2)
+    assert type(y.grad_fn).__name__ == "RepeatBackward0"
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (3,)
+    assert x.grad.tolist() == [2.0, 2.0, 2.0]
+
+
+def test_autograd_sort_propagates_grad_to_original_positions():
+    x = torch.tensor([3.0, 1.0, 2.0])
+    x.requires_grad = True
+
+    values, indices = torch.sort(x)
+    assert type(values.grad_fn).__name__ == "SortBackward0"
+    assert indices.requires_grad is False
+    (values * torch.tensor([10.0, 20.0, 30.0])).sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (3,)
+    assert x.grad.tolist() == [30.0, 10.0, 20.0]
+
+
+def test_autograd_topk_propagates_grad_to_selected_positions():
+    x = torch.tensor([1.0, 4.0, 2.0, 3.0])
+    x.requires_grad = True
+
+    values, indices = torch.topk(x, 2)
+    assert type(values.grad_fn).__name__ == "TopkBackward0"
+    assert indices.requires_grad is False
+    values.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (4,)
+    assert x.grad.tolist() == [0.0, 1.0, 0.0, 1.0]

@@ -8906,30 +8906,27 @@ class ProdBackward0(_Node):
         super().__init__(None, inputs, name='ProdBackward0')
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
-        self._saved_self_idx = None
-        self._saved_result_idx = None
-        self._dtype = None
+        self._saved_input_idx = None
+        self._dim = None
+        self._keepdim = None
 
-    def _save(self, *, self_=None, result=None):
+    def _save(self, *, input_=None):
         tensors = []
-        if self_ is not None:
-            self._saved_self_idx = len(tensors)
-            tensors.append(self_)
-        if result is not None:
-            self._saved_result_idx = len(tensors)
-            tensors.append(result)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
         if tensors:
             super().save_for_backward(*tensors)
 
     def apply(self, grad):
         _ensure_refs()
         keyset = _backward_dispatch_keyset(self._raw_keyset)
-        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
-        result = self.saved_tensors[self._saved_result_idx] if self._saved_result_idx is not None else None
-        dtype = self._dtype
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
+        dim = self._dim
+        keepdim = self._keepdim
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("ProdBackward0: self")
-        return (grad_self,)
+            grad_input = _cy_not_implemented("ProdBackward0: input")
+        return (grad_input,)
 
 class ProdDimIntBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
@@ -14191,6 +14188,7 @@ class MaxPool2dBackward0(_Node):
         self._padding = None
         self._dilation = None
         self._ceil_mode = None
+        self._return_indices = None
 
     def _save(self, *, self_=None):
         tensors = []
@@ -14209,6 +14207,7 @@ class MaxPool2dBackward0(_Node):
         padding = self._padding
         dilation = self._dilation
         ceil_mode = self._ceil_mode
+        return_indices = self._return_indices
         with _grad_context(keyset):
             grad_self = _cy_not_implemented("MaxPool2dBackward0: self")
         return (grad_self,)
