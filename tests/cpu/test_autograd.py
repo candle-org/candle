@@ -117,6 +117,24 @@ def test_autograd_repeat_interleave_reduces_grad_to_input_shape():
     assert x.grad.tolist() == [2.0, 2.0, 2.0]
 
 
+def test_autograd_take_along_dim_scatters_grad_to_input_positions():
+    from candle._dispatch.dispatcher import dispatch
+
+    x = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    indices = torch.tensor([[2, 0], [1, 1]])
+    x.requires_grad = True
+    indices.requires_grad = True
+
+    y = dispatch("take_along_dim", x.device.type, x, indices, 1)
+    assert type(y.grad_fn).__name__ == "TakeAlongDimBackward0"
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (2, 3)
+    assert x.grad.tolist() == [[1.0, 0.0, 1.0], [0.0, 2.0, 0.0]]
+    assert indices.grad is None
+
+
 def test_autograd_core_nn_ops_keep_graph():
     import candle.nn.functional as F
 

@@ -124,6 +124,7 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.moveaxis_autograd" not in legacy
     assert "_VT_PY.tile_autograd" not in legacy
     assert "_VT_PY.repeat_interleave_autograd" not in legacy
+    assert "_VT_PY.take_along_dim_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -135,4 +136,5 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.moveaxis_autograd" in head
     assert "_VT.tile_autograd" in head
     assert "_VT.repeat_interleave_autograd" in head
+    assert "_VT.take_along_dim_autograd" in head
     assert "_VT.relu_autograd" in head

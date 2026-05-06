@@ -19173,31 +19173,6 @@ def square_autograd_post(result, self, *, raw_keyset, active_keyset, **_kwargs):
 
 
 
-def take_along_dim_autograd(input, indices, dim, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("take_along_dim", raw_keyset, input, indices, dim, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Take_along_dimBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(indices=indices, input_=input)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def take_along_dim_autograd_post(result, input, indices, dim, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Take_along_dimBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(indices=indices, input_=input)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
 
 
 def tensordot_autograd(self, other, dims=2, **_kwargs):
