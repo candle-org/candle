@@ -128,6 +128,12 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.index_select_autograd" not in legacy
     assert "_VT_PY.gather_autograd" not in legacy
     assert "_VT_PY.cumsum_autograd" not in legacy
+    assert "_VT_PY.cummax_autograd" not in legacy
+    assert "_VT_PY.max_pool2d_autograd" not in legacy
+    assert "_VT_PY.prod_autograd" not in legacy
+    assert "_VT_PY.repeat_autograd" not in legacy
+    assert "_VT_PY.sort_autograd" not in legacy
+    assert "_VT_PY.topk_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -143,4 +149,10 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.index_select_autograd" in head
     assert "_VT.gather_autograd" in head
     assert "_VT.cumsum_autograd" in head
+    assert "_VT.cummax_autograd" in head
+    assert "_VT.max_pool2d_autograd" in head
+    assert "_VT.prod_autograd" in head
+    assert "_VT.repeat_autograd" in head
+    assert "_VT.sort_autograd" in head
+    assert "_VT.topk_autograd" in head
     assert "_VT.relu_autograd" in head

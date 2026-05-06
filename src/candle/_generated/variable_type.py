@@ -928,21 +928,6 @@ def cumprod_autograd(self_, dim, dtype=None, **_kwargs):
     return result
 
 
-def cummax_autograd(self_, dim, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("cummax", raw_keyset, self_, dim, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.CummaxBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, indices=result)
-        grad_fn._dim = dim
-        result[0].grad_fn = grad_fn
-        result[0].requires_grad = True
-        result[1].grad_fn = grad_fn
-        result[1].requires_grad = True
-    return result
-
 
 def cummin_autograd(self_, dim, **_kwargs):
     active_keyset = current_dispatch_keyset()
@@ -3633,20 +3618,6 @@ def pow_scalar_autograd(self_, exponent, **_kwargs):
     return result
 
 
-def prod_autograd(input, dim=None, keepdim=False, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("prod", raw_keyset, input, dim, keepdim, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.ProdBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dim = dim
-        grad_fn._keepdim = keepdim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
 
 def prod_dim_int_autograd(self_, dim, keepdim=False, dtype=None, **_kwargs):
     active_keyset = current_dispatch_keyset()
@@ -3802,19 +3773,6 @@ def renorm_autograd(self_, p, dim, maxnorm, **_kwargs):
         result.requires_grad = True
     return result
 
-
-def repeat_autograd(input, repeats, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("repeat", raw_keyset, input, repeats, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.RepeatBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._repeats = repeats
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
 
 
 def special_entr_autograd(self_, **_kwargs):
@@ -4202,21 +4160,6 @@ def _linalg_solve_ex_autograd(A, B, left=True, check_errors=False, **_kwargs):
         result[0].requires_grad = True
     return result
 
-
-def sort_autograd(self, dim=-1, descending=False, stable=False, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("sort", raw_keyset, self, dim, descending, stable, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SortBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, result1=result[1])
-        grad_fn._dim = dim
-        grad_fn._descending = descending
-        grad_fn._stable = stable
-        result[0].grad_fn = grad_fn
-        result[0].requires_grad = True
-    return result
 
 
 def sort_stable_autograd(self_, stable, dim=-1, descending=False, **_kwargs):
@@ -4606,22 +4549,6 @@ def tanh_autograd(self_, **_kwargs):
         result.requires_grad = True
     return result
 
-
-def topk_autograd(self, k, dim=-1, largest=True, sorted=True, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("topk", raw_keyset, self, k, dim, largest, sorted, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.TopkBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, result1=result[1])
-        grad_fn._k = k
-        grad_fn._dim = dim
-        grad_fn._largest = largest
-        grad_fn._sorted = sorted
-        result[0].grad_fn = grad_fn
-        result[0].requires_grad = True
-    return result
 
 
 def trace_autograd(self_, **_kwargs):
@@ -6506,24 +6433,6 @@ def linear_backward_autograd(self_, grad_output, weight, output_mask, **_kwargs)
         result[2].requires_grad = True
     return result
 
-
-def max_pool2d_autograd(self, kernel_size, stride, padding=None, dilation=None, ceil_mode=False, return_indices=False, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("max_pool2d", raw_keyset, self, kernel_size, stride, padding, dilation, ceil_mode, return_indices, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.Max_pool2dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, result=result)
-        grad_fn._kernel_size = kernel_size
-        grad_fn._stride = stride
-        grad_fn._padding = padding
-        grad_fn._dilation = dilation
-        grad_fn._ceil_mode = ceil_mode
-        grad_fn._return_indices = return_indices
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
 
 
 def _mps_convolution_autograd(self_, weight, bias, padding, stride, dilation, groups, **_kwargs):
@@ -9794,18 +9703,6 @@ def cumprod_autograd_post(result, self_, dim, dtype=None, *, raw_keyset, active_
     return result
 
 
-def cummax_autograd_post(result, self_, dim, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.CummaxBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, indices=result[1])
-        grad_fn._dim = dim
-        result[0].grad_fn = grad_fn
-        result[0].requires_grad = True
-        result[1].grad_fn = grad_fn
-        result[1].requires_grad = True
-    return result
-
 
 def cummin_autograd_post(result, self_, dim, *, raw_keyset, active_keyset, **_kwargs):
     if GradMode.enabled and (self_.requires_grad):
@@ -11929,17 +11826,6 @@ def pow_scalar_autograd_post(result, self_, exponent, *, raw_keyset, active_keys
     return result
 
 
-def prod_autograd_post(result, input, dim=None, keepdim=False, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.ProdBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dim = dim
-        grad_fn._keepdim = keepdim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
 
 def prod_dim_int_autograd_post(result, self_, dim, keepdim=False, dtype=None, *, raw_keyset, active_keyset, **_kwargs):
     if GradMode.enabled and (self_.requires_grad):
@@ -12062,16 +11948,6 @@ def renorm_autograd_post(result, self_, p, dim, maxnorm, *, raw_keyset, active_k
         result.requires_grad = True
     return result
 
-
-def repeat_autograd_post(result, input, repeats, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.RepeatBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._repeats = repeats
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
 
 
 def special_entr_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
@@ -12378,18 +12254,6 @@ def _linalg_solve_ex_autograd_post(result, A, B, left=True, check_errors=False, 
         result[0].requires_grad = True
     return result
 
-
-def sort_autograd_post(result, self, dim=-1, descending=False, stable=False, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SortBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, result1=result[1])
-        grad_fn._dim = dim
-        grad_fn._descending = descending
-        grad_fn._stable = stable
-        result[0].grad_fn = grad_fn
-        result[0].requires_grad = True
-    return result
 
 
 def sort_stable_autograd_post(result, self_, stable, dim=-1, descending=False, *, raw_keyset, active_keyset, **_kwargs):
@@ -12702,19 +12566,6 @@ def tanh_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
         result.requires_grad = True
     return result
 
-
-def topk_autograd_post(result, self, k, dim=-1, largest=True, sorted=True, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.TopkBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, result1=result[1])
-        grad_fn._k = k
-        grad_fn._dim = dim
-        grad_fn._largest = largest
-        grad_fn._sorted = sorted
-        result[0].grad_fn = grad_fn
-        result[0].requires_grad = True
-    return result
 
 
 def trace_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
@@ -14188,21 +14039,6 @@ def linear_backward_autograd_post(result, self_, grad_output, weight, output_mas
         result[2].requires_grad = True
     return result
 
-
-def max_pool2d_autograd_post(result, self, kernel_size, stride, padding=None, dilation=None, ceil_mode=False, return_indices=False, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.Max_pool2dBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, result=result)
-        grad_fn._kernel_size = kernel_size
-        grad_fn._stride = stride
-        grad_fn._padding = padding
-        grad_fn._dilation = dilation
-        grad_fn._ceil_mode = ceil_mode
-        grad_fn._return_indices = return_indices
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
 
 
 def _mps_convolution_autograd_post(result, self_, weight, bias, padding, stride, dilation, groups, *, raw_keyset, active_keyset, **_kwargs):
