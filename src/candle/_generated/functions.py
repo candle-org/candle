@@ -4634,7 +4634,9 @@ class GatherBackward0(Node):
         self._saved_input_idx = None
         self._dim = None
 
-    def _save(self, *, index=None, input_=None):
+    def _save(self, *, index=None, input_=None, self_=None):
+        if self_ is not None and input_ is None:
+            input_ = self_
         tensors = []
         if index is not None:
             self._saved_index_idx = len(tensors)
