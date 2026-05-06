@@ -3246,7 +3246,9 @@ class CumsumBackward0(Node):
         self._saved_input_idx = None
         self._dim = None
 
-    def _save(self, *, input_=None):
+    def _save(self, *, input_=None, self_=None):
+        if self_ is not None and input_ is None:
+            input_ = self_
         tensors = []
         if input_ is not None:
             self._saved_input_idx = len(tensors)

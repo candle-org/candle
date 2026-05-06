@@ -928,20 +928,6 @@ def cumprod_autograd(self_, dim, dtype=None, **_kwargs):
     return result
 
 
-def cumsum_autograd(input, dim=0, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("cumsum", raw_keyset, input, dim, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.CumsumBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def cummax_autograd(self_, dim, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -9803,17 +9789,6 @@ def cumprod_autograd_post(result, self_, dim, dtype=None, *, raw_keyset, active_
         grad_fn._save(self_=self_, result=result)
         grad_fn._dim = dim
         grad_fn._dtype = dtype
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def cumsum_autograd_post(result, input, dim=0, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.CumsumBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dim = dim
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
