@@ -395,6 +395,9 @@
 - name: repeat_interleave(Tensor input, Any repeats, int? dim=None) -> Tensor
   input: repeat_interleave_backward(grad, input, repeats, dim)
 
+- name: take_along_dim(Tensor input, Tensor indices, int dim) -> Tensor
+  input: take_along_dim_backward(grad, input, indices, dim)
+
 - name: cat(Tensor[] tensors, int dim=0) -> Tensor
   tensors: cat_tensors_backward(grad, to_args_sizes_symint(tensors), to_args_scalartypes(tensors), dim)
   result: cat_jvp(tensors, dim)

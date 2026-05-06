@@ -2494,6 +2494,37 @@ class RepeatInterleaveBackward0(_Node):
             grad_input = _repeat_interleave_backward_helper(grad, input_, repeats, dim, keyset)
         return (grad_input,)
 
+class TakeAlongDimBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='TakeAlongDimBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_indices_idx = None
+        self._saved_input_idx = None
+        self._dim = None
+
+    def _save(self, *, indices=None, input_=None):
+        tensors = []
+        if indices is not None:
+            self._saved_indices_idx = len(tensors)
+            tensors.append(indices)
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        indices = self.saved_tensors[self._saved_indices_idx] if self._saved_indices_idx is not None else None
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
+        dim = self._dim
+        with _grad_context(keyset):
+            grad_input = _take_along_dim_backward_helper(grad, input_, indices, dim, keyset)
+        return (grad_input,)
+
 class CatBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         _ensure_refs()
@@ -19633,6 +19664,7 @@ As_strided_Backward0 = AsStridedBackward0
 Bernoulli_Backward0 = BernoulliTensorBackward0
 Broadcast_toBackward0 = BroadcastToBackward0
 Repeat_interleaveBackward0 = RepeatInterleaveBackward0
+Take_along_dimBackward0 = TakeAlongDimBackward0
 Cauchy_Backward0 = CauchyBackward0
 Linalg_cholesky_exBackward0 = LinalgCholeskyExBackward0
 Cholesky_solveBackward0 = CholeskySolveBackward0

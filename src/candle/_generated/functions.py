@@ -23956,9 +23956,9 @@ class SquareBackward0(Node):
         return (grad_self,)
 
 
-class Take_along_dimBackward0(Node):
+class TakeAlongDimBackward0(Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
-        super().__init__(None, inputs, name='Take_along_dimBackward0')
+        super().__init__(None, inputs, name='TakeAlongDimBackward0')
         self._raw_keyset = raw_keyset
         self._active_keyset = active_keyset
         self._saved_indices_idx = None
@@ -23990,6 +23990,9 @@ class Take_along_dimBackward0(Node):
         with _grad_context(keyset):
             grad_input = _take_along_dim_backward_helper(grad, input_, indices, dim, keyset)
         return (grad_input,)
+
+
+Take_along_dimBackward0 = TakeAlongDimBackward0
 
 
 class TensordotBackward0(Node):
