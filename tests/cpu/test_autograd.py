@@ -135,6 +135,24 @@ def test_autograd_take_along_dim_scatters_grad_to_input_positions():
     assert indices.grad is None
 
 
+def test_autograd_index_select_scatters_grad_to_input_rows():
+    from candle._dispatch.dispatcher import dispatch
+
+    x = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+    index = torch.tensor([0, 2, 0])
+    x.requires_grad = True
+    index.requires_grad = True
+
+    y = dispatch("index_select", x.device.type, x, 0, index)
+    assert type(y.grad_fn).__name__ == "IndexSelectBackward0"
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (3, 3)
+    assert x.grad.tolist() == [[2.0, 2.0, 2.0], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]
+    assert index.grad is None
+
+
 def test_autograd_core_nn_ops_keep_graph():
     import candle.nn.functional as F
 
