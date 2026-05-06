@@ -2125,20 +2125,6 @@ def _index_put_impl__autograd(self_, indices, values, accumulate=False, unsafe=F
     return result
 
 
-def index_select_autograd(input, dim, index, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("index_select", raw_keyset, input, dim, index, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Index_selectBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(index=index, input_=input)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def linalg_inv_ex_autograd(A, check_errors=False, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -10764,17 +10750,6 @@ def _index_put_impl__autograd_post(result, self_, indices, values, accumulate=Fa
         grad_fn._save(values=values)
         grad_fn._accumulate = accumulate
         grad_fn._unsafe = unsafe
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def index_select_autograd_post(result, input, dim, index, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Index_selectBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(index=index, input_=input)
-        grad_fn._dim = dim
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
