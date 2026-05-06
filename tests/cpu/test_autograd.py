@@ -270,3 +270,16 @@ def test_autograd_matmul_matrix_vector_backward_shape_and_values():
         ),
     )
     np.testing.assert_allclose(x.grad.numpy(), np.array([1.0, -1.0, 3.0], dtype=np.float32))
+
+
+def test_autograd_cumsum_propagates_grad_to_input():
+    x = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    x.requires_grad = True
+
+    y = torch.cumsum(x, 0)
+    assert type(y.grad_fn).__name__ == "CumsumBackward0"
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.shape == (4,)
+    assert x.grad.tolist() == [4.0, 3.0, 2.0, 1.0]
