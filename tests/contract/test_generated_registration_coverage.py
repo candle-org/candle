@@ -183,6 +183,14 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.linalg_matrix_power_autograd" not in legacy
     assert "_VT_PY.linalg_inv_autograd" not in legacy
     assert "_VT_PY.getitem_autograd" not in legacy
+    assert "_VT_PY.fft_fft_autograd" not in legacy
+    assert "_VT_PY.fft_ifft_autograd" not in legacy
+    assert "_VT_PY.fft_fft2_autograd" not in legacy
+    assert "_VT_PY.fft_ifft2_autograd" not in legacy
+    assert "_VT_PY.fft_rfft_autograd" not in legacy
+    assert "_VT_PY.fft_irfft_autograd" not in legacy
+    assert "_VT_PY.fft_rfft2_autograd" not in legacy
+    assert "_VT_PY.fft_irfft2_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -255,6 +263,14 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.linalg_matrix_power_autograd" in full_text
     assert "_VT.linalg_inv_autograd" in full_text
     assert "_VT.getitem_autograd" in full_text
+    assert "_VT.fft_fft_autograd" in full_text
+    assert "_VT.fft_ifft_autograd" in full_text
+    assert "_VT.fft_fft2_autograd" in full_text
+    assert "_VT.fft_ifft2_autograd" in full_text
+    assert "_VT.fft_rfft_autograd" in full_text
+    assert "_VT.fft_irfft_autograd" in full_text
+    assert "_VT.fft_rfft2_autograd" in full_text
+    assert "_VT.fft_irfft2_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():

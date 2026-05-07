@@ -3325,3 +3325,27 @@
 
 - name: getitem(Tensor self, Any key) -> Tensor
   self: getitem_backward(grad, self, key)
+
+- name: fft_fft(Tensor input, int? n=None, int dim=-1, str? norm=None) -> Tensor
+  input: generated_fft_c2c_backward(grad, input, n, dim, norm, "fft_ifft")
+
+- name: fft_ifft(Tensor input, int? n=None, int dim=-1, str? norm=None) -> Tensor
+  input: generated_fft_c2c_backward(grad, input, n, dim, norm, "fft_fft")
+
+- name: fft_fft2(Tensor input, Any s=None, Any dim=None, str? norm=None) -> Tensor
+  input: generated_fft_c2c_backward(grad, input, s, dim, norm, "fft_ifft2")
+
+- name: fft_ifft2(Tensor input, Any s=None, Any dim=None, str? norm=None) -> Tensor
+  input: generated_fft_c2c_backward(grad, input, s, dim, norm, "fft_fft2")
+
+- name: fft_rfft(Tensor input, int? n=None, int dim=-1, str? norm=None) -> Tensor
+  input: generated_fft_r2c_backward(grad, input, n, dim, norm, "fft_irfft")
+
+- name: fft_irfft(Tensor input, int? n=None, int dim=-1, str? norm=None) -> Tensor
+  input: generated_fft_c2r_backward(grad, input, n, dim, norm, "fft_rfft")
+
+- name: fft_rfft2(Tensor input, Any s=None, Any dim=None, str? norm=None) -> Tensor
+  input: generated_fft_r2c_backward(grad, input, s, dim, norm, "fft_irfft2")
+
+- name: fft_irfft2(Tensor input, Any s=None, Any dim=None, str? norm=None) -> Tensor
+  input: generated_fft_c2r_backward(grad, input, s, dim, norm, "fft_rfft2")

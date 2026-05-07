@@ -58,6 +58,14 @@ class DifferentiabilityInfo:
     def backward_name(self) -> str:
         preserved_names = {
             "column_stack": "Column_stackBackward0",
+            "fft_fft": "Fft_fftBackward0",
+            "fft_fft2": "Fft_fft2Backward0",
+            "fft_ifft": "Fft_ifftBackward0",
+            "fft_ifft2": "Fft_ifft2Backward0",
+            "fft_irfft": "Fft_irfftBackward0",
+            "fft_irfft2": "Fft_irfft2Backward0",
+            "fft_rfft": "Fft_rfftBackward0",
+            "fft_rfft2": "Fft_rfft2Backward0",
             "floor_divide": "Floor_divideBackward0",
             "linalg_inv": "Linalg_invBackward0",
             "linalg_matrix_power": "Linalg_matrix_powerBackward0",

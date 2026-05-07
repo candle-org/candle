@@ -122,6 +122,9 @@ _SPECIAL_CALLS = {
     "matrix_power_backward": lambda args: f'_matrix_power_backward_helper({", ".join([*args, "keyset"])})',
     "linalg_inv_backward": lambda args: f'_linalg_inv_grad({", ".join([*args, "keyset"])})',
     "getitem_backward": lambda args: f'_getitem_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_fft_c2c_backward": lambda args: f'_fft_c2c_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_fft_r2c_backward": lambda args: f'_fft_r2c_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_fft_c2r_backward": lambda args: f'_fft_c2r_backward_helper({", ".join([*args, "keyset"])})',
 }
 
 _HELPER_FALLBACKS = {

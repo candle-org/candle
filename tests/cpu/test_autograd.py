@@ -951,3 +951,30 @@ def test_autograd_linalg_and_view_batch_routes_compiled_backward():
     g_out.sum().backward()
     assert g.grad is not None
     np.testing.assert_allclose(g.grad.numpy(), np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32))
+
+
+def test_autograd_fft_batch_routes_compiled_backward():
+    grad_fn_classes = {
+        torch.fft.fft: "Fft_fftBackward0",
+        torch.fft.ifft: "Fft_ifftBackward0",
+        torch.fft.fft2: "Fft_fft2Backward0",
+        torch.fft.ifft2: "Fft_ifft2Backward0",
+        torch.fft.rfft: "Fft_rfftBackward0",
+        torch.fft.rfft2: "Fft_rfft2Backward0",
+    }
+    for fn, expected in grad_fn_classes.items():
+        x = torch.tensor([[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]])
+        x.requires_grad = True
+        out = fn(x)
+        assert type(out.grad_fn).__name__ == expected, f"{fn.__name__}: {type(out.grad_fn).__name__}"
+
+    # irfft / irfft2 take complex input
+    cx = torch.tensor([1.0, 2.0, 3.0]).to(dtype=torch.complex64)
+    cx.requires_grad = True
+    irfft_out = torch.fft.irfft(cx)
+    assert type(irfft_out.grad_fn).__name__ == "Fft_irfftBackward0"
+
+    cx2 = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]).to(dtype=torch.complex64)
+    cx2.requires_grad = True
+    irfft2_out = torch.fft.irfft2(cx2)
+    assert type(irfft2_out.grad_fn).__name__ == "Fft_irfft2Backward0"

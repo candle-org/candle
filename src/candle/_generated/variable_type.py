@@ -16328,64 +16328,6 @@ def ctc_loss_autograd_post(result, self, targets, input_lengths, target_lengths,
 
 
 
-def fft_fft2_autograd(input, s=None, dim=None, norm=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("fft_fft2", raw_keyset, input, s, dim, norm, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_fft2Backward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._s = s
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_fft2_autograd_post(result, input, s=None, dim=None, norm=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_fft2Backward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._s = s
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_fft_autograd(input, n=None, dim=-1, norm=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("fft_fft", raw_keyset, input, n, dim, norm, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_fftBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._n = n
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_fft_autograd_post(result, input, n=None, dim=-1, norm=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_fftBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._n = n
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def fft_fftn_autograd(input, s=None, dim=None, norm=None, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -16459,64 +16401,6 @@ def fft_hfft_autograd(input, n=None, dim=-1, norm=None, **_kwargs):
 def fft_hfft_autograd_post(result, input, n=None, dim=-1, norm=None, *, raw_keyset, active_keyset, **_kwargs):
     if GradMode.enabled and (input.requires_grad):
         grad_fn = _F.Fft_hfftBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._n = n
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_ifft2_autograd(input, s=None, dim=None, norm=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("fft_ifft2", raw_keyset, input, s, dim, norm, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_ifft2Backward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._s = s
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_ifft2_autograd_post(result, input, s=None, dim=None, norm=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_ifft2Backward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._s = s
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_ifft_autograd(input, n=None, dim=-1, norm=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("fft_ifft", raw_keyset, input, n, dim, norm, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_ifftBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._n = n
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_ifft_autograd_post(result, input, n=None, dim=-1, norm=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_ifftBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
         grad_fn._save(input_=input)
         grad_fn._n = n
@@ -16610,64 +16494,6 @@ def fft_ihfft_autograd_post(result, input, n=None, dim=-1, norm=None, *, raw_key
     return result
 
 
-def fft_irfft2_autograd(input, s=None, dim=None, norm=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("fft_irfft2", raw_keyset, input, s, dim, norm, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_irfft2Backward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._s = s
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_irfft2_autograd_post(result, input, s=None, dim=None, norm=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_irfft2Backward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._s = s
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_irfft_autograd(input, n=None, dim=-1, norm=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("fft_irfft", raw_keyset, input, n, dim, norm, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_irfftBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._n = n
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_irfft_autograd_post(result, input, n=None, dim=-1, norm=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_irfftBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._n = n
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def fft_irfftn_autograd(input, s=None, dim=None, norm=None, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -16690,64 +16516,6 @@ def fft_irfftn_autograd_post(result, input, s=None, dim=None, norm=None, *, raw_
         annotate_node_creation(grad_fn)
         grad_fn._save(input_=input)
         grad_fn._s = s
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_rfft2_autograd(input, s=None, dim=None, norm=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("fft_rfft2", raw_keyset, input, s, dim, norm, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_rfft2Backward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._s = s
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_rfft2_autograd_post(result, input, s=None, dim=None, norm=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_rfft2Backward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._s = s
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_rfft_autograd(input, n=None, dim=-1, norm=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("fft_rfft", raw_keyset, input, n, dim, norm, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_rfftBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._n = n
-        grad_fn._dim = dim
-        grad_fn._norm = norm
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fft_rfft_autograd_post(result, input, n=None, dim=-1, norm=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Fft_rfftBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._n = n
         grad_fn._dim = dim
         grad_fn._norm = norm
         result.grad_fn = grad_fn
