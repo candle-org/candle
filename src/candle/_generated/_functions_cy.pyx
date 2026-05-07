@@ -1254,7 +1254,7 @@ def _special_polygamma_backward_helper(grad, n, self_, keyset):
 
 def _special_multigammaln_backward_helper(grad, self_, p, keyset):
     from .._backends.autograd import _special_multigammaln_backward
-    return _special_multigammaln_backward(grad, self_, self_, keyset, (p,))[0]
+    return _special_multigammaln_backward(grad, self_, self_, keyset, (p,), {})[0]
 
 
 # ---------------------------------------------------------------------------

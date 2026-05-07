@@ -171,6 +171,12 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.special_ndtr_autograd" not in legacy
     assert "_VT_PY.special_sinc_autograd" not in legacy
     assert "_VT_PY.special_i0_autograd" not in legacy
+    assert "_VT_PY.diag_autograd" not in legacy
+    assert "_VT_PY.special_polygamma_autograd" not in legacy
+    assert "_VT_PY.special_multigammaln_autograd" not in legacy
+    assert "_VT_PY.special_xlogy_autograd" not in legacy
+    assert "_VT_PY.special_gammainc_autograd" not in legacy
+    assert "_VT_PY.special_gammaincc_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -230,6 +236,12 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.special_ndtr_autograd" in full_text
     assert "_VT.special_sinc_autograd" in full_text
     assert "_VT.special_i0_autograd" in full_text
+    assert "_VT.diag_autograd" in full_text
+    assert "_VT.special_polygamma_autograd" in full_text
+    assert "_VT.special_multigammaln_autograd" in full_text
+    assert "_VT.special_xlogy_autograd" in full_text
+    assert "_VT.special_gammainc_autograd" in full_text
+    assert "_VT.special_gammaincc_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():

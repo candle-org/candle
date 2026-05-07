@@ -64,11 +64,16 @@ class DifferentiabilityInfo:
             "row_stack": "Row_stackBackward0",
             "special_digamma": "Special_digammaBackward0",
             "special_erfinv": "Special_erfinvBackward0",
+            "special_gammainc": "Special_gammaincBackward0",
+            "special_gammaincc": "Special_gammainccBackward0",
             "special_gammaln": "Special_gammalnBackward0",
             "special_i0": "Special_i0Backward0",
             "special_logit": "Special_logitBackward0",
+            "special_multigammaln": "Special_multigammalnBackward0",
             "special_ndtr": "Special_ndtrBackward0",
+            "special_polygamma": "Special_polygammaBackward0",
             "special_sinc": "Special_sincBackward0",
+            "special_xlogy": "Special_xlogyBackward0",
             "true_divide": "True_divideBackward0",
         }
         if self.func_name in preserved_names:

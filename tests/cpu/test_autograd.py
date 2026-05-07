@@ -839,3 +839,65 @@ def test_autograd_special_unary_batch_routes_compiled_backward():
     s_np = s.numpy()
     expected_sinc_grad = (np.cos(np.pi * s_np) * np.pi * s_np - np.sin(np.pi * s_np)) / (np.pi * s_np * s_np)
     np.testing.assert_allclose(s.grad.numpy(), expected_sinc_grad, rtol=1e-6, atol=1e-6)
+
+
+def test_autograd_diag_and_special_binary_batch_routes_compiled_backward():
+    x = torch.tensor([1.0, 2.0, 3.0])
+    x.requires_grad = True
+    diag_out = torch.diag(x)
+    assert type(diag_out.grad_fn).__name__ == "DiagBackward0"
+    diag_out.sum().backward()
+    assert x.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.ones(3, dtype=np.float32))
+
+    p = torch.tensor([1.5, 2.5, 3.5])
+    p.requires_grad = True
+    poly_out = torch.special.polygamma(1, p)
+    assert type(poly_out.grad_fn).__name__ == "Special_polygammaBackward0"
+    poly_out.sum().backward()
+    assert p.grad is not None
+    np.testing.assert_allclose(
+        p.grad.numpy(),
+        torch.special.polygamma(2, torch.tensor([1.5, 2.5, 3.5])).numpy(),
+        rtol=1e-6,
+        atol=1e-6,
+    )
+
+    m = torch.tensor([2.0, 3.0, 4.0])
+    m.requires_grad = True
+    multi_out = torch.special.multigammaln(m, 2)
+    assert type(multi_out.grad_fn).__name__ == "Special_multigammalnBackward0"
+    multi_out.sum().backward()
+    assert m.grad is not None
+    m_np = m.numpy()
+    expected_multi_grad = torch.special.digamma(torch.tensor(m_np)).numpy() + \
+        torch.special.digamma(torch.tensor(m_np - 0.5)).numpy()
+    np.testing.assert_allclose(m.grad.numpy(), expected_multi_grad, rtol=1e-5, atol=1e-5)
+
+    a = torch.tensor([0.5, 1.0, 2.0])
+    b = torch.tensor([1.0, 2.0, 3.0])
+    a.requires_grad = True
+    b.requires_grad = True
+    xl_out = torch.special.xlogy(a, b)
+    assert type(xl_out.grad_fn).__name__ == "Special_xlogyBackward0"
+    xl_out.sum().backward()
+    assert a.grad is not None
+    assert b.grad is not None
+    np.testing.assert_allclose(a.grad.numpy(), np.log(b.numpy()), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(b.grad.numpy(), a.numpy() / b.numpy(), rtol=1e-6, atol=1e-6)
+
+    g_a = torch.tensor([1.0, 2.0, 3.0])
+    g_x = torch.tensor([0.5, 1.5, 2.5])
+    g_x.requires_grad = True
+    gi_out = torch.special.gammainc(g_a, g_x)
+    assert type(gi_out.grad_fn).__name__ == "Special_gammaincBackward0"
+    gi_out.sum().backward()
+    assert g_x.grad is not None
+
+    h_a = torch.tensor([1.0, 2.0, 3.0])
+    h_x = torch.tensor([0.5, 1.5, 2.5])
+    h_x.requires_grad = True
+    gic_out = torch.special.gammaincc(h_a, h_x)
+    assert type(gic_out.grad_fn).__name__ == "Special_gammainccBackward0"
+    gic_out.sum().backward()
+    assert h_x.grad is not None

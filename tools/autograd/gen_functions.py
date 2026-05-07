@@ -1245,7 +1245,7 @@ def _special_polygamma_backward_helper(grad, n, self_, keyset):
 
 def _special_multigammaln_backward_helper(grad, self_, p, keyset):
     from .._backends.autograd import _special_multigammaln_backward
-    return _special_multigammaln_backward(grad, self_, self_, keyset, (p,))[0]
+    return _special_multigammaln_backward(grad, self_, self_, keyset, (p,), {})[0]
 
 
 # ---------------------------------------------------------------------------
@@ -1858,6 +1858,7 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
     parts.append(_get_pyx_helpers_block())
     pyx_backward_skip_ops = {
         "cross",
+        "diag",
         "diff",
         "log_softmax",
         "nanmean",
@@ -1867,11 +1868,16 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
         "softmax",
         "special_digamma",
         "special_erfinv",
+        "special_gammainc",
+        "special_gammaincc",
         "special_gammaln",
         "special_i0",
         "special_logit",
+        "special_multigammaln",
         "special_ndtr",
+        "special_polygamma",
         "special_sinc",
+        "special_xlogy",
     }
     for info in infos:
         if info.op_name in pyx_backward_skip_ops:

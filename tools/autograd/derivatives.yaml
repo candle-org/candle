@@ -3286,3 +3286,21 @@
 
 - name: special_sinc(Tensor self) -> Tensor
   self: special_sinc_grad(grad, self)
+
+- name: diag(Tensor input, int diagonal=0) -> Tensor
+  input: diag_backward(grad, input, diagonal)
+
+- name: special_polygamma(int n, Tensor self) -> Tensor
+  self: special_polygamma_backward(grad, n, self)
+
+- name: special_multigammaln(Tensor self, int p) -> Tensor
+  self: special_multigammaln_backward(grad, self, p)
+
+- name: special_xlogy(Tensor self, Tensor other) -> Tensor
+  self, other: special_xlogy_backward(grad, self, other)
+
+- name: special_gammainc(Tensor self, Tensor other) -> Tensor
+  self, other: special_gammainc_backward(grad, self, other)
+
+- name: special_gammaincc(Tensor self, Tensor other) -> Tensor
+  self, other: special_gammaincc_backward(grad, self, other)

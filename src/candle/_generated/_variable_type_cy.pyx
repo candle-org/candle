@@ -10344,6 +10344,93 @@ def special_sinc_autograd(self_, **_kwargs):
     return result
 
 
+def diag_autograd(input_, diagonal=0, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("diag", raw_keyset, input_, diagonal, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.DiagBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._diagonal = diagonal
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_polygamma_autograd(n, self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_polygamma", raw_keyset, n, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_polygammaBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._n = n
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_multigammaln_autograd(self_, p, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_multigammaln", raw_keyset, self_, p, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_multigammalnBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._p = p
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_xlogy_autograd(self_, other, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_xlogy", raw_keyset, self_, other, **_kwargs)
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.Special_xlogyBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_gammainc_autograd(self_, other, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_gammainc", raw_keyset, self_, other, **_kwargs)
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.Special_gammaincBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_gammaincc_autograd(self_, other, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_gammaincc", raw_keyset, self_, other, **_kwargs)
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.Special_gammainccBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def abs_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
     _ensure_refs()
     if _GradMode.enabled and (self_.requires_grad):
@@ -18475,6 +18562,75 @@ def special_sinc_autograd_post(result, self_, *, raw_keyset, active_keyset, **_k
         grad_fn = _F.Special_sincBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
         grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def diag_autograd_post(result, input_, diagonal=0, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.DiagBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._diagonal = diagonal
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_polygamma_autograd_post(result, n, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_polygammaBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._n = n
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_multigammaln_autograd_post(result, self_, p, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_multigammalnBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._p = p
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_xlogy_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.Special_xlogyBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_gammainc_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.Special_gammaincBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_gammaincc_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.Special_gammainccBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self_)
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result

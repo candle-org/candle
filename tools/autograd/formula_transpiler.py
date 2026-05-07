@@ -111,6 +111,12 @@ _SPECIAL_CALLS = {
     "special_erfinv_grad": lambda args: f'_special_erfinv_grad({", ".join([*args, "keyset"])})',
     "special_ndtr_grad": lambda args: f'_special_ndtr_grad({", ".join([*args, "keyset"])})',
     "special_sinc_grad": lambda args: f'_special_sinc_grad({", ".join([*args, "keyset"])})',
+    "diag_backward": lambda args: f'_diag_backward_helper({", ".join([*args, "keyset"])})',
+    "special_polygamma_backward": lambda args: f'_special_polygamma_backward_helper({", ".join([*args, "keyset"])})',
+    "special_multigammaln_backward": lambda args: f'_special_multigammaln_backward_helper({", ".join([*args, "keyset"])})',
+    "special_xlogy_backward": lambda args: f'_special_xlogy_backward_all({", ".join([*args, "keyset"])})',
+    "special_gammainc_backward": lambda args: f'_special_gammainc_backward_all({", ".join([*args, "keyset"])})',
+    "special_gammaincc_backward": lambda args: f'_special_gammaincc_backward_all({", ".join([*args, "keyset"])})',
 }
 
 _HELPER_FALLBACKS = {
@@ -169,7 +175,7 @@ def _strip_comments(text: str) -> str:
 
 
 
-def _transpile_expr(expr: str) -> str:
+def _transpile_expr(expr: str) -> str:  # pylint: disable=too-many-return-statements
     expr = expr.strip()
     if not expr:
         return expr
