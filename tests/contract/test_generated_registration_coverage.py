@@ -152,6 +152,14 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.floor_divide_autograd" not in legacy
     assert "_VT_PY.inner_autograd" not in legacy
     assert "_VT_PY.heaviside_autograd" not in legacy
+    assert "_VT_PY.hstack_autograd" not in legacy
+    assert "_VT_PY.vstack_autograd" not in legacy
+    assert "_VT_PY.row_stack_autograd" not in legacy
+    assert "_VT_PY.dstack_autograd" not in legacy
+    assert "_VT_PY.column_stack_autograd" not in legacy
+    assert "_VT_PY.concat_autograd" not in legacy
+    assert "_VT_PY.concatenate_autograd" not in legacy
+    assert "_VT_PY.pad_sequence_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -188,6 +196,14 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.floor_divide_autograd" in full_text
     assert "_VT.inner_autograd" in full_text
     assert "_VT.heaviside_autograd" in full_text
+    assert "_VT.hstack_autograd" in full_text
+    assert "_VT.vstack_autograd" in full_text
+    assert "_VT.row_stack_autograd" in full_text
+    assert "_VT.dstack_autograd" in full_text
+    assert "_VT.column_stack_autograd" in full_text
+    assert "_VT.concat_autograd" in full_text
+    assert "_VT.concatenate_autograd" in full_text
+    assert "_VT.pad_sequence_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():

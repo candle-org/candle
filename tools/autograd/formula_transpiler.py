@@ -90,6 +90,14 @@ _SPECIAL_CALLS = {
     "select_backward_symint": lambda args: f'_select_backward_symint_helper({", ".join([*args, "keyset"])})',
     "cat_tensors_backward": lambda args: f'_cat_backward_helper({args[0]}, tensors, {args[-1]}, keyset)',
     "stack_tensors_backward": lambda args: f'_stack_backward_helper({args[0]}, tensors, {args[1]}, keyset)',
+    "hstack_backward": lambda args: f'_hstack_backward_helper({args[0]}, tensors, keyset)',
+    "vstack_backward": lambda args: f'_vstack_backward_helper({args[0]}, tensors, keyset)',
+    "row_stack_backward": lambda args: f'_vstack_backward_helper({args[0]}, tensors, keyset)',
+    "dstack_backward": lambda args: f'_dstack_backward_helper({args[0]}, tensors, keyset)',
+    "column_stack_backward": lambda args: f'_column_stack_backward_helper({args[0]}, tensors, keyset)',
+    "concat_backward": lambda args: f'_concat_backward_helper({args[0]}, tensors, {args[1]}, keyset)',
+    "concatenate_backward": lambda args: f'_concatenate_backward_helper({args[0]}, tensors, {args[1]}, keyset)',
+    "pad_sequence_backward": lambda args: f'_pad_sequence_backward_helper({args[0]}, sequences, {args[1]}, {args[2]}, {args[3]}, keyset)',
 }
 
 _HELPER_FALLBACKS = {
