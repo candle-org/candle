@@ -18,8 +18,6 @@ _GEN = pathlib.Path(__file__).parent.parent.parent / "src" / "candle" / "_genera
 
 LEGACY_MANUAL_WRAPPERS = {
     "sum_to_size_autograd_post",
-    "diff_autograd",
-    "diff_autograd_post",
 }
 
 
@@ -122,9 +120,7 @@ def test_registration_legacy_section_uses_python_surface():
     assert marker in text
     legacy = text.split(marker, 1)[1]
     assert "_VT_PY.sum_to_size_autograd_post" in legacy
-    assert "_VT_PY.diff_autograd" in legacy
     assert "_VT_PY.contiguous_autograd" in legacy
-    assert "_VT_PY.softmax_autograd" in legacy
     assert "_VT_PY.broadcast_to_autograd" not in legacy
     assert "_VT_PY.moveaxis_autograd" not in legacy
     assert "_VT_PY.tile_autograd" not in legacy
@@ -160,6 +156,15 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.concat_autograd" not in legacy
     assert "_VT_PY.concatenate_autograd" not in legacy
     assert "_VT_PY.pad_sequence_autograd" not in legacy
+    assert "_VT_PY.relu6_autograd" not in legacy
+    assert "_VT_PY.softmax_autograd" not in legacy
+    assert "_VT_PY.log_softmax_autograd" not in legacy
+    assert "_VT_PY.prelu_autograd" not in legacy
+    assert "_VT_PY.normalize_autograd" not in legacy
+    assert "_VT_PY.diff_autograd" not in legacy
+    assert "_VT_PY.nanmean_autograd" not in legacy
+    assert "_VT_PY.special_logit_autograd" not in legacy
+    assert "_VT_PY.cross_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -204,6 +209,15 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.concat_autograd" in full_text
     assert "_VT.concatenate_autograd" in full_text
     assert "_VT.pad_sequence_autograd" in full_text
+    assert "_VT.relu6_autograd" in full_text
+    assert "_VT.softmax_autograd" in full_text
+    assert "_VT.log_softmax_autograd" in full_text
+    assert "_VT.prelu_autograd" in full_text
+    assert "_VT.normalize_autograd" in full_text
+    assert "_VT.diff_autograd" in full_text
+    assert "_VT.nanmean_autograd" in full_text
+    assert "_VT.special_logit_autograd" in full_text
+    assert "_VT.cross_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():

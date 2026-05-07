@@ -1856,7 +1856,20 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
     import re as _re
     parts = [_PYX_HEADER]
     parts.append(_get_pyx_helpers_block())
+    pyx_backward_skip_ops = {
+        "cross",
+        "diff",
+        "log_softmax",
+        "nanmean",
+        "normalize",
+        "prelu",
+        "relu6",
+        "softmax",
+        "special_logit",
+    }
     for info in infos:
+        if info.op_name in pyx_backward_skip_ops:
+            continue
         parts.append(_gen_one_node_pyx(info))
     seen_ops: set = set()
     alias_lines = []

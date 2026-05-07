@@ -98,6 +98,16 @@ _SPECIAL_CALLS = {
     "concat_backward": lambda args: f'_concat_backward_helper({args[0]}, tensors, {args[1]}, keyset)',
     "concatenate_backward": lambda args: f'_concatenate_backward_helper({args[0]}, tensors, {args[1]}, keyset)',
     "pad_sequence_backward": lambda args: f'_pad_sequence_backward_helper({args[0]}, sequences, {args[1]}, {args[2]}, {args[3]}, keyset)',
+    "relu6_backward": lambda args: f'_hardtanh_grad({args[0]}, {args[1]}, 0.0, 6.0, keyset)',
+    "softmax_backward": lambda args: f'_softmax_grad({args[0]}, {args[1]}, {args[2]}, keyset)',
+    "log_softmax_backward": lambda args: f'_log_softmax_grad({args[0]}, {args[1]}, {args[2]}, keyset)',
+    "prelu_backward_input": lambda args: f'_prelu_grad_input({args[0]}, {args[1]}, {args[2]}, keyset)',
+    "prelu_backward_weight": lambda args: f'reduce_grad(_prelu_grad_weight({args[0]}, {args[1]}, {args[2]}, keyset), {args[2]}.shape)',
+    "normalize_backward": lambda args: f'_normalize_backward_helper({", ".join([*args, "keyset"])})',
+    "diff_backward": lambda args: f'_diff_backward_helper({", ".join([*args, "keyset"])})',
+    "nanmean_backward": lambda args: f'_nanmean_backward_helper({", ".join([*args, "keyset"])})',
+    "special_logit_backward": lambda args: f'_special_logit_backward_helper({", ".join([*args, "keyset"])})',
+    "cross_backward": lambda args: f'_cross_backward_all({", ".join([*args, "keyset"])})',
 }
 
 _HELPER_FALLBACKS = {

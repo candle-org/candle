@@ -698,18 +698,19 @@ def test_registration_keeps_python_fallback_for_legacy_ops():
     import importlib
 
     py_vt = importlib.import_module("candle._generated.variable_type")
+    cy_vt = importlib.import_module("candle._generated._variable_type_cy")
     reg_text = importlib.import_module("candle._generated.registration").__file__
 
     assert hasattr(py_vt, "sum_to_size_autograd_post")
-    assert hasattr(py_vt, "diff_autograd")
-    assert hasattr(py_vt, "diff_autograd_post")
+    assert hasattr(cy_vt, "diff_autograd")
+    assert hasattr(cy_vt, "diff_autograd_post")
 
     from pathlib import Path
     text = Path(reg_text).read_text()
     legacy = text.split("# === UPSTREAM LEGACY REGISTRATIONS ===", 1)[1]
     assert "_VT_PY.sum_to_size_autograd_post" in legacy
-    assert "_VT_PY.diff_autograd" in legacy
-    assert "_VT_PY.diff_autograd_post" in legacy
+    assert "_VT.diff_autograd" in legacy
+    assert "_VT.diff_autograd_post" in legacy
 def test_gen_autograd_writes_cython_outputs(tmp_path):
     """gen_autograd.main() must write both .pyx outputs alongside the .py outputs.
 

@@ -1,5 +1,6 @@
 import numpy as np
 import candle as torch
+from candle.nn import functional as F
 
 
 def test_autograd_add_mul():
@@ -682,3 +683,96 @@ def test_autograd_pad_sequence_routes_compiled_backward():
     assert y.grad is not None
     np.testing.assert_allclose(x.grad.numpy(), np.ones(2, dtype=np.float32))
     np.testing.assert_allclose(y.grad.numpy(), np.ones(1, dtype=np.float32))
+
+
+
+def test_autograd_relu6_softmax_log_softmax_route_compiled_backward():
+    x = torch.tensor([-1.0, 0.5, 7.0])
+    x.requires_grad = True
+
+    relu_out = torch.relu6(x)
+    assert type(relu_out.grad_fn).__name__ == "Relu6Backward0"
+    relu_out.sum().backward()
+    assert x.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([0.0, 1.0, 0.0], dtype=np.float32))
+
+    y = torch.tensor([[1.0, 2.0, 3.0]])
+    y.requires_grad = True
+    softmax_out = torch.softmax(y, dim=1)
+    assert type(softmax_out.grad_fn).__name__ == "SoftmaxBackward0"
+    softmax_out[:, 0].sum().backward()
+    assert y.grad is not None
+    expected_softmax = softmax_out.numpy()
+    expected_grad = -expected_softmax[0, 0] * expected_softmax
+    expected_grad[0, 0] = expected_softmax[0, 0] * (1.0 - expected_softmax[0, 0])
+    np.testing.assert_allclose(y.grad.numpy(), expected_grad, rtol=1e-6, atol=1e-6)
+
+    z = torch.tensor([[1.0, 2.0, 3.0]])
+    z.requires_grad = True
+    log_softmax_out = torch.log_softmax(z, dim=1)
+    assert type(log_softmax_out.grad_fn).__name__ == "Log_softmaxBackward0"
+    log_softmax_out[:, 0].sum().backward()
+    assert z.grad is not None
+    expected = -np.exp(log_softmax_out.numpy())
+    expected[0, 0] += 1.0
+    np.testing.assert_allclose(z.grad.numpy(), expected, rtol=1e-6, atol=1e-6)
+
+
+def test_autograd_prelu_normalize_nanmean_special_logit_route_compiled_backward():
+    x = torch.tensor([-2.0, 3.0])
+    weight = torch.tensor([0.25])
+    x.requires_grad = True
+    weight.requires_grad = True
+    prelu_out = F.prelu(x, weight)
+    assert type(prelu_out.grad_fn).__name__ == "PreluBackward0"
+    prelu_out.sum().backward()
+    assert x.grad is not None
+    assert weight.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([0.25, 1.0], dtype=np.float32))
+    np.testing.assert_allclose(weight.grad.numpy(), np.array([-2.0], dtype=np.float32))
+
+    y = torch.tensor([[3.0, 4.0]])
+    y.requires_grad = True
+    normalize_out = F.normalize(y, p=2.0, dim=1, eps=1e-12)
+    assert type(normalize_out.grad_fn).__name__ == "NormalizeBackward0"
+    normalize_out.sum().backward()
+    assert y.grad is not None
+    np.testing.assert_allclose(y.grad.numpy(), np.array([[0.032, -0.024]], dtype=np.float32), rtol=1e-5, atol=1e-6)
+
+    n = torch.tensor([1.0, np.nan, 3.0])
+    n.requires_grad = True
+    nanmean_out = torch.nanmean(n)
+    assert type(nanmean_out.grad_fn).__name__ == "NanmeanBackward0"
+    nanmean_out.backward()
+    assert n.grad is not None
+    np.testing.assert_allclose(n.grad.numpy(), np.array([0.5, 0.0, 0.5], dtype=np.float32))
+
+    l = torch.tensor([0.25, 0.75])
+    l.requires_grad = True
+    logit_out = torch.special.logit(l)
+    assert type(logit_out.grad_fn).__name__ == "Special_logitBackward0"
+    logit_out.sum().backward()
+    assert l.grad is not None
+    np.testing.assert_allclose(l.grad.numpy(), np.array([5.3333335, 5.3333335], dtype=np.float32), rtol=1e-6)
+
+
+def test_autograd_diff_cross_route_compiled_backward():
+    x = torch.tensor([1.0, 3.0, 6.0])
+    x.requires_grad = True
+    diff_out = torch.diff(x)
+    assert type(diff_out.grad_fn).__name__ == "DiffBackward0"
+    diff_out.sum().backward()
+    assert x.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([-1.0, 0.0, 1.0], dtype=np.float32))
+
+    a = torch.tensor([1.0, 0.0, 0.0])
+    b = torch.tensor([0.0, 1.0, 0.0])
+    a.requires_grad = True
+    b.requires_grad = True
+    cross_out = torch.cross(a, b, dim=0)
+    assert type(cross_out.grad_fn).__name__ == "CrossBackward0"
+    cross_out.sum().backward()
+    assert a.grad is not None
+    assert b.grad is not None
+    np.testing.assert_allclose(a.grad.numpy(), np.array([1.0, 0.0, -1.0], dtype=np.float32))
+    np.testing.assert_allclose(b.grad.numpy(), np.array([0.0, 1.0, -1.0], dtype=np.float32))

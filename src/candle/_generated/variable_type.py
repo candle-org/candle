@@ -16354,33 +16354,6 @@ def conv_transpose3d_autograd_post(result, input, weight, bias=None, stride=None
 
 
 
-def cross_autograd(self, other, dim=-1, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("cross", raw_keyset, self, other, dim, **_kwargs)
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.CrossBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def cross_autograd_post(result, self, other, dim=-1, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.CrossBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def ctc_loss_autograd(self, targets, input_lengths, target_lengths, blank=0, reduction='mean', zero_infinity=False, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -16464,35 +16437,6 @@ def diag_autograd_post(result, input, diagonal=0, *, raw_keyset, active_keyset, 
         annotate_node_creation(grad_fn)
         grad_fn._save(input_=input)
         grad_fn._diagonal = diagonal
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def diff_autograd(input, n=1, dim=-1, prepend=None, append=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("diff", raw_keyset, input, n, dim, prepend, append, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.DiffBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._n = n
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def diff_autograd_post(result, input, n=1, dim=-1, prepend=None, append=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.DiffBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._n = n
-        grad_fn._dim = dim
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
@@ -17580,33 +17524,6 @@ def linalg_vander_autograd_post(result, x, N=None, *, raw_keyset, active_keyset,
 
 
 
-def log_softmax_autograd(self, dim, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("log_softmax", raw_keyset, self, dim, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.Log_softmaxBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def log_softmax_autograd_post(result, self, dim, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.Log_softmaxBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def matrix_power_autograd(input, n, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -17708,35 +17625,6 @@ def max_pool3d_autograd_post(result, self, kernel_size, stride, padding=None, di
 
 
 
-def nanmean_autograd(input, dim=None, keepdim=False, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("nanmean", raw_keyset, input, dim, keepdim, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.NanmeanBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dim = dim
-        grad_fn._keepdim = keepdim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def nanmean_autograd_post(result, input, dim=None, keepdim=False, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.NanmeanBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._dim = dim
-        grad_fn._keepdim = keepdim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def nanquantile_autograd(input, q, dim=None, keepdim=False, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -17762,37 +17650,6 @@ def nanquantile_autograd_post(result, input, q, dim=None, keepdim=False, *, raw_
         grad_fn._q = q
         grad_fn._dim = dim
         grad_fn._keepdim = keepdim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def normalize_autograd(input, p=2.0, dim=1, eps=1e-12, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("normalize", raw_keyset, input, p, dim, eps, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.NormalizeBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._p = p
-        grad_fn._dim = dim
-        grad_fn._eps = eps
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def normalize_autograd_post(result, input, p=2.0, dim=1, eps=1e-12, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.NormalizeBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._p = p
-        grad_fn._dim = dim
-        grad_fn._eps = eps
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
@@ -17830,31 +17687,6 @@ def pad_autograd_post(result, input, pad, mode="constant", value=0, *, raw_keyse
 
 
 
-def prelu_autograd(self, weight, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("prelu", raw_keyset, self, weight, **_kwargs)
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(weight, 'requires_grad', False)):
-        grad_fn = _F.PreluBackward0((self, weight,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, weight=weight)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def prelu_autograd_post(result, self, weight, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(weight, 'requires_grad', False)):
-        grad_fn = _F.PreluBackward0((self, weight,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, weight=weight)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def quantile_autograd(input, q, dim=None, keepdim=False, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -17886,33 +17718,6 @@ def quantile_autograd_post(result, input, q, dim=None, keepdim=False, *, raw_key
 
 
 
-def relu6_autograd(self, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("relu6", raw_keyset, self, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.Relu6Backward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def relu6_autograd_post(result, self, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.Relu6Backward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-
-
 def rms_norm_autograd(input, normalized_shape, weight, eps=1e-6, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -17936,33 +17741,6 @@ def rms_norm_autograd_post(result, input, normalized_shape, weight, eps=1e-6, *,
         grad_fn._save(input_=input, weight=weight)
         grad_fn._normalized_shape = normalized_shape
         grad_fn._eps = eps
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def softmax_autograd(self, dim, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("softmax", raw_keyset, self, dim, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SoftmaxBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def softmax_autograd_post(result, self, dim, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SoftmaxBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        grad_fn._dim = dim
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
@@ -18113,33 +17891,6 @@ def special_i0_autograd_post(result, self, *, raw_keyset, active_keyset, **_kwar
         grad_fn = _F.Special_i0Backward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
         grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def special_logit_autograd(input, eps=None, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("special_logit", raw_keyset, input, eps, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Special_logitBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._eps = eps
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def special_logit_autograd_post(result, input, eps=None, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Special_logitBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._eps = eps
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
@@ -18299,6 +18050,7 @@ def tensordot_autograd_post(result, self, other, dims=2, *, raw_keyset, active_k
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
+
 
 
 
