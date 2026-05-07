@@ -364,3 +364,101 @@ def test_autograd_topk_propagates_grad_to_selected_positions():
     assert x.grad is not None
     assert x.grad.shape == (4,)
     assert x.grad.tolist() == [0.0, 1.0, 0.0, 1.0]
+
+
+def test_autograd_fmod_tensor_routes_compiled_tensor_overload():
+    x = torch.tensor([5.5, -5.5])
+    y = torch.tensor([2.0, 2.0])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.fmod(x, y)
+    assert type(out.grad_fn).__name__ == "FmodTensorBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([1.0, 1.0], dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.array([-2.0, 2.0], dtype=np.float32))
+
+    scalar_x = torch.tensor([5.5, -5.5])
+    scalar_x.requires_grad = True
+    scalar_out = torch.fmod(scalar_x, 2.0)
+    assert type(scalar_out.grad_fn).__name__ == "FmodScalarBackward0"
+    scalar_out.sum().backward()
+    assert scalar_x.grad is not None
+    np.testing.assert_allclose(scalar_x.grad.numpy(), np.array([1.0, 1.0], dtype=np.float32))
+
+
+def test_autograd_remainder_tensor_routes_compiled_tensor_overload():
+    x = torch.tensor([5.5, -5.5])
+    y = torch.tensor([2.0, 2.0])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.remainder(x, y)
+    assert type(out.grad_fn).__name__ == "RemainderTensorBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([1.0, 1.0], dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.array([-2.0, 3.0], dtype=np.float32))
+
+    scalar_x = torch.tensor([5.5, -5.5])
+    scalar_x.requires_grad = True
+    scalar_out = torch.remainder(scalar_x, 2.0)
+    assert type(scalar_out.grad_fn).__name__ == "RemainderScalarBackward0"
+    scalar_out.sum().backward()
+    assert scalar_x.grad is not None
+    np.testing.assert_allclose(scalar_x.grad.numpy(), np.array([1.0, 1.0], dtype=np.float32))
+
+
+def test_autograd_norm_dim_routes_compiled_dim_overload():
+    x = torch.tensor([[3.0, 4.0], [6.0, 8.0]])
+    x.requires_grad = True
+
+    out = torch.norm(x, 2, dim=1)
+    assert type(out.grad_fn).__name__ == "NormScalarOptDimBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    expected = np.array([[3.0 / 5.0, 4.0 / 5.0], [6.0 / 10.0, 8.0 / 10.0]], dtype=np.float32)
+    np.testing.assert_allclose(x.grad.numpy(), expected)
+
+
+def test_autograd_pow_tensor_scalar_and_tensor_tensor_backward():
+    x = torch.tensor([2.0, 3.0])
+    x.requires_grad = True
+
+    scalar_out = torch.pow(x, 3.0)
+    assert type(scalar_out.grad_fn).__name__ == "PowTensorScalarBackward0"
+    scalar_out.sum().backward()
+
+    assert x.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([12.0, 27.0], dtype=np.float32))
+
+    base = torch.tensor([2.0, 4.0])
+    exponent = torch.tensor([3.0, 0.5])
+    base.requires_grad = True
+    exponent.requires_grad = True
+
+    tensor_out = torch.pow(base, exponent)
+    assert type(tensor_out.grad_fn).__name__ == "PowTensorTensorBackward0"
+    tensor_out.sum().backward()
+
+    assert base.grad is not None
+    assert exponent.grad is not None
+    np.testing.assert_allclose(base.grad.numpy(), np.array([12.0, 0.25], dtype=np.float32))
+    expected_exponent = np.array([8.0 * np.log(2.0), 2.0 * np.log(4.0)], dtype=np.float32)
+    np.testing.assert_allclose(exponent.grad.numpy(), expected_exponent)
+
+    reflected_exponent = torch.tensor([2.0, 3.0])
+    reflected_exponent.requires_grad = True
+    reflected_out = 2.0 ** reflected_exponent
+    assert type(reflected_out.grad_fn).__name__ == "PowScalarBackward0"
+    reflected_out.sum().backward()
+
+    assert reflected_exponent.grad is not None
+    expected_reflected = np.array([4.0 * np.log(2.0), 8.0 * np.log(2.0)], dtype=np.float32)
+    np.testing.assert_allclose(reflected_exponent.grad.numpy(), expected_reflected)

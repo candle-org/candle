@@ -63,9 +63,15 @@ def test_compiled_variable_type_surface_matches_generated_safe_registration_subs
 def test_registration_does_not_reference_generic_alias_without_backing_wrapper():
     vt_symbols = _wrapper_symbols_in_file("variable_type.py")
     reg_symbols = set(_vt_symbols_from_registration())
+    cy_symbols = _wrapper_symbols_in_file("_variable_type_cy.pyx")
     overloaded_ops = ["add", "sub", "mul", "div", "pow"]
-    missing = [op + "_autograd" for op in overloaded_ops
-               if op + "_autograd" in reg_symbols and op + "_autograd" not in vt_symbols]
+    missing = [
+        op + "_autograd"
+        for op in overloaded_ops
+        if op + "_autograd" in reg_symbols
+        and op + "_autograd" not in vt_symbols
+        and op + "_autograd" not in cy_symbols
+    ]
     assert missing == []
 
 
@@ -83,14 +89,13 @@ def test_legacy_manual_wrapper_inventory_matches_current_cython_gap():
         assert name not in cy_symbols
 
 
-def test_overloaded_ops_have_canonical_aliases_in_both_python_and_cython_surfaces():
+def test_overloaded_ops_have_canonical_entrypoints_in_at_least_one_surface():
     vt_symbols = _wrapper_symbols_in_file("variable_type.py")
     cy_symbols = _wrapper_symbols_in_file("_variable_type_cy.pyx")
     required = {"add_autograd", "add_autograd_post", "sub_autograd", "sub_autograd_post",
                 "mul_autograd", "mul_autograd_post", "div_autograd", "div_autograd_post",
                 "pow_autograd", "pow_autograd_post"}
-    assert sorted(required - vt_symbols) == []
-    assert sorted(required - cy_symbols) == []
+    assert sorted(required - (vt_symbols | cy_symbols)) == []
 
 
 def test_registration_generic_aliases_resolve_against_alias_aware_surface():
@@ -134,6 +139,10 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.repeat_autograd" not in legacy
     assert "_VT_PY.sort_autograd" not in legacy
     assert "_VT_PY.topk_autograd" not in legacy
+    assert "_VT_PY.fmod_autograd" not in legacy
+    assert "_VT_PY.norm_autograd" not in legacy
+    assert "_VT_PY.pow_autograd" not in legacy
+    assert "_VT_PY.remainder_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -141,6 +150,7 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     head = text.split("# === UPSTREAM LEGACY REGISTRATIONS ===", 1)[0]
     assert "_VT.abs_autograd" in head
     assert "_VT.matmul_autograd" in head
+    assert "_VT.relu_autograd" in head
     assert "_VT.broadcast_to_autograd" in head
     assert "_VT.moveaxis_autograd" in head
     assert "_VT.tile_autograd" in head
@@ -155,4 +165,27 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.repeat_autograd" in head
     assert "_VT.sort_autograd" in head
     assert "_VT.topk_autograd" in head
-    assert "_VT.relu_autograd" in head
+    assert "_VT.fmod_autograd" in head
+    assert "_VT.norm_autograd" in head
+    assert "_VT.pow_autograd" in head
+    assert "_VT.remainder_autograd" in head
+
+
+def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():
+    cy_text = _read("_variable_type_cy.pyx")
+    assert "# Canonical overload entrypoints" in cy_text
+    assert "def fmod_autograd(self_, other, **_kwargs):" in cy_text
+    assert "return fmod_tensor_autograd(self_, other, **_kwargs)" in cy_text
+    assert "return fmod_scalar_autograd(self_, other, **_kwargs)" in cy_text
+    assert "def norm_autograd(self_, p=2, dim=None, keepdim=False, *, dtype=None, **_kwargs):" in cy_text
+    assert "return norm_scalaropt_dim_dtype_autograd(self_, p, dim, keepdim, dtype, **_kwargs)" in cy_text
+    assert "return norm_scalaropt_dtype_autograd(self_, p, dtype, **_kwargs)" in cy_text
+    assert "return norm_scalaropt_dim_autograd(self_, p, dim, keepdim, **_kwargs)" in cy_text
+    assert "return norm_scalar_autograd(self_, p, **_kwargs)" in cy_text
+    assert "def pow_autograd(self_, exponent, **_kwargs):" in cy_text
+    assert "return pow_tensor_tensor_autograd(self_, exponent, **_kwargs)" in cy_text
+    assert "return pow_tensor_scalar_autograd(self_, exponent, **_kwargs)" in cy_text
+    assert "return pow_scalar_autograd(self_, exponent, **_kwargs)" in cy_text
+    assert "def remainder_autograd(self_, other, **_kwargs):" in cy_text
+    assert "return remainder_tensor_autograd(self_, other, **_kwargs)" in cy_text
+    assert "return remainder_scalar_autograd(self_, other, **_kwargs)" in cy_text

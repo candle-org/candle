@@ -104,6 +104,7 @@ _HELPER_FALLBACKS = {
     "grad * result.conj() * M_LN2": "_exp2_backward_helper(grad, result, keyset)",
     "2.0 / sqrt(M_PI) * exp(-(self.pow(2))) * grad": "_erf_backward_helper(grad, self, keyset)",
     "at::sum_to(grad, self.sym_sizes())": "_sum_to_backward_helper(grad, self.shape, keyset)",
+    "pow_backward_exponent(grad, self, exponent, result)": "_pow_backward_exponent_helper(grad, self, exponent, result, keyset)",
 }
 
 

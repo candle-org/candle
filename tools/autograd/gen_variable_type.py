@@ -5,6 +5,124 @@ from .model import DifferentiabilityInfo
 from .gen_functions import _safe_param
 
 
+_RUNTIME_DISPATCHED_OPS = {"fmod", "norm", "pow", "remainder"}
+
+
+def _group_by_op(infos: list[DifferentiabilityInfo]) -> dict[str, list[DifferentiabilityInfo]]:
+    by_op: dict[str, list[DifferentiabilityInfo]] = {}
+    for info in infos:
+        by_op.setdefault(info.op_name, []).append(info)
+    return by_op
+
+
+def _canonical_alias_lines(infos: list[DifferentiabilityInfo]) -> list[str]:
+    by_op = _group_by_op(infos)
+    alias_lines = []
+    for op_name, op_infos in by_op.items():
+        if op_name in _RUNTIME_DISPATCHED_OPS:
+            continue
+        info = op_infos[0]
+        canonical = f"{op_name}_autograd"
+        canonical_post = f"{op_name}_autograd_post"
+        specific = f"{info.generated_func_stem}_autograd"
+        specific_post = f"{info.generated_func_stem}_autograd_post"
+        if canonical != specific:
+            alias_lines.append(f"{canonical} = {specific}")
+        if canonical_post != specific_post:
+            alias_lines.append(f"{canonical_post} = {specific_post}")
+    return alias_lines
+
+
+def _runtime_dispatch_blocks(by_op: dict[str, list[DifferentiabilityInfo]]) -> list[str]:
+    parts: list[str] = []
+
+    if "fmod" in by_op:
+        parts.append(
+            '''\
+
+
+def fmod_autograd(self_, other, **_kwargs):
+    if _is_tensor_like(other):
+        return fmod_tensor_autograd(self_, other, **_kwargs)
+    return fmod_scalar_autograd(self_, other, **_kwargs)
+
+
+def fmod_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
+    if _is_tensor_like(other):
+        return fmod_tensor_autograd_post(result, self_, other, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    return fmod_scalar_autograd_post(result, self_, other, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+'''
+        )
+
+    if "norm" in by_op:
+        parts.append(
+            '''\
+
+
+def norm_autograd(self_, p=2, dim=None, keepdim=False, *, dtype=None, **_kwargs):
+    if dtype is not None:
+        if dim is not None:
+            return norm_scalaropt_dim_dtype_autograd(self_, p, dim, keepdim, dtype, **_kwargs)
+        return norm_scalaropt_dtype_autograd(self_, p, dtype, **_kwargs)
+    if dim is not None:
+        return norm_scalaropt_dim_autograd(self_, p, dim, keepdim, **_kwargs)
+    return norm_scalar_autograd(self_, p, **_kwargs)
+
+
+def norm_autograd_post(result, self_, p=2, dim=None, keepdim=False, *, dtype=None, raw_keyset, active_keyset, **_kwargs):
+    if dtype is not None:
+        if dim is not None:
+            return norm_scalaropt_dim_dtype_autograd_post(result, self_, p, dim, keepdim, dtype, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+        return norm_scalaropt_dtype_autograd_post(result, self_, p, dtype, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    if dim is not None:
+        return norm_scalaropt_dim_autograd_post(result, self_, p, dim, keepdim, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    return norm_scalar_autograd_post(result, self_, p, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+'''
+        )
+
+    if "pow" in by_op:
+        parts.append(
+            '''\
+
+
+def pow_autograd(self_, exponent, **_kwargs):
+    if _is_tensor_like(self_):
+        if _is_tensor_like(exponent):
+            return pow_tensor_tensor_autograd(self_, exponent, **_kwargs)
+        return pow_tensor_scalar_autograd(self_, exponent, **_kwargs)
+    return pow_scalar_autograd(self_, exponent, **_kwargs)
+
+
+def pow_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_kwargs):
+    if _is_tensor_like(self_):
+        if _is_tensor_like(exponent):
+            return pow_tensor_tensor_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+        return pow_tensor_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    return pow_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+'''
+        )
+
+    if "remainder" in by_op:
+        parts.append(
+            '''\
+
+
+def remainder_autograd(self_, other, **_kwargs):
+    if _is_tensor_like(other):
+        return remainder_tensor_autograd(self_, other, **_kwargs)
+    return remainder_scalar_autograd(self_, other, **_kwargs)
+
+
+def remainder_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
+    if _is_tensor_like(other):
+        return remainder_tensor_autograd_post(result, self_, other, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    return remainder_scalar_autograd_post(result, self_, other, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+'''
+        )
+
+    return parts
+
+
 def gen_variable_type(infos: list[DifferentiabilityInfo]) -> str:
     """Generate the full variable_type.py source."""
     parts = [_HEADER]
@@ -12,22 +130,12 @@ def gen_variable_type(infos: list[DifferentiabilityInfo]) -> str:
         parts.append(_gen_one_wrapper(info))
     for info in infos:
         parts.append(_gen_one_post_wrapper(info))
-    seen_ops = set()
-    alias_lines = []
-    for info in infos:
-        if info.op_name in seen_ops:
-            continue
-        seen_ops.add(info.op_name)
-        canonical = f"{info.op_name}_autograd"
-        canonical_post = f"{info.op_name}_autograd_post"
-        specific = f"{info.generated_func_stem}_autograd"
-        specific_post = f"{info.generated_func_stem}_autograd_post"
-        if canonical != specific:
-            alias_lines.append(f"{canonical} = {specific}")
-        if canonical_post != specific_post:
-            alias_lines.append(f"{canonical_post} = {specific_post}")
-    if alias_lines:
-        parts.append("\n\n# Canonical overload aliases")
+    by_op = _group_by_op(infos)
+    runtime_blocks = _runtime_dispatch_blocks(by_op)
+    alias_lines = _canonical_alias_lines(infos)
+    if runtime_blocks or alias_lines:
+        parts.append("\n\n# Canonical overload entrypoints")
+        parts.extend(runtime_blocks)
         parts.extend(alias_lines)
     return "\n".join(parts) + "\n"
 
@@ -44,6 +152,10 @@ from ..autograd.anomaly_mode import annotate_node_creation
 from .._backends.autograd import _strip_autograd_keys
 from .._dispatch.dispatcher import current_dispatch_keyset, redispatch
 from . import functions as _F
+
+
+def _is_tensor_like(value):
+    return value is not None and hasattr(value, "device")
 '''
 
 
@@ -302,6 +414,10 @@ _strip_autograd_keys = None
 _current_dispatch_keyset = None
 _redispatch = None
 _F = None
+
+
+cdef inline bint _is_tensor_like(object value):
+    return value is not None and hasattr(value, "device")
 
 
 cdef inline void _ensure_refs():
@@ -582,21 +698,11 @@ def gen_variable_type_pyx(infos: list) -> str:  # type: ignore[type-arg]
         parts.append(_gen_one_wrapper_pyx(info))
     for info in infos:
         parts.append(_gen_one_post_wrapper_pyx(info))
-    seen_ops: set[str] = set()
-    alias_lines = []
-    for info in infos:
-        if info.op_name in seen_ops:
-            continue
-        seen_ops.add(info.op_name)
-        canonical = f"{info.op_name}_autograd"
-        canonical_post = f"{info.op_name}_autograd_post"
-        specific = f"{info.generated_func_stem}_autograd"
-        specific_post = f"{info.generated_func_stem}_autograd_post"
-        if canonical != specific:
-            alias_lines.append(f"{canonical} = {specific}")
-        if canonical_post != specific_post:
-            alias_lines.append(f"{canonical_post} = {specific_post}")
-    if alias_lines:
-        parts.append("\n\n# Canonical overload aliases")
+    by_op = _group_by_op(infos)
+    runtime_blocks = _runtime_dispatch_blocks(by_op)
+    alias_lines = _canonical_alias_lines(infos)
+    if runtime_blocks or alias_lines:
+        parts.append("\n\n# Canonical overload entrypoints")
+        parts.extend(runtime_blocks)
         parts.extend(alias_lines)
     return "\n".join(parts) + "\n"

@@ -19,6 +19,10 @@ _redispatch = None
 _F = None
 
 
+cdef inline bint _is_tensor_like(object value):
+    return value is not None and hasattr(value, "device")
+
+
 cdef inline void _ensure_refs():
     global _GradMode, _annotate_node_creation, _strip_autograd_keys
     global _current_dispatch_keyset, _redispatch, _F
@@ -17669,7 +17673,71 @@ def _foreach_norm_scalar_autograd_post(result, self_, ord=2, dtype=None, *, raw_
     return result
 
 
-# Canonical overload aliases
+# Canonical overload entrypoints
+
+
+def fmod_autograd(self_, other, **_kwargs):
+    if _is_tensor_like(other):
+        return fmod_tensor_autograd(self_, other, **_kwargs)
+    return fmod_scalar_autograd(self_, other, **_kwargs)
+
+
+def fmod_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
+    if _is_tensor_like(other):
+        return fmod_tensor_autograd_post(result, self_, other, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    return fmod_scalar_autograd_post(result, self_, other, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+
+
+
+def norm_autograd(self_, p=2, dim=None, keepdim=False, *, dtype=None, **_kwargs):
+    if dtype is not None:
+        if dim is not None:
+            return norm_scalaropt_dim_dtype_autograd(self_, p, dim, keepdim, dtype, **_kwargs)
+        return norm_scalaropt_dtype_autograd(self_, p, dtype, **_kwargs)
+    if dim is not None:
+        return norm_scalaropt_dim_autograd(self_, p, dim, keepdim, **_kwargs)
+    return norm_scalar_autograd(self_, p, **_kwargs)
+
+
+def norm_autograd_post(result, self_, p=2, dim=None, keepdim=False, *, dtype=None, raw_keyset, active_keyset, **_kwargs):
+    if dtype is not None:
+        if dim is not None:
+            return norm_scalaropt_dim_dtype_autograd_post(result, self_, p, dim, keepdim, dtype, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+        return norm_scalaropt_dtype_autograd_post(result, self_, p, dtype, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    if dim is not None:
+        return norm_scalaropt_dim_autograd_post(result, self_, p, dim, keepdim, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    return norm_scalar_autograd_post(result, self_, p, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+
+
+
+def pow_autograd(self_, exponent, **_kwargs):
+    if _is_tensor_like(self_):
+        if _is_tensor_like(exponent):
+            return pow_tensor_tensor_autograd(self_, exponent, **_kwargs)
+        return pow_tensor_scalar_autograd(self_, exponent, **_kwargs)
+    return pow_scalar_autograd(self_, exponent, **_kwargs)
+
+
+def pow_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_kwargs):
+    if _is_tensor_like(self_):
+        if _is_tensor_like(exponent):
+            return pow_tensor_tensor_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+        return pow_tensor_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    return pow_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+
+
+
+def remainder_autograd(self_, other, **_kwargs):
+    if _is_tensor_like(other):
+        return remainder_tensor_autograd(self_, other, **_kwargs)
+    return remainder_scalar_autograd(self_, other, **_kwargs)
+
+
+def remainder_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
+    if _is_tensor_like(other):
+        return remainder_tensor_autograd_post(result, self_, other, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+    return remainder_scalar_autograd_post(result, self_, other, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
+
 add_autograd = add_tensor_autograd
 add_autograd_post = add_tensor_autograd_post
 bernoulli__autograd = bernoulli__tensor_autograd
@@ -17688,8 +17756,6 @@ fill_autograd = fill_scalar_autograd
 fill_autograd_post = fill_scalar_autograd_post
 fill__autograd = fill__scalar_autograd
 fill__autograd_post = fill__scalar_autograd_post
-fmod_autograd = fmod_scalar_autograd
-fmod_autograd_post = fmod_scalar_autograd_post
 frexp_autograd = frexp_tensor_autograd
 frexp_autograd_post = frexp_tensor_autograd_post
 ge__autograd = ge__scalar_autograd
@@ -17724,16 +17790,10 @@ mul_autograd = mul_tensor_autograd
 mul_autograd_post = mul_tensor_autograd_post
 ne__autograd = ne__scalar_autograd
 ne__autograd_post = ne__scalar_autograd_post
-norm_autograd = norm_scalar_autograd
-norm_autograd_post = norm_scalar_autograd_post
 normal_autograd = normal_tensor_float_autograd
 normal_autograd_post = normal_tensor_float_autograd_post
-pow_autograd = pow_tensor_scalar_autograd
-pow_autograd_post = pow_tensor_scalar_autograd_post
 random__autograd = random__from_autograd
 random__autograd_post = random__from_autograd_post
-remainder_autograd = remainder_scalar_autograd
-remainder_autograd_post = remainder_scalar_autograd_post
 scatter_autograd = scatter_src_autograd
 scatter_autograd_post = scatter_src_autograd_post
 select_autograd = select_int_autograd
