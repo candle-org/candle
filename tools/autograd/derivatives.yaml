@@ -3268,3 +3268,21 @@
 
 - name: cross(Tensor self, Tensor other, int dim=-1) -> Tensor
   self, other: cross_backward(grad, self, other, dim)
+
+- name: special_digamma(Tensor self) -> Tensor
+  self: grad * at::special_polygamma(1, self)
+
+- name: special_gammaln(Tensor self) -> Tensor
+  self: grad * at::special_digamma(self)
+
+- name: special_i0(Tensor self) -> Tensor
+  self: grad * at::special_i1(self)
+
+- name: special_erfinv(Tensor self) -> Tensor
+  self: special_erfinv_grad(grad, self)
+
+- name: special_ndtr(Tensor self) -> Tensor
+  self: special_ndtr_grad(grad, self)
+
+- name: special_sinc(Tensor self) -> Tensor
+  self: special_sinc_grad(grad, self)

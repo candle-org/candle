@@ -10260,6 +10260,90 @@ def cross_autograd(self_, other, dim=-1, **_kwargs):
     return result
 
 
+def special_digamma_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_digamma", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_digammaBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_gammaln_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_gammaln", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_gammalnBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_i0_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_i0", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_i0Backward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_erfinv_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_erfinv", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_erfinvBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_ndtr_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_ndtr", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_ndtrBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_sinc_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("special_sinc", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_sincBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def abs_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
     _ensure_refs()
     if _GradMode.enabled and (self_.requires_grad):
@@ -18325,6 +18409,72 @@ def cross_autograd_post(result, self_, other, dim=-1, *, raw_keyset, active_keys
         _annotate_node_creation(grad_fn)
         grad_fn._save(other=other, self_=self_)
         grad_fn._dim = dim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_digamma_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_digammaBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_gammaln_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_gammalnBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_i0_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_i0Backward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_erfinv_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_erfinvBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_ndtr_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_ndtrBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def special_sinc_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Special_sincBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result

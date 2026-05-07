@@ -1865,7 +1865,13 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
         "prelu",
         "relu6",
         "softmax",
+        "special_digamma",
+        "special_erfinv",
+        "special_gammaln",
+        "special_i0",
         "special_logit",
+        "special_ndtr",
+        "special_sinc",
     }
     for info in infos:
         if info.op_name in pyx_backward_skip_ops:

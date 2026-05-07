@@ -62,7 +62,13 @@ class DifferentiabilityInfo:
             "log_softmax": "Log_softmaxBackward0",
             "pad_sequence": "Pad_sequenceBackward0",
             "row_stack": "Row_stackBackward0",
+            "special_digamma": "Special_digammaBackward0",
+            "special_erfinv": "Special_erfinvBackward0",
+            "special_gammaln": "Special_gammalnBackward0",
+            "special_i0": "Special_i0Backward0",
             "special_logit": "Special_logitBackward0",
+            "special_ndtr": "Special_ndtrBackward0",
+            "special_sinc": "Special_sincBackward0",
             "true_divide": "True_divideBackward0",
         }
         if self.func_name in preserved_names:

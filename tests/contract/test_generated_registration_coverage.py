@@ -165,6 +165,12 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.nanmean_autograd" not in legacy
     assert "_VT_PY.special_logit_autograd" not in legacy
     assert "_VT_PY.cross_autograd" not in legacy
+    assert "_VT_PY.special_digamma_autograd" not in legacy
+    assert "_VT_PY.special_gammaln_autograd" not in legacy
+    assert "_VT_PY.special_erfinv_autograd" not in legacy
+    assert "_VT_PY.special_ndtr_autograd" not in legacy
+    assert "_VT_PY.special_sinc_autograd" not in legacy
+    assert "_VT_PY.special_i0_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -218,6 +224,12 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.nanmean_autograd" in full_text
     assert "_VT.special_logit_autograd" in full_text
     assert "_VT.cross_autograd" in full_text
+    assert "_VT.special_digamma_autograd" in full_text
+    assert "_VT.special_gammaln_autograd" in full_text
+    assert "_VT.special_erfinv_autograd" in full_text
+    assert "_VT.special_ndtr_autograd" in full_text
+    assert "_VT.special_sinc_autograd" in full_text
+    assert "_VT.special_i0_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():

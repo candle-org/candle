@@ -108,6 +108,9 @@ _SPECIAL_CALLS = {
     "nanmean_backward": lambda args: f'_nanmean_backward_helper({", ".join([*args, "keyset"])})',
     "special_logit_backward": lambda args: f'_special_logit_backward_helper({", ".join([*args, "keyset"])})',
     "cross_backward": lambda args: f'_cross_backward_all({", ".join([*args, "keyset"])})',
+    "special_erfinv_grad": lambda args: f'_special_erfinv_grad({", ".join([*args, "keyset"])})',
+    "special_ndtr_grad": lambda args: f'_special_ndtr_grad({", ".join([*args, "keyset"])})',
+    "special_sinc_grad": lambda args: f'_special_sinc_grad({", ".join([*args, "keyset"])})',
 }
 
 _HELPER_FALLBACKS = {
