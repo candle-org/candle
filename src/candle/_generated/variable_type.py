@@ -1551,32 +1551,6 @@ def floor_autograd(self_, **_kwargs):
     return result
 
 
-def fmod_scalar_autograd(self_, other, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("fmod", raw_keyset, self_, other, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.FmodScalarBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._other = other
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fmod_tensor_autograd(self_, other, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("fmod", raw_keyset, self_, other, **_kwargs)
-    if GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.FmodTensorBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self_)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def frac_autograd(self_, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -3317,68 +3291,6 @@ def nextafter_autograd(self_, other, **_kwargs):
     return result
 
 
-def norm_scalar_autograd(self_, p=2, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("norm", raw_keyset, self_, p, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.NormScalarBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, result=result)
-        grad_fn._p = p
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def norm_scalaropt_dim_autograd(self_, p, dim, keepdim=False, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("norm", raw_keyset, self_, p, dim, keepdim, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.NormScalarOptDimBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, result=result)
-        grad_fn._p = p
-        grad_fn._dim = dim
-        grad_fn._keepdim = keepdim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def norm_scalaropt_dtype_autograd(self_, p, dtype, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("norm", raw_keyset, self_, p, dtype, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.NormScalarOptDtypeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, result=result)
-        grad_fn._p = p
-        grad_fn._dtype = dtype
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def norm_scalaropt_dim_dtype_autograd(self_, p, dim, keepdim, dtype, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("norm", raw_keyset, self_, p, dim, keepdim, dtype, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.NormScalarOptDimDtypeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, result=result)
-        grad_fn._p = p
-        grad_fn._dim = dim
-        grad_fn._keepdim = keepdim
-        grad_fn._dtype = dtype
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def linalg_vector_norm_autograd(self_, ord=2, dim=None, keepdim=False, dtype=None, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -3577,47 +3489,6 @@ def poisson_autograd(self_, generator=None, **_kwargs):
     return result
 
 
-def pow_tensor_scalar_autograd(self_, exponent, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("pow", raw_keyset, self_, exponent, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.PowTensorScalarBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._exponent = exponent
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def pow_tensor_tensor_autograd(self_, exponent, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("pow", raw_keyset, self_, exponent, **_kwargs)
-    if GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(exponent, 'requires_grad', False)):
-        grad_fn = _F.PowTensorTensorBackward0((self_, exponent,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(exponent=exponent, self_=self_, result=result)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def pow_scalar_autograd(self_, exponent, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("pow", raw_keyset, self_, exponent, **_kwargs)
-    if GradMode.enabled and (exponent.requires_grad):
-        grad_fn = _F.PowScalarBackward0((exponent,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(exponent=exponent, result=result)
-        grad_fn._self = self_
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 
 def prod_dim_int_autograd(self_, dim, keepdim=False, dtype=None, **_kwargs):
     active_keyset = current_dispatch_keyset()
@@ -3727,32 +3598,6 @@ def reciprocal_autograd(self_, **_kwargs):
         grad_fn = _F.ReciprocalBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
         grad_fn._save(result=result)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def remainder_scalar_autograd(self_, other, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("remainder", raw_keyset, self_, other, **_kwargs)
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.RemainderScalarBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._other = other
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def remainder_tensor_autograd(self_, other, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("remainder", raw_keyset, self_, other, **_kwargs)
-    if GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.RemainderTensorBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self_)
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
@@ -10197,26 +10042,6 @@ def floor_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
     return result
 
 
-def fmod_scalar_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.FmodScalarBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._other = other
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def fmod_tensor_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.FmodTensorBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self_)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def frac_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
     if GradMode.enabled and (self_.requires_grad):
         grad_fn = _F.FracBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
@@ -11588,56 +11413,6 @@ def nextafter_autograd_post(result, self_, other, *, raw_keyset, active_keyset, 
     return result
 
 
-def norm_scalar_autograd_post(result, self_, p=2, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.NormScalarBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, result=result)
-        grad_fn._p = p
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def norm_scalaropt_dim_autograd_post(result, self_, p, dim, keepdim=False, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.NormScalarOptDimBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, result=result)
-        grad_fn._p = p
-        grad_fn._dim = dim
-        grad_fn._keepdim = keepdim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def norm_scalaropt_dtype_autograd_post(result, self_, p, dtype, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.NormScalarOptDtypeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, result=result)
-        grad_fn._p = p
-        grad_fn._dtype = dtype
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def norm_scalaropt_dim_dtype_autograd_post(result, self_, p, dim, keepdim, dtype, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.NormScalarOptDimDtypeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_, result=result)
-        grad_fn._p = p
-        grad_fn._dim = dim
-        grad_fn._keepdim = keepdim
-        grad_fn._dtype = dtype
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def linalg_vector_norm_autograd_post(result, self_, ord=2, dim=None, keepdim=False, dtype=None, *, raw_keyset, active_keyset, **_kwargs):
     if GradMode.enabled and (self_.requires_grad):
         grad_fn = _F.LinalgVectorNormBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
@@ -11794,38 +11569,6 @@ def poisson_autograd_post(result, self_, generator=None, *, raw_keyset, active_k
     return result
 
 
-def pow_tensor_scalar_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.PowTensorScalarBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        grad_fn._exponent = exponent
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def pow_tensor_tensor_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(exponent, 'requires_grad', False)):
-        grad_fn = _F.PowTensorTensorBackward0((self_, exponent,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(exponent=exponent, self_=self_, result=result)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def pow_scalar_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (exponent.requires_grad):
-        grad_fn = _F.PowScalarBackward0((exponent,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(exponent=exponent, result=result)
-        grad_fn._self = self_
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 
 def prod_dim_int_autograd_post(result, self_, dim, keepdim=False, dtype=None, *, raw_keyset, active_keyset, **_kwargs):
     if GradMode.enabled and (self_.requires_grad):
@@ -11911,26 +11654,6 @@ def reciprocal_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwa
         grad_fn = _F.ReciprocalBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
         grad_fn._save(result=result)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def remainder_scalar_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.RemainderScalarBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._other = other
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def remainder_tensor_autograd_post(result, self_, other, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.RemainderTensorBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self_)
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
@@ -16058,8 +15781,6 @@ fill_autograd = fill_scalar_autograd
 fill_autograd_post = fill_scalar_autograd_post
 fill__autograd = fill__scalar_autograd
 fill__autograd_post = fill__scalar_autograd_post
-fmod_autograd = fmod_tensor_autograd
-fmod_autograd_post = fmod_tensor_autograd_post
 frexp_autograd = frexp_tensor_autograd
 frexp_autograd_post = frexp_tensor_autograd_post
 ge__autograd = ge__scalar_autograd
@@ -16094,20 +15815,10 @@ mul_autograd = mul_tensor_autograd
 mul_autograd_post = mul_tensor_autograd_post
 ne__autograd = ne__scalar_autograd
 ne__autograd_post = ne__scalar_autograd_post
-norm_autograd = norm_scalaropt_dim_autograd
-norm_autograd_post = norm_scalaropt_dim_autograd_post
 normal_autograd = normal_tensor_float_autograd
 normal_autograd_post = normal_tensor_float_autograd_post
-pow_autograd = pow_tensor_scalar_autograd
-def pow_autograd_post(result, self_, exponent, *, raw_keyset, active_keyset, **_kwargs):
-    from .._tensor import Tensor as _Tensor
-    if isinstance(exponent, _Tensor):
-        return pow_tensor_tensor_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
-    return pow_tensor_scalar_autograd_post(result, self_, exponent, raw_keyset=raw_keyset, active_keyset=active_keyset, **_kwargs)
 random__autograd = random__from_autograd
 random__autograd_post = random__from_autograd_post
-remainder_autograd = remainder_tensor_autograd
-remainder_autograd_post = remainder_tensor_autograd_post
 scatter_autograd = scatter_src_autograd
 scatter_autograd_post = scatter_src_autograd_post
 select_autograd = select_int_autograd

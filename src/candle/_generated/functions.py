@@ -92,9 +92,10 @@ def _pow_backward_self_helper(grad, self_, exponent, keyset):
 
 def _pow_backward_exponent_helper(grad, self_, exponent, result, keyset):
     """Backward for pow w.r.t. exponent: grad * result * log(self)"""
+    base = self_ if hasattr(self_, 'shape') else _scalar_tensor_like(exponent, float(self_))
     return redispatch("mul", keyset, grad,
            redispatch("mul", keyset, result,
-           redispatch("log", keyset, self_)))
+           redispatch("log", keyset, base)))
 
 
 def _div_tensor_self_backward_helper(grad, other, dtype, *extra_and_keyset):
@@ -9346,7 +9347,7 @@ class PowScalarBackward0(Node):
         result = _saved[self._saved_result_idx]
         self_ = self._self
         with _grad_context(keyset):
-            grad_exponent = redispatch("pow_backward_exponent", keyset, grad, self_, exponent, result)
+            grad_exponent = _pow_backward_exponent_helper(grad, self_, exponent, result, keyset)
         return (grad_exponent,)
 
 class ProdBackward0(Node):
@@ -20243,8 +20244,8 @@ class ForeachPowListBackward0(Node):
         exponent = list(self.inputs)
         self_ = list(self.inputs)
         with _grad_context(keyset):
-            grad_self = redispatch("pow_backward_self", keyset, grads[i], self_[i], exponent[i])
-            grad_exponent = redispatch("pow_backward_exponent", keyset, grads[i], self_[i], exponent[i], result[i])
+            grad_self = _pow_backward_self_helper(grads[i], self_[i], exponent[i], keyset)
+            grad_exponent = _pow_backward_exponent_helper(grads[i], self_[i], exponent[i], result[i], keyset)
         return (grad_self, grad_exponent,)
 
 class ForeachPowScalarListBackward0(Node):
@@ -20260,7 +20261,7 @@ class ForeachPowScalarListBackward0(Node):
         self_ = list(self.inputs)
         exponent = self._exponent
         with _grad_context(keyset):
-            grad_self = redispatch("pow_backward", keyset, grads[i], self_[i], exponent[i])
+            grad_self = _pow_backward_helper(grads[i], self_[i], exponent[i], keyset)
         return grad_self
 
 class ForeachPowScalarAndTensorBackward0(Node):
@@ -20289,7 +20290,7 @@ class ForeachPowScalarAndTensorBackward0(Node):
         exponent = list(self.inputs)
         self_ = self._self
         with _grad_context(keyset):
-            grad_exponent = redispatch("pow_backward_exponent", keyset, grads[i], self_, exponent[i], result[i])
+            grad_exponent = _pow_backward_exponent_helper(grads[i], self_, exponent[i], result[i], keyset)
         return grad_exponent
 
 class ForeachMinimumScalarBackward0(Node):
