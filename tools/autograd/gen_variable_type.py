@@ -139,14 +139,7 @@ def _gen_one_wrapper(info: DifferentiabilityInfo) -> str:
                 continue  # Tensor[] saved via Node.inputs, not _save()
             save_kw.append(f"{_safe_param(name)}={_safe_param(name)}")
         for name in saved_outputs:
-            # Multi-output: result0 -> result[0], result1 -> result[1], etc.
-            if name == "result":
-                save_kw.append(f"{_safe_param(name)}=result")
-            elif name.startswith("result") and name[6:].isdigit():
-                idx = name[6:]
-                save_kw.append(f"{_safe_param(name)}=result[{idx}]")
-            else:
-                save_kw.append(f"{_safe_param(name)}=result")
+            save_kw.append(_result_save_expr(info, name))
         if save_kw:
             lines.append(f"        grad_fn._save({', '.join(save_kw)})")
 
@@ -258,13 +251,7 @@ def _gen_one_post_wrapper(info: DifferentiabilityInfo) -> str:
                 continue
             save_kw.append(f"{_safe_param(name)}={_safe_param(name)}")
         for name in saved_outputs:
-            if name == "result":
-                save_kw.append(f"{_safe_param(name)}=result")
-            elif name.startswith("result") and name[6:].isdigit():
-                idx = name[6:]
-                save_kw.append(f"{_safe_param(name)}=result[{idx}]")
-            else:
-                save_kw.append(f"{_safe_param(name)}=result")
+            save_kw.append(_result_save_expr(info, name))
         if save_kw:
             lines.append(f"        grad_fn._save({', '.join(save_kw)})")
 
@@ -334,6 +321,19 @@ cdef inline void _ensure_refs():
         from . import functions as _f
         _F = _f
 '''
+
+
+def _result_save_expr(info: DifferentiabilityInfo, name: str) -> str:
+    safe_name = _safe_param(name)
+    if name == "result":
+        return f"{safe_name}=result"
+    if name.startswith("result") and name[6:].isdigit():
+        return f"{safe_name}=result[{name[6:]}]"
+    if info.func_name == "cummax" and name == "indices":
+        return f"{safe_name}=result[1]"
+    if info.func_name in {"sort", "topk"} and name == "indices":
+        return "result1=result[1]"
+    return f"{safe_name}=result"
 
 
 def _gen_one_wrapper_pyx(info: DifferentiabilityInfo) -> str:
@@ -432,13 +432,7 @@ def _gen_one_wrapper_pyx(info: DifferentiabilityInfo) -> str:
                 continue
             save_kw.append(f"{_safe_param(name)}={_safe_param(name)}")
         for name in saved_outputs:
-            if name == "result":
-                save_kw.append(f"{_safe_param(name)}=result")
-            elif name.startswith("result") and name[6:].isdigit():
-                idx = name[6:]
-                save_kw.append(f"{_safe_param(name)}=result[{idx}]")
-            else:
-                save_kw.append(f"{_safe_param(name)}=result")
+            save_kw.append(_result_save_expr(info, name))
         if save_kw:
             lines.append(f"        grad_fn._save({', '.join(save_kw)})")
 
@@ -554,13 +548,7 @@ def _gen_one_post_wrapper_pyx(info: DifferentiabilityInfo) -> str:
                 continue
             save_kw.append(f"{_safe_param(name)}={_safe_param(name)}")
         for name in saved_outputs:
-            if name == "result":
-                save_kw.append(f"{_safe_param(name)}=result")
-            elif name.startswith("result") and name[6:].isdigit():
-                idx = name[6:]
-                save_kw.append(f"{_safe_param(name)}=result[{idx}]")
-            else:
-                save_kw.append(f"{_safe_param(name)}=result")
+            save_kw.append(_result_save_expr(info, name))
         if save_kw:
             lines.append(f"        grad_fn._save({', '.join(save_kw)})")
 
