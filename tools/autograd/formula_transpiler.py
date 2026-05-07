@@ -117,6 +117,11 @@ _SPECIAL_CALLS = {
     "special_xlogy_backward": lambda args: f'_special_xlogy_backward_all({", ".join([*args, "keyset"])})',
     "special_gammainc_backward": lambda args: f'_special_gammainc_backward_all({", ".join([*args, "keyset"])})',
     "special_gammaincc_backward": lambda args: f'_special_gammaincc_backward_all({", ".join([*args, "keyset"])})',
+    "pad_backward": lambda args: f'_pad_backward_helper({", ".join([*args, "keyset"])})',
+    "det_backward": lambda args: f'_det_backward_helper({", ".join([*args, "keyset"])})',
+    "matrix_power_backward": lambda args: f'_matrix_power_backward_helper({", ".join([*args, "keyset"])})',
+    "linalg_inv_backward": lambda args: f'_linalg_inv_grad({", ".join([*args, "keyset"])})',
+    "getitem_backward": lambda args: f'_getitem_backward_helper({", ".join([*args, "keyset"])})',
 }
 
 _HELPER_FALLBACKS = {

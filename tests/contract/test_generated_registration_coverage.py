@@ -120,7 +120,6 @@ def test_registration_legacy_section_uses_python_surface():
     assert marker in text
     legacy = text.split(marker, 1)[1]
     assert "_VT_PY.sum_to_size_autograd_post" in legacy
-    assert "_VT_PY.contiguous_autograd" in legacy
     assert "_VT_PY.broadcast_to_autograd" not in legacy
     assert "_VT_PY.moveaxis_autograd" not in legacy
     assert "_VT_PY.tile_autograd" not in legacy
@@ -177,6 +176,13 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.special_xlogy_autograd" not in legacy
     assert "_VT_PY.special_gammainc_autograd" not in legacy
     assert "_VT_PY.special_gammaincc_autograd" not in legacy
+    assert "_VT_PY.contiguous_autograd" not in legacy
+    assert "_VT_PY.pad_autograd" not in legacy
+    assert "_VT_PY.det_autograd" not in legacy
+    assert "_VT_PY.matrix_power_autograd" not in legacy
+    assert "_VT_PY.linalg_matrix_power_autograd" not in legacy
+    assert "_VT_PY.linalg_inv_autograd" not in legacy
+    assert "_VT_PY.getitem_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -242,6 +248,13 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.special_xlogy_autograd" in full_text
     assert "_VT.special_gammainc_autograd" in full_text
     assert "_VT.special_gammaincc_autograd" in full_text
+    assert "_VT.contiguous_autograd" in full_text
+    assert "_VT.pad_autograd" in full_text
+    assert "_VT.det_autograd" in full_text
+    assert "_VT.matrix_power_autograd" in full_text
+    assert "_VT.linalg_matrix_power_autograd" in full_text
+    assert "_VT.linalg_inv_autograd" in full_text
+    assert "_VT.getitem_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():

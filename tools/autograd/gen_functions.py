@@ -1857,12 +1857,19 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
     parts = [_PYX_HEADER]
     parts.append(_get_pyx_helpers_block())
     pyx_backward_skip_ops = {
+        "contiguous",
         "cross",
+        "det",
         "diag",
         "diff",
+        "getitem",
+        "linalg_inv",
+        "linalg_matrix_power",
         "log_softmax",
+        "matrix_power",
         "nanmean",
         "normalize",
+        "pad",
         "prelu",
         "relu6",
         "softmax",

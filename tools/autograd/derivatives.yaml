@@ -3304,3 +3304,24 @@
 
 - name: special_gammaincc(Tensor self, Tensor other) -> Tensor
   self, other: special_gammaincc_backward(grad, self, other)
+
+- name: contiguous(Tensor input, *, MemoryFormat? memory_format=None) -> Tensor
+  input: grad
+
+- name: pad(Tensor input, int[] pad, str mode="constant", Scalar value=0) -> Tensor
+  input: pad_backward(grad, input, pad)
+
+- name: det(Tensor input) -> Tensor
+  input: det_backward(grad, input)
+
+- name: matrix_power(Tensor input, int n) -> Tensor
+  input: matrix_power_backward(grad, input, n)
+
+- name: linalg_matrix_power(Tensor input, int n) -> Tensor
+  input: matrix_power_backward(grad, input, n)
+
+- name: linalg_inv(Tensor self) -> Tensor
+  self: linalg_inv_backward(grad, self)
+
+- name: getitem(Tensor self, Any key) -> Tensor
+  self: getitem_backward(grad, self, key)

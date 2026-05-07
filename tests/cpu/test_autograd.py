@@ -901,3 +901,53 @@ def test_autograd_diag_and_special_binary_batch_routes_compiled_backward():
     assert type(gic_out.grad_fn).__name__ == "Special_gammainccBackward0"
     gic_out.sum().backward()
     assert h_x.grad is not None
+
+
+def test_autograd_linalg_and_view_batch_routes_compiled_backward():
+    x = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    x.requires_grad = True
+    contig_out = x.t().contiguous()
+    assert type(contig_out.grad_fn).__name__ == "ContiguousBackward0"
+    contig_out.sum().backward()
+    assert x.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.ones((2, 2), dtype=np.float32))
+
+    p = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    p.requires_grad = True
+    pad_out = torch.nn.functional.pad(p, [1, 1, 0, 0])
+    assert type(pad_out.grad_fn).__name__ == "PadBackward0"
+    pad_out.sum().backward()
+    assert p.grad is not None
+    np.testing.assert_allclose(p.grad.numpy(), np.ones((2, 2), dtype=np.float32))
+
+    d = torch.tensor([[2.0, 1.0], [1.0, 3.0]])
+    d.requires_grad = True
+    det_out = torch.det(d)
+    assert type(det_out.grad_fn).__name__ == "DetBackward0"
+    det_out.backward()
+    assert d.grad is not None
+
+    mp = torch.tensor([[2.0, 0.0], [0.0, 3.0]])
+    mp.requires_grad = True
+    mp_out = torch.matrix_power(mp, 2)
+    assert type(mp_out.grad_fn).__name__ == "Matrix_powerBackward0"
+
+    lmp = torch.tensor([[2.0, 0.0], [0.0, 3.0]])
+    lmp.requires_grad = True
+    lmp_out = torch.linalg.matrix_power(lmp, 2)
+    assert type(lmp_out.grad_fn).__name__ == "Linalg_matrix_powerBackward0"
+
+    inv = torch.tensor([[2.0, 0.0], [0.0, 4.0]])
+    inv.requires_grad = True
+    inv_out = torch.linalg.inv(inv)
+    assert type(inv_out.grad_fn).__name__ == "Linalg_invBackward0"
+    inv_out.sum().backward()
+    assert inv.grad is not None
+
+    g = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    g.requires_grad = True
+    g_out = g[1:3]
+    assert type(g_out.grad_fn).__name__ == "GetitemBackward0"
+    g_out.sum().backward()
+    assert g.grad is not None
+    np.testing.assert_allclose(g.grad.numpy(), np.array([0.0, 1.0, 1.0, 0.0], dtype=np.float32))

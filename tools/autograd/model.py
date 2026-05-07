@@ -59,7 +59,10 @@ class DifferentiabilityInfo:
         preserved_names = {
             "column_stack": "Column_stackBackward0",
             "floor_divide": "Floor_divideBackward0",
+            "linalg_inv": "Linalg_invBackward0",
+            "linalg_matrix_power": "Linalg_matrix_powerBackward0",
             "log_softmax": "Log_softmaxBackward0",
+            "matrix_power": "Matrix_powerBackward0",
             "pad_sequence": "Pad_sequenceBackward0",
             "row_stack": "Row_stackBackward0",
             "special_digamma": "Special_digammaBackward0",

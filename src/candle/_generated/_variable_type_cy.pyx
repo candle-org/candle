@@ -10431,6 +10431,110 @@ def special_gammaincc_autograd(self_, other, **_kwargs):
     return result
 
 
+def contiguous_autograd(input_, memory_format=None, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("contiguous", raw_keyset, input_, memory_format, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.ContiguousBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._memory_format = memory_format
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def pad_autograd(input_, pad, mode="constant", value=0, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("pad", raw_keyset, input_, pad, mode, value, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.PadBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._pad = pad
+        grad_fn._mode = mode
+        grad_fn._value = value
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def det_autograd(input_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("det", raw_keyset, input_, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.DetBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def matrix_power_autograd(input_, n, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("matrix_power", raw_keyset, input_, n, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Matrix_powerBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._n = n
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_matrix_power_autograd(input_, n, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_matrix_power", raw_keyset, input_, n, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_matrix_powerBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._n = n
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_inv_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_inv", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_invBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def getitem_autograd(self_, key, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("getitem", raw_keyset, self_, key, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.GetitemBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._key = key
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def abs_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
     _ensure_refs()
     if _GradMode.enabled and (self_.requires_grad):
@@ -18631,6 +18735,89 @@ def special_gammaincc_autograd_post(result, self_, other, *, raw_keyset, active_
         grad_fn = _F.Special_gammainccBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
         grad_fn._save(other=other, self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def contiguous_autograd_post(result, input_, memory_format=None, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.ContiguousBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._memory_format = memory_format
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def pad_autograd_post(result, input_, pad, mode="constant", value=0, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.PadBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._pad = pad
+        grad_fn._mode = mode
+        grad_fn._value = value
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def det_autograd_post(result, input_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.DetBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def matrix_power_autograd_post(result, input_, n, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Matrix_powerBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._n = n
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_matrix_power_autograd_post(result, input_, n, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_matrix_powerBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._n = n
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_inv_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_invBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def getitem_autograd_post(result, self_, key, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.GetitemBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._key = key
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
