@@ -143,6 +143,15 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.norm_autograd" not in legacy
     assert "_VT_PY.pow_autograd" not in legacy
     assert "_VT_PY.remainder_autograd" not in legacy
+    assert "_VT_PY.selu_autograd" not in legacy
+    assert "_VT_PY.softsign_autograd" not in legacy
+    assert "_VT_PY.square_autograd" not in legacy
+    assert "_VT_PY.signbit_autograd" not in legacy
+    assert "_VT_PY.true_divide_autograd" not in legacy
+    assert "_VT_PY.outer_autograd" not in legacy
+    assert "_VT_PY.floor_divide_autograd" not in legacy
+    assert "_VT_PY.inner_autograd" not in legacy
+    assert "_VT_PY.heaviside_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -169,6 +178,16 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.norm_autograd" in head
     assert "_VT.pow_autograd" in head
     assert "_VT.remainder_autograd" in head
+    full_text = _read("registration.py")
+    assert "_VT.selu_autograd" in full_text
+    assert "_VT.softsign_autograd" in full_text
+    assert "_VT.square_autograd" in full_text
+    assert "_VT.signbit_autograd" in full_text
+    assert "_VT.true_divide_autograd" in full_text
+    assert "_VT.outer_autograd" in full_text
+    assert "_VT.floor_divide_autograd" in full_text
+    assert "_VT.inner_autograd" in full_text
+    assert "_VT.heaviside_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():

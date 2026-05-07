@@ -210,6 +210,8 @@ def _clamp_backward_helper(grad, self_, min_val, max_val, keyset):
     return redispatch("mul", keyset, grad, mask)
 
 
+
+def _softsign_grad(grad, self_, keyset):
     one = _scalar_tensor_like(self_, 1.0)
     denom = redispatch("add", keyset, one, redispatch("abs", keyset, self_))
     denom_sq = redispatch("mul", keyset, denom, denom)

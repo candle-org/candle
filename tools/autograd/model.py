@@ -56,6 +56,12 @@ class DifferentiabilityInfo:
 
     @property
     def backward_name(self) -> str:
+        preserved_names = {
+            "floor_divide": "Floor_divideBackward0",
+            "true_divide": "True_divideBackward0",
+        }
+        if self.func_name in preserved_names:
+            return preserved_names[self.func_name]
         parts = [p for p in re.split(r"[^0-9A-Za-z]+", self.func_name) if p]
         camel = "".join(p[:1].upper() + p[1:] for p in parts)
         return f"{camel}Backward0"

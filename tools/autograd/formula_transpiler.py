@@ -73,6 +73,8 @@ _SPECIAL_CALLS = {
     "repeat_interleave_backward": lambda args: f'_repeat_interleave_backward_helper({", ".join([*args, "keyset"])})',
     "take_along_dim_backward": lambda args: f'_take_along_dim_backward_helper({", ".join([*args, "keyset"])})',
     "gelu_backward": lambda args: f'_gelu_backward_helper({", ".join([*args, "keyset"])})',
+    "inner_backward": lambda args: f'_inner_backward_all({", ".join([*args, "keyset"])})',
+    "selu_backward": lambda args: f'_selu_grad({", ".join([*args, "keyset"])})',
     "unsqueeze_to": lambda args: f'_unsqueeze_to_backward_helper({", ".join([*args, "keyset"])})',
     "sum_to": lambda args: f'_sum_to_backward_helper({", ".join([*args, "keyset"])})',
     "pow_backward": lambda args: f'_pow_backward_helper({", ".join([*args, "keyset"])})',

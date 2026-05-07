@@ -17083,31 +17083,6 @@ def fft_rfftn_autograd_post(result, input, s=None, dim=None, norm=None, *, raw_k
 
 
 
-def floor_divide_autograd(self, other, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("floor_divide", raw_keyset, self, other, **_kwargs)
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.Floor_divideBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, other=other)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def floor_divide_autograd_post(result, self, other, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.Floor_divideBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, other=other)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def getitem_autograd(self, key, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -17195,31 +17170,6 @@ def group_norm_autograd_post(result, input, num_groups, weight, bias, eps=1e-5, 
 
 
 
-def heaviside_autograd(self, other, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("heaviside", raw_keyset, self, other, **_kwargs)
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.HeavisideBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, other=other)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def heaviside_autograd_post(result, self, other, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.HeavisideBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self, other=other)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def hstack_autograd(tensors, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -17237,31 +17187,6 @@ def hstack_autograd_post(result, tensors, *, raw_keyset, active_keyset, **_kwarg
     if GradMode.enabled and (any(getattr(t, 'requires_grad', False) for t in tensors)):
         grad_fn = _F.HstackBackward0((*tensors,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         annotate_node_creation(grad_fn)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def inner_autograd(self, other, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("inner", raw_keyset, self, other, **_kwargs)
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.InnerBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def inner_autograd_post(result, self, other, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.InnerBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self)
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
@@ -17993,31 +17918,6 @@ def normalize_autograd_post(result, input, p=2.0, dim=1, eps=1e-12, *, raw_keyse
 
 
 
-def outer_autograd(self, other, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("outer", raw_keyset, self, other, **_kwargs)
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.OuterBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def outer_autograd_post(result, self, other, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.OuterBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def pad_autograd(input, pad, mode="constant", value=0, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -18212,56 +18112,6 @@ def row_stack_autograd_post(result, tensors, *, raw_keyset, active_keyset, **_kw
 
 
 
-def selu_autograd(self, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("selu", raw_keyset, self, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SeluBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def selu_autograd_post(result, self, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SeluBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def signbit_autograd(self, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("signbit", raw_keyset, self, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SignbitBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def signbit_autograd_post(result, self, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SignbitBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
 def softmax_autograd(self, dim, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -18283,31 +18133,6 @@ def softmax_autograd_post(result, self, dim, *, raw_keyset, active_keyset, **_kw
         annotate_node_creation(grad_fn)
         grad_fn._save(self_=self)
         grad_fn._dim = dim
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def softsign_autograd(self, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("softsign", raw_keyset, self, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SoftsignBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def softsign_autograd_post(result, self, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SoftsignBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
@@ -18620,33 +18445,6 @@ def special_xlogy_autograd_post(result, self, other, *, raw_keyset, active_keyse
 
 
 
-def square_autograd(self, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("square", raw_keyset, self, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SquareBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def square_autograd_post(result, self, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.SquareBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-
-
 def tensordot_autograd(self, other, dims=2, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -18668,31 +18466,6 @@ def tensordot_autograd_post(result, self, other, dims=2, *, raw_keyset, active_k
         annotate_node_creation(grad_fn)
         grad_fn._save(other=other, self_=self)
         grad_fn._dims = dims
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def true_divide_autograd(self, other, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("true_divide", raw_keyset, self, other, **_kwargs)
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.True_divideBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-
-def true_divide_autograd_post(result, self, other, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (getattr(self, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
-        grad_fn = _F.True_divideBackward0((self, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(other=other, self_=self)
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
