@@ -640,6 +640,10 @@
   grad_output: "native_dropout_double_backward(grad, grad_output, mask, scale)"
   mask: 'not_implemented("native_dropout_backward: mask")'
 
+- name: outer(Tensor self, Tensor other) -> Tensor
+  self: grad.matmul(other)
+  other: grad.t().matmul(self)
+
 - name: eq_.Scalar(Tensor(a!) self, Scalar other) -> Tensor(a!)
   self: zeros_like(self)
   result: self_t.zero_()
@@ -735,6 +739,10 @@
   other: -grad * self.div(other, /*rounding_mode=*/"trunc")
   result: self_t - other_t * self_p.div(other_p, /*rounding_mode=*/"trunc")
 
+- name: floor_divide(Tensor self, Tensor other) -> Tensor
+  self: zeros_like(self)
+  other: zeros_like(other)
+
 - name: frac(Tensor self) -> Tensor
   self: grad
   result: self_t
@@ -782,11 +790,18 @@
 - name: row_indices(Tensor(a) self) -> Tensor(a)
   output_differentiability: [False]
 
+- name: inner(Tensor self, Tensor other) -> Tensor
+  self, other: inner_backward(grad, self, other)
+
 - name: grid_sampler_2d(Tensor input, Tensor grid, int interpolation_mode, int padding_mode, bool align_corners) -> Tensor
   input, grid: "grad.defined() ? grid_sampler_2d_backward(grad, input, grid, interpolation_mode, padding_mode, align_corners, grad_input_mask) : std::tuple<Tensor, Tensor>()"
 
 - name: grid_sampler_3d(Tensor input, Tensor grid, int interpolation_mode, int padding_mode, bool align_corners) -> Tensor
   input, grid: "grad.defined() ? grid_sampler_3d_backward(grad, input, grid, interpolation_mode, padding_mode, align_corners, grad_input_mask) : std::tuple<Tensor, Tensor>()"
+
+- name: heaviside(Tensor self, Tensor other) -> Tensor
+  self: zeros_like(self)
+  other: zeros_like(other)
 
 # See NOTE [ grid_sample CPU fallback ]
 - name: _grid_sampler_2d_cpu_fallback(Tensor input, Tensor grid, int interpolation_mode, int padding_mode, bool align_corners) -> Tensor
@@ -1639,6 +1654,12 @@
   self: grad / (2 * result.conj())
   result: auto_element_wise
 
+- name: softsign(Tensor self) -> Tensor
+  self: grad / ((1 + self.abs()) * (1 + self.abs()))
+
+- name: square(Tensor self) -> Tensor
+  self: grad * 2 * self
+
 # View-tracked ops (1B-B): squeeze / squeeze_ / squeeze.dim / squeeze.dims /
 # squeeze_.dim / squeeze_.dims gradients flow via view rebase
 # (_view_func/_rev_view_func wired in src/candle/_backends/common/view.py).
@@ -1826,6 +1847,10 @@
 - name: trunc(Tensor self) -> Tensor
   self: zeros_like(grad)
   result: auto_element_wise
+
+- name: true_divide(Tensor self, Tensor other) -> Tensor
+  self: grad / other
+  other: -grad * self / (other * other)
 
 - name: hash_tensor(Tensor self, int[1] dim=[], *, bool keepdim=False, int mode=0) -> Tensor
   output_differentiability: [False]
@@ -2126,6 +2151,12 @@
 - name: silu(Tensor self) -> Tensor
   self: "GradMode::is_enabled() ? infinitely_differentiable_silu_backward(grad, self) : silu_backward(grad, self)"
   result: auto_element_wise
+
+- name: selu(Tensor self) -> Tensor
+  self: selu_backward(grad, self)
+
+- name: signbit(Tensor self) -> Tensor
+  output_differentiability: [False]
 
 - name: mish(Tensor self) -> Tensor
   self: "GradMode::is_enabled() ? infinitely_differentiable_mish_backward(grad, self) : mish_backward(grad, self)"

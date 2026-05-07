@@ -462,3 +462,134 @@ def test_autograd_pow_tensor_scalar_and_tensor_tensor_backward():
     assert reflected_exponent.grad is not None
     expected_reflected = np.array([4.0 * np.log(2.0), 8.0 * np.log(2.0)], dtype=np.float32)
     np.testing.assert_allclose(reflected_exponent.grad.numpy(), expected_reflected)
+
+
+
+def test_autograd_square_routes_compiled_backward():
+    x = torch.tensor([2.0, -3.0])
+    x.requires_grad = True
+
+    out = torch.square(x)
+    assert type(out.grad_fn).__name__ == "SquareBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([4.0, -6.0], dtype=np.float32))
+
+
+def test_autograd_outer_routes_compiled_backward():
+    x = torch.tensor([1.0, 2.0])
+    y = torch.tensor([3.0, 4.0, 5.0])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.outer(x, y)
+    assert type(out.grad_fn).__name__ == "OuterBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([12.0, 12.0], dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.array([3.0, 3.0, 3.0], dtype=np.float32))
+
+
+def test_autograd_inner_routes_compiled_backward():
+    x = torch.tensor([1.0, 2.0, 3.0])
+    y = torch.tensor([4.0, 5.0, 6.0])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.inner(x, y)
+    assert type(out.grad_fn).__name__ == "InnerBackward0"
+    out.backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([4.0, 5.0, 6.0], dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.array([1.0, 2.0, 3.0], dtype=np.float32))
+
+
+def test_autograd_selu_routes_compiled_backward():
+    x = torch.tensor([-1.0, 0.0, 2.0])
+    x.requires_grad = True
+
+    out = torch.nn.functional.selu(x)
+    assert type(out.grad_fn).__name__ == "SeluBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    expected = np.array([1.0507009873554805 * 1.6732632423543772 * np.exp(-1.0),
+                         1.0507009873554805,
+                         1.0507009873554805], dtype=np.float32)
+    np.testing.assert_allclose(x.grad.numpy(), expected, rtol=1e-6)
+
+
+def test_autograd_softsign_routes_compiled_backward():
+    x = torch.tensor([-2.0, 0.0, 3.0])
+    x.requires_grad = True
+
+    out = torch.nn.functional.softsign(x)
+    assert type(out.grad_fn).__name__ == "SoftsignBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    expected = 1.0 / np.array([3.0, 1.0, 4.0], dtype=np.float32) ** 2
+    np.testing.assert_allclose(x.grad.numpy(), expected)
+
+
+def test_autograd_signbit_is_non_differentiable():
+    x = torch.tensor([-1.0, 0.0, 2.0])
+    x.requires_grad = True
+
+    out = torch.signbit(x)
+
+    assert out.requires_grad is False
+    assert out.grad_fn is None
+
+
+def test_autograd_heaviside_routes_compiled_zero_backward():
+    x = torch.tensor([-1.0, 0.0, 2.0])
+    y = torch.tensor([0.5, 0.5, 0.5])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.heaviside(x, y)
+    assert type(out.grad_fn).__name__ == "HeavisideBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.zeros(3, dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.zeros(3, dtype=np.float32))
+
+
+def test_autograd_floor_divide_routes_compiled_zero_backward():
+    x = torch.tensor([5.0, -5.0])
+    y = torch.tensor([2.0, 2.0])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.floor_divide(x, y)
+    assert type(out.grad_fn).__name__ == "Floor_divideBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.zeros(2, dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.zeros(2, dtype=np.float32))
+
+
+def test_autograd_true_divide_preserves_public_div_backward():
+    x = torch.tensor([6.0, -8.0])
+    y = torch.tensor([2.0, 4.0])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.true_divide(x, y)
+    assert type(out.grad_fn).__name__ == "DivTensorBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([0.5, 0.25], dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.array([-1.5, 0.5], dtype=np.float32))

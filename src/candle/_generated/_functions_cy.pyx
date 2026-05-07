@@ -208,6 +208,8 @@ def _clamp_backward_helper(grad, self_, min_val, max_val, keyset):
     return _redispatch("mul", keyset, grad, mask)
 
 
+
+def _softsign_grad(grad, self_, keyset):
     one = _scalar_tensor_like(self_, 1.0)
     denom = _redispatch("add", keyset, one, _redispatch("abs", keyset, self_))
     denom_sq = _redispatch("mul", keyset, denom, denom)
@@ -4012,6 +4014,36 @@ class NativeDropoutBackwardBackward0(_Node):
             grad_mask = _cy_not_implemented("NativeDropoutBackwardBackward0: mask")
         return (grad_grad_output, grad_mask,)
 
+class OuterBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='OuterBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_other_idx = None
+        self._saved_self_idx = None
+
+    def _save(self, *, other=None, self_=None):
+        tensors = []
+        if other is not None:
+            self._saved_other_idx = len(tensors)
+            tensors.append(other)
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        other = self.saved_tensors[self._saved_other_idx] if self._saved_other_idx is not None else None
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        with _grad_context(keyset):
+            grad_self = _cy_not_implemented("OuterBackward0: self")
+            grad_other = _cy_not_implemented("OuterBackward0: other")
+        return (grad_self, grad_other,)
+
 class EqScalarBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         _ensure_refs()
@@ -4581,6 +4613,36 @@ class FmodTensorBackward0(_Node):
             grad_other = _cy_not_implemented("FmodTensorBackward0: other")
         return (grad_self, grad_other,)
 
+class Floor_divideBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='Floor_divideBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_other_idx = None
+
+    def _save(self, *, self_=None, other=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if other is not None:
+            self._saved_other_idx = len(tensors)
+            tensors.append(other)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        other = self.saved_tensors[self._saved_other_idx] if self._saved_other_idx is not None else None
+        with _grad_context(keyset):
+            grad_self = self_._zeros_like()
+            grad_other = other._zeros_like()
+        return (grad_self, grad_other,)
+
 class FracBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         _ensure_refs()
@@ -4802,6 +4864,35 @@ class RowIndicesBackward0(_Node):
         keyset = _backward_dispatch_keyset(self._raw_keyset)
         return (grad,)
 
+class InnerBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='InnerBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_other_idx = None
+        self._saved_self_idx = None
+
+    def _save(self, *, other=None, self_=None):
+        tensors = []
+        if other is not None:
+            self._saved_other_idx = len(tensors)
+            tensors.append(other)
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        other = self.saved_tensors[self._saved_other_idx] if self._saved_other_idx is not None else None
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        with _grad_context(keyset):
+            grad_self, grad_other = _inner_backward_all(grad, self_, other, keyset)
+        return (grad_self, grad_other,)
+
 class GridSampler2dBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         _ensure_refs()
@@ -4875,6 +4966,36 @@ class GridSampler3dBackward0(_Node):
             grad_input = _cy_not_implemented("GridSampler3dBackward0: input")
             grad_grid = _cy_not_implemented("GridSampler3dBackward0: grid")
         return (grad_input, grad_grid,)
+
+class HeavisideBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='HeavisideBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._saved_other_idx = None
+
+    def _save(self, *, self_=None, other=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if other is not None:
+            self._saved_other_idx = len(tensors)
+            tensors.append(other)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        other = self.saved_tensors[self._saved_other_idx] if self._saved_other_idx is not None else None
+        with _grad_context(keyset):
+            grad_self = self_._zeros_like()
+            grad_other = other._zeros_like()
+        return (grad_self, grad_other,)
 
 class GridSampler2dCpuFallbackBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
@@ -10167,6 +10288,54 @@ class SqrtBackward0(_Node):
             grad_self = _sqrt_backward_helper(grad, result, keyset)
         return (grad_self,)
 
+class SoftsignBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='SoftsignBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        with _grad_context(keyset):
+            grad_self = _cy_not_implemented("SoftsignBackward0: self")
+        return (grad_self,)
+
+class SquareBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='SquareBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        with _grad_context(keyset):
+            grad_self = _cy_not_implemented("SquareBackward0: self")
+        return (grad_self,)
+
 class StdCorrectionBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         _ensure_refs()
@@ -10892,6 +11061,36 @@ class TruncBackward0(_Node):
         with _grad_context(keyset):
             grad_self = grad._zeros_like()
         return (grad_self,)
+
+class True_divideBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='True_divideBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_other_idx = None
+        self._saved_self_idx = None
+
+    def _save(self, *, other=None, self_=None):
+        tensors = []
+        if other is not None:
+            self._saved_other_idx = len(tensors)
+            tensors.append(other)
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        other = self.saved_tensors[self._saved_other_idx] if self._saved_other_idx is not None else None
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        with _grad_context(keyset):
+            grad_self = _cy_not_implemented("True_divideBackward0: self")
+            grad_other = _cy_not_implemented("True_divideBackward0: other")
+        return (grad_self, grad_other,)
 
 class HashTensorBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
@@ -12431,6 +12630,42 @@ class SiluBackward0(_Node):
         with _grad_context(keyset):
             grad_self = _silu_grad(grad, self_, keyset)
         return (grad_self,)
+
+class SeluBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='SeluBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        with _grad_context(keyset):
+            grad_self = _selu_grad(grad, self_, keyset)
+        return (grad_self,)
+
+class SignbitBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='SignbitBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        return (grad,)
 
 class MishBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
