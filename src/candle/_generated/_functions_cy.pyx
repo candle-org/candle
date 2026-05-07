@@ -2496,6 +2496,20 @@ class RepeatInterleaveBackward0(_Node):
             grad_input = _repeat_interleave_backward_helper(grad, input_, repeats, dim, keyset)
         return (grad_input,)
 
+class Row_stackBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='Row_stackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        with _grad_context(keyset):
+            grad_tensors = _cy_not_implemented("Row_stackBackward0: tensors")
+        return grad_tensors
+
 class TakeAlongDimBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         _ensure_refs()
@@ -2542,6 +2556,52 @@ class CatBackward0(_Node):
         dim = self._dim
         with _grad_context(keyset):
             grad_tensors = _cat_backward_helper(grad, tensors, dim, keyset)
+        return grad_tensors
+
+class Column_stackBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='Column_stackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        with _grad_context(keyset):
+            grad_tensors = _cy_not_implemented("Column_stackBackward0: tensors")
+        return grad_tensors
+
+class ConcatBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='ConcatBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._dim = None
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        dim = self._dim
+        with _grad_context(keyset):
+            grad_tensors = _cy_not_implemented("ConcatBackward0: tensors")
+        return grad_tensors
+
+class ConcatenateBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='ConcatenateBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._dim = None
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        dim = self._dim
+        with _grad_context(keyset):
+            grad_tensors = _cy_not_implemented("ConcatenateBackward0: tensors")
         return grad_tensors
 
 class CauchyBackward0(_Node):
@@ -3754,6 +3814,20 @@ class DistBackward0(_Node):
             grad_other = _cy_not_implemented("DistBackward0: other")
         return (grad_self, grad_other,)
 
+class DstackBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='DstackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        with _grad_context(keyset):
+            grad_tensors = _cy_not_implemented("DstackBackward0: tensors")
+        return grad_tensors
+
 class DivTensorBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
         _ensure_refs()
@@ -4013,6 +4087,26 @@ class NativeDropoutBackwardBackward0(_Node):
             grad_grad_output = _cy_not_implemented("NativeDropoutBackwardBackward0: grad_output")
             grad_mask = _cy_not_implemented("NativeDropoutBackwardBackward0: mask")
         return (grad_grad_output, grad_mask,)
+
+class Pad_sequenceBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='Pad_sequenceBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._batch_first = None
+        self._padding_value = None
+        self._padding_side = None
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        batch_first = self._batch_first
+        padding_value = self._padding_value
+        padding_side = self._padding_side
+        with _grad_context(keyset):
+            grad_sequences = _cy_not_implemented("Pad_sequenceBackward0: sequences")
+        return grad_sequences
 
 class OuterBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
@@ -4966,6 +5060,20 @@ class GridSampler3dBackward0(_Node):
             grad_input = _cy_not_implemented("GridSampler3dBackward0: input")
             grad_grid = _cy_not_implemented("GridSampler3dBackward0: grid")
         return (grad_input, grad_grid,)
+
+class HstackBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='HstackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        with _grad_context(keyset):
+            grad_tensors = _cy_not_implemented("HstackBackward0: tensors")
+        return grad_tensors
 
 class HeavisideBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
@@ -11061,6 +11169,20 @@ class TruncBackward0(_Node):
         with _grad_context(keyset):
             grad_self = grad._zeros_like()
         return (grad_self,)
+
+class VstackBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='VstackBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        with _grad_context(keyset):
+            grad_tensors = _cy_not_implemented("VstackBackward0: tensors")
+        return grad_tensors
 
 class True_divideBackward0(_Node):
     def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):

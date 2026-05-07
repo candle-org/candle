@@ -593,3 +593,92 @@ def test_autograd_true_divide_preserves_public_div_backward():
     assert y.grad is not None
     np.testing.assert_allclose(x.grad.numpy(), np.array([0.5, 0.25], dtype=np.float32))
     np.testing.assert_allclose(y.grad.numpy(), np.array([-1.5, 0.5], dtype=np.float32))
+
+
+
+def test_autograd_hstack_vstack_row_stack_dstack_route_compiled_backward():
+    a = torch.tensor([1.0, 2.0])
+    b = torch.tensor([3.0, 4.0])
+    for fn, grad_name in [
+        (torch.hstack, "HstackBackward0"),
+        (torch.vstack, "VstackBackward0"),
+        (torch.row_stack, "Row_stackBackward0"),
+        (torch.dstack, "DstackBackward0"),
+    ]:
+        x = a.clone()
+        y = b.clone()
+        x.requires_grad = True
+        y.requires_grad = True
+
+        out = fn((x, y))
+        assert type(out.grad_fn).__name__ == grad_name
+        out.sum().backward()
+
+        assert x.grad is not None
+        assert y.grad is not None
+        np.testing.assert_allclose(x.grad.numpy(), np.ones_like(x.numpy()))
+        np.testing.assert_allclose(y.grad.numpy(), np.ones_like(y.numpy()))
+
+
+def test_autograd_column_stack_routes_compiled_backward():
+    x = torch.tensor([1.0, 2.0])
+    y = torch.tensor([3.0, 4.0])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.column_stack((x, y))
+    assert type(out.grad_fn).__name__ == "Column_stackBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.ones(2, dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.ones(2, dtype=np.float32))
+
+
+def test_autograd_concat_public_alias_preserves_cat_backward():
+    x = torch.tensor([[1.0, 2.0]])
+    y = torch.tensor([[3.0, 4.0]])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.concat((x, y), dim=0)
+    assert type(out.grad_fn).__name__ == "CatBackward0"
+    (out * torch.tensor([[1.0, 2.0], [3.0, 4.0]])).sum().backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([[1.0, 2.0]], dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.array([[3.0, 4.0]], dtype=np.float32))
+
+
+def test_autograd_concatenate_routes_compiled_backward():
+    x = torch.tensor([[1.0, 2.0]])
+    y = torch.tensor([[3.0, 4.0]])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.concatenate((x, y), dim=0)
+    assert type(out.grad_fn).__name__ == "ConcatenateBackward0"
+    (out * torch.tensor([[1.0, 2.0], [3.0, 4.0]])).sum().backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.array([[1.0, 2.0]], dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.array([[3.0, 4.0]], dtype=np.float32))
+
+
+def test_autograd_pad_sequence_routes_compiled_backward():
+    x = torch.tensor([1.0, 2.0])
+    y = torch.tensor([3.0])
+    x.requires_grad = True
+    y.requires_grad = True
+
+    out = torch.pad_sequence((x, y), batch_first=True, padding_value=-1.0)
+    assert type(out.grad_fn).__name__ == "Pad_sequenceBackward0"
+    out.sum().backward()
+
+    assert x.grad is not None
+    assert y.grad is not None
+    np.testing.assert_allclose(x.grad.numpy(), np.ones(2, dtype=np.float32))
+    np.testing.assert_allclose(y.grad.numpy(), np.ones(1, dtype=np.float32))

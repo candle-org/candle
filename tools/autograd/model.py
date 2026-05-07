@@ -57,7 +57,10 @@ class DifferentiabilityInfo:
     @property
     def backward_name(self) -> str:
         preserved_names = {
+            "column_stack": "Column_stackBackward0",
             "floor_divide": "Floor_divideBackward0",
+            "pad_sequence": "Pad_sequenceBackward0",
+            "row_stack": "Row_stackBackward0",
             "true_divide": "True_divideBackward0",
         }
         if self.func_name in preserved_names:
