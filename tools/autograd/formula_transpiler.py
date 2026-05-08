@@ -160,6 +160,9 @@ _SPECIAL_CALLS = {
     "generated_grid_sample_backward": lambda args: f'_grid_sample_backward_all({", ".join(args)}, keyset)',
     "generated_affine_grid_backward": lambda args: f'_affine_grid_backward_helper({", ".join(args)}, keyset)',
     "generated_ctc_loss_backward": lambda args: f'_ctc_loss_backward_helper({", ".join(args)}, keyset)',
+    "generated_instance_norm_backward": lambda args: f'_instance_norm_backward_helper({", ".join(args)}, keyset)',
+    "generated_linalg_slogdet_backward": lambda args: f'_linalg_slogdet_backward_helper({", ".join(args)}, keyset)',
+    "generated_sum_to_size_backward": lambda args: f'_sum_to_size_backward_helper({", ".join(args)}, keyset)',
 }
 
 _HELPER_FALLBACKS = {

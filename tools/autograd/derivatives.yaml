@@ -1943,6 +1943,9 @@
   self: zeros_like(grad)
   result: self_t.zero_()
 
+- name: uniform(Tensor self) -> Tensor
+  self: zeros_like(grad)
+
 - name: _unique(Tensor self, bool sorted=True, bool return_inverse=False) -> (Tensor, Tensor)
   output_differentiability: [True, False]
   self: not_implemented("_unique")
@@ -3391,6 +3394,16 @@
 
 - name: ctc_loss(Tensor self, Any targets, Any input_lengths, Any target_lengths, int blank=0, str reduction='mean', bool zero_infinity=False) -> Tensor
   self: generated_ctc_loss_backward(grad, self, targets, input_lengths, target_lengths, blank, reduction, zero_infinity)
+
+- name: instance_norm(Tensor input, Any weight=None, Any bias=None, Any running_mean=None, Any running_var=None, bool use_input_stats=True, float momentum=0.1, float eps=1e-5, bool cudnn_enabled=False) -> Tensor
+  input: generated_instance_norm_backward(grad, input, weight, bias, running_mean, running_var, use_input_stats, momentum, eps, cudnn_enabled)
+
+- name: linalg_slogdet(Tensor self) -> (Tensor sign, Tensor logabsdet)
+  output_differentiability: [False, True]
+  self: generated_linalg_slogdet_backward(grad, self)
+
+- name: sum_to_size(Tensor self, int[] size) -> Tensor
+  self: generated_sum_to_size_backward(grad, self, size)
 
 - name: linalg_inv(Tensor self) -> Tensor
   self: linalg_inv_backward(grad, self)

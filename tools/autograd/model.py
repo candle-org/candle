@@ -88,6 +88,8 @@ class DifferentiabilityInfo:
             "affine_grid": "Affine_gridBackward0",
             "grid_sample": "Grid_sampleBackward0",
             "ctc_loss": "Ctc_lossBackward0",
+            "instance_norm": "Instance_normBackward0",
+            "linalg_slogdet": "Linalg_slogdetBackward0",
             "batch_norm": "Batch_normBackward0",
             "group_norm": "Group_normBackward0",
             "layer_norm": "Layer_normBackward0",

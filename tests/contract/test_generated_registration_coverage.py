@@ -16,9 +16,7 @@ import re
 
 _GEN = pathlib.Path(__file__).parent.parent.parent / "src" / "candle" / "_generated"
 
-LEGACY_MANUAL_WRAPPERS = {
-    "sum_to_size_autograd_post",
-}
+LEGACY_MANUAL_WRAPPERS = set()
 
 
 def _read(name):
@@ -54,8 +52,8 @@ def test_compiled_variable_type_surface_matches_generated_safe_registration_subs
     vt_symbols = _wrapper_symbols_in_file("variable_type.py")
     reg_symbols = set(_vt_symbols_from_registration())
     assert "sum_to_size_autograd_post" in reg_symbols
-    assert "sum_to_size_autograd_post" in vt_symbols
-    assert "sum_to_size_autograd_post" not in cy_symbols
+    assert "sum_to_size_autograd_post" not in vt_symbols
+    assert "sum_to_size_autograd_post" in cy_symbols
 
 
 def test_registration_does_not_reference_generic_alias_without_backing_wrapper():
@@ -119,7 +117,7 @@ def test_registration_legacy_section_uses_python_surface():
     marker = "# === UPSTREAM LEGACY REGISTRATIONS ==="
     assert marker in text
     legacy = text.split(marker, 1)[1]
-    assert "_VT_PY.sum_to_size_autograd_post" in legacy
+    assert "_VT_PY.sum_to_size_autograd_post" not in legacy
     assert "_VT_PY.broadcast_to_autograd" not in legacy
     assert "_VT_PY.moveaxis_autograd" not in legacy
     assert "_VT_PY.tile_autograd" not in legacy
@@ -236,6 +234,9 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.grid_sample_autograd" not in legacy
     assert "_VT_PY.affine_grid_autograd" not in legacy
     assert "_VT_PY.ctc_loss_autograd" not in legacy
+    assert "_VT_PY.uniform_autograd" not in legacy
+    assert "_VT_PY.instance_norm_autograd" not in legacy
+    assert "_VT_PY.linalg_slogdet_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -361,6 +362,10 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.grid_sample_autograd" in full_text
     assert "_VT.affine_grid_autograd" in full_text
     assert "_VT.ctc_loss_autograd" in full_text
+    assert "_VT.uniform_autograd" in full_text
+    assert "_VT.instance_norm_autograd" in full_text
+    assert "_VT.linalg_slogdet_autograd" in full_text
+    assert "_VT.sum_to_size_autograd_post" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():

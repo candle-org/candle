@@ -1304,3 +1304,36 @@ def test_autograd_misc_batch_routes_compiled_backward():
     assert type(out.grad_fn).__name__ == "Ctc_lossBackward0", (
         f"ctc_loss: {type(out.grad_fn).__name__}"
     )
+
+
+def test_autograd_final_special_batch_routes_compiled_backward():
+    from candle._dispatch.dispatcher import dispatch
+
+    x = torch.tensor([1.0, 2.0, 3.0])
+    x.requires_grad = True
+    out = dispatch("uniform", x.device.type, x)
+    assert type(out.grad_fn).__name__ == "UniformBackward0", (
+        f"uniform: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
+    x.requires_grad = True
+    out = F.instance_norm(x)
+    assert type(out.grad_fn).__name__ == "Instance_normBackward0", (
+        f"instance_norm: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[2.0, 0.0], [0.0, 3.0]])
+    x.requires_grad = True
+    sign, logabsdet = torch.linalg.slogdet(x)
+    assert sign.requires_grad is False
+    assert type(logabsdet.grad_fn).__name__ == "Linalg_slogdetBackward0", (
+        f"linalg_slogdet: {type(logabsdet.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[1.0, 2.0, 3.0]])
+    x.requires_grad = True
+    out = x.sum_to_size((1, 1))
+    assert type(out.grad_fn).__name__ == "SumToSizeBackward0", (
+        f"sum_to_size: {type(out.grad_fn).__name__}"
+    )

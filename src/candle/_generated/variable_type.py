@@ -4847,16 +4847,6 @@ def var_mean_correction_autograd(self_, dim=None, correction=None, keepdim=False
     return result
 
 
-def sum_to_size_autograd_post(result, self_, size, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self_.requires_grad):
-        grad_fn = _F.SumToSizeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self_)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
 def reshape_autograd(self_, shape, **_kwargs):
     active_keyset = current_dispatch_keyset()
     raw_keyset = _strip_autograd_keys(active_keyset)
@@ -15864,88 +15854,3 @@ _foreach_maximum_autograd = _foreach_maximum_scalar_autograd
 _foreach_maximum_autograd_post = _foreach_maximum_scalar_autograd_post
 _foreach_norm_autograd = _foreach_norm_scalar_autograd
 _foreach_norm_autograd_post = _foreach_norm_scalar_autograd_post
-
-
-# === UPSTREAM LEGACY WRAPPERS (not in transpiler output) ===
-
-def instance_norm_autograd(input, weight=None, bias=None, running_mean=None, running_var=None, use_input_stats=True, momentum=0.1, eps=1e-5, cudnn_enabled=False, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("instance_norm", raw_keyset, input, weight, bias, running_mean, running_var, use_input_stats, momentum, eps, cudnn_enabled, **_kwargs)
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Instance_normBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._weight = weight
-        grad_fn._bias = bias
-        grad_fn._running_mean = running_mean
-        grad_fn._running_var = running_var
-        grad_fn._use_input_stats = use_input_stats
-        grad_fn._momentum = momentum
-        grad_fn._eps = eps
-        grad_fn._cudnn_enabled = cudnn_enabled
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def instance_norm_autograd_post(result, input, weight=None, bias=None, running_mean=None, running_var=None, use_input_stats=True, momentum=0.1, eps=1e-5, cudnn_enabled=False, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (input.requires_grad):
-        grad_fn = _F.Instance_normBackward0((input,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(input_=input)
-        grad_fn._weight = weight
-        grad_fn._bias = bias
-        grad_fn._running_mean = running_mean
-        grad_fn._running_var = running_var
-        grad_fn._use_input_stats = use_input_stats
-        grad_fn._momentum = momentum
-        grad_fn._eps = eps
-        grad_fn._cudnn_enabled = cudnn_enabled
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-def linalg_slogdet_autograd(self, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("linalg_slogdet", raw_keyset, self, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.Linalg_slogdetBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result[1].grad_fn = grad_fn
-        result[1].requires_grad = True
-    return result
-
-
-def linalg_slogdet_autograd_post(result, self, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.Linalg_slogdetBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result[1].grad_fn = grad_fn
-        result[1].requires_grad = True
-    return result
-
-def uniform_autograd(self, **_kwargs):
-    active_keyset = current_dispatch_keyset()
-    raw_keyset = _strip_autograd_keys(active_keyset)
-    result = redispatch("uniform", raw_keyset, self, **_kwargs)
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.UniformBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
-
-
-def uniform_autograd_post(result, self, *, raw_keyset, active_keyset, **_kwargs):
-    if GradMode.enabled and (self.requires_grad):
-        grad_fn = _F.UniformBackward0((self,), raw_keyset=raw_keyset, active_keyset=active_keyset)
-        annotate_node_creation(grad_fn)
-        grad_fn._save(self_=self)
-        result.grad_fn = grad_fn
-        result.requires_grad = True
-    return result
