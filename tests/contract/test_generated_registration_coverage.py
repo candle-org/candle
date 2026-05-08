@@ -195,6 +195,10 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.fft_ifftn_autograd" not in legacy
     assert "_VT_PY.fft_rfftn_autograd" not in legacy
     assert "_VT_PY.fft_irfftn_autograd" not in legacy
+    assert "_VT_PY.fft_hfft_autograd" not in legacy
+    assert "_VT_PY.fft_ihfft_autograd" not in legacy
+    assert "_VT_PY.fft_fftshift_autograd" not in legacy
+    assert "_VT_PY.fft_ifftshift_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -279,6 +283,10 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.fft_ifftn_autograd" in full_text
     assert "_VT.fft_rfftn_autograd" in full_text
     assert "_VT.fft_irfftn_autograd" in full_text
+    assert "_VT.fft_hfft_autograd" in full_text
+    assert "_VT.fft_ihfft_autograd" in full_text
+    assert "_VT.fft_fftshift_autograd" in full_text
+    assert "_VT.fft_ifftshift_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():
