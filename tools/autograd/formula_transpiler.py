@@ -126,6 +126,16 @@ _SPECIAL_CALLS = {
     "generated_fft_r2c_backward": lambda args: f'_fft_r2c_backward_helper({", ".join([*args, "keyset"])})',
     "generated_fft_c2r_backward": lambda args: f'_fft_c2r_backward_helper({", ".join([*args, "keyset"])})',
     "generated_fft_shift_backward": lambda args: f'_fft_shift_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_linalg_norm_backward": lambda args: f'_linalg_norm_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_linalg_matrix_norm_backward": lambda args: f'_linalg_matrix_norm_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_linalg_cond_backward": lambda args: f'_linalg_cond_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_linalg_tensorinv_backward": lambda args: f'_linalg_tensorinv_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_linalg_vander_backward": lambda args: f'_linalg_vander_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_linalg_eigvalsh_backward": lambda args: f'_linalg_eigvalsh_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_linalg_svdvals_backward": lambda args: f'_linalg_svdvals_grad({", ".join([*args, "keyset"])})',
+    "generated_linalg_det_backward": lambda args: f'_linalg_det_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_linalg_cholesky_backward": lambda args: f'_linalg_cholesky_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_linalg_solve_backward": lambda args: f'_linalg_solve_backward_all({", ".join([*args, "keyset"])})',
 }
 
 _HELPER_FALLBACKS = {

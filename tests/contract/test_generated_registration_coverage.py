@@ -199,6 +199,19 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.fft_ihfft_autograd" not in legacy
     assert "_VT_PY.fft_fftshift_autograd" not in legacy
     assert "_VT_PY.fft_ifftshift_autograd" not in legacy
+    assert "_VT_PY.linalg_cholesky_autograd" not in legacy
+    assert "_VT_PY.linalg_cond_autograd" not in legacy
+    assert "_VT_PY.linalg_det_autograd" not in legacy
+    assert "_VT_PY.linalg_eigvals_autograd" not in legacy
+    assert "_VT_PY.linalg_eigvalsh_autograd" not in legacy
+    assert "_VT_PY.linalg_matrix_norm_autograd" not in legacy
+    assert "_VT_PY.linalg_matrix_rank_autograd" not in legacy
+    assert "_VT_PY.linalg_norm_autograd" not in legacy
+    assert "_VT_PY.linalg_solve_autograd" not in legacy
+    assert "_VT_PY.linalg_svdvals_autograd" not in legacy
+    assert "_VT_PY.linalg_tensorinv_autograd" not in legacy
+    assert "_VT_PY.linalg_tensorsolve_autograd" not in legacy
+    assert "_VT_PY.linalg_vander_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -287,6 +300,19 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.fft_ihfft_autograd" in full_text
     assert "_VT.fft_fftshift_autograd" in full_text
     assert "_VT.fft_ifftshift_autograd" in full_text
+    assert "_VT.linalg_cholesky_autograd" in full_text
+    assert "_VT.linalg_cond_autograd" in full_text
+    assert "_VT.linalg_det_autograd" in full_text
+    assert "_VT.linalg_eigvals_autograd" in full_text
+    assert "_VT.linalg_eigvalsh_autograd" in full_text
+    assert "_VT.linalg_matrix_norm_autograd" in full_text
+    assert "_VT.linalg_matrix_rank_autograd" in full_text
+    assert "_VT.linalg_norm_autograd" in full_text
+    assert "_VT.linalg_solve_autograd" in full_text
+    assert "_VT.linalg_svdvals_autograd" in full_text
+    assert "_VT.linalg_tensorinv_autograd" in full_text
+    assert "_VT.linalg_tensorsolve_autograd" in full_text
+    assert "_VT.linalg_vander_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():

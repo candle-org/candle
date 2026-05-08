@@ -3323,6 +3323,45 @@
 - name: linalg_inv(Tensor self) -> Tensor
   self: linalg_inv_backward(grad, self)
 
+- name: linalg_cholesky(Tensor self, bool upper=False) -> Tensor
+  self: generated_linalg_cholesky_backward(grad, self, upper)
+
+- name: linalg_cond(Tensor input, Any p=None) -> Tensor
+  input: generated_linalg_cond_backward(grad, input, p)
+
+- name: linalg_det(Tensor self) -> Tensor
+  self: generated_linalg_det_backward(grad, self)
+
+- name: linalg_eigvals(Tensor self) -> Tensor
+  self: zeros_like(self)
+
+- name: linalg_eigvalsh(Tensor input, str UPLO='L') -> Tensor
+  input: generated_linalg_eigvalsh_backward(grad, input, UPLO)
+
+- name: linalg_matrix_norm(Tensor input, Any ord='fro', Any dim=None, bool keepdim=False) -> Tensor
+  input: generated_linalg_matrix_norm_backward(grad, input, ord, dim, keepdim)
+
+- name: linalg_matrix_rank(Tensor input, Any atol=None, Any rtol=None, bool hermitian=False) -> Tensor
+  input: zeros_like(input)
+
+- name: linalg_norm(Tensor input, Any ord=None, Any dim=None, bool keepdim=False) -> Tensor
+  input: generated_linalg_norm_backward(grad, input, ord, dim, keepdim)
+
+- name: linalg_solve(Tensor self, Tensor other, bool left=True) -> Tensor
+  self, other: generated_linalg_solve_backward(grad, self, other, left)
+
+- name: linalg_svdvals(Tensor self) -> Tensor
+  self: generated_linalg_svdvals_backward(grad, self)
+
+- name: linalg_tensorinv(Tensor input, int ind=2) -> Tensor
+  input: generated_linalg_tensorinv_backward(grad, input, ind)
+
+- name: linalg_tensorsolve(Tensor input, Tensor other, Any dims=None) -> Tensor
+  input: zeros_like(input)
+
+- name: linalg_vander(Tensor x, int? N=None) -> Tensor
+  x: generated_linalg_vander_backward(grad, x, N)
+
 - name: getitem(Tensor self, Any key) -> Tensor
   self: getitem_backward(grad, self, key)
 

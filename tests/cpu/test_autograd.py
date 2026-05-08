@@ -1014,3 +1014,98 @@ def test_autograd_fft_residual_batch_routes_compiled_backward():
     ih.requires_grad = True
     ihfft_out = torch.fft.ihfft(ih)
     assert type(ihfft_out.grad_fn).__name__ == "Fft_ihfftBackward0"
+
+
+def test_autograd_linalg_batch_routes_compiled_backward():
+    a = torch.eye(3) * 2.0
+    a.requires_grad = True
+    out = torch.linalg.cholesky(a)
+    assert type(out.grad_fn).__name__ == "Linalg_choleskyBackward0", (
+        f"linalg.cholesky: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(3) * 2.0
+    a.requires_grad = True
+    out = torch.linalg.cond(a)
+    assert type(out.grad_fn).__name__ == "Linalg_condBackward0", (
+        f"linalg.cond: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(3) * 2.0
+    a.requires_grad = True
+    out = torch.linalg.det(a)
+    assert type(out.grad_fn).__name__ == "Linalg_detBackward0", (
+        f"linalg.det: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(3) * 2.0
+    a.requires_grad = True
+    out = torch.linalg.eigvals(a)
+    assert type(out.grad_fn).__name__ == "Linalg_eigvalsBackward0", (
+        f"linalg.eigvals: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(3) * 2.0
+    a.requires_grad = True
+    out = torch.linalg.eigvalsh(a)
+    assert type(out.grad_fn).__name__ == "Linalg_eigvalshBackward0", (
+        f"linalg.eigvalsh: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(3) * 2.0
+    a.requires_grad = True
+    out = torch.linalg.matrix_norm(a)
+    assert type(out.grad_fn).__name__ == "Linalg_matrix_normBackward0", (
+        f"linalg.matrix_norm: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(3) * 2.0
+    a.requires_grad = True
+    out = torch.linalg.matrix_rank(a)
+    assert type(out.grad_fn).__name__ == "Linalg_matrix_rankBackward0", (
+        f"linalg.matrix_rank: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(3) * 2.0
+    a.requires_grad = True
+    out = torch.linalg.norm(a)
+    assert type(out.grad_fn).__name__ == "Linalg_normBackward0", (
+        f"linalg.norm: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(3) * 2.0
+    a.requires_grad = True
+    b = torch.tensor([1.0, 2.0, 3.0])
+    out = torch.linalg.solve(a, b)
+    assert type(out.grad_fn).__name__ == "Linalg_solveBackward0", (
+        f"linalg.solve: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(3) * 2.0
+    a.requires_grad = True
+    out = torch.linalg.svdvals(a)
+    assert type(out.grad_fn).__name__ == "Linalg_svdvalsBackward0", (
+        f"linalg.svdvals: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(6).reshape(2, 3, 2, 3) * 2.0
+    a.requires_grad = True
+    out = torch.linalg.tensorinv(a)
+    assert type(out.grad_fn).__name__ == "Linalg_tensorinvBackward0", (
+        f"linalg.tensorinv: {type(out.grad_fn).__name__}"
+    )
+
+    a = torch.eye(6).reshape(2, 3, 2, 3) * 2.0
+    a.requires_grad = True
+    b = torch.zeros(2, 3)
+    out = torch.linalg.tensorsolve(a, b)
+    assert type(out.grad_fn).__name__ == "Linalg_tensorsolveBackward0", (
+        f"linalg.tensorsolve: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([1.0, 2.0, 3.0])
+    x.requires_grad = True
+    out = torch.linalg.vander(x)
+    assert type(out.grad_fn).__name__ == "Linalg_vanderBackward0", (
+        f"linalg.vander: {type(out.grad_fn).__name__}"
+    )

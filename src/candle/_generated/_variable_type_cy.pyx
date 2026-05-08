@@ -10520,6 +10520,204 @@ def linalg_inv_autograd(self_, **_kwargs):
     return result
 
 
+def linalg_cholesky_autograd(self_, upper=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_cholesky", raw_keyset, self_, upper, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_choleskyBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._upper = upper
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_cond_autograd(input_, p=None, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_cond", raw_keyset, input_, p, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_condBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._p = p
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_det_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_det", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_detBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_eigvals_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_eigvals", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_eigvalsBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_eigvalsh_autograd(input_, UPLO='L', **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_eigvalsh", raw_keyset, input_, UPLO, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_eigvalshBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._UPLO = UPLO
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_matrix_norm_autograd(input_, ord='fro', dim=None, keepdim=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_matrix_norm", raw_keyset, input_, ord, dim, keepdim, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_matrix_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._ord = ord
+        grad_fn._dim = dim
+        grad_fn._keepdim = keepdim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_matrix_rank_autograd(input_, atol=None, rtol=None, hermitian=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_matrix_rank", raw_keyset, input_, atol, rtol, hermitian, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_matrix_rankBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._atol = atol
+        grad_fn._rtol = rtol
+        grad_fn._hermitian = hermitian
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_norm_autograd(input_, ord=None, dim=None, keepdim=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_norm", raw_keyset, input_, ord, dim, keepdim, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._ord = ord
+        grad_fn._dim = dim
+        grad_fn._keepdim = keepdim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_solve_autograd(self_, other, left=True, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_solve", raw_keyset, self_, other, left, **_kwargs)
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.Linalg_solveBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self_)
+        grad_fn._left = left
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_svdvals_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_svdvals", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_svdvalsBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_tensorinv_autograd(input_, ind=2, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_tensorinv", raw_keyset, input_, ind, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_tensorinvBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._ind = ind
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_tensorsolve_autograd(input_, other, dims=None, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_tensorsolve", raw_keyset, input_, other, dims, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_tensorsolveBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._dims = dims
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_vander_autograd(x, N=None, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_vander", raw_keyset, x, N, **_kwargs)
+    if _GradMode.enabled and (x.requires_grad):
+        grad_fn = _F.Linalg_vanderBackward0((x,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(x=x)
+        grad_fn._N = N
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def getitem_autograd(self_, key, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
@@ -19074,6 +19272,165 @@ def linalg_inv_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwa
         grad_fn = _F.Linalg_invBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
         _annotate_node_creation(grad_fn)
         grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_cholesky_autograd_post(result, self_, upper=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_choleskyBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._upper = upper
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_cond_autograd_post(result, input_, p=None, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_condBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._p = p
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_det_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_detBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_eigvals_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_eigvalsBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_eigvalsh_autograd_post(result, input_, UPLO='L', *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_eigvalshBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._UPLO = UPLO
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_matrix_norm_autograd_post(result, input_, ord='fro', dim=None, keepdim=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_matrix_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._ord = ord
+        grad_fn._dim = dim
+        grad_fn._keepdim = keepdim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_matrix_rank_autograd_post(result, input_, atol=None, rtol=None, hermitian=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_matrix_rankBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._atol = atol
+        grad_fn._rtol = rtol
+        grad_fn._hermitian = hermitian
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_norm_autograd_post(result, input_, ord=None, dim=None, keepdim=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._ord = ord
+        grad_fn._dim = dim
+        grad_fn._keepdim = keepdim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_solve_autograd_post(result, self_, other, left=True, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.Linalg_solveBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self_)
+        grad_fn._left = left
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_svdvals_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_svdvalsBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_tensorinv_autograd_post(result, input_, ind=2, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_tensorinvBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._ind = ind
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_tensorsolve_autograd_post(result, input_, other, dims=None, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Linalg_tensorsolveBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._dims = dims
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_vander_autograd_post(result, x, N=None, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (x.requires_grad):
+        grad_fn = _F.Linalg_vanderBackward0((x,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(x=x)
+        grad_fn._N = N
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
