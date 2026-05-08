@@ -3353,6 +3353,24 @@
 - name: adaptive_max_pool1d(Tensor self, Any output_size, bool return_indices=False) -> Tensor
   self: generated_adaptive_max_pool1d_backward(grad, self, result, output_size)
 
+- name: conv1d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any dilation=None, int groups=1) -> Tensor
+  input, weight, bias: generated_conv1d_backward(grad, input, weight, bias, stride, padding, dilation, groups)
+
+- name: conv2d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any dilation=None, int groups=1) -> Tensor
+  input, weight, bias: generated_conv2d_backward(grad, input, weight, bias, stride, padding, dilation, groups)
+
+- name: conv3d(Tensor input, Tensor weight, Tensor? bias, Any stride, Any padding, Any dilation, int groups=1) -> Tensor
+  input, weight, bias: generated_conv3d_backward(grad, input, weight, bias, stride, padding, dilation, groups)
+
+- name: conv_transpose1d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any output_padding=None, int groups=1, Any dilation=None) -> Tensor
+  input, weight, bias: generated_conv_transpose1d_backward(grad, input, weight, bias, stride, padding, dilation, groups)
+
+- name: conv_transpose2d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any output_padding=None, int groups=1, Any dilation=None) -> Tensor
+  input, weight, bias: generated_conv_transpose2d_backward(grad, input, weight, bias, stride, padding, dilation, groups)
+
+- name: conv_transpose3d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any output_padding=None, int groups=1, Any dilation=None) -> Tensor
+  input, weight, bias: generated_conv_transpose3d_backward(grad, input, weight, bias, stride, padding, dilation, groups)
+
 - name: linalg_inv(Tensor self) -> Tensor
   self: linalg_inv_backward(grad, self)
 

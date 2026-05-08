@@ -1190,3 +1190,59 @@ def test_autograd_pool_batch_routes_compiled_backward():
     assert type(out.grad_fn).__name__ == "Adaptive_max_pool1dBackward0", (
         f"adaptive_max_pool1d: {type(out.grad_fn).__name__}"
     )
+
+
+def test_autograd_conv_batch_routes_compiled_backward():
+    x = torch.tensor([[[1.0, 2.0, 3.0, 4.0, 5.0]]])
+    x.requires_grad = True
+    w = torch.tensor([[[1.0, 0.0, -1.0]]])
+    w.requires_grad = True
+    out = F.conv1d(x, w)
+    assert type(out.grad_fn).__name__ == "Conv1dBackward0", (
+        f"conv1d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]]]])
+    x.requires_grad = True
+    w = torch.tensor([[[[1.0, 0.0], [0.0, -1.0]]]])
+    w.requires_grad = True
+    out = F.conv2d(x, w)
+    assert type(out.grad_fn).__name__ == "Conv2dBackward0", (
+        f"conv2d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]]])
+    x.requires_grad = True
+    w = torch.tensor([[[[[1.0, 0.0], [0.0, -1.0]], [[0.0, 1.0], [-1.0, 0.0]]]]])
+    w.requires_grad = True
+    out = F.conv3d(x, w, None, (1, 1, 1), (0, 0, 0), (1, 1, 1))
+    assert type(out.grad_fn).__name__ == "Conv3dBackward0", (
+        f"conv3d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[1.0, 2.0, 3.0]]])
+    x.requires_grad = True
+    w = torch.tensor([[[1.0, 0.0]]])
+    w.requires_grad = True
+    out = F.conv_transpose1d(x, w)
+    assert type(out.grad_fn).__name__ == "Conv_transpose1dBackward0", (
+        f"conv_transpose1d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]]]])
+    x.requires_grad = True
+    w = torch.tensor([[[[1.0, 0.0], [0.0, -1.0]]]])
+    w.requires_grad = True
+    out = F.conv_transpose2d(x, w)
+    assert type(out.grad_fn).__name__ == "Conv_transpose2dBackward0", (
+        f"conv_transpose2d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]]])
+    x.requires_grad = True
+    w = torch.tensor([[[[[1.0, 0.0], [0.0, -1.0]], [[0.0, 1.0], [-1.0, 0.0]]]]])
+    w.requires_grad = True
+    out = F.conv_transpose3d(x, w)
+    assert type(out.grad_fn).__name__ == "Conv_transpose3dBackward0", (
+        f"conv_transpose3d: {type(out.grad_fn).__name__}"
+    )

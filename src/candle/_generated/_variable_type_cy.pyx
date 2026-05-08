@@ -10692,6 +10692,123 @@ def adaptive_max_pool1d_autograd(self_, output_size, return_indices=False, **_kw
     return result
 
 
+def conv1d_autograd(input_, weight, bias=None, stride=None, padding=None, dilation=None, groups=1, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("conv1d", raw_keyset, input_, weight, bias, stride, padding, dilation, groups, **_kwargs)
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv1dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._groups = groups
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv2d_autograd(input_, weight, bias=None, stride=None, padding=None, dilation=None, groups=1, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("conv2d", raw_keyset, input_, weight, bias, stride, padding, dilation, groups, **_kwargs)
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv2dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._groups = groups
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv3d_autograd(input_, weight, bias, stride, padding, dilation, groups=1, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("conv3d", raw_keyset, input_, weight, bias, stride, padding, dilation, groups, **_kwargs)
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv3dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._groups = groups
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv_transpose1d_autograd(input_, weight, bias=None, stride=None, padding=None, output_padding=None, groups=1, dilation=None, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("conv_transpose1d", raw_keyset, input_, weight, bias, stride, padding, output_padding, groups, dilation, **_kwargs)
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv_transpose1dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._output_padding = output_padding
+        grad_fn._groups = groups
+        grad_fn._dilation = dilation
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv_transpose2d_autograd(input_, weight, bias=None, stride=None, padding=None, output_padding=None, groups=1, dilation=None, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("conv_transpose2d", raw_keyset, input_, weight, bias, stride, padding, output_padding, groups, dilation, **_kwargs)
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv_transpose2dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._output_padding = output_padding
+        grad_fn._groups = groups
+        grad_fn._dilation = dilation
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv_transpose3d_autograd(input_, weight, bias=None, stride=None, padding=None, output_padding=None, groups=1, dilation=None, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("conv_transpose3d", raw_keyset, input_, weight, bias, stride, padding, output_padding, groups, dilation, **_kwargs)
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv_transpose3dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._output_padding = output_padding
+        grad_fn._groups = groups
+        grad_fn._dilation = dilation
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def linalg_inv_autograd(self_, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
@@ -19600,6 +19717,105 @@ def adaptive_max_pool1d_autograd_post(result, self_, output_size, return_indices
         grad_fn._save(self_=self_, result=result)
         grad_fn._output_size = output_size
         grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv1d_autograd_post(result, input_, weight, bias=None, stride=None, padding=None, dilation=None, groups=1, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv1dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._groups = groups
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv2d_autograd_post(result, input_, weight, bias=None, stride=None, padding=None, dilation=None, groups=1, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv2dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._groups = groups
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv3d_autograd_post(result, input_, weight, bias, stride, padding, dilation, groups=1, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv3dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._groups = groups
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv_transpose1d_autograd_post(result, input_, weight, bias=None, stride=None, padding=None, output_padding=None, groups=1, dilation=None, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv_transpose1dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._output_padding = output_padding
+        grad_fn._groups = groups
+        grad_fn._dilation = dilation
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv_transpose2d_autograd_post(result, input_, weight, bias=None, stride=None, padding=None, output_padding=None, groups=1, dilation=None, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv_transpose2dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._output_padding = output_padding
+        grad_fn._groups = groups
+        grad_fn._dilation = dilation
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def conv_transpose3d_autograd_post(result, input_, weight, bias=None, stride=None, padding=None, output_padding=None, groups=1, dilation=None, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or getattr(weight, 'requires_grad', False) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Conv_transpose3dBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._output_padding = output_padding
+        grad_fn._groups = groups
+        grad_fn._dilation = dilation
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
