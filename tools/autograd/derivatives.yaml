@@ -3320,6 +3320,18 @@
 - name: linalg_matrix_power(Tensor input, int n) -> Tensor
   input: matrix_power_backward(grad, input, n)
 
+- name: layer_norm(Tensor input, int[] normalized_shape, Tensor? weight=None, Tensor? bias=None, float eps=1e-05) -> Tensor
+  input, weight, bias: generated_layer_norm_backward(grad, input, normalized_shape, weight, bias, eps)
+
+- name: batch_norm(Tensor input, Tensor? running_mean=None, Tensor? running_var=None, Tensor? weight=None, Tensor? bias=None, bool training=False, float momentum=0.1, float eps=1e-05) -> Tensor
+  input: generated_batch_norm_backward(grad, input, weight, eps)
+
+- name: group_norm(Tensor input, int num_groups, Tensor? weight=None, Tensor? bias=None, float eps=1e-05) -> Tensor
+  input: generated_group_norm_backward(grad, input, num_groups, weight, eps)
+
+- name: rms_norm(Tensor input, int[] normalized_shape, Tensor? weight=None, float eps=1e-6) -> Tensor
+  input: generated_rms_norm_backward(grad, input, normalized_shape, weight, eps)
+
 - name: linalg_inv(Tensor self) -> Tensor
   self: linalg_inv_backward(grad, self)
 

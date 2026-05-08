@@ -212,6 +212,10 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.linalg_tensorinv_autograd" not in legacy
     assert "_VT_PY.linalg_tensorsolve_autograd" not in legacy
     assert "_VT_PY.linalg_vander_autograd" not in legacy
+    assert "_VT_PY.layer_norm_autograd" not in legacy
+    assert "_VT_PY.batch_norm_autograd" not in legacy
+    assert "_VT_PY.group_norm_autograd" not in legacy
+    assert "_VT_PY.rms_norm_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -313,6 +317,10 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.linalg_tensorinv_autograd" in full_text
     assert "_VT.linalg_tensorsolve_autograd" in full_text
     assert "_VT.linalg_vander_autograd" in full_text
+    assert "_VT.layer_norm_autograd" in full_text
+    assert "_VT.batch_norm_autograd" in full_text
+    assert "_VT.group_norm_autograd" in full_text
+    assert "_VT.rms_norm_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():
