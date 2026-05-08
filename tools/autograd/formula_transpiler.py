@@ -136,6 +136,10 @@ _SPECIAL_CALLS = {
     "generated_linalg_det_backward": lambda args: f'_linalg_det_backward_helper({", ".join([*args, "keyset"])})',
     "generated_linalg_cholesky_backward": lambda args: f'_linalg_cholesky_backward_helper({", ".join([*args, "keyset"])})',
     "generated_linalg_solve_backward": lambda args: f'_linalg_solve_backward_all({", ".join([*args, "keyset"])})',
+    "generated_layer_norm_backward": lambda args: f'_layer_norm_backward_all({", ".join([*args, "keyset"])})',
+    "generated_batch_norm_backward": lambda args: f'_batch_norm_grad_input({", ".join([*args, "keyset"])})',
+    "generated_group_norm_backward": lambda args: f'_group_norm_grad_input({", ".join([*args, "keyset"])})',
+    "generated_rms_norm_backward": lambda args: f'_rms_norm_grad_input({", ".join([*args, "keyset"])})',
 }
 
 _HELPER_FALLBACKS = {

@@ -1109,3 +1109,33 @@ def test_autograd_linalg_batch_routes_compiled_backward():
     assert type(out.grad_fn).__name__ == "Linalg_vanderBackward0", (
         f"linalg.vander: {type(out.grad_fn).__name__}"
     )
+
+
+def test_autograd_normalization_batch_routes_compiled_backward():
+    x = torch.tensor([[1.0, 2.0, 3.0, 4.0], [2.0, 3.0, 4.0, 5.0]])
+    x.requires_grad = True
+    out = F.layer_norm(x, [4])
+    assert type(out.grad_fn).__name__ == "Layer_normBackward0", (
+        f"layer_norm: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[[1.0]], [[2.0]]], [[[3.0]], [[4.0]]]])
+    x.requires_grad = True
+    out = F.batch_norm(x, None, None, training=True)
+    assert type(out.grad_fn).__name__ == "Batch_normBackward0", (
+        f"batch_norm: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[1.0, 2.0], [3.0, 4.0]], [[2.0, 3.0], [4.0, 5.0]]])
+    x.requires_grad = True
+    out = F.group_norm(x, 2)
+    assert type(out.grad_fn).__name__ == "Group_normBackward0", (
+        f"group_norm: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[1.0, 2.0, 3.0], [2.0, 3.0, 4.0]])
+    x.requires_grad = True
+    out = F.rms_norm(x, [3])
+    assert type(out.grad_fn).__name__ == "Rms_normBackward0", (
+        f"rms_norm: {type(out.grad_fn).__name__}"
+    )

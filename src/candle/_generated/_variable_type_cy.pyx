@@ -10506,6 +10506,72 @@ def linalg_matrix_power_autograd(input_, n, **_kwargs):
     return result
 
 
+def layer_norm_autograd(input_, normalized_shape, weight=None, bias=None, eps=1e-05, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("layer_norm", raw_keyset, input_, normalized_shape, weight, bias, eps, **_kwargs)
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or (weight is not None and getattr(weight, 'requires_grad', False)) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Layer_normBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._normalized_shape = normalized_shape
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def batch_norm_autograd(input_, running_mean=None, running_var=None, weight=None, bias=None, training=False, momentum=0.1, eps=1e-05, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("batch_norm", raw_keyset, input_, running_mean, running_var, weight, bias, training, momentum, eps, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Batch_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_, weight=weight)
+        grad_fn._training = training
+        grad_fn._momentum = momentum
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def group_norm_autograd(input_, num_groups, weight=None, bias=None, eps=1e-05, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("group_norm", raw_keyset, input_, num_groups, weight, bias, eps, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Group_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_, weight=weight)
+        grad_fn._num_groups = num_groups
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def rms_norm_autograd(input_, normalized_shape, weight=None, eps=1e-6, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("rms_norm", raw_keyset, input_, normalized_shape, weight, eps, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Rms_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_, weight=weight)
+        grad_fn._normalized_shape = normalized_shape
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def linalg_inv_autograd(self_, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
@@ -19261,6 +19327,60 @@ def linalg_matrix_power_autograd_post(result, input_, n, *, raw_keyset, active_k
         _annotate_node_creation(grad_fn)
         grad_fn._save(input_=input_)
         grad_fn._n = n
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def layer_norm_autograd_post(result, input_, normalized_shape, weight=None, bias=None, eps=1e-05, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(input_, 'requires_grad', False) or (weight is not None and getattr(weight, 'requires_grad', False)) or (bias is not None and getattr(bias, 'requires_grad', False))):
+        _inputs = [x for x in (input_, weight, bias,) if x is not None]
+        grad_fn = _F.Layer_normBackward0(_inputs, raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(bias=bias, input_=input_, weight=weight)
+        grad_fn._normalized_shape = normalized_shape
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def batch_norm_autograd_post(result, input_, running_mean=None, running_var=None, weight=None, bias=None, training=False, momentum=0.1, eps=1e-05, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Batch_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_, weight=weight)
+        grad_fn._training = training
+        grad_fn._momentum = momentum
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def group_norm_autograd_post(result, input_, num_groups, weight=None, bias=None, eps=1e-05, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Group_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_, weight=weight)
+        grad_fn._num_groups = num_groups
+        grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def rms_norm_autograd_post(result, input_, normalized_shape, weight=None, eps=1e-6, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Rms_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_, weight=weight)
+        grad_fn._normalized_shape = normalized_shape
+        grad_fn._eps = eps
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
