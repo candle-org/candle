@@ -1139,3 +1139,54 @@ def test_autograd_normalization_batch_routes_compiled_backward():
     assert type(out.grad_fn).__name__ == "Rms_normBackward0", (
         f"rms_norm: {type(out.grad_fn).__name__}"
     )
+
+
+def test_autograd_pool_batch_routes_compiled_backward():
+    x = torch.tensor([[[1.0, 2.0, 3.0, 4.0]]])
+    x.requires_grad = True
+    out = F.max_pool1d(x, 2)
+    assert type(out.grad_fn).__name__ == "Max_pool1dBackward0", (
+        f"max_pool1d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]]])
+    x.requires_grad = True
+    out = F.max_pool3d(x, 2)
+    assert type(out.grad_fn).__name__ == "Max_pool3dBackward0", (
+        f"max_pool3d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[1.0, 2.0, 3.0, 4.0]]])
+    x.requires_grad = True
+    out = F.avg_pool1d(x, 2)
+    assert type(out.grad_fn).__name__ == "Avg_pool1dBackward0", (
+        f"avg_pool1d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[1.0, 2.0, 3.0, 4.0]]])
+    x.requires_grad = True
+    out = F.adaptive_avg_pool1d(x, 2)
+    assert type(out.grad_fn).__name__ == "Adaptive_avg_pool1dBackward0", (
+        f"adaptive_avg_pool1d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]]]])
+    x.requires_grad = True
+    out = F.adaptive_avg_pool2d(x, (1, 1))
+    assert type(out.grad_fn).__name__ == "Adaptive_avg_pool2dBackward0", (
+        f"adaptive_avg_pool2d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[[[1.0, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]]])
+    x.requires_grad = True
+    out = F.adaptive_avg_pool3d(x, (1, 1, 1))
+    assert type(out.grad_fn).__name__ == "Adaptive_avg_pool3dBackward0", (
+        f"adaptive_avg_pool3d: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[1.0, 2.0, 3.0, 4.0]]])
+    x.requires_grad = True
+    out = F.adaptive_max_pool1d(x, 2)
+    assert type(out.grad_fn).__name__ == "Adaptive_max_pool1dBackward0", (
+        f"adaptive_max_pool1d: {type(out.grad_fn).__name__}"
+    )

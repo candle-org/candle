@@ -10572,6 +10572,126 @@ def rms_norm_autograd(input_, normalized_shape, weight=None, eps=1e-6, **_kwargs
     return result
 
 
+def max_pool1d_autograd(self_, kernel_size, stride, padding, dilation, ceil_mode=False, return_indices=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("max_pool1d", raw_keyset, self_, kernel_size, stride, padding, dilation, ceil_mode, return_indices, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Max_pool1dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_, result=result)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def max_pool3d_autograd(self_, kernel_size, stride, padding=None, dilation=None, ceil_mode=False, return_indices=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("max_pool3d", raw_keyset, self_, kernel_size, stride, padding, dilation, ceil_mode, return_indices, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Max_pool3dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_, result=result)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def avg_pool1d_autograd(self_, kernel_size, stride, padding, ceil_mode=False, count_include_pad=True, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("avg_pool1d", raw_keyset, self_, kernel_size, stride, padding, ceil_mode, count_include_pad, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Avg_pool1dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._count_include_pad = count_include_pad
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_avg_pool1d_autograd(self_, output_size, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("adaptive_avg_pool1d", raw_keyset, self_, output_size, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Adaptive_avg_pool1dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_avg_pool2d_autograd(self_, output_size, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("adaptive_avg_pool2d", raw_keyset, self_, output_size, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Adaptive_avg_pool2dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_avg_pool3d_autograd(self_, output_size, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("adaptive_avg_pool3d", raw_keyset, self_, output_size, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Adaptive_avg_pool3dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_max_pool1d_autograd(self_, output_size, return_indices=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("adaptive_max_pool1d", raw_keyset, self_, output_size, return_indices, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Adaptive_max_pool1dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_, result=result)
+        grad_fn._output_size = output_size
+        grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def linalg_inv_autograd(self_, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
@@ -19381,6 +19501,105 @@ def rms_norm_autograd_post(result, input_, normalized_shape, weight=None, eps=1e
         grad_fn._save(input_=input_, weight=weight)
         grad_fn._normalized_shape = normalized_shape
         grad_fn._eps = eps
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def max_pool1d_autograd_post(result, self_, kernel_size, stride, padding, dilation, ceil_mode=False, return_indices=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Max_pool1dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_, result=result)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def max_pool3d_autograd_post(result, self_, kernel_size, stride, padding=None, dilation=None, ceil_mode=False, return_indices=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Max_pool3dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_, result=result)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._dilation = dilation
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._return_indices = return_indices
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def avg_pool1d_autograd_post(result, self_, kernel_size, stride, padding, ceil_mode=False, count_include_pad=True, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Avg_pool1dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._kernel_size = kernel_size
+        grad_fn._stride = stride
+        grad_fn._padding = padding
+        grad_fn._ceil_mode = ceil_mode
+        grad_fn._count_include_pad = count_include_pad
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_avg_pool1d_autograd_post(result, self_, output_size, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Adaptive_avg_pool1dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_avg_pool2d_autograd_post(result, self_, output_size, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Adaptive_avg_pool2dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_avg_pool3d_autograd_post(result, self_, output_size, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Adaptive_avg_pool3dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._output_size = output_size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def adaptive_max_pool1d_autograd_post(result, self_, output_size, return_indices=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Adaptive_max_pool1dBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_, result=result)
+        grad_fn._output_size = output_size
+        grad_fn._return_indices = return_indices
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result

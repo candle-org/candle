@@ -140,6 +140,13 @@ _SPECIAL_CALLS = {
     "generated_batch_norm_backward": lambda args: f'_batch_norm_grad_input({", ".join([*args, "keyset"])})',
     "generated_group_norm_backward": lambda args: f'_group_norm_grad_input({", ".join([*args, "keyset"])})',
     "generated_rms_norm_backward": lambda args: f'_rms_norm_grad_input({", ".join([*args, "keyset"])})',
+    "generated_max_pool1d_backward": lambda args: f'_max_pool1d_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_max_pool3d_backward": lambda args: f'_max_pool3d_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_avg_pool1d_backward": lambda args: f'_avg_pool1d_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_adaptive_avg_pool1d_backward": lambda args: f'_adaptive_avg_pool1d_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_adaptive_avg_pool2d_backward": lambda args: f'_adaptive_avg_pool2d_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_adaptive_avg_pool3d_backward": lambda args: f'_adaptive_avg_pool3d_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_adaptive_max_pool1d_backward": lambda args: f'_adaptive_max_pool1d_backward_helper({", ".join([*args, "keyset"])})',
 }
 
 _HELPER_FALLBACKS = {
