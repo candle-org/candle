@@ -153,6 +153,13 @@ _SPECIAL_CALLS = {
     "generated_conv_transpose1d_backward": lambda args: f'_conv_backward_all({", ".join(args)}, "conv_transpose1d", keyset)',
     "generated_conv_transpose2d_backward": lambda args: f'_conv_backward_all({", ".join(args)}, "conv_transpose2d", keyset)',
     "generated_conv_transpose3d_backward": lambda args: f'_conv_backward_all({", ".join(args)}, "conv_transpose3d", keyset)',
+    "generated_tensordot_backward": lambda args: f'_tensordot_backward_all({", ".join(args)}, keyset)',
+    "generated_cdist_backward": lambda args: f'_cdist_backward_all({", ".join(args)}, keyset)',
+    "generated_quantile_backward": lambda args: f'_quantile_backward_helper({", ".join(args)}, keyset)',
+    "generated_nanquantile_backward": lambda args: f'_quantile_backward_helper({", ".join(args)}, keyset)',
+    "generated_grid_sample_backward": lambda args: f'_grid_sample_backward_all({", ".join(args)}, keyset)',
+    "generated_affine_grid_backward": lambda args: f'_affine_grid_backward_helper({", ".join(args)}, keyset)',
+    "generated_ctc_loss_backward": lambda args: f'_ctc_loss_backward_helper({", ".join(args)}, keyset)',
 }
 
 _HELPER_FALLBACKS = {

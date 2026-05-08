@@ -10809,6 +10809,123 @@ def conv_transpose3d_autograd(input_, weight, bias=None, stride=None, padding=No
     return result
 
 
+def tensordot_autograd(self_, other, dims=2, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("tensordot", raw_keyset, self_, other, dims, **_kwargs)
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.TensordotBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self_)
+        grad_fn._dims = dims
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def cdist_autograd(x1, x2, p=2.0, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("cdist", raw_keyset, x1, x2, p, **_kwargs)
+    if _GradMode.enabled and (getattr(x1, 'requires_grad', False) or getattr(x2, 'requires_grad', False)):
+        grad_fn = _F.CdistBackward0((x1, x2,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(x1=x1, x2=x2)
+        grad_fn._p = p
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def quantile_autograd(input_, q, dim=None, keepdim=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("quantile", raw_keyset, input_, q, dim, keepdim, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.QuantileBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._q = q
+        grad_fn._dim = dim
+        grad_fn._keepdim = keepdim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def nanquantile_autograd(input_, q, dim=None, keepdim=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("nanquantile", raw_keyset, input_, q, dim, keepdim, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.NanquantileBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._q = q
+        grad_fn._dim = dim
+        grad_fn._keepdim = keepdim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def grid_sample_autograd(self_, grid, mode='bilinear', padding_mode='zeros', align_corners=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("grid_sample", raw_keyset, self_, grid, mode, padding_mode, align_corners, **_kwargs)
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(grid, 'requires_grad', False)):
+        grad_fn = _F.Grid_sampleBackward0((self_, grid,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(grid=grid, self_=self_)
+        grad_fn._mode = mode
+        grad_fn._padding_mode = padding_mode
+        grad_fn._align_corners = align_corners
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def affine_grid_autograd(theta, size, align_corners=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("affine_grid", raw_keyset, theta, size, align_corners, **_kwargs)
+    if _GradMode.enabled and (theta.requires_grad):
+        grad_fn = _F.Affine_gridBackward0((theta,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(theta=theta)
+        grad_fn._size = size
+        grad_fn._align_corners = align_corners
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def ctc_loss_autograd(self_, targets, input_lengths, target_lengths, blank=0, reduction='mean', zero_infinity=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("ctc_loss", raw_keyset, self_, targets, input_lengths, target_lengths, blank, reduction, zero_infinity, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Ctc_lossBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._targets = targets
+        grad_fn._input_lengths = input_lengths
+        grad_fn._target_lengths = target_lengths
+        grad_fn._blank = blank
+        grad_fn._reduction = reduction
+        grad_fn._zero_infinity = zero_infinity
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def linalg_inv_autograd(self_, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
@@ -19816,6 +19933,102 @@ def conv_transpose3d_autograd_post(result, input_, weight, bias=None, stride=Non
         grad_fn._output_padding = output_padding
         grad_fn._groups = groups
         grad_fn._dilation = dilation
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def tensordot_autograd_post(result, self_, other, dims=2, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(other, 'requires_grad', False)):
+        grad_fn = _F.TensordotBackward0((self_, other,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(other=other, self_=self_)
+        grad_fn._dims = dims
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def cdist_autograd_post(result, x1, x2, p=2.0, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(x1, 'requires_grad', False) or getattr(x2, 'requires_grad', False)):
+        grad_fn = _F.CdistBackward0((x1, x2,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(x1=x1, x2=x2)
+        grad_fn._p = p
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def quantile_autograd_post(result, input_, q, dim=None, keepdim=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.QuantileBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._q = q
+        grad_fn._dim = dim
+        grad_fn._keepdim = keepdim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def nanquantile_autograd_post(result, input_, q, dim=None, keepdim=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.NanquantileBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._q = q
+        grad_fn._dim = dim
+        grad_fn._keepdim = keepdim
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def grid_sample_autograd_post(result, self_, grid, mode='bilinear', padding_mode='zeros', align_corners=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (getattr(self_, 'requires_grad', False) or getattr(grid, 'requires_grad', False)):
+        grad_fn = _F.Grid_sampleBackward0((self_, grid,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(grid=grid, self_=self_)
+        grad_fn._mode = mode
+        grad_fn._padding_mode = padding_mode
+        grad_fn._align_corners = align_corners
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def affine_grid_autograd_post(result, theta, size, align_corners=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (theta.requires_grad):
+        grad_fn = _F.Affine_gridBackward0((theta,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(theta=theta)
+        grad_fn._size = size
+        grad_fn._align_corners = align_corners
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def ctc_loss_autograd_post(result, self_, targets, input_lengths, target_lengths, blank=0, reduction='mean', zero_infinity=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Ctc_lossBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._targets = targets
+        grad_fn._input_lengths = input_lengths
+        grad_fn._target_lengths = target_lengths
+        grad_fn._blank = blank
+        grad_fn._reduction = reduction
+        grad_fn._zero_infinity = zero_infinity
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result

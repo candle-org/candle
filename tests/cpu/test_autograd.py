@@ -1246,3 +1246,61 @@ def test_autograd_conv_batch_routes_compiled_backward():
     assert type(out.grad_fn).__name__ == "Conv_transpose3dBackward0", (
         f"conv_transpose3d: {type(out.grad_fn).__name__}"
     )
+
+
+def test_autograd_misc_batch_routes_compiled_backward():
+    x = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    y = torch.tensor([[0.5, -1.0], [2.0, 0.25]])
+    x.requires_grad = True
+    y.requires_grad = True
+    out = torch.tensordot(x, y, dims=1)
+    assert type(out.grad_fn).__name__ == "TensordotBackward0", (
+        f"tensordot: {type(out.grad_fn).__name__}"
+    )
+
+    x1 = torch.tensor([[0.0, 0.0], [1.0, 1.0]])
+    x2 = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+    x1.requires_grad = True
+    x2.requires_grad = True
+    out = torch.cdist(x1, x2)
+    assert type(out.grad_fn).__name__ == "CdistBackward0", (
+        f"cdist: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([1.0, 3.0, 2.0])
+    x.requires_grad = True
+    out = torch.quantile(x, 0.5)
+    assert type(out.grad_fn).__name__ == "QuantileBackward0", (
+        f"quantile: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([1.0, np.nan, 3.0])
+    x.requires_grad = True
+    out = torch.nanquantile(x, 0.5)
+    assert type(out.grad_fn).__name__ == "NanquantileBackward0", (
+        f"nanquantile: {type(out.grad_fn).__name__}"
+    )
+
+    x = torch.tensor([[[[1.0, 2.0], [3.0, 4.0]]]])
+    grid = torch.tensor([[[[-1.0, -1.0]]]])
+    x.requires_grad = True
+    grid.requires_grad = True
+    out = F.grid_sample(x, grid, align_corners=True)
+    assert type(out.grad_fn).__name__ == "Grid_sampleBackward0", (
+        f"grid_sample: {type(out.grad_fn).__name__}"
+    )
+
+    theta = torch.tensor([[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
+    theta.requires_grad = True
+    out = F.affine_grid(theta, (1, 1, 2, 2), align_corners=False)
+    assert type(out.grad_fn).__name__ == "Affine_gridBackward0", (
+        f"affine_grid: {type(out.grad_fn).__name__}"
+    )
+
+    log_probs = torch.tensor([[[-0.1, -2.3]], [[-2.3, -0.1]]])
+    targets = torch.tensor([1.0])
+    log_probs.requires_grad = True
+    out = F.ctc_loss(log_probs, targets, [2], [1], reduction="sum")
+    assert type(out.grad_fn).__name__ == "Ctc_lossBackward0", (
+        f"ctc_loss: {type(out.grad_fn).__name__}"
+    )

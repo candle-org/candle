@@ -3371,6 +3371,27 @@
 - name: conv_transpose3d(Tensor input, Tensor weight, Tensor? bias=None, Any stride=None, Any padding=None, Any output_padding=None, int groups=1, Any dilation=None) -> Tensor
   input, weight, bias: generated_conv_transpose3d_backward(grad, input, weight, bias, stride, padding, dilation, groups)
 
+- name: tensordot(Tensor self, Tensor other, Any dims=2) -> Tensor
+  self, other: generated_tensordot_backward(grad, self, other, dims)
+
+- name: cdist(Tensor x1, Tensor x2, float p=2.0) -> Tensor
+  x1, x2: generated_cdist_backward(grad, x1, x2, p)
+
+- name: quantile(Tensor input, Any q, int? dim=None, bool keepdim=False) -> Tensor
+  input: generated_quantile_backward(grad, input, q, dim, keepdim)
+
+- name: nanquantile(Tensor input, Any q, int? dim=None, bool keepdim=False) -> Tensor
+  input: generated_nanquantile_backward(grad, input, q, dim, keepdim)
+
+- name: grid_sample(Tensor self, Tensor grid, str mode='bilinear', str padding_mode='zeros', bool align_corners=False) -> Tensor
+  self, grid: generated_grid_sample_backward(grad, self, grid, mode, padding_mode, align_corners)
+
+- name: affine_grid(Tensor theta, Any size, bool align_corners=False) -> Tensor
+  theta: generated_affine_grid_backward(grad, theta, size, align_corners)
+
+- name: ctc_loss(Tensor self, Any targets, Any input_lengths, Any target_lengths, int blank=0, str reduction='mean', bool zero_infinity=False) -> Tensor
+  self: generated_ctc_loss_backward(grad, self, targets, input_lengths, target_lengths, blank, reduction, zero_infinity)
+
 - name: linalg_inv(Tensor self) -> Tensor
   self: linalg_inv_backward(grad, self)
 
