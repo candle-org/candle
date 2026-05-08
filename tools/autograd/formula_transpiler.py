@@ -147,6 +147,12 @@ _SPECIAL_CALLS = {
     "generated_adaptive_avg_pool2d_backward": lambda args: f'_adaptive_avg_pool2d_backward_helper({", ".join([*args, "keyset"])})',
     "generated_adaptive_avg_pool3d_backward": lambda args: f'_adaptive_avg_pool3d_backward_helper({", ".join([*args, "keyset"])})',
     "generated_adaptive_max_pool1d_backward": lambda args: f'_adaptive_max_pool1d_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_conv1d_backward": lambda args: f'_conv_backward_all({", ".join(args)}, "conv1d", keyset)',
+    "generated_conv2d_backward": lambda args: f'_conv_backward_all({", ".join(args)}, "conv2d", keyset)',
+    "generated_conv3d_backward": lambda args: f'_conv_backward_all({", ".join(args)}, "conv3d", keyset)',
+    "generated_conv_transpose1d_backward": lambda args: f'_conv_backward_all({", ".join(args)}, "conv_transpose1d", keyset)',
+    "generated_conv_transpose2d_backward": lambda args: f'_conv_backward_all({", ".join(args)}, "conv_transpose2d", keyset)',
+    "generated_conv_transpose3d_backward": lambda args: f'_conv_backward_all({", ".join(args)}, "conv_transpose3d", keyset)',
 }
 
 _HELPER_FALLBACKS = {

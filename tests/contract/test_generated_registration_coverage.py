@@ -223,6 +223,12 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.adaptive_avg_pool2d_autograd" not in legacy
     assert "_VT_PY.adaptive_avg_pool3d_autograd" not in legacy
     assert "_VT_PY.adaptive_max_pool1d_autograd" not in legacy
+    assert "_VT_PY.conv1d_autograd" not in legacy
+    assert "_VT_PY.conv2d_autograd" not in legacy
+    assert "_VT_PY.conv3d_autograd" not in legacy
+    assert "_VT_PY.conv_transpose1d_autograd" not in legacy
+    assert "_VT_PY.conv_transpose2d_autograd" not in legacy
+    assert "_VT_PY.conv_transpose3d_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -335,6 +341,12 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.adaptive_avg_pool2d_autograd" in full_text
     assert "_VT.adaptive_avg_pool3d_autograd" in full_text
     assert "_VT.adaptive_max_pool1d_autograd" in full_text
+    assert "_VT.conv1d_autograd" in full_text
+    assert "_VT.conv2d_autograd" in full_text
+    assert "_VT.conv3d_autograd" in full_text
+    assert "_VT.conv_transpose1d_autograd" in full_text
+    assert "_VT.conv_transpose2d_autograd" in full_text
+    assert "_VT.conv_transpose3d_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():
