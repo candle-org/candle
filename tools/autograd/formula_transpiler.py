@@ -125,6 +125,7 @@ _SPECIAL_CALLS = {
     "generated_fft_c2c_backward": lambda args: f'_fft_c2c_backward_helper({", ".join([*args, "keyset"])})',
     "generated_fft_r2c_backward": lambda args: f'_fft_r2c_backward_helper({", ".join([*args, "keyset"])})',
     "generated_fft_c2r_backward": lambda args: f'_fft_c2r_backward_helper({", ".join([*args, "keyset"])})',
+    "generated_fft_shift_backward": lambda args: f'_fft_shift_backward_helper({", ".join([*args, "keyset"])})',
 }
 
 _HELPER_FALLBACKS = {

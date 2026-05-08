@@ -3361,3 +3361,15 @@
 
 - name: fft_irfftn(Tensor input, Any s=None, Any dim=None, str? norm=None) -> Tensor
   input: generated_fft_c2r_backward(grad, input, s, dim, norm, "fft_rfftn")
+
+- name: fft_hfft(Tensor input, int? n=None, int dim=-1, str? norm=None) -> Tensor
+  input: generated_fft_c2r_backward(grad, input, n, dim, norm, "fft_ihfft")
+
+- name: fft_ihfft(Tensor input, int? n=None, int dim=-1, str? norm=None) -> Tensor
+  input: generated_fft_r2c_backward(grad, input, n, dim, norm, "fft_hfft")
+
+- name: fft_fftshift(Tensor input, Any dim=None) -> Tensor
+  input: generated_fft_shift_backward(grad, input, dim, "fft_ifftshift")
+
+- name: fft_ifftshift(Tensor input, Any dim=None) -> Tensor
+  input: generated_fft_shift_backward(grad, input, dim, "fft_fftshift")

@@ -993,3 +993,24 @@ def test_autograd_fft_batch_routes_compiled_backward():
     cxn.requires_grad = True
     irfftn_out = torch.fft.irfftn(cxn)
     assert type(irfftn_out.grad_fn).__name__ == "Fft_irfftnBackward0"
+
+
+def test_autograd_fft_residual_batch_routes_compiled_backward():
+    for fn, expected in (
+        (torch.fft.fftshift, "Fft_fftshiftBackward0"),
+        (torch.fft.ifftshift, "Fft_ifftshiftBackward0"),
+    ):
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        x.requires_grad = True
+        out = fn(x)
+        assert type(out.grad_fn).__name__ == expected, f"{fn.__name__}: {type(out.grad_fn).__name__}"
+
+    h = torch.tensor([1.0, 2.0, 3.0]).to(dtype=torch.complex64)
+    h.requires_grad = True
+    hfft_out = torch.fft.hfft(h)
+    assert type(hfft_out.grad_fn).__name__ == "Fft_hfftBackward0"
+
+    ih = torch.tensor([1.0, 2.0, 3.0, 4.0])
+    ih.requires_grad = True
+    ihfft_out = torch.fft.ihfft(ih)
+    assert type(ihfft_out.grad_fn).__name__ == "Fft_ihfftBackward0"
