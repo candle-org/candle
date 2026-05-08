@@ -20005,6 +20005,227 @@ class ForeachNormScalarBackward0(_Node):
             grad_self = _cy_not_implemented("ForeachNormScalarBackward0: self")
         return grad_self
 
+class TensordotBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='TensordotBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_other_idx = None
+        self._saved_self_idx = None
+        self._dims = None
+
+    def _save(self, *, other=None, self_=None):
+        tensors = []
+        if other is not None:
+            self._saved_other_idx = len(tensors)
+            tensors.append(other)
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        other = self.saved_tensors[self._saved_other_idx] if self._saved_other_idx is not None else None
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        dims = self._dims
+        with _grad_context(keyset):
+            grad_self, grad_other = _tensordot_backward_all(grad, self_, other, dims, keyset)
+        return (grad_self, grad_other,)
+
+class CdistBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='CdistBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_x1_idx = None
+        self._saved_x2_idx = None
+        self._p = None
+
+    def _save(self, *, x1=None, x2=None):
+        tensors = []
+        if x1 is not None:
+            self._saved_x1_idx = len(tensors)
+            tensors.append(x1)
+        if x2 is not None:
+            self._saved_x2_idx = len(tensors)
+            tensors.append(x2)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        x1 = self.saved_tensors[self._saved_x1_idx] if self._saved_x1_idx is not None else None
+        x2 = self.saved_tensors[self._saved_x2_idx] if self._saved_x2_idx is not None else None
+        p = self._p
+        with _grad_context(keyset):
+            grad_x1, grad_x2 = _cdist_backward_all(grad, x1, x2, p, keyset)
+        return (grad_x1, grad_x2,)
+
+class QuantileBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='QuantileBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_input_idx = None
+        self._q = None
+        self._dim = None
+        self._keepdim = None
+
+    def _save(self, *, input_=None):
+        tensors = []
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
+        q = self._q
+        dim = self._dim
+        keepdim = self._keepdim
+        with _grad_context(keyset):
+            grad_input = _quantile_backward_helper(grad, input_, q, dim, keepdim, keyset)
+        return (grad_input,)
+
+class NanquantileBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='NanquantileBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_input_idx = None
+        self._q = None
+        self._dim = None
+        self._keepdim = None
+
+    def _save(self, *, input_=None):
+        tensors = []
+        if input_ is not None:
+            self._saved_input_idx = len(tensors)
+            tensors.append(input_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        input_ = self.saved_tensors[self._saved_input_idx] if self._saved_input_idx is not None else None
+        q = self._q
+        dim = self._dim
+        keepdim = self._keepdim
+        with _grad_context(keyset):
+            grad_input = _quantile_backward_helper(grad, input_, q, dim, keepdim, keyset)
+        return (grad_input,)
+
+class Grid_sampleBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='Grid_sampleBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_grid_idx = None
+        self._saved_self_idx = None
+        self._mode = None
+        self._padding_mode = None
+        self._align_corners = None
+
+    def _save(self, *, grid=None, self_=None):
+        tensors = []
+        if grid is not None:
+            self._saved_grid_idx = len(tensors)
+            tensors.append(grid)
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        grid = self.saved_tensors[self._saved_grid_idx] if self._saved_grid_idx is not None else None
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        mode = self._mode
+        padding_mode = self._padding_mode
+        align_corners = self._align_corners
+        with _grad_context(keyset):
+            grad_self, grad_grid = _grid_sample_backward_all(grad, self_, grid, mode, padding_mode, align_corners, keyset)
+        return (grad_self, grad_grid,)
+
+class Affine_gridBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='Affine_gridBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_theta_idx = None
+        self._size = None
+        self._align_corners = None
+
+    def _save(self, *, theta=None):
+        tensors = []
+        if theta is not None:
+            self._saved_theta_idx = len(tensors)
+            tensors.append(theta)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        theta = self.saved_tensors[self._saved_theta_idx] if self._saved_theta_idx is not None else None
+        size = self._size
+        align_corners = self._align_corners
+        with _grad_context(keyset):
+            grad_theta = _affine_grid_backward_helper(grad, theta, size, align_corners, keyset)
+        return (grad_theta,)
+
+class Ctc_lossBackward0(_Node):
+    def __init__(self, inputs, *, raw_keyset=None, active_keyset=None):
+        _ensure_refs()
+        super().__init__(None, inputs, name='Ctc_lossBackward0')
+        self._raw_keyset = raw_keyset
+        self._active_keyset = active_keyset
+        self._saved_self_idx = None
+        self._targets = None
+        self._input_lengths = None
+        self._target_lengths = None
+        self._blank = None
+        self._reduction = None
+        self._zero_infinity = None
+
+    def _save(self, *, self_=None):
+        tensors = []
+        if self_ is not None:
+            self._saved_self_idx = len(tensors)
+            tensors.append(self_)
+        if tensors:
+            super().save_for_backward(*tensors)
+
+    def apply(self, grad):
+        _ensure_refs()
+        keyset = _backward_dispatch_keyset(self._raw_keyset)
+        self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
+        targets = self._targets
+        input_lengths = self._input_lengths
+        target_lengths = self._target_lengths
+        blank = self._blank
+        reduction = self._reduction
+        zero_infinity = self._zero_infinity
+        with _grad_context(keyset):
+            grad_self = _ctc_loss_backward_helper(grad, self_, targets, input_lengths, target_lengths, blank, reduction, zero_infinity, keyset)
+        return (grad_self,)
+
 
 # Canonical overload aliases
 AddBackward0 = AddTensorBackward0

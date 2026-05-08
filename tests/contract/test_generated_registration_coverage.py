@@ -229,6 +229,13 @@ def test_registration_legacy_section_uses_python_surface():
     assert "_VT_PY.conv_transpose1d_autograd" not in legacy
     assert "_VT_PY.conv_transpose2d_autograd" not in legacy
     assert "_VT_PY.conv_transpose3d_autograd" not in legacy
+    assert "_VT_PY.tensordot_autograd" not in legacy
+    assert "_VT_PY.cdist_autograd" not in legacy
+    assert "_VT_PY.quantile_autograd" not in legacy
+    assert "_VT_PY.nanquantile_autograd" not in legacy
+    assert "_VT_PY.grid_sample_autograd" not in legacy
+    assert "_VT_PY.affine_grid_autograd" not in legacy
+    assert "_VT_PY.ctc_loss_autograd" not in legacy
 
 
 def test_registration_generated_safe_section_uses_compiled_candidate():
@@ -347,6 +354,13 @@ def test_registration_generated_safe_section_uses_compiled_candidate():
     assert "_VT.conv_transpose1d_autograd" in full_text
     assert "_VT.conv_transpose2d_autograd" in full_text
     assert "_VT.conv_transpose3d_autograd" in full_text
+    assert "_VT.tensordot_autograd" in full_text
+    assert "_VT.cdist_autograd" in full_text
+    assert "_VT.quantile_autograd" in full_text
+    assert "_VT.nanquantile_autograd" in full_text
+    assert "_VT.grid_sample_autograd" in full_text
+    assert "_VT.affine_grid_autograd" in full_text
+    assert "_VT.ctc_loss_autograd" in full_text
 
 
 def test_overloaded_math_ops_use_runtime_compatible_canonical_entrypoints():
