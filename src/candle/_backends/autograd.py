@@ -5770,7 +5770,8 @@ def _special_multigammaln_backward(grad, _a, saved_a, keyset, args, kwargs):
 def _special_gammainc_backward(grad, a, b, saved_a, saved_b, keyset):
     """Backward for gammainc(a, x): grad_x = x^(a-1)*exp(-x)/gamma(a)."""
     with _grad_context(keyset):
-        grad_a = None  # grad w.r.t. a is complex (involves integral), skip
+        if getattr(a, "requires_grad", False):
+            raise NotImplementedError("the derivative for 'igamma: input' is not implemented.")
         if getattr(b, "requires_grad", False):
             ones = saved_a._ones_like()
             a_minus_1 = redispatch("sub", keyset, saved_a, ones)
@@ -5782,15 +5783,15 @@ def _special_gammainc_backward(grad, a, b, saved_a, saved_b, keyset):
             grad_b = redispatch("mul", keyset, grad, deriv)
         else:
             grad_b = None
-    grad_a = reduce_grad(grad_a, a.shape) if grad_a is not None else None
     grad_b = reduce_grad(grad_b, b.shape) if grad_b is not None else None
-    return grad_a, grad_b
+    return None, grad_b
 
 
 def _special_gammaincc_backward(grad, a, b, saved_a, saved_b, keyset):
     """Backward for gammaincc(a, x): negative of gammainc grad_x."""
     with _grad_context(keyset):
-        grad_a = None
+        if getattr(a, "requires_grad", False):
+            raise NotImplementedError("the derivative for 'igammac: input' is not implemented.")
         if getattr(b, "requires_grad", False):
             ones = saved_a._ones_like()
             a_minus_1 = redispatch("sub", keyset, saved_a, ones)
@@ -5803,9 +5804,8 @@ def _special_gammaincc_backward(grad, a, b, saved_a, saved_b, keyset):
             grad_b = redispatch("mul", keyset, grad, deriv)
         else:
             grad_b = None
-    grad_a = reduce_grad(grad_a, a.shape) if grad_a is not None else None
     grad_b = reduce_grad(grad_b, b.shape) if grad_b is not None else None
-    return grad_a, grad_b
+    return None, grad_b
 
 
 # Special polygamma needs a custom wrapper since n is first arg, x is second
