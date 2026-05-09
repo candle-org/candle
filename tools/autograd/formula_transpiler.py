@@ -607,7 +607,7 @@ def _split_ternary(expr: str):
 
 
 def _raise_not_implemented(name):
-    raise NotImplementedError(name)
+    raise NotImplementedError(f"the derivative for '{name}' is not implemented.")
 
 
 __all__ = ['transpile', 'TranspileError']

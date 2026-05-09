@@ -17,3 +17,17 @@ def test_inplace_view_version_error_message():
         y.sum().backward()
 
     assert_torch_error(mt, th)
+
+
+def test_special_zeta_backward_error_matches_torch():
+    def mt():
+        x = torch.tensor([2.5], requires_grad=True)
+        q = torch.tensor([3.0])
+        torch.special.zeta(x, q).sum().backward()
+
+    def th():
+        x = pt.tensor([2.5], requires_grad=True)
+        q = pt.tensor([3.0])
+        pt.special.zeta(x, q).sum().backward()
+
+    assert_torch_error(mt, th)

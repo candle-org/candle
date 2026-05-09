@@ -30,7 +30,7 @@ _current_dispatch_keyset = None
 
 
 def _cy_not_implemented(name):
-    raise NotImplementedError(name)
+    raise NotImplementedError(f"the derivative for '{name}' is not implemented.")
 
 
 cdef inline void _ensure_refs():

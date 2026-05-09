@@ -44,6 +44,10 @@ from .._dispatch.dispatcher import redispatch
 from ..autograd.utils import reduce_grad
 
 
+def _raise_not_implemented(name):
+    raise NotImplementedError(f"the derivative for '{name}' is not implemented.")
+
+
 def _inverse_permutation(dims):
     inv = [0] * len(dims)
     for i, d in enumerate(dims):
@@ -1660,7 +1664,7 @@ _current_dispatch_keyset = None
 
 
 def _cy_not_implemented(name):
-    raise NotImplementedError(name)
+    raise NotImplementedError(f"the derivative for '{name}' is not implemented.")
 
 
 cdef inline void _ensure_refs():
