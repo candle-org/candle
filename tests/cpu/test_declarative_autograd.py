@@ -694,21 +694,23 @@ def test_registration_prefers_compiled_generated_variable_type_for_generated_saf
     assert ns["_VT"].__name__.endswith("_variable_type_cy")
 
 
-def test_registration_keeps_python_fallback_for_legacy_ops():
+def test_registration_uses_compiled_surface_for_generated_ops():
     import importlib
 
     py_vt = importlib.import_module("candle._generated.variable_type")
     cy_vt = importlib.import_module("candle._generated._variable_type_cy")
     reg_text = importlib.import_module("candle._generated.registration").__file__
 
-    assert hasattr(py_vt, "sum_to_size_autograd_post")
+    assert not hasattr(py_vt, "sum_to_size_autograd_post")
+    assert hasattr(cy_vt, "sum_to_size_autograd_post")
     assert hasattr(cy_vt, "diff_autograd")
     assert hasattr(cy_vt, "diff_autograd_post")
 
     from pathlib import Path
     text = Path(reg_text).read_text()
     legacy = text.split("# === UPSTREAM LEGACY REGISTRATIONS ===", 1)[1]
-    assert "_VT_PY.sum_to_size_autograd_post" in legacy
+    assert "_VT_PY." not in legacy
+    assert "_VT.sum_to_size_autograd_post" in legacy
     assert "_VT.diff_autograd" in legacy
     assert "_VT.diff_autograd_post" in legacy
 def test_gen_autograd_writes_cython_outputs(tmp_path):

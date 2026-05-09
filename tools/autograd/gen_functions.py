@@ -1892,7 +1892,11 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
         "conv_transpose1d",
         "conv_transpose2d",
         "conv_transpose3d",
+        "uniform",
         "batch_norm",
+        "instance_norm",
+        "linalg_slogdet",
+        "sum_to_size",
         "group_norm",
         "layer_norm",
         "rms_norm",
@@ -1939,7 +1943,7 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
     seen_ops: set = set()
     alias_lines = []
     for info in infos:
-        if info.op_name in seen_ops:
+        if info.op_name in seen_ops or info.op_name in pyx_backward_skip_ops:
             continue
         seen_ops.add(info.op_name)
         if info.backward_name != f"{info.op_name.capitalize()}Backward0":

@@ -5637,6 +5637,19 @@ def uniform__autograd(self_, from_=0, to=1, generator=None, **_kwargs):
     return result
 
 
+def uniform_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("uniform", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.UniformBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def _unique_autograd(self_, sorted=True, return_inverse=False, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
@@ -10926,6 +10939,57 @@ def ctc_loss_autograd(self_, targets, input_lengths, target_lengths, blank=0, re
     return result
 
 
+def instance_norm_autograd(input_, weight=None, bias=None, running_mean=None, running_var=None, use_input_stats=True, momentum=0.1, eps=1e-5, cudnn_enabled=False, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("instance_norm", raw_keyset, input_, weight, bias, running_mean, running_var, use_input_stats, momentum, eps, cudnn_enabled, **_kwargs)
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Instance_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._weight = weight
+        grad_fn._bias = bias
+        grad_fn._running_mean = running_mean
+        grad_fn._running_var = running_var
+        grad_fn._use_input_stats = use_input_stats
+        grad_fn._momentum = momentum
+        grad_fn._eps = eps
+        grad_fn._cudnn_enabled = cudnn_enabled
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_slogdet_autograd(self_, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("linalg_slogdet", raw_keyset, self_, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_slogdetBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result[1].grad_fn = grad_fn
+        result[1].requires_grad = True
+    return result
+
+
+def sum_to_size_autograd(self_, size, **_kwargs):
+    _ensure_refs()
+    active_keyset = _current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    result = _redispatch("sum_to_size", raw_keyset, self_, size, **_kwargs)
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.SumToSizeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._size = size
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def linalg_inv_autograd(self_, **_kwargs):
     _ensure_refs()
     active_keyset = _current_dispatch_keyset()
@@ -15871,6 +15935,16 @@ def uniform__autograd_post(result, self_, from_=0, to=1, generator=None, *, raw_
     return result
 
 
+def uniform_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.UniformBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
 def _unique_autograd_post(result, self_, sorted=True, return_inverse=False, *, raw_keyset, active_keyset, **_kwargs):
     _ensure_refs()
     if _GradMode.enabled and (self_.requires_grad):
@@ -20029,6 +20103,48 @@ def ctc_loss_autograd_post(result, self_, targets, input_lengths, target_lengths
         grad_fn._blank = blank
         grad_fn._reduction = reduction
         grad_fn._zero_infinity = zero_infinity
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def instance_norm_autograd_post(result, input_, weight=None, bias=None, running_mean=None, running_var=None, use_input_stats=True, momentum=0.1, eps=1e-5, cudnn_enabled=False, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (input_.requires_grad):
+        grad_fn = _F.Instance_normBackward0((input_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(input_=input_)
+        grad_fn._weight = weight
+        grad_fn._bias = bias
+        grad_fn._running_mean = running_mean
+        grad_fn._running_var = running_var
+        grad_fn._use_input_stats = use_input_stats
+        grad_fn._momentum = momentum
+        grad_fn._eps = eps
+        grad_fn._cudnn_enabled = cudnn_enabled
+        result.grad_fn = grad_fn
+        result.requires_grad = True
+    return result
+
+
+def linalg_slogdet_autograd_post(result, self_, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.Linalg_slogdetBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        result[1].grad_fn = grad_fn
+        result[1].requires_grad = True
+    return result
+
+
+def sum_to_size_autograd_post(result, self_, size, *, raw_keyset, active_keyset, **_kwargs):
+    _ensure_refs()
+    if _GradMode.enabled and (self_.requires_grad):
+        grad_fn = _F.SumToSizeBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        _annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._size = size
         result.grad_fn = grad_fn
         result.requires_grad = True
     return result
