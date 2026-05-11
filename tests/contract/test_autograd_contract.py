@@ -59,3 +59,15 @@ def test_special_gammaincc_backward_error_matches_torch():
         pt.special.gammaincc(x, y).sum().backward()
 
     assert_torch_error(mt, th)
+
+
+def test_unique_backward_error_matches_torch():
+    def mt():
+        x = torch.tensor([1.0, 2.0], requires_grad=True)
+        torch.unique(x).sum().backward()
+
+    def th():
+        x = pt.tensor([1.0, 2.0], requires_grad=True)
+        pt.unique(x).sum().backward()
+
+    assert_torch_error(mt, th)

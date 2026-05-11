@@ -766,6 +766,32 @@ def _unbind_backward(grad, idx, a, _saved_a, keyset, args, _kwargs):
     return (grad_input,)
 
 
+def _autograd_unique():
+    def wrapper(a, *args, **kwargs):
+        active_keyset = current_dispatch_keyset()
+        raw_keyset = _strip_autograd_keys(active_keyset)
+        out = redispatch("unique", raw_keyset, a, *args, **kwargs)
+        if GradMode.enabled and getattr(a, "requires_grad", False):
+            dim = args[3] if len(args) > 3 else kwargs.get("dim", None)
+            backward_name = "unique_dim" if dim is not None else "_unique2"
+            node_name = "UniqueDimBackward0" if dim is not None else "Unique2Backward0"
+
+            def _backward(_grad):
+                raise NotImplementedError(f"the derivative for '{backward_name}' is not implemented.")
+
+            node = Node(_backward, (a,), name=node_name)
+            annotate_node_creation(node)
+            if isinstance(out, tuple):
+                out[0].grad_fn = node
+                out[0].requires_grad = True
+            else:
+                out.grad_fn = node
+                out.requires_grad = True
+        return out
+
+    return wrapper
+
+
 # ---------------------------------------------------------------------------
 # Phase 4: Advanced ops backward
 # ---------------------------------------------------------------------------
@@ -7159,6 +7185,7 @@ for _entry in (
     ("setitem", lambda: _autograd_setitem("setitem"), False),
     ("dropout", _autograd_dropout),
     # Multi-output ops
+    ("unique", lambda: _autograd_unique()),
     ("split", lambda: _autograd_multi_output("split", _split_backward, save_input=False)),
     ("unbind", lambda: _autograd_multi_output("unbind", _unbind_backward, save_input=False)),
     ("chunk", lambda: _autograd_multi_output("chunk", _chunk_backward, save_input=False)),
