@@ -1563,7 +1563,20 @@ def unique(a, sorted=True, return_inverse=False, return_counts=False, dim=None):
 
 
 def unique_consecutive(a, return_inverse=False, return_counts=False, dim=None):
-    return dispatch("unique_consecutive", a.device.type, a, return_inverse, return_counts, dim)
+    out = dispatch("unique_consecutive", a.device.type, a, return_inverse, return_counts, dim)
+    if GradMode.enabled and getattr(a, "requires_grad", False):
+        from .autograd.anomaly_mode import annotate_node_creation
+        from .autograd.node import Node
+
+        def _backward(_grad):
+            raise NotImplementedError("the derivative for 'unique_consecutive' is not implemented.")
+
+        node = Node(_backward, (a,), name="UniqueConsecutiveBackward0")
+        annotate_node_creation(node)
+        result = out[0] if isinstance(out, tuple) else out
+        result.grad_fn = node
+        result.requires_grad = True
+    return out
 
 
 def searchsorted(sorted_seq, values, out_int32=False, right=False, side=None, sorter=None):
