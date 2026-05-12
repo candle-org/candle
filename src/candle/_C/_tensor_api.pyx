@@ -1169,6 +1169,24 @@ def tensor_tanh_(self):
     return _dispatch_fn("tanh_", self.device.type, self)
 
 
+def tensor_acosh_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("acosh_", self.device.type, self)
+
+
+def tensor_asinh_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("asinh_", self.device.type, self)
+
+
+def tensor_atanh_(self):
+    _ensure_dispatch_ref()
+    self._check_inplace()
+    return _dispatch_fn("atanh_", self.device.type, self)
+
+
 def tensor_sigmoid_(self):
     _ensure_dispatch_ref()
     self._check_inplace()

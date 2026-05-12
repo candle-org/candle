@@ -1023,15 +1023,6 @@ class Tensor(torch._C.TensorBase):
 
         return Resize.apply(self, tensor.size())
 
-    def acosh_(self):
-        return torch.acosh_(self)
-
-    def asinh_(self):
-        return torch.asinh_(self)
-
-    def atanh_(self):
-        return torch.atanh_(self)
-
     def unique(self, sorted=True, return_inverse=False, return_counts=False, dim=None):
         r"""Returns the unique elements of the input tensor.
 
