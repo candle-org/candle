@@ -6489,22 +6489,28 @@ def _autograd_linalg_eigh(name):
 
             def _backward(grad):
                 saved_a = node_holder["node"].saved_tensors()[0]
-                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
-                import numpy as _np
-                # eigh backward: V @ (F * (V^T @ grad_V) + diag(grad_L)) @ V^T
-                a_np = saved_a._numpy_view().astype(_np.float64)
-                L_np, V_np = _np.linalg.eigh(a_np)
-                grad_np = grad._numpy_view().astype(_np.float64)
-
-                # For grad_L only (simplified)
-                grad_a_np = V_np @ (_np.eye(L_np.shape[-1]) * grad_np[..., None]) @ V_np.swapaxes(-2, -1) if grad_np.ndim >= 1 else _np.zeros_like(a_np)
-
+                _backward_dispatch_keyset(raw_keyset, active_keyset)
+                a_np = saved_a._numpy_view().astype(np.float64)
+                grad_np = grad._numpy_view().astype(np.float64)
+                eigenvalues, eigenvectors = np.linalg.eigh(a_np)
+                if grad.shape == out[0].shape:
+                    grad_a_np = eigenvectors @ (np.eye(eigenvalues.shape[-1]) * grad_np[..., None]) @ eigenvectors.swapaxes(-2, -1) if grad_np.ndim >= 1 else np.zeros_like(a_np)
+                else:
+                    if a_np.ndim != 2:
+                        raise NotImplementedError("linalg.eigh eigenvector backward currently supports only 2D inputs")
+                    denom = eigenvalues[None, :] - eigenvalues[:, None]
+                    offdiag = denom[~np.eye(denom.shape[0], dtype=bool)]
+                    if np.any(np.isclose(offdiag, 0.0)):
+                        raise RuntimeError("linalg.eigh eigenvector backward is ill-defined for repeated eigenvalues")
+                    factor = np.divide(1.0, denom, out=np.zeros_like(denom), where=denom != 0.0)
+                    middle = factor * (eigenvectors.T @ grad_np)
+                    grad_a_np = eigenvectors @ ((middle + middle.T) * 0.5) @ eigenvectors.T
                 from .._C import typed_storage_from_numpy
                 from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
                 from .._dtype import to_numpy_dtype
                 grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
-                stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
+                stride = tuple(np.array(grad_a_np.strides) // grad_a_np.itemsize)
                 return (cy_make_tensor_from_storage(storage, grad_a_np.shape, stride, 0, False),)
 
             node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
@@ -6515,6 +6521,8 @@ def _autograd_linalg_eigh(name):
                 L, V = out
                 L.grad_fn = node
                 L.requires_grad = True
+                V.grad_fn = node
+                V.requires_grad = True
         return out
 
     return wrapper
