@@ -99,6 +99,21 @@ def test_nextafter_backward_error_matches_torch():
     assert_torch_error(mt, th)
 
 
+def test_top_level_rrelu_backward_matches_torch():
+    x = torch.tensor([-2.0, 1.0], requires_grad=True)
+    out = torch.rrelu(x, lower=0.1, upper=0.1, training=False)
+    out.sum().backward()
+
+    expected_x = pt.tensor([-2.0, 1.0], requires_grad=True)
+    expected = pt.rrelu(expected_x, lower=0.1, upper=0.1, training=False)
+    expected.sum().backward()
+
+    actual_out = pt.tensor(out.detach().numpy())
+    actual_grad = pt.tensor(x.grad.detach().numpy())
+    assert pt.allclose(actual_out, expected.detach(), atol=1e-6, rtol=1e-6)
+    assert pt.allclose(actual_grad, expected_x.grad.detach(), atol=1e-6, rtol=1e-6)
+
+
 def test_tensor_acosh_inplace_leaf_error_matches_torch():
     def mt():
         x = torch.tensor([2.0], requires_grad=True)
