@@ -99,6 +99,18 @@ def test_nextafter_backward_error_matches_torch():
     assert_torch_error(mt, th)
 
 
+def test_aminmax_backward_error_matches_torch():
+    def mt():
+        x = torch.tensor([1.0, 3.0, 2.0], requires_grad=True)
+        torch.aminmax(x)[0].backward()
+
+    def th():
+        x = pt.tensor([1.0, 3.0, 2.0], requires_grad=True)
+        pt.aminmax(x)[0].backward()
+
+    assert_torch_error(mt, th)
+
+
 def test_top_level_rrelu_backward_matches_torch():
     x = torch.tensor([-2.0, 1.0], requires_grad=True)
     out = torch.rrelu(x, lower=0.1, upper=0.1, training=False)

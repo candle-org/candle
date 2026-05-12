@@ -5265,13 +5265,11 @@ def _autograd_aminmax(name):
             node_holder_min = {}
             node_holder_max = {}
 
-            def _backward_min(grad):
-                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
-                return _aminmax_min_backward(grad, a, min_val, backward_keyset, dim, keepdim)
+            def _backward_min(_grad):
+                raise RuntimeError("derivative for aten::aminmax is not implemented")
 
-            def _backward_max(grad):
-                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
-                return _aminmax_max_backward(grad, a, max_val, backward_keyset, dim, keepdim)
+            def _backward_max(_grad):
+                raise RuntimeError("derivative for aten::aminmax is not implemented")
 
             node_min = Node(_backward_min, (a,), name="MinBackward0")
             annotate_node_creation(node_min)
@@ -6522,6 +6520,32 @@ def _autograd_linalg_eigh(name):
     return wrapper
 
 
+def _autograd_max_unpool1d(name):
+    def wrapper(input_tensor, indices, kernel_size, stride=None, padding=0, output_size=None):
+        active_keyset = current_dispatch_keyset()
+        raw_keyset = _strip_autograd_keys(active_keyset)
+        out = redispatch(name, raw_keyset, input_tensor, indices, kernel_size, stride, padding, output_size)
+        if GradMode.enabled and getattr(input_tensor, "requires_grad", False):
+            def _backward(grad):
+                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
+                with _grad_context(backward_keyset):
+                    from .._creation import arange
+                    plane_count = indices.numel() // indices.shape[-1]
+                    output_length = grad.shape[-1]
+                    offsets = arange(0, plane_count, dtype=indices.dtype, device=indices.device).reshape(indices.shape[:-1] + (1,))
+                    flat_indices = redispatch("add", backward_keyset, indices, offsets * output_length).reshape((-1,))
+                    grad_input = redispatch("gather", backward_keyset, grad.reshape((-1,)), 0, flat_indices)
+                    return (grad_input.reshape(input_tensor.shape),)
+
+            node = Node(_backward, (input_tensor,), name="MaxUnpool1DBackward0")
+            annotate_node_creation(node)
+            out.grad_fn = node
+            out.requires_grad = True
+        return out
+
+    return wrapper
+
+
 def _autograd_linalg_multi_dot(name):
     """Autograd wrapper for linalg_multi_dot: chain of matmul backwards."""
     def wrapper(tensors):
@@ -6542,16 +6566,20 @@ def _autograd_linalg_multi_dot(name):
                         if not getattr(tensors[i], "requires_grad", False):
                             grads.append(None)
                             continue
-                        # grad_i = (product of tensors before i)^T @ grad @ (product of tensors after i)^T
-                        left = grad
-                        for j in range(i - 1, -1, -1):
-                            t_j = redispatch("transpose", backward_keyset, saved[j], -2, -1)
-                            left = redispatch("matmul", backward_keyset, t_j, left)
-                        right = left
-                        for j in range(i + 1, n):
-                            t_j = redispatch("transpose", backward_keyset, saved[j], -2, -1)
-                            right = redispatch("matmul", backward_keyset, right, t_j)
-                        grads.append(right)
+                        grad_i = grad
+                        if i > 0:
+                            left = saved[0]
+                            for j in range(1, i):
+                                left = redispatch("matmul", backward_keyset, left, saved[j])
+                            left_t = redispatch("transpose", backward_keyset, left, -2, -1)
+                            grad_i = redispatch("matmul", backward_keyset, left_t, grad_i)
+                        if i + 1 < n:
+                            right = saved[i + 1]
+                            for j in range(i + 2, n):
+                                right = redispatch("matmul", backward_keyset, right, saved[j])
+                            right_t = redispatch("transpose", backward_keyset, right, -2, -1)
+                            grad_i = redispatch("matmul", backward_keyset, grad_i, right_t)
+                        grads.append(grad_i)
                     return tuple(grads)
 
             node = Node(_backward, tuple(tensors), name=f"{name.capitalize()}Backward0")
@@ -7183,6 +7211,7 @@ for _entry in (
     ("as_strided_scatter", lambda: _autograd_binary_args("as_strided_scatter", _as_strided_scatter_backward, save_inputs=False), False),
     ("setitem", lambda: _autograd_setitem("setitem"), False),
     ("dropout", _autograd_dropout),
+    ("max_unpool1d", lambda: _autograd_max_unpool1d("max_unpool1d")),
     # Multi-output ops
     ("unique", lambda: _autograd_unique()),
     ("split", lambda: _autograd_multi_output("split", _split_backward, save_input=False)),
