@@ -6446,14 +6446,13 @@ def _autograd_linalg_svd(name):
             def _backward(grad):
                 saved_a = node_holder["node"].saved_tensors()[0]
                 backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
+                if grad.shape == out[1].shape:
+                    return _linalg_svdvals_backward(grad, saved_a, saved_a, backward_keyset)
+
                 import numpy as _np
-                # SVD backward via numpy for correctness
                 a_np = saved_a._numpy_view().astype(_np.float64)
                 U_np, S_np, Vh_np = _np.linalg.svd(a_np, full_matrices=False)
                 grad_np = grad._numpy_view().astype(_np.float64)
-
-                # Gradient w.r.t. S only (simplified)
-                # grad_A = U @ diag(grad_S) @ Vh
                 grad_a_np = U_np @ (_np.eye(S_np.shape[-1]) * grad_np[..., :S_np.shape[-1], :S_np.shape[-1]].diagonal(axis1=-2, axis2=-1)[..., None]) @ Vh_np if grad_np.ndim >= 2 else _np.zeros_like(a_np)
                 from .._C import typed_storage_from_numpy
                 from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module

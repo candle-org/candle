@@ -1111,6 +1111,22 @@ def test_autograd_linalg_batch_routes_compiled_backward():
     )
 
 
+def test_linalg_svd_singular_values_backward_matches_svdvals():
+    x = torch.tensor([[3.0, 1.0], [1.0, 3.0]])
+    x.requires_grad = True
+    _u, s, _vh = torch.linalg.svd(x)
+
+    expected_x = torch.tensor([[3.0, 1.0], [1.0, 3.0]])
+    expected_x.requires_grad = True
+    expected = torch.linalg.svdvals(expected_x)
+
+    s.sum().backward()
+    expected.sum().backward()
+
+    assert x.grad is not None
+    assert np.allclose(x.grad.numpy(), expected_x.grad.numpy(), atol=1e-6, rtol=1e-6)
+
+
 def test_autograd_normalization_batch_routes_compiled_backward():
     x = torch.tensor([[1.0, 2.0, 3.0, 4.0], [2.0, 3.0, 4.0, 5.0]])
     x.requires_grad = True

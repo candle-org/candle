@@ -180,6 +180,7 @@ from ._functional import baddbmm, trace, cummin, logsumexp, renorm
 from ._functional import bitwise_and, bitwise_or, bitwise_xor, bitwise_not
 from ._functional import unflatten, broadcast_to, movedim, moveaxis, diagonal
 from ._functional import unique, unique_consecutive, searchsorted, kthvalue, median
+from .nn.functional import rrelu
 # Category A: Export existing functions
 from ._functional import eq, ne, lt, le, gt, ge
 from ._functional import select, expand, masked_fill, unfold
