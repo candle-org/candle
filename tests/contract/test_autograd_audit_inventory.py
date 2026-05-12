@@ -291,7 +291,7 @@ def test_derivatives_not_implemented_inventory_is_classified():
     assert len(entries) == 42
 
 
-def test_autograd_functional_stub_inventory():
+def test_autograd_functional_has_no_remaining_stubs():
     text = _read(_SRC / "autograd" / "functional.py")
     stubs = set(
         re.findall(
@@ -299,7 +299,7 @@ def test_autograd_functional_stub_inventory():
             text,
         )
     )
-    assert stubs == {"jacobian", "hessian", "jvp", "vjp"}
+    assert stubs == set()
 
 
 def test_manual_review_schema_ops_are_currently_unregistered():
