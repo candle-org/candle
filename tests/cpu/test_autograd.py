@@ -1127,6 +1127,55 @@ def test_linalg_svd_singular_values_backward_matches_svdvals():
     assert np.allclose(x.grad.numpy(), expected_x.grad.numpy(), atol=1e-6, rtol=1e-6)
 
 
+def test_linalg_multi_dot_three_matrix_backward_matches_torch():
+    a = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    b = torch.tensor([[2.0, 0.0], [0.0, 2.0]])
+    c = torch.tensor([[1.0], [2.0]])
+    a.requires_grad = True
+    b.requires_grad = True
+    c.requires_grad = True
+    out = torch.linalg.multi_dot([a, b, c])
+    out.sum().backward()
+
+    import torch as torch_ref
+
+    a_ref = torch_ref.tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
+    b_ref = torch_ref.tensor([[2.0, 0.0], [0.0, 2.0]], requires_grad=True)
+    c_ref = torch_ref.tensor([[1.0], [2.0]], requires_grad=True)
+    ref_out = torch_ref.linalg.multi_dot([a_ref, b_ref, c_ref])
+    ref_out.sum().backward()
+
+    assert np.allclose(a.grad.numpy(), a_ref.grad.numpy(), atol=1e-6, rtol=1e-6)
+    assert np.allclose(b.grad.numpy(), b_ref.grad.numpy(), atol=1e-6, rtol=1e-6)
+    assert np.allclose(c.grad.numpy(), c_ref.grad.numpy(), atol=1e-6, rtol=1e-6)
+
+
+def test_max_unpool1d_backward_matches_torch():
+    x = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]])
+    x.requires_grad = True
+    indices = torch.tensor([[[0, 1], [0, 1]]], dtype=torch.int64)
+    out = F.max_unpool1d(x, indices, kernel_size=2, stride=2, output_size=(1, 2, 4))
+    weights = torch.tensor([[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]]])
+    (out * weights).sum().backward()
+
+    import torch as torch_ref
+
+    x_ref = torch_ref.tensor([[[1.0, 2.0], [3.0, 4.0]]], requires_grad=True)
+    indices_ref = torch_ref.tensor([[[0, 1], [0, 1]]])
+    ref_out = torch_ref.nn.functional.max_unpool1d(
+        x_ref,
+        indices_ref,
+        kernel_size=2,
+        stride=2,
+        output_size=(1, 2, 4),
+    )
+    weights_ref = torch_ref.tensor([[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]]])
+    (ref_out * weights_ref).sum().backward()
+
+    assert x.grad is not None
+    assert np.allclose(x.grad.numpy(), x_ref.grad.numpy(), atol=1e-6, rtol=1e-6)
+
+
 def test_autograd_normalization_batch_routes_compiled_backward():
     x = torch.tensor([[1.0, 2.0, 3.0, 4.0], [2.0, 3.0, 4.0, 5.0]])
     x.requires_grad = True
