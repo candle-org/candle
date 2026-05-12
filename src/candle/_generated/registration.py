@@ -115,6 +115,8 @@ def register_generated_autograd_kernels():
     register_autograd_post_kernels('floor', _VT.floor_autograd_post)
     register_autograd_kernels('fmod', default=_VT.fmod_autograd, cpu=_VT.fmod_autograd, cuda=_VT.fmod_autograd, npu=_VT.fmod_autograd, meta=_VT.fmod_autograd)
     register_autograd_post_kernels('fmod', _VT.fmod_autograd_post)
+    register_autograd_kernels('nextafter', default=_VT.nextafter_autograd, cpu=_VT.nextafter_autograd, cuda=_VT.nextafter_autograd, npu=_VT.nextafter_autograd, meta=_VT.nextafter_autograd)
+    register_autograd_post_kernels('nextafter', _VT.nextafter_autograd_post)
     register_autograd_kernels('frac', default=_VT.frac_autograd, cpu=_VT.frac_autograd, cuda=_VT.frac_autograd, npu=_VT.frac_autograd, meta=_VT.frac_autograd)
     register_autograd_post_kernels('frac', _VT.frac_autograd_post)
     register_autograd_kernels('gather', default=_VT.gather_autograd, cpu=_VT.gather_autograd, cuda=_VT.gather_autograd, npu=_VT.gather_autograd, meta=_VT.gather_autograd)

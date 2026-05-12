@@ -1850,6 +1850,13 @@ def fmod(a, b):
     return _from_numpy(np.fmod(a_np, b_np), ref.dtype, ref.device)
 
 
+def nextafter(a, b):
+    a_np = _to_numpy(a) if isinstance(a, Tensor) else a
+    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
+    ref = a if isinstance(a, Tensor) else b
+    return _from_numpy(np.nextafter(a_np, b_np), ref.dtype, ref.device)
+
+
 def _normalize_index_key(key):
     if isinstance(key, Tensor):
         arr = _to_numpy(key)

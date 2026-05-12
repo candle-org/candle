@@ -539,6 +539,10 @@ def fmod(a, b):
     return dispatch("fmod", a.device.type, a, b)
 
 
+def nextafter(a, b):
+    return dispatch("nextafter", a.device.type, a, b)
+
+
 def div(a, b, *, rounding_mode=None):
     r = _handle_torch_function(div, (a, b), {'rounding_mode': rounding_mode})
     if r is not NotImplemented:

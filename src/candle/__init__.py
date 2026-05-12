@@ -165,7 +165,7 @@ from ._functional import add_, mul_, relu_, zero_, clamp_, copy_
 from ._functional import min, max, amin, amax, fmin, fmax, where
 from ._functional import atan, atan2, asin, acos, lerp, addcmul, addcdiv
 from ._functional import reshape, transpose, view_as_real, view_as_complex
-from ._functional import logaddexp, logaddexp2, hypot, remainder, fmod
+from ._functional import logaddexp, logaddexp2, hypot, remainder, fmod, nextafter
 from ._functional import squeeze, unsqueeze, permute
 from ._functional import var, var_mean, norm, prod
 from ._functional import reciprocal, addmm, einsum
@@ -823,6 +823,7 @@ __all__ = [
     "hypot",
     "remainder",
     "fmod",
+    "nextafter",
     "sum",
     "std",
     "reshape",

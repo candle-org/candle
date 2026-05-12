@@ -83,3 +83,17 @@ def test_unique_consecutive_backward_error_matches_torch():
         pt.unique_consecutive(x).sum().backward()
 
     assert_torch_error(mt, th)
+
+
+def test_nextafter_backward_error_matches_torch():
+    def mt():
+        x = torch.tensor([1.0], requires_grad=True)
+        y = torch.tensor([2.0])
+        torch.nextafter(x, y).sum().backward()
+
+    def th():
+        x = pt.tensor([1.0], requires_grad=True)
+        y = pt.tensor([2.0])
+        pt.nextafter(x, y).sum().backward()
+
+    assert_torch_error(mt, th)

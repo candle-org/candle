@@ -226,8 +226,8 @@ def _not_implemented_entries():
 
 def test_autograd_registration_inventory_counts():
     text = _read(_SRC / "_generated" / "registration.py")
-    assert len(re.findall(r"register_autograd_kernels\(", text)) == 303
-    assert len(re.findall(r"register_autograd_post_kernels\(", text)) == 303
+    assert len(re.findall(r"register_autograd_kernels\(", text)) == 304
+    assert len(re.findall(r"register_autograd_post_kernels\(", text)) == 304
     assert re.findall(r"_VT_PY\.", text) == []
     assert "_VT = _VT_CY if _VT_CY is not None else _VT_PY" in text
 

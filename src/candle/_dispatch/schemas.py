@@ -419,7 +419,7 @@ def register_schemas():
     registry.register_schema("dropout", "dropout(Tensor input, float p=0.5, bool training=True) -> Tensor")
     registry.register_schema("leaky_relu", "leaky_relu(Tensor input, float negative_slope=0.01) -> Tensor")
     registry.register_schema("elu", "elu(Tensor input, float alpha=1.0) -> Tensor")
-    _register_binary_ops(("pow", "sub", "div", "true_divide", "min", "max", "fmin", "fmax", "atan2", "logaddexp", "logaddexp2", "hypot", "remainder", "fmod"), other_type="Any")
+    _register_binary_ops(("pow", "sub", "div", "true_divide", "min", "max", "fmin", "fmax", "atan2", "logaddexp", "logaddexp2", "hypot", "remainder", "fmod", "nextafter"), other_type="Any")
     registry.register_schema("lerp", "lerp(Tensor input, Tensor other, Any weight) -> Tensor")
     registry.register_schema("addcmul", "addcmul(Tensor input, Tensor tensor1, Tensor tensor2, *, Scalar value=1) -> Tensor")
     registry.register_schema("addcdiv", "addcdiv(Tensor input, Tensor tensor1, Tensor tensor2, *, Scalar value=1) -> Tensor")
