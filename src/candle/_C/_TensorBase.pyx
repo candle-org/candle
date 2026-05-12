@@ -660,6 +660,9 @@ def _install_tensor_api(TensorBase):
     TensorBase.cos_ = _tensor_api_mod.tensor_cos_
     TensorBase.tan_ = _tensor_api_mod.tensor_tan_
     TensorBase.tanh_ = _tensor_api_mod.tensor_tanh_
+    TensorBase.acosh_ = _tensor_api_mod.tensor_acosh_
+    TensorBase.asinh_ = _tensor_api_mod.tensor_asinh_
+    TensorBase.atanh_ = _tensor_api_mod.tensor_atanh_
     TensorBase.sigmoid_ = _tensor_api_mod.tensor_sigmoid_
     TensorBase.floor_ = _tensor_api_mod.tensor_floor_
     TensorBase.ceil_ = _tensor_api_mod.tensor_ceil_

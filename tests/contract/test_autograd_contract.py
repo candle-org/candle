@@ -97,3 +97,39 @@ def test_nextafter_backward_error_matches_torch():
         pt.nextafter(x, y).sum().backward()
 
     assert_torch_error(mt, th)
+
+
+def test_tensor_acosh_inplace_leaf_error_matches_torch():
+    def mt():
+        x = torch.tensor([2.0], requires_grad=True)
+        x.acosh_()
+
+    def th():
+        x = pt.tensor([2.0], requires_grad=True)
+        x.acosh_()
+
+    assert_torch_error(mt, th)
+
+
+def test_tensor_asinh_inplace_leaf_error_matches_torch():
+    def mt():
+        x = torch.tensor([2.0], requires_grad=True)
+        x.asinh_()
+
+    def th():
+        x = pt.tensor([2.0], requires_grad=True)
+        x.asinh_()
+
+    assert_torch_error(mt, th)
+
+
+def test_tensor_atanh_inplace_leaf_error_matches_torch():
+    def mt():
+        x = torch.tensor([0.2], requires_grad=True)
+        x.atanh_()
+
+    def th():
+        x = pt.tensor([0.2], requires_grad=True)
+        x.atanh_()
+
+    assert_torch_error(mt, th)
