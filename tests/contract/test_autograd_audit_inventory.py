@@ -55,43 +55,25 @@ CREATION_RANDOM_OPS = {
 
 INPLACE_OR_MUTATION_OPS = {
     "abs_",
-    "add_",
     "bitwise_and_",
     "bitwise_or_",
     "bitwise_xor_",
     "ceil_",
-    "clamp_",
-    "copy_",
     "cos_",
-    "div_",
     "erfinv_",
     "exp_",
     "floor_",
-    "index_add_",
-    "index_copy_",
-    "index_fill_",
-    "index_put_",
     "log10_",
     "log2_",
     "log_",
-    "masked_fill_",
-    "masked_scatter_",
-    "max_",
-    "min_",
-    "mul_",
     "neg_",
     "pow_",
     "randint_",
     "reciprocal_",
-    "relu_",
     "round_",
-    "scatter_",
-    "scatter_add_",
-    "setitem",
     "sigmoid_",
     "sin_",
     "sqrt_",
-    "sub_",
     "tan_",
     "tanh_",
     "trunc_",
@@ -112,43 +94,27 @@ COMPARISON_INDEX_OPS = {
     "isposinf",
     "isreal",
     "searchsorted",
-    "unique",
 }
 
 SHAPE_VIEW_COPY_OPS = {
     "as_strided_copy",
-    "dsplit",
     "expand_copy",
     "flatten",
-    "hsplit",
     "movedim",
     "narrow",
     "slice_copy",
-    "split",
     "squeeze",
-    "to",
-    "unbind",
     "unflatten",
-    "vsplit",
 }
 
 MANUAL_REVIEW_SCHEMA_OPS = {
-    "aminmax",
     "bitwise_and",
     "bitwise_left_shift",
     "bitwise_not",
     "bitwise_or",
     "bitwise_right_shift",
     "bitwise_xor",
-    "dropout",
-    "einsum",
-    "linalg_eigh",
-    "linalg_lu_factor",
-    "linalg_multi_dot",
-    "linalg_svd",
     "logical_xor",
-    "max_unpool1d",
-    "rrelu",
 }
 
 LIKELY_NONDIFFERENTIABLE_NOT_IMPLEMENTED = {
@@ -208,8 +174,14 @@ def _schema_ops():
 
 
 def _autograd_registered_ops():
-    text = _read(_SRC / "_generated" / "registration.py")
-    return set(re.findall(r"register_autograd_kernels\('([^']+)'", text))
+    generated = _read(_SRC / "_generated" / "registration.py")
+    manual = _read(_SRC / "_backends" / "autograd.py")
+    return (
+        set(re.findall(r"register_autograd_kernels\('([^']+)'", generated))
+        | set(re.findall(r'\("([A-Za-z0-9_]+)",\s*lambda:', manual))
+        | set(re.findall(r'\("([A-Za-z0-9_]+)",\s*lambda\s*:', manual))
+        | set(re.findall(r'\("([A-Za-z0-9_]+)",\s*_[A-Za-z0-9_]+\)', manual))
+    )
 
 
 def _not_implemented_entries():
@@ -244,7 +216,7 @@ def test_schema_ops_without_autograd_registration_are_categorized():
     actual_missing = _schema_ops() - _autograd_registered_ops()
     assert sorted(actual_missing - expected_missing) == []
     assert sorted(expected_missing - actual_missing) == []
-    assert len(actual_missing) == 121
+    assert len(actual_missing) == 87
 
 
 def test_derivatives_not_implemented_inventory_is_classified():

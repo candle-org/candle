@@ -1016,6 +1016,40 @@ def test_autograd_fft_residual_batch_routes_compiled_backward():
     assert type(ihfft_out.grad_fn).__name__ == "Fft_ihfftBackward0"
 
 
+def _assert_linalg_svd_grad_matches_pytorch(input_data, loss_selector, atol=1e-5, rtol=1e-5):
+    import torch as real_torch
+
+    candle_a = torch.tensor(input_data)
+    candle_a.requires_grad = True
+    candle_out = torch.linalg.svd(candle_a, full_matrices=False)
+    loss_selector(candle_out).sum().backward()
+
+    torch_a = real_torch.tensor(input_data, dtype=real_torch.float64, requires_grad=True)
+    torch_out = real_torch.linalg.svd(torch_a, full_matrices=False)
+    loss_selector(torch_out).sum().backward()
+
+    np.testing.assert_allclose(
+        np.asarray(candle_a.grad.tolist()),
+        torch_a.grad.detach().numpy(),
+        atol=atol,
+        rtol=rtol,
+    )
+
+
+def test_linalg_svd_u_backward_matches_pytorch():
+    _assert_linalg_svd_grad_matches_pytorch(
+        [[3.0, 1.0], [0.5, 2.0], [1.0, -0.25]],
+        lambda svd_out: svd_out[0],
+    )
+
+
+def test_linalg_svd_vh_backward_matches_pytorch():
+    _assert_linalg_svd_grad_matches_pytorch(
+        [[3.0, 1.0], [0.5, 2.0], [1.0, -0.25]],
+        lambda svd_out: svd_out[2],
+    )
+
+
 def test_autograd_linalg_batch_routes_compiled_backward():
     a = torch.eye(3) * 2.0
     a.requires_grad = True

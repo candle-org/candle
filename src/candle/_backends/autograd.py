@@ -6451,7 +6451,32 @@ def _autograd_linalg_svd(name):
                 a_np = saved_a._numpy_view().astype(_np.float64)
                 U_np, S_np, Vh_np = _np.linalg.svd(a_np, full_matrices=False)
                 grad_np = grad._numpy_view().astype(_np.float64)
-                grad_a_np = U_np @ (_np.eye(S_np.shape[-1]) * grad_np[..., :S_np.shape[-1], :S_np.shape[-1]].diagonal(axis1=-2, axis2=-1)[..., None]) @ Vh_np if grad_np.ndim >= 2 else _np.zeros_like(a_np)
+
+                k = S_np.shape[-1]
+                eye_k = _np.eye(k, dtype=_np.float64)
+                if grad_np.shape == S_np.shape:
+                    grad_a_np = U_np @ (eye_k * grad_np[..., None, :]) @ Vh_np
+                elif grad_np.shape == U_np.shape:
+                    ut_grad_u = U_np.swapaxes(-2, -1) @ grad_np
+                    skew_u = ut_grad_u - ut_grad_u.swapaxes(-2, -1)
+                    denom = S_np[..., :, None] ** 2 - S_np[..., None, :] ** 2
+                    f = _np.divide(1.0, denom, out=_np.zeros_like(denom), where=~eye_k.astype(bool))
+                    middle = -(f * skew_u) * S_np[..., None, :]
+                    grad_a_np = U_np @ middle @ Vh_np
+                    if a_np.shape[-2] > k:
+                        proj = eye_k
+                        left_eye = _np.eye(a_np.shape[-2], dtype=_np.float64)
+                        grad_a_np = grad_a_np + (left_eye - U_np @ U_np.swapaxes(-2, -1)) @ grad_np @ (proj / S_np[..., None, :]) @ Vh_np
+                elif grad_np.shape == Vh_np.shape:
+                    grad_v = grad_np.swapaxes(-2, -1)
+                    vt_grad_v = Vh_np @ grad_v
+                    skew_v = vt_grad_v - vt_grad_v.swapaxes(-2, -1)
+                    denom = S_np[..., :, None] ** 2 - S_np[..., None, :] ** 2
+                    f = _np.divide(1.0, denom, out=_np.zeros_like(denom), where=~eye_k.astype(bool))
+                    middle = -S_np[..., :, None] * (f * skew_v)
+                    grad_a_np = U_np @ middle @ Vh_np
+                else:
+                    grad_a_np = _np.zeros_like(a_np)
                 from .._C import typed_storage_from_numpy
                 from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
                 from .._dtype import to_numpy_dtype
@@ -6669,16 +6694,35 @@ def _autograd_linalg_lu_factor(name):
             node_holder = {}
 
             def _backward(grad):
-                saved_a = node_holder["node"].saved_tensors()[0]
-                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
+                saved = node_holder["node"].saved_tensors()
+                saved_a, saved_lu, saved_pivots = saved[0], saved[1], saved[2]
+                _backward_dispatch_keyset(raw_keyset, active_keyset)
                 import numpy as _np
-                a_np = saved_a._numpy_view().astype(_np.float64)
+                a_np = saved_a._numpy_view()
+                lu_np = saved_lu._numpy_view().astype(_np.float64)
+                pivots_np = saved_pivots._numpy_view()
                 grad_np = grad._numpy_view().astype(_np.float64)
-                grad_a_np = grad_np.copy() if grad_np.shape == a_np.shape else _np.zeros_like(a_np)
+
+                if not pivot or a_np.ndim != 2 or a_np.shape[0] != a_np.shape[1]:
+                    raise RuntimeError("linalg.lu_factor backward is only implemented for pivoted square 2-D inputs")
+
+                n = a_np.shape[0]
+                lower_grad = _np.tril(grad_np, -1)
+                upper_grad = _np.triu(grad_np)
+                lower = _np.tril(lu_np, -1) + _np.eye(n, dtype=_np.float64)
+                upper = _np.triu(lu_np)
+
+                middle = _np.tril(lower.T @ lower_grad, -1) + _np.triu(upper_grad @ upper.T)
+                grad_pa = _np.linalg.solve(lower.T, middle) @ _np.linalg.inv(upper.T)
+                permutation = _np.eye(n, dtype=_np.float64)
+                for i, pivot_index in enumerate(pivots_np.astype(_np.int64)):
+                    permutation[[i, pivot_index]] = permutation[[pivot_index, i]]
+                grad_a_np = permutation.T @ grad_pa
+
                 from .._C import typed_storage_from_numpy
                 from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
                 from .._dtype import to_numpy_dtype
-                grad_a_np = grad_a_np.astype(to_numpy_dtype(saved_a.dtype))
+                grad_a_np = _np.ascontiguousarray(grad_a_np.astype(to_numpy_dtype(saved_a.dtype)))
                 storage = typed_storage_from_numpy(grad_a_np, saved_a.dtype, device=saved_a.device)
                 stride = tuple(_np.array(grad_a_np.strides) // grad_a_np.itemsize)
                 return (cy_make_tensor_from_storage(storage, grad_a_np.shape, stride, 0, False),)
@@ -6686,10 +6730,12 @@ def _autograd_linalg_lu_factor(name):
             node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
             annotate_node_creation(node)
             node_holder["node"] = weakref.proxy(node)
-            node.save_for_backward(a)
             if isinstance(out, tuple):
+                node.save_for_backward(a, out[0], out[1])
                 out[0].grad_fn = node
                 out[0].requires_grad = True
+            else:
+                node.save_for_backward(a)
         return out
 
     return wrapper
