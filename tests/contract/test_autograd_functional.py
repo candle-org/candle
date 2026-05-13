@@ -308,3 +308,64 @@ def test_autograd_functional_jacobian_empty_output_error_matches_torch():
 
     assert_torch_error(mt, th)
 
+
+def test_autograd_functional_jacobian_forward_mode_without_vectorize_error_matches_torch():
+    def mt():
+        x = torch.tensor([1.0, 2.0], requires_grad=True)
+        torch.autograd.functional.jacobian(lambda value: value * value, x, strategy="forward-mode")
+
+    def th():
+        x = pt.tensor([1.0, 2.0], requires_grad=True)
+        pt.autograd.functional.jacobian(lambda value: value * value, x, strategy="forward-mode")
+
+    assert_torch_error(mt, th)
+
+
+def test_autograd_functional_jacobian_forward_mode_create_graph_error_matches_torch():
+    def mt():
+        x = torch.tensor([1.0, 2.0], requires_grad=True)
+        torch.autograd.functional.jacobian(
+            lambda value: value * value, x, vectorize=True, strategy="forward-mode", create_graph=True,
+        )
+
+    def th():
+        x = pt.tensor([1.0, 2.0], requires_grad=True)
+        pt.autograd.functional.jacobian(
+            lambda value: value * value, x, vectorize=True, strategy="forward-mode", create_graph=True,
+        )
+
+    assert_torch_error(mt, th)
+
+
+def test_autograd_functional_jacobian_forward_mode_strict_error_matches_torch():
+    def mt():
+        x = torch.tensor([1.0, 2.0], requires_grad=True)
+        torch.autograd.functional.jacobian(
+            lambda value: value * value, x, vectorize=True, strategy="forward-mode", strict=True,
+        )
+
+    def th():
+        x = pt.tensor([1.0, 2.0], requires_grad=True)
+        pt.autograd.functional.jacobian(
+            lambda value: value * value, x, vectorize=True, strategy="forward-mode", strict=True,
+        )
+
+    assert_torch_error(mt, th)
+
+
+def test_autograd_functional_hessian_forward_mode_without_vectorize_error_matches_torch():
+    def mt():
+        x = torch.tensor([1.0, 2.0], requires_grad=True)
+        torch.autograd.functional.hessian(
+            lambda value: (value * value).sum(), x, outer_jacobian_strategy="forward-mode",
+        )
+
+    def th():
+        x = pt.tensor([1.0, 2.0], requires_grad=True)
+        pt.autograd.functional.hessian(
+            lambda value: (value * value).sum(), x, outer_jacobian_strategy="forward-mode",
+        )
+
+    assert_torch_error(mt, th)
+
+

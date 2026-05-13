@@ -339,7 +339,7 @@ def jacobian(
             )
         if not vectorize:
             raise NotImplementedError(
-                "Computing Jacobian using forward-AD or forward-over-reverse Hessian is "
+                "Computing Jacobian using forward-AD or forward-over-reverse Hessian is"
                 "only implemented for `vectorize=True`."
             )
         vectorize = False
