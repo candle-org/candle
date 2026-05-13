@@ -28,9 +28,10 @@ def test_retain_graph_allows_double_backward():
 
 def test_retain_grad_populates_non_leaf_grad():
     t = torch.ones((2,))
-    y = t.sum()
+    t.requires_grad = True
+    y = t * 2.0
     y.retain_grad()
-    y.backward()
+    y.sum().backward()
     assert y.grad is not None
 
 
