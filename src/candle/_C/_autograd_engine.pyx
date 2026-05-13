@@ -607,6 +607,8 @@ def _run_backward(
 
 
 def backward(tensor, grad=None, retain_graph=False, create_graph=False, inputs=None):
+    if not tensor.requires_grad and tensor.grad_fn is None:
+        raise RuntimeError("element 0 of tensors does not require grad and does not have a grad_fn")
     if grad is None:
         if tensor.numel() != 1:
             raise RuntimeError("grad can be implicitly created only for scalar outputs")

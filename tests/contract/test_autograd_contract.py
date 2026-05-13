@@ -111,6 +111,38 @@ def test_aminmax_backward_error_matches_torch():
     assert_torch_error(mt, th)
 
 
+def test_non_scalar_no_grad_backward_error_matches_torch():
+    def mt():
+        torch.tensor([1.0, 2.0]).backward()
+
+    def th():
+        pt.tensor([1.0, 2.0]).backward()
+
+    assert_torch_error(mt, th)
+
+
+def test_logical_xor_backward_error_matches_torch():
+    def mt():
+        x = torch.tensor([0.0, 1.0], requires_grad=True)
+        torch.logical_xor(x, torch.tensor([1.0, 1.0])).sum().backward()
+
+    def th():
+        x = pt.tensor([0.0, 1.0], requires_grad=True)
+        pt.logical_xor(x, pt.tensor([1.0, 1.0])).sum().backward()
+
+    assert_torch_error(mt, th)
+
+
+def test_bitwise_not_backward_error_matches_torch():
+    def mt():
+        torch.bitwise_not(torch.tensor([1, 3])).sum().backward()
+
+    def th():
+        pt.bitwise_not(pt.tensor([1, 3])).sum().backward()
+
+    assert_torch_error(mt, th)
+
+
 def test_top_level_rrelu_backward_matches_torch():
     x = torch.tensor([-2.0, 1.0], requires_grad=True)
     out = torch.rrelu(x, lower=0.1, upper=0.1, training=False)
