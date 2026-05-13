@@ -148,11 +148,13 @@ INTERNAL_NOT_IMPLEMENTED = {
     "native_layer_norm_backward",
 }
 
-MANUAL_REVIEW_NOT_IMPLEMENTED = {
+PYTORCH_ERROR_PARITY_NOT_IMPLEMENTED = {
     "igamma",
     "igammac",
     "special_zeta",
 }
+
+MANUAL_REVIEW_NOT_IMPLEMENTED = set()
 
 
 def _read(path):
@@ -228,6 +230,7 @@ def test_derivatives_not_implemented_inventory_is_classified():
     expected_ops = (
         LIKELY_NONDIFFERENTIABLE_NOT_IMPLEMENTED
         | INTERNAL_NOT_IMPLEMENTED
+        | PYTORCH_ERROR_PARITY_NOT_IMPLEMENTED
         | MANUAL_REVIEW_NOT_IMPLEMENTED
     )
     counts_by_op = {name: 0 for name in actual_ops}

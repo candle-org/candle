@@ -6566,7 +6566,7 @@ class SpecialZetaBackward0(_Node):
         other = self.saved_tensors[self._saved_other_idx] if self._saved_other_idx is not None else None
         self_ = self.saved_tensors[self._saved_self_idx] if self._saved_self_idx is not None else None
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("SpecialZetaBackward0: self")
+            grad_self = _cy_not_implemented("SpecialZetaBackward0: self") if getattr(self.inputs[0], 'requires_grad', False) else None
             grad_other = _cy_not_implemented("SpecialZetaBackward0: other")
         return (grad_self, grad_other,)
 
@@ -6609,7 +6609,7 @@ class SpecialZetaOtherScalarBackward0(_Node):
         keyset = _backward_dispatch_keyset(self._raw_keyset)
         other = self._other
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("SpecialZetaOtherScalarBackward0: self")
+            grad_self = _cy_not_implemented("SpecialZetaOtherScalarBackward0: self") if getattr(self.inputs[0], 'requires_grad', False) else None
         return (grad_self,)
 
 class LogNormalBackward0(_Node):
