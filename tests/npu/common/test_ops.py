@@ -1161,3 +1161,4 @@ def test_npu_masked_select():
     mask = torch.tensor([[True, False], [False, True]], device="npu")
     out = torch.masked_select(x, mask)
     np.testing.assert_array_equal(out.to("cpu").numpy(), np.array([1, 4]))
+# test
