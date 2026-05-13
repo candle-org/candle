@@ -61,7 +61,6 @@ _FALLBACK_OPS = {
         "isclose",      # aclnnIsClose returns 561103 on 310B
         "flip",         # aclnnFlip returns 561000
         "argsort",      # aclnnTopk (used by argsort) returns 561103
-        "sort",         # aclnnTopk returns 561103
         "topk",         # aclnnTopk returns 561103
         "diag",         # aclnnDiag returns 561103
         "gather",       # aclnnGather returns 561103
