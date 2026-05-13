@@ -739,5 +739,19 @@ class TestLinalgLuFactorBackward:
         _check_grad(x, ref.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
 
 
+class TestChunkBackward:
+    def test_first_chunk_dim1(self):
+        x = _tensor([[1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12]])
+        first, _second, _third = torch.chunk(x, 3, dim=1)
+        first.sum().backward()
+        _check_grad(x, [[1, 1, 0, 0, 0, 0], [1, 1, 0, 0, 0, 0]])
+
+    def test_later_chunk_uneven_dim0(self):
+        x = _tensor([[1, 2], [3, 4], [5, 6], [7, 8], [9, 10]])
+        _first, _second, third = torch.chunk(x, 3, dim=0)
+        third.sum().backward()
+        _check_grad(x, [[0, 0], [0, 0], [0, 0], [0, 0], [1, 1]])
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

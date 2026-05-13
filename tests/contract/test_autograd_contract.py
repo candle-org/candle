@@ -1,3 +1,5 @@
+import pytest
+
 import candle as torch
 import torch as pt
 from .helpers import assert_torch_error
@@ -139,6 +141,26 @@ def test_bitwise_not_backward_error_matches_torch():
 
     def th():
         pt.bitwise_not(pt.tensor([1, 3])).sum().backward()
+
+    assert_torch_error(mt, th)
+
+
+@pytest.mark.parametrize(
+    ("op_name", "left", "right"),
+    [
+        ("bitwise_and", [1, 2], [3, 1]),
+        ("bitwise_or", [1, 2], [3, 1]),
+        ("bitwise_xor", [1, 2], [3, 1]),
+        ("bitwise_left_shift", [1, 2], [1, 2]),
+        ("bitwise_right_shift", [4, 8], [1, 2]),
+    ],
+)
+def test_bitwise_binary_backward_error_matches_torch(op_name, left, right):
+    def mt():
+        getattr(torch, op_name)(torch.tensor(left), torch.tensor(right)).sum().backward()
+
+    def th():
+        getattr(pt, op_name)(pt.tensor(left), pt.tensor(right)).sum().backward()
 
     assert_torch_error(mt, th)
 

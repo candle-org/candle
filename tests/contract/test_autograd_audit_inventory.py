@@ -107,7 +107,7 @@ SHAPE_VIEW_COPY_OPS = {
     "unflatten",
 }
 
-MANUAL_REVIEW_SCHEMA_OPS = {
+NONDIFFERENTIABLE_OUTPUT_OPS = {
     "bitwise_and",
     "bitwise_left_shift",
     "bitwise_not",
@@ -116,6 +116,8 @@ MANUAL_REVIEW_SCHEMA_OPS = {
     "bitwise_xor",
     "logical_xor",
 }
+
+MANUAL_REVIEW_SCHEMA_OPS = set()
 
 LIKELY_NONDIFFERENTIABLE_NOT_IMPLEMENTED = {
     "_unique",
@@ -211,6 +213,7 @@ def test_schema_ops_without_autograd_registration_are_categorized():
         | INPLACE_OR_MUTATION_OPS
         | COMPARISON_INDEX_OPS
         | SHAPE_VIEW_COPY_OPS
+        | NONDIFFERENTIABLE_OUTPUT_OPS
         | MANUAL_REVIEW_SCHEMA_OPS
     )
     actual_missing = _schema_ops() - _autograd_registered_ops()
