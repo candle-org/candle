@@ -1127,6 +1127,22 @@ def test_linalg_svd_singular_values_backward_matches_svdvals():
     assert np.allclose(x.grad.numpy(), expected_x.grad.numpy(), atol=1e-6, rtol=1e-6)
 
 
+def test_linalg_eigh_eigenvectors_backward_matches_torch():
+    x = torch.tensor([[3.0, 1.0], [1.0, 3.0]])
+    x.requires_grad = True
+    _values, vectors = torch.linalg.eigh(x)
+    vectors.sum().backward()
+
+    import torch as torch_ref
+
+    x_ref = torch_ref.tensor([[3.0, 1.0], [1.0, 3.0]], requires_grad=True)
+    _values_ref, vectors_ref = torch_ref.linalg.eigh(x_ref)
+    vectors_ref.sum().backward()
+
+    assert x.grad is not None
+    assert np.allclose(x.grad.numpy(), x_ref.grad.numpy(), atol=1e-6, rtol=1e-6)
+
+
 def test_linalg_multi_dot_three_matrix_backward_matches_torch():
     a = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
     b = torch.tensor([[2.0, 0.0], [0.0, 2.0]])
