@@ -721,5 +721,23 @@ class TestTopkBackward:
         _check_grad(x, [0.0, 1.0, 0.0, 1.0])
 
 
+class TestLinalgLuFactorBackward:
+    def test_lu_output_backward_matches_torch_for_2x2_pivoted_factorization(self):
+        import torch as real_torch
+
+        data = [[0.5, 3.0], [2.0, 1.0]]
+        upstream = [[1.5, -2.0], [0.25, 0.75]]
+
+        ref = real_torch.tensor(data, dtype=real_torch.float32, requires_grad=True)
+        ref_lu, _ = real_torch.linalg.lu_factor(ref)
+        (ref_lu * real_torch.tensor(upstream, dtype=real_torch.float32)).sum().backward()
+
+        x = _tensor(data)
+        lu, _ = torch.linalg.lu_factor(x)
+        (lu * torch.tensor(upstream, dtype=torch.float32)).sum().backward()
+
+        _check_grad(x, ref.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
