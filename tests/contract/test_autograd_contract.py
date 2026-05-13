@@ -165,6 +165,57 @@ def test_bitwise_binary_backward_error_matches_torch(op_name, left, right):
     assert_torch_error(mt, th)
 
 
+def test_special_zeta_other_backward_matches_torch():
+    x = torch.tensor([2.5])
+    q = torch.tensor([3.0], requires_grad=True)
+    torch.special.zeta(x, q).sum().backward()
+
+    expected_x = pt.tensor([2.5])
+    expected_q = pt.tensor([3.0], requires_grad=True)
+    pt.special.zeta(expected_x, expected_q).sum().backward()
+
+    actual_grad = pt.tensor(q.grad.detach().numpy())
+    assert pt.allclose(actual_grad, expected_q.grad.detach(), atol=1e-6, rtol=1e-6)
+
+
+def test_nextafter_other_backward_error_matches_torch():
+    def mt():
+        x = torch.tensor([1.0])
+        y = torch.tensor([2.0], requires_grad=True)
+        torch.nextafter(x, y).sum().backward()
+
+    def th():
+        x = pt.tensor([1.0])
+        y = pt.tensor([2.0], requires_grad=True)
+        pt.nextafter(x, y).sum().backward()
+
+    assert_torch_error(mt, th)
+
+
+def test_unique_dim_backward_error_matches_torch():
+    def mt():
+        x = torch.tensor([[1.0, 2.0], [1.0, 2.0]], requires_grad=True)
+        torch.unique(x, dim=0).sum().backward()
+
+    def th():
+        x = pt.tensor([[1.0, 2.0], [1.0, 2.0]], requires_grad=True)
+        pt.unique(x, dim=0).sum().backward()
+
+    assert_torch_error(mt, th)
+
+
+def test_unique_consecutive_dim_backward_error_matches_torch():
+    def mt():
+        x = torch.tensor([[1.0, 2.0], [1.0, 2.0]], requires_grad=True)
+        torch.unique_consecutive(x, dim=0).sum().backward()
+
+    def th():
+        x = pt.tensor([[1.0, 2.0], [1.0, 2.0]], requires_grad=True)
+        pt.unique_consecutive(x, dim=0).sum().backward()
+
+    assert_torch_error(mt, th)
+
+
 def test_top_level_rrelu_backward_matches_torch():
     x = torch.tensor([-2.0, 1.0], requires_grad=True)
     out = torch.rrelu(x, lower=0.1, upper=0.1, training=False)

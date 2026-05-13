@@ -1588,7 +1588,11 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
             var_name = deriv.var_names[0]
             grad_var = f"grad_{var_name}"
             grad_vars[var_name] = grad_var
-            lines.append(f"            {grad_var} = {formula}")
+            if _should_guard_not_implemented_formula(formula, var_name, info):
+                needed = _grad_needed_expr(var_name, info)
+                lines.append(f"            {grad_var} = {formula} if {needed} else None")
+            else:
+                lines.append(f"            {grad_var} = {formula}")
         else:
             # Multi-output: tuple unpacking (e.g. conv backward returns all grads at once)
             grad_var_names = [f"grad_{v}" for v in deriv.var_names]
@@ -1616,6 +1620,25 @@ def _gen_one_node(info: DifferentiabilityInfo) -> str:
         lines.append(f"        return ({', '.join(ret_parts)},)")
 
     return "\n".join(lines)
+
+
+def _is_not_implemented_formula(formula: str) -> bool:
+    return "_raise_not_implemented(" in formula or "_cy_not_implemented(" in formula
+
+
+def _should_guard_not_implemented_formula(formula: str, var_name: str, info: DifferentiabilityInfo) -> bool:
+    return (
+        info.op_name == "special_zeta"
+        and var_name == "self"
+        and _is_not_implemented_formula(formula)
+    )
+
+
+def _grad_needed_expr(var_name: str, info: DifferentiabilityInfo) -> str:
+    for idx, arg in enumerate(info.differentiable_inputs):
+        if arg.name == var_name:
+            return f"getattr(self.inputs[{idx}], 'requires_grad', False)"
+    return "True"
 
 
 def _rewrite_keyword_refs(formula: str, arg_names: set[str]) -> str:
@@ -2089,9 +2112,17 @@ def _gen_one_node_pyx(info: DifferentiabilityInfo) -> str:
             grad_vars[var_name] = grad_var
             local_names.add(grad_var)
             if safe_formula:
-                lines.append(f"            {grad_var} = {formula}")
+                if _should_guard_not_implemented_formula(formula, var_name, info):
+                    needed = _grad_needed_expr(var_name, info)
+                    lines.append(f"            {grad_var} = {formula} if {needed} else None")
+                else:
+                    lines.append(f"            {grad_var} = {formula}")
             else:
-                lines.append(f"            {grad_var} = _cy_not_implemented(\"{cls_name}: {var_name}\")")
+                if _should_guard_not_implemented_formula(formula, var_name, info):
+                    needed = _grad_needed_expr(var_name, info)
+                    lines.append(f"            {grad_var} = _cy_not_implemented(\"{cls_name}: {var_name}\") if {needed} else None")
+                else:
+                    lines.append(f"            {grad_var} = _cy_not_implemented(\"{cls_name}: {var_name}\")")
         else:
             grad_var_names = [f"grad_{v}" for v in deriv.var_names]
             for v, gv in zip(deriv.var_names, grad_var_names):

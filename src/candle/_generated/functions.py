@@ -6482,7 +6482,7 @@ class SpecialZetaBackward0(Node):
         other = _saved[self._saved_other_idx]
         self_ = _saved[self._saved_self_idx]
         with _grad_context(keyset):
-            grad_self = _raise_not_implemented("zeta")
+            grad_self = _raise_not_implemented("zeta") if getattr(self.inputs[0], 'requires_grad', False) else None
             grad_other = redispatch("mul", keyset, redispatch("mul", keyset, grad, redispatch("neg", keyset, self_)), redispatch("special_zeta", keyset, redispatch("add", keyset, self_, 1.), other))
         return (grad_self, grad_other,)
 
