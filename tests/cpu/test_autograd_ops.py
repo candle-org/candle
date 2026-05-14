@@ -738,6 +738,48 @@ class TestLinalgLuFactorBackward:
 
         _check_grad(x, ref.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
 
+    def test_lu_output_backward_matches_torch_for_batched_3d_input(self):
+        import torch as real_torch
+
+        data = [
+            [[2.0, 1.0], [1.0, 3.0]],
+            [[0.5, 3.0], [2.0, 1.0]],
+        ]
+        upstream = [
+            [[1.0, -0.5], [0.25, 0.75]],
+            [[1.5, -2.0], [0.25, 0.75]],
+        ]
+
+        ref = real_torch.tensor(data, dtype=real_torch.float32, requires_grad=True)
+        ref_lu, _ = real_torch.linalg.lu_factor(ref)
+        (ref_lu * real_torch.tensor(upstream, dtype=real_torch.float32)).sum().backward()
+
+        x = _tensor(data)
+        lu, _ = torch.linalg.lu_factor(x)
+        (lu * torch.tensor(upstream, dtype=torch.float32)).sum().backward()
+
+        _check_grad(x, ref.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
+
+
+class TestLinalgEighBatchedBackward:
+    def test_eigenvectors_backward_matches_torch_for_batched_3d_input(self):
+        import torch as real_torch
+
+        data = [
+            [[3.0, 1.0], [1.0, 4.0]],
+            [[5.0, 2.0], [2.0, 6.0]],
+        ]
+
+        ref = real_torch.tensor(data, dtype=real_torch.float32, requires_grad=True)
+        _ref_values, ref_vectors = real_torch.linalg.eigh(ref)
+        ref_vectors.sum().backward()
+
+        x = _tensor(data)
+        _values, vectors = torch.linalg.eigh(x)
+        vectors.sum().backward()
+
+        _check_grad(x, ref.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
+
 
 class TestChunkBackward:
     def test_first_chunk_dim1(self):

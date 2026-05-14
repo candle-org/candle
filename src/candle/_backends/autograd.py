@@ -6521,15 +6521,15 @@ def _autograd_linalg_eigh(name):
                 if grad.shape == out[0].shape:
                     grad_a_np = eigenvectors @ (np.eye(eigenvalues.shape[-1]) * grad_np[..., None]) @ eigenvectors.swapaxes(-2, -1) if grad_np.ndim >= 1 else np.zeros_like(a_np)
                 else:
-                    if a_np.ndim != 2:
-                        raise NotImplementedError("linalg.eigh eigenvector backward currently supports only 2D inputs")
-                    denom = eigenvalues[None, :] - eigenvalues[:, None]
-                    offdiag = denom[~np.eye(denom.shape[0], dtype=bool)]
-                    if np.any(np.isclose(offdiag, 0.0)):
+                    n = eigenvalues.shape[-1]
+                    denom = eigenvalues[..., None, :] - eigenvalues[..., :, None]
+                    off_mask = ~np.eye(n, dtype=bool)
+                    if np.any(np.isclose(denom[..., off_mask], 0.0)):
                         raise RuntimeError("linalg.eigh eigenvector backward is ill-defined for repeated eigenvalues")
                     factor = np.divide(1.0, denom, out=np.zeros_like(denom), where=denom != 0.0)
-                    middle = factor * (eigenvectors.T @ grad_np)
-                    grad_a_np = eigenvectors @ ((middle + middle.T) * 0.5) @ eigenvectors.T
+                    eigvecs_t = eigenvectors.swapaxes(-2, -1)
+                    middle = factor * (eigvecs_t @ grad_np)
+                    grad_a_np = eigenvectors @ ((middle + middle.swapaxes(-2, -1)) * 0.5) @ eigvecs_t
                 from .._C import typed_storage_from_numpy
                 from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
                 from .._dtype import to_numpy_dtype
@@ -6703,21 +6703,36 @@ def _autograd_linalg_lu_factor(name):
                 pivots_np = saved_pivots._numpy_view()
                 grad_np = grad._numpy_view().astype(_np.float64)
 
-                if not pivot or a_np.ndim != 2 or a_np.shape[0] != a_np.shape[1]:
-                    raise RuntimeError("linalg.lu_factor backward is only implemented for pivoted square 2-D inputs")
+                if not pivot or a_np.ndim < 2 or a_np.shape[-1] != a_np.shape[-2]:
+                    raise RuntimeError("linalg.lu_factor backward is only implemented for pivoted square inputs")
 
-                n = a_np.shape[0]
+                n = a_np.shape[-1]
                 lower_grad = _np.tril(grad_np, -1)
                 upper_grad = _np.triu(grad_np)
-                lower = _np.tril(lu_np, -1) + _np.eye(n, dtype=_np.float64)
+                eye_n = _np.eye(n, dtype=_np.float64)
+                lower = _np.tril(lu_np, -1) + eye_n
                 upper = _np.triu(lu_np)
 
-                middle = _np.tril(lower.T @ lower_grad, -1) + _np.triu(upper_grad @ upper.T)
-                grad_pa = _np.linalg.solve(lower.T, middle) @ _np.linalg.inv(upper.T)
-                permutation = _np.eye(n, dtype=_np.float64)
-                for i, pivot_index in enumerate(pivots_np.astype(_np.int64)):
-                    permutation[[i, pivot_index]] = permutation[[pivot_index, i]]
-                grad_a_np = permutation.T @ grad_pa
+                lower_t = _np.swapaxes(lower, -2, -1)
+                upper_t = _np.swapaxes(upper, -2, -1)
+                middle = _np.tril(lower_t @ lower_grad, -1) + _np.triu(upper_grad @ upper_t)
+                grad_pa = _np.linalg.solve(lower_t, middle) @ _np.linalg.inv(upper_t)
+
+                pivots_int = pivots_np.astype(_np.int64)
+                if a_np.ndim == 2:
+                    permutation = _np.eye(n, dtype=_np.float64)
+                    for i, pivot_index in enumerate(pivots_int):
+                        permutation[[i, pivot_index]] = permutation[[pivot_index, i]]
+                else:
+                    batch_shape = a_np.shape[:-2]
+                    permutation = _np.broadcast_to(eye_n, batch_shape + (n, n)).copy()
+                    flat_perm = permutation.reshape(-1, n, n)
+                    flat_pivots = pivots_int.reshape(-1, n)
+                    for b in range(flat_perm.shape[0]):
+                        for i, pivot_index in enumerate(flat_pivots[b]):
+                            flat_perm[b, [i, int(pivot_index)]] = flat_perm[b, [int(pivot_index), i]]
+                    permutation = flat_perm.reshape(batch_shape + (n, n))
+                grad_a_np = _np.swapaxes(permutation, -2, -1) @ grad_pa
 
                 from .._C import typed_storage_from_numpy
                 from .._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
