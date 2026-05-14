@@ -1997,8 +1997,64 @@ def pdist(input, p=2.0):
             results.append(d.unsqueeze(0))
     if not results:
         from .._creation import zeros
-        return zeros(0, device=input.device)
-    return dispatch("cat", None, results, 0)
+        out = zeros(0, device=input.device)
+    else:
+        out = dispatch("cat", None, results, 0)
+    if p != 2.0 or not getattr(input, "requires_grad", False):
+        return out
+
+    from ..autograd.anomaly_mode import annotate_node_creation
+    from ..autograd.grad_mode import GradMode
+    from ..autograd.node import Node
+    from .._C._autograd_engine import is_create_graph_enabled  # pylint: disable=no-name-in-module
+    from .._C._autograd_ops import (  # pylint: disable=no-name-in-module
+        _backward_dispatch_keyset,
+        _grad_context,
+        _strip_autograd_keys,
+    )
+    from .._dispatch.dispatcher import current_dispatch_keyset, redispatch
+
+    if not GradMode.enabled:
+        return out
+    active_keyset = current_dispatch_keyset()
+    raw_keyset = _strip_autograd_keys(active_keyset)
+    node_holder = {}
+
+    def _backward(grad):
+        saved_input = node_holder["node"].saved_tensors()[0]
+        keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
+        with _grad_context(keyset):
+            zero = _tensor(0.0, dtype=saved_input.dtype, device=saved_input.device)
+            rows = [redispatch("mul", keyset, saved_input[i], zero) for i in range(saved_input.shape[0])]
+            pair_idx = 0
+            for i in range(saved_input.shape[0]):
+                for j in range(i + 1, saved_input.shape[0]):
+                    diff = redispatch("add", keyset, saved_input[i], redispatch("neg", keyset, saved_input[j]))
+                    dist = redispatch("norm", keyset, diff, 2.0, None, False)
+                    safe_dist = redispatch("add", keyset, dist, _tensor(1e-30, dtype=saved_input.dtype, device=saved_input.device))
+                    direction = redispatch("div", keyset, diff, safe_dist)
+                    grad_pair = redispatch("mul", keyset, grad[pair_idx], direction)
+                    rows[i] = redispatch("add", keyset, rows[i], grad_pair)
+                    rows[j] = redispatch("add", keyset, rows[j], redispatch("neg", keyset, grad_pair))
+                    pair_idx += 1
+            grad_input = redispatch("stack", keyset, rows, 0)
+        if is_create_graph_enabled():
+            def _raise_pdist_backward(_grad):
+                raise NotImplementedError("the derivative for '_pdist_backward' is not implemented.")
+            grad_node = Node(_raise_pdist_backward, (), name="PdistBackwardBackward0")
+            annotate_node_creation(grad_node)
+            grad_input.grad_fn = grad_node
+            grad_input.requires_grad = True
+        return (grad_input,)
+
+    node = Node(_backward, (input,), name="PdistForwardBackward0")
+    annotate_node_creation(node)
+    node_holder["node"] = node
+    node.save_for_backward(input)
+    out.grad_fn = node
+    out.requires_grad = True
+    return out
+
 
 
 

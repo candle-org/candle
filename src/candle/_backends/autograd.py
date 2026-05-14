@@ -575,13 +575,16 @@ def _layer_norm_backward(grad, _a, saved_a, keyset, args, kwargs, backward_data=
             n *= saved_a.shape[d]
         n_t = _scalar_tensor_like(saved_a, float(n))
 
-        mean_dl_dxhat = redispatch("div", keyset, redispatch("sum", keyset, dl_dxhat, dim=axis_dims, keepdim=True), n_t)
-        mean_dl_dxhat_xhat = redispatch("div", keyset, redispatch("sum", keyset, redispatch("mul", keyset, dl_dxhat, x_hat), dim=axis_dims, keepdim=True), n_t)
-
-        grad_input = redispatch("mul", keyset, inv_std,
+        dl_dxhat_sum = redispatch("sum", keyset, dl_dxhat, dim=axis_dims, keepdim=True)
+        dl_dxhat_xhat_sum = redispatch("sum", keyset, redispatch("mul", keyset, dl_dxhat, x_hat), dim=axis_dims, keepdim=True)
+        scaled = redispatch("add", keyset,
             redispatch("add", keyset,
-                redispatch("add", keyset, dl_dxhat, redispatch("neg", keyset, mean_dl_dxhat)),
-                redispatch("neg", keyset, redispatch("mul", keyset, x_hat, mean_dl_dxhat_xhat))))
+                redispatch("mul", keyset, n_t, dl_dxhat),
+                redispatch("neg", keyset, dl_dxhat_sum)),
+            redispatch("neg", keyset, redispatch("mul", keyset, x_hat, dl_dxhat_xhat_sum)))
+        grad_input = redispatch("mul", keyset, redispatch("div", keyset, inv_std, n_t), scaled)
+        grad_input = redispatch("add", keyset, grad_input, redispatch("neg", keyset,
+            redispatch("div", keyset, redispatch("sum", keyset, grad_input, dim=axis_dims, keepdim=True), n_t)))
 
         # Compute weight and bias gradients
         grad_weight = None
@@ -6703,35 +6706,70 @@ def _autograd_linalg_lu_factor(name):
                 pivots_np = saved_pivots._numpy_view()
                 grad_np = grad._numpy_view().astype(_np.float64)
 
-                if not pivot or a_np.ndim < 2 or a_np.shape[-1] != a_np.shape[-2]:
-                    raise RuntimeError("linalg.lu_factor backward is only implemented for pivoted square inputs")
+                if not pivot or a_np.ndim < 2:
+                    raise RuntimeError("linalg.lu_factor backward is only implemented for pivoted inputs")
 
-                n = a_np.shape[-1]
-                lower_grad = _np.tril(grad_np, -1)
-                upper_grad = _np.triu(grad_np)
-                eye_n = _np.eye(n, dtype=_np.float64)
-                lower = _np.tril(lu_np, -1) + eye_n
-                upper = _np.triu(lu_np)
-
-                lower_t = _np.swapaxes(lower, -2, -1)
-                upper_t = _np.swapaxes(upper, -2, -1)
-                middle = _np.tril(lower_t @ lower_grad, -1) + _np.triu(upper_grad @ upper_t)
-                grad_pa = _np.linalg.solve(lower_t, middle) @ _np.linalg.inv(upper_t)
+                m, n = a_np.shape[-2], a_np.shape[-1]
+                k = min(m, n)
+                eye_k = _np.eye(k, dtype=_np.float64)
 
                 pivots_int = pivots_np.astype(_np.int64)
+                eye_m = _np.eye(m, dtype=_np.float64)
                 if a_np.ndim == 2:
-                    permutation = _np.eye(n, dtype=_np.float64)
+                    permutation = eye_m.copy()
                     for i, pivot_index in enumerate(pivots_int):
                         permutation[[i, pivot_index]] = permutation[[pivot_index, i]]
                 else:
                     batch_shape = a_np.shape[:-2]
-                    permutation = _np.broadcast_to(eye_n, batch_shape + (n, n)).copy()
-                    flat_perm = permutation.reshape(-1, n, n)
-                    flat_pivots = pivots_int.reshape(-1, n)
+                    permutation = _np.broadcast_to(eye_m, batch_shape + (m, m)).copy()
+                    flat_perm = permutation.reshape(-1, m, m)
+                    flat_pivots = pivots_int.reshape(-1, k)
                     for b in range(flat_perm.shape[0]):
                         for i, pivot_index in enumerate(flat_pivots[b]):
                             flat_perm[b, [i, int(pivot_index)]] = flat_perm[b, [int(pivot_index), i]]
-                    permutation = flat_perm.reshape(batch_shape + (n, n))
+                    permutation = flat_perm.reshape(batch_shape + (m, m))
+
+                if m == n:
+                    lower_grad = _np.tril(grad_np, -1)
+                    upper_grad = _np.triu(grad_np)
+                    lower = _np.tril(lu_np, -1) + eye_k
+                    upper = _np.triu(lu_np)
+
+                    lower_t = _np.swapaxes(lower, -2, -1)
+                    upper_t = _np.swapaxes(upper, -2, -1)
+                    middle = _np.tril(lower_t @ lower_grad, -1) + _np.triu(upper_grad @ upper_t)
+                    grad_pa = _np.linalg.solve(lower_t, middle) @ _np.linalg.inv(upper_t)
+                else:
+                    lower = _np.tril(lu_np[..., :, :k], -1)
+                    diag_idx = _np.arange(k)
+                    lower[..., diag_idx, diag_idx] = 1.0
+                    upper = _np.triu(lu_np[..., :k, :])
+                    lower_grad = grad_np[..., :, :k]
+                    upper_grad = grad_np[..., :k, :]
+                    lower_t = _np.swapaxes(lower, -2, -1)
+                    upper_t = _np.swapaxes(upper, -2, -1)
+                    lower_1 = lower[..., :k, :]
+                    lower_1_t = _np.swapaxes(lower_1, -2, -1)
+                    upper_1 = upper[..., :, :k]
+                    upper_1_t = _np.swapaxes(upper_1, -2, -1)
+
+                    if m < n:
+                        upper_1_grad = upper_grad[..., :, :k]
+                        upper_2_grad = upper_grad[..., :, k:]
+                        tmp = lower_t @ lower_grad - _np.triu(upper_grad) @ upper_t
+                        left_part = _np.tril(tmp, -1) @ _np.linalg.inv(upper_1_t)
+                        left_part = left_part + _np.triu(upper_1_grad)
+                        a_grad = _np.concatenate((left_part, upper_2_grad), axis=-1)
+                        grad_pa = _np.linalg.solve(lower_t, a_grad)
+                    else:
+                        lower_1_grad = lower_grad[..., :k, :]
+                        lower_2_grad = lower_grad[..., k:, :]
+                        tmp = upper_grad @ upper_t - lower_t @ _np.tril(lower_grad, -1)
+                        top_part = _np.linalg.solve(lower_1_t, _np.triu(tmp))
+                        top_part = top_part + _np.tril(lower_1_grad, -1)
+                        a_grad = _np.concatenate((top_part, lower_2_grad), axis=-2)
+                        grad_pa = a_grad @ _np.linalg.inv(upper_t)
+
                 grad_a_np = _np.swapaxes(permutation, -2, -1) @ grad_pa
 
                 from .._C import typed_storage_from_numpy

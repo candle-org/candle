@@ -310,7 +310,7 @@ cdef class _GraphTask:
         acc_node = getattr(tensor, "_accumulate_grad_node", None)
         if acc_node is not None:
             grad = acc_node.apply_prehooks(grad)
-        if mark_create_graph and self.create_graph and grad is not None:
+        if mark_create_graph and self.create_graph and grad is not None and getattr(grad, "grad_fn", None) is not None:
             grad.requires_grad = True
         # PyTorch-aligned view-rebase: if the tensor is a view that carries a
         # _rev_view_func, transform grad via _rev_view_func before forwarding

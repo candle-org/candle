@@ -4,6 +4,8 @@ import math
 import numpy as np
 import pytest
 
+import torch as real_torch
+
 import candle as torch
 import candle.nn.functional as F
 
@@ -18,6 +20,25 @@ def _check_grad(x, expected, *, atol=1e-5, rtol=1e-5):
     actual = x.grad.numpy()
     np.testing.assert_allclose(actual, np.array(expected, dtype=actual.dtype),
                                atol=atol, rtol=rtol)
+
+
+def _assert_torch_error(mt_fn, th_fn):
+    try:
+        th_fn()
+    except Exception as th_exc:  # pylint: disable=broad-exception-caught
+        expected = th_exc
+    else:
+        expected = None
+
+    try:
+        mt_fn()
+    except Exception as mt_exc:  # pylint: disable=broad-exception-caught
+        actual = mt_exc
+    else:
+        actual = None
+
+    assert type(actual) is type(expected)
+    assert str(actual) == str(expected)
 
 
 def _tensor(vals, requires_grad=True):
@@ -723,8 +744,6 @@ class TestTopkBackward:
 
 class TestLinalgLuFactorBackward:
     def test_lu_output_backward_matches_torch_for_2x2_pivoted_factorization(self):
-        import torch as real_torch
-
         data = [[0.5, 3.0], [2.0, 1.0]]
         upstream = [[1.5, -2.0], [0.25, 0.75]]
 
@@ -739,8 +758,6 @@ class TestLinalgLuFactorBackward:
         _check_grad(x, ref.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
 
     def test_lu_output_backward_matches_torch_for_batched_3d_input(self):
-        import torch as real_torch
-
         data = [
             [[2.0, 1.0], [1.0, 3.0]],
             [[0.5, 3.0], [2.0, 1.0]],
@@ -749,6 +766,34 @@ class TestLinalgLuFactorBackward:
             [[1.0, -0.5], [0.25, 0.75]],
             [[1.5, -2.0], [0.25, 0.75]],
         ]
+
+        ref = real_torch.tensor(data, dtype=real_torch.float32, requires_grad=True)
+        ref_lu, _ = real_torch.linalg.lu_factor(ref)
+        (ref_lu * real_torch.tensor(upstream, dtype=real_torch.float32)).sum().backward()
+
+        x = _tensor(data)
+        lu, _ = torch.linalg.lu_factor(x)
+        (lu * torch.tensor(upstream, dtype=torch.float32)).sum().backward()
+
+        _check_grad(x, ref.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
+
+    def test_lu_output_backward_matches_torch_for_tall_rectangular_input(self):
+        data = [[2.0, 1.0, 0.5], [1.0, 3.0, 1.5], [4.0, 2.0, 2.5], [1.5, 0.5, 3.5]]
+        upstream = [[1.0, -0.5, 0.25], [0.75, 1.25, -1.0], [0.5, -0.25, 1.5], [1.0, 0.0, -0.75]]
+
+        ref = real_torch.tensor(data, dtype=real_torch.float32, requires_grad=True)
+        ref_lu, _ = real_torch.linalg.lu_factor(ref)
+        (ref_lu * real_torch.tensor(upstream, dtype=real_torch.float32)).sum().backward()
+
+        x = _tensor(data)
+        lu, _ = torch.linalg.lu_factor(x)
+        (lu * torch.tensor(upstream, dtype=torch.float32)).sum().backward()
+
+        _check_grad(x, ref.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
+
+    def test_lu_output_backward_matches_torch_for_wide_rectangular_input(self):
+        data = [[2.0, 1.0, 0.5, 1.5], [1.0, 3.0, 1.5, 0.5], [4.0, 2.0, 2.5, 3.5]]
+        upstream = [[1.0, -0.5, 0.25, 0.75], [0.75, 1.25, -1.0, 0.5], [0.5, -0.25, 1.5, -0.75]]
 
         ref = real_torch.tensor(data, dtype=real_torch.float32, requires_grad=True)
         ref_lu, _ = real_torch.linalg.lu_factor(ref)
@@ -779,6 +824,100 @@ class TestLinalgEighBatchedBackward:
         vectors.sum().backward()
 
         _check_grad(x, ref.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
+
+
+class TestRemainingAutogradParity:
+    def test_cdist_backward_matches_torch(self):
+        x_data = [[1.0, 0.0, 0.5], [0.0, 1.0, 1.5], [1.0, 1.0, 0.25], [2.0, 0.5, 1.0]]
+        y_data = [[0.5, 1.0, 0.0], [1.5, 0.0, 1.0], [0.0, 0.5, 2.0], [2.0, 1.0, 0.5], [1.0, 2.0, 1.5]]
+        upstream = np.arange(20, dtype=np.float32).reshape(4, 5) / 10.0 + 0.25
+
+        ref_x = real_torch.tensor(x_data, dtype=real_torch.float32, requires_grad=True)
+        ref_y = real_torch.tensor(y_data, dtype=real_torch.float32, requires_grad=True)
+        (real_torch.cdist(ref_x, ref_y) * real_torch.tensor(upstream, dtype=real_torch.float32)).sum().backward()
+
+        x = _tensor(x_data)
+        y = _tensor(y_data)
+        (torch.cdist(x, y) * torch.tensor(upstream, dtype=torch.float32)).sum().backward()
+
+        _check_grad(x, ref_x.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
+        _check_grad(y, ref_y.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
+
+    def test_layer_norm_second_backward_matches_torch(self):
+        x_data = [[1.0, 2.0, 3.0, 4.0], [4.0, 5.0, 6.0, 7.0]]
+        weight_data = [0.5, 0.7, 0.9, 1.1]
+        bias_data = [0.1, 0.2, 0.3, 0.4]
+
+        ref_x = real_torch.tensor(x_data, dtype=real_torch.float32, requires_grad=True)
+        ref_weight = real_torch.tensor(weight_data, dtype=real_torch.float32, requires_grad=True)
+        ref_bias = real_torch.tensor(bias_data, dtype=real_torch.float32, requires_grad=True)
+        ref_out = real_torch.nn.functional.layer_norm(ref_x, [4], ref_weight, ref_bias)
+        ref_grad_x = real_torch.autograd.grad(ref_out.sum(), ref_x, create_graph=True)[0]
+        ref_grad_x.sum().backward()
+
+        x = _tensor(x_data)
+        weight = _tensor(weight_data)
+        bias = _tensor(bias_data)
+        out = F.layer_norm(x, [4], weight, bias)
+        grad_x = torch.autograd.grad(out.sum(), x, create_graph=True)[0]
+        grad_x.sum().backward()
+
+        _check_grad(x, ref_x.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
+        _check_grad(weight, ref_weight.grad.detach().numpy(), atol=1e-5, rtol=1e-5)
+        assert bias.grad is None
+        assert ref_bias.grad is None
+
+    def test_pdist_second_backward_error_matches_torch(self):
+        def mt():
+            x = torch.tensor(
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.5]],
+                dtype=torch.float32,
+                requires_grad=True,
+            )
+            grad_x = torch.autograd.grad(F.pdist(x).sum(), x, create_graph=True)[0]
+            grad_x.sum().backward()
+
+        def th():
+            x = real_torch.tensor(
+                [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 0.5]],
+                dtype=real_torch.float32,
+                requires_grad=True,
+            )
+            grad_x = real_torch.autograd.grad(real_torch.nn.functional.pdist(x).sum(), x, create_graph=True)[0]
+            grad_x.sum().backward()
+
+        _assert_torch_error(mt, th)
+
+    def test_embedding_bag_second_backward_error_matches_torch(self):
+        def mt():
+            weight = torch.tensor(
+                (np.arange(40, dtype=np.float32).reshape(10, 4) / 40.0),
+                requires_grad=True,
+            )
+            grad_weight = torch.autograd.grad(
+                F.embedding_bag(torch.tensor([1, 2, 4, 5, 4, 3, 2, 9]), weight, torch.tensor([0, 4])).sum(),
+                weight,
+                create_graph=True,
+            )[0]
+            grad_weight.sum().backward()
+
+        def th():
+            weight = real_torch.tensor(
+                (np.arange(40, dtype=np.float32).reshape(10, 4) / 40.0),
+                requires_grad=True,
+            )
+            grad_weight = real_torch.autograd.grad(
+                real_torch.nn.functional.embedding_bag(
+                    real_torch.tensor([1, 2, 4, 5, 4, 3, 2, 9]),
+                    weight,
+                    real_torch.tensor([0, 4]),
+                ).sum(),
+                weight,
+                create_graph=True,
+            )[0]
+            grad_weight.sum().backward()
+
+        _assert_torch_error(mt, th)
 
 
 class TestChunkBackward:

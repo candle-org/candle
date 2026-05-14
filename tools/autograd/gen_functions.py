@@ -396,10 +396,12 @@ def _norm_grad_core(dl_dxhat, x_hat, inv_std, axes, n, keyset):
     mean_dl_xhat = redispatch("div", keyset,
         redispatch("sum", keyset, redispatch("mul", keyset, dl_dxhat, x_hat),
                    dim=axes, keepdim=True), n_t)
-    return redispatch("mul", keyset, inv_std,
+    grad_input = redispatch("mul", keyset, inv_std,
         redispatch("add", keyset,
             redispatch("add", keyset, dl_dxhat, redispatch("neg", keyset, mean_dl)),
             redispatch("neg", keyset, redispatch("mul", keyset, x_hat, mean_dl_xhat))))
+    return redispatch("add", keyset, grad_input, redispatch("neg", keyset,
+        redispatch("div", keyset, redispatch("sum", keyset, grad_input, dim=axes, keepdim=True), n_t)))
 
 
 def _layer_norm_grad_input(grad, input_, normalized_shape, weight, eps, keyset):
@@ -1314,7 +1316,7 @@ def _dist_backward_all(grad, self_, other, p, keyset):
 
 def _cdist_backward_all(grad, self_, other, p, keyset):
     from .._backends.autograd import _cdist_backward
-    return _cdist_backward(grad, self_, other, self_, other, keyset, (p,))
+    return _cdist_backward(grad, self_, other, p, keyset)
 
 
 def _as_strided_scatter_backward_all(grad, self_, src, size, stride, storage_offset, keyset):
