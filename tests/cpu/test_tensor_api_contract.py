@@ -1496,6 +1496,17 @@ def test_utils_dlpack_to_dlpack_surfaces_runtime_support():
 def test_tensor_is_conj_defaults_to_false():
     assert torch.tensor([1.0]).is_conj() is False
 
+def test_creation_factories_use_cython_native_module():
+    import candle._C._creation_ops as creation_ops
+
+    names = (
+        "arange", "as_tensor", "asarray", "empty", "eye", "from_numpy",
+        "frombuffer", "full", "linspace", "logspace", "normal", "ones",
+        "rand", "randint", "randn", "randperm", "range", "tensor", "zeros",
+    )
+    for name in names:
+        assert getattr(torch, name) is getattr(creation_ops, name)
+
 
 def test_asarray_from_sequence_defaults_to_tensor():
     out = torch.asarray([1, 2, 3])
