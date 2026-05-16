@@ -22,6 +22,7 @@ Feature flags (set after import):
     _HAS_CYTHON_GRAD_MODE_STATE — always True (hard import, no fallback)
     _HAS_CYTHON_FORWARD_AD      — always True (hard import, no fallback)
     _HAS_CYTHON_FUNCTIONAL_OPS  — True if _functional_ops.pyx compiled successfully
+    _HAS_CYTHON_CREATION_OPS    — True if _creation_ops.pyx compiled successfully
     _HAS_CYTHON_FAST_OPS        — True if _fast_ops.pyx compiled successfully
     _HAS_CYTHON_TENSOR_API      — True if _tensor_api.pyx compiled successfully
     _HAS_CYTHON_STORAGE_IMPL    — True if _storage_impl.pyx compiled successfully
@@ -41,6 +42,7 @@ from ._bootstrap import (
     _HAS_CYTHON_DISPATCH,
     _HAS_CYTHON_DISPATCHER_CORE,
     _HAS_CYTHON_DTYPE,
+    _HAS_CYTHON_CREATION_OPS,
     _HAS_CYTHON_FAST_OPS,
     _HAS_CYTHON_FUNCTIONAL_OPS,
     _HAS_CYTHON_NPU_OPS,

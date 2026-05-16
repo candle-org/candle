@@ -92,6 +92,7 @@ _HAS_CYTHON_AUTOGRAD_OPS = False
 _HAS_CYTHON_GRAD_MODE_STATE = False
 _HAS_CYTHON_FORWARD_AD = False
 _HAS_CYTHON_FUNCTIONAL_OPS = False
+_HAS_CYTHON_CREATION_OPS = False
 _HAS_CYTHON_FAST_OPS = False
 _HAS_CYTHON_TENSOR_API = False
 _HAS_CYTHON_STORAGE_IMPL = False
@@ -283,6 +284,12 @@ try:
         neg as functional_neg,
     )
     _HAS_CYTHON_FUNCTIONAL_OPS = True
+except ImportError:
+    pass
+
+try:
+    from ._creation_ops import tensor as creation_tensor  # noqa: F401
+    _HAS_CYTHON_CREATION_OPS = True
 except ImportError:
     pass
 
