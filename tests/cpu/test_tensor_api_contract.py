@@ -1477,3 +1477,21 @@ def test_set_allows_empty_tensor_view_with_large_storage_offset():
     assert rebound.shape == (0,)
     assert rebound.storage_offset() == 1000
     assert rebound.tolist() == []
+
+
+def test_utils_dlpack_module_exposes_to_dlpack_and_from_dlpack():
+    from candle.utils import dlpack as candle_dlpack
+
+    assert hasattr(candle_dlpack, "to_dlpack")
+    assert hasattr(candle_dlpack, "from_dlpack")
+
+
+def test_utils_dlpack_to_dlpack_surfaces_runtime_support():
+    from candle.utils.dlpack import to_dlpack
+
+    with pytest.raises(NotImplementedError, match="DLPack not supported"):
+        to_dlpack(torch.tensor([1.0, 2.0, 3.0]))
+
+
+def test_tensor_is_conj_defaults_to_false():
+    assert torch.tensor([1.0]).is_conj() is False

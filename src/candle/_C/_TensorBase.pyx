@@ -409,6 +409,9 @@ class TensorBase(TensorImpl):
     def is_pinned(self):
         return getattr(self._storage.untyped_storage(), 'is_pinned', lambda: False)()
 
+    def is_conj(self):
+        return False
+
     def retain_grad(self):
         if not self.requires_grad:
             raise RuntimeError("can't retain_grad on Tensor that has requires_grad=False")

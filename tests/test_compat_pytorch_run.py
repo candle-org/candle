@@ -50,3 +50,13 @@ def test_write_bridge_conftest_targets_shared_clone(tmp_path, monkeypatch):
     bridge = mod.write_bridge_conftest()
     assert bridge == mod.PYTORCH_DIR / "test" / "conftest.py"
     assert bridge.exists()
+
+
+def test_bridge_conftest_imports_unittest_mock_for_pytorch_tests(tmp_path, monkeypatch):
+    mod = load_run_module()
+    monkeypatch.setattr(mod, "PYTORCH_DIR", tmp_path / "_pytorch")
+    (mod.PYTORCH_DIR / "test").mkdir(parents=True)
+
+    bridge = mod.write_bridge_conftest()
+
+    assert "import unittest.mock" in bridge.read_text()

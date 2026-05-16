@@ -2,6 +2,16 @@
 
 import enum
 
+from .. import _C
+
+
+def to_dlpack(tensor):
+    return tensor.__dlpack__()
+
+
+def from_dlpack(dlpack):
+    return _C._dlpack_exchange_api.from_dlpack(dlpack)
+
 
 class DLDeviceType(enum.IntEnum):
     kDLCPU = 1
