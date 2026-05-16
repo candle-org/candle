@@ -1495,3 +1495,73 @@ def test_utils_dlpack_to_dlpack_surfaces_runtime_support():
 
 def test_tensor_is_conj_defaults_to_false():
     assert torch.tensor([1.0]).is_conj() is False
+
+
+def test_asarray_from_sequence_defaults_to_tensor():
+    out = torch.asarray([1, 2, 3])
+
+    assert isinstance(out, torch.Tensor)
+    assert out.tolist() == [1, 2, 3]
+    assert out.dtype == torch.int64
+    assert out.requires_grad is False
+
+
+def test_asarray_honors_dtype_and_requires_grad():
+    out = torch.asarray([1, 2, 3], dtype=torch.float32, requires_grad=True)
+
+    assert out.tolist() == [1.0, 2.0, 3.0]
+    assert out.dtype == torch.float32
+    assert out.requires_grad is True
+
+
+def test_asarray_from_tensor_returns_alias_when_no_copy_needed():
+    src = torch.tensor([1.0, 2.0, 3.0], requires_grad=True)
+
+    out = torch.asarray(src, requires_grad=True)
+
+    assert out is src
+    assert out.requires_grad is True
+
+
+def test_asarray_copy_true_returns_distinct_tensor():
+    src = torch.tensor([1.0, 2.0, 3.0])
+
+    out = torch.asarray(src, copy=True)
+
+    assert out is not src
+    assert out.tolist() == src.tolist()
+
+
+def test_frombuffer_returns_1d_tensor_with_dtype():
+    import array
+
+    buf = array.array("i", [1, 2, 3, 4])
+
+    out = torch.frombuffer(buf, dtype=torch.int32)
+
+    assert isinstance(out, torch.Tensor)
+    assert out.dtype == torch.int32
+    assert out.tolist() == [1, 2, 3, 4]
+    assert out.requires_grad is False
+
+
+def test_frombuffer_honors_count_and_offset():
+    import array
+
+    buf = array.array("i", [10, 20, 30, 40, 50])
+
+    out = torch.frombuffer(buf, dtype=torch.int32, count=2, offset=4)
+
+    assert out.tolist() == [20, 30]
+
+
+def test_frombuffer_requires_grad_only_for_floating_dtype():
+    import array
+
+    floats = array.array("f", [1.0, 2.0])
+    out = torch.frombuffer(floats, dtype=torch.float32, requires_grad=True)
+    assert out.requires_grad is True
+
+    ints = array.array("i", [1, 2])
+    with pytest.raises(RuntimeError, match="floating point"):
+        torch.frombuffer(ints, dtype=torch.int32, requires_grad=True)

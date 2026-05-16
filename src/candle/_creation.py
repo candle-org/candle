@@ -166,6 +166,15 @@ def from_numpy(ndarray):
     return tensor_dispatch(ndarray, dtype=dt)
 
 
+def frombuffer(buffer, *, dtype, count=-1, offset=0, requires_grad=False):
+    from ._dtype import to_numpy_dtype
+
+    np_dtype = to_numpy_dtype(dtype)
+    arr = np.frombuffer(buffer, dtype=np_dtype, count=count, offset=offset)
+    out = tensor_dispatch(arr, dtype=dtype)
+    return _apply_requires_grad(out, requires_grad)
+
+
 def as_tensor(data, dtype=None, device=None):
     from ._tensor import Tensor
 
@@ -180,6 +189,47 @@ def as_tensor(data, dtype=None, device=None):
         from . import get_default_dtype
         dtype = get_default_dtype()
     return tensor_dispatch(data, dtype=dtype, device=device)
+
+
+def asarray(obj, *, dtype=None, device=None, copy=None, requires_grad=False):
+    from ._tensor import Tensor
+
+    if isinstance(obj, Tensor):
+        same_dtype = dtype is None or obj.dtype == dtype
+        same_device = device is None or _torch_device_matches(obj, device)
+        if copy is False and (not same_dtype or not same_device):
+            raise ValueError(
+                "can't alias tensor: dtype/device differ; pass copy=True to copy"
+            )
+        if not same_dtype or not same_device:
+            out = obj.to(device=device, dtype=dtype)
+        elif copy:
+            out = obj.clone()
+        else:
+            out = obj
+    else:
+        if copy is False:
+            raise ValueError(
+                "can't alias arbitrary sequence: pass copy=True or omit copy"
+            )
+        if dtype is None:
+            dtype = _infer_creation_dtype(obj)
+        if dtype is None:
+            from . import get_default_dtype
+            dtype = get_default_dtype()
+        out = tensor_dispatch(obj, dtype=dtype, device=device)
+
+    return _apply_requires_grad(out, requires_grad)
+
+
+def _torch_device_matches(tensor, target_device):
+    from . import device as device_ctor
+
+    target = target_device if hasattr(target_device, "type") else device_ctor(target_device)
+    same_type = tensor.device.type == target.type
+    if target.index is None:
+        return same_type
+    return same_type and tensor.device.index == target.index
 
 
 def normal(mean, std, size=None, *, generator=None, out=None):
