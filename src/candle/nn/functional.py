@@ -2006,8 +2006,8 @@ def pdist(input, p=2.0):
     from ..autograd.anomaly_mode import annotate_node_creation
     from ..autograd.grad_mode import GradMode
     from ..autograd.node import Node
-    from .._C._autograd_engine import is_create_graph_enabled  # pylint: disable=no-name-in-module
-    from .._C._autograd_ops import (  # pylint: disable=no-name-in-module
+    from .._C._autograd_engine import is_create_graph_enabled  # pylint: disable=import-error,no-name-in-module
+    from .._C._autograd_ops import (  # pylint: disable=import-error,no-name-in-module
         _backward_dispatch_keyset,
         _grad_context,
         _strip_autograd_keys,
