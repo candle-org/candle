@@ -3,6 +3,8 @@ import numpy as np
 
 from candle._dtype import float32, int64
 from candle._dtype import bool as bool_dtype
+
+cdef bint _frombuffer_writable_warned = False
 cdef object _get_default_dtype():
     from candle import get_default_dtype
     return get_default_dtype()
@@ -257,6 +259,25 @@ def frombuffer(buffer, *, dtype, count=-1, offset=0, requires_grad=False):
         view = memoryview(buffer)
     except TypeError as exc:
         raise ValueError("object does not implement Python buffer protocol.") from exc
+
+    try:
+        readonly = bool(view.readonly)
+    except AttributeError:
+        readonly = False
+    global _frombuffer_writable_warned
+    if readonly:
+        from candle import is_warn_always_enabled
+        if is_warn_always_enabled() or not _frombuffer_writable_warned:
+            import warnings
+            warnings.warn(
+                "The given buffer is not writable, and PyTorch does not support non-writable tensors. "
+                "This means you can write to the underlying (supposedly non-writable) buffer using the tensor. "
+                "You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. "
+                "This type of warning will be suppressed for the rest of this program.",
+                UserWarning,
+                stacklevel=2,
+            )
+            _frombuffer_writable_warned = True
 
     byte_len = int(view.nbytes)
     itemsize = int(np.dtype(np_dtype).itemsize)

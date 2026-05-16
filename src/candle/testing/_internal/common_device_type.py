@@ -220,9 +220,12 @@ def instantiate_device_type_tests(test_class, scope, except_for=None, only_for=N
                     @functools.wraps(f)
                     def test_fn(self):
                         sig = inspect.signature(f)
+                        kwargs = {}
+                        if "device" in sig.parameters:
+                            kwargs["device"] = d
                         if "dtype" in sig.parameters:
-                            return f(self, device=d, dtype=torch.float32)
-                        return f(self, device=d)
+                            kwargs["dtype"] = torch.float32
+                        return f(self, **kwargs)
                     return test_fn
 
                 setattr(device_class, test_name, make_test_no_dtype(fn, device))

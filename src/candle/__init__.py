@@ -104,6 +104,18 @@ def get_default_dtype():
     return _DEFAULT_DTYPE
 
 
+_WARN_ALWAYS = False
+
+def set_warn_always(enabled):
+    """Force WARN_ONCE-style warnings to fire every time when True."""
+    global _WARN_ALWAYS
+    _WARN_ALWAYS = _builtins.bool(enabled)
+
+
+def is_warn_always_enabled():
+    return _WARN_ALWAYS
+
+
 # Vitals (minimal compatibility)
 def vitals_enabled():
     return os.environ.get("TORCH_VITAL", "").upper() == "ON"
