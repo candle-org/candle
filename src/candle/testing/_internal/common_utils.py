@@ -109,20 +109,42 @@ class TestCase(unittest.TestCase):
             rtol=self.rel_tol,
         )
 
-    def assertEqual(self, x, y, msg=None, *, atol=None, rtol=None, equal_nan=False):
+    def assertEqual(self, x, y, msg=None, *, atol=None, rtol=None, equal_nan=False, exact_dtype=None):
         if isinstance(x, np.ndarray) and isinstance(y, torch.Tensor):
             x = torch.from_numpy(np.ascontiguousarray(x))
         elif isinstance(x, torch.Tensor) and isinstance(y, np.ndarray):
             y = torch.from_numpy(np.ascontiguousarray(y))
+        elif isinstance(x, torch.Tensor) and isinstance(y, (tuple, list)):
+            y = torch.tensor(y, dtype=x.dtype, device=x.device)
+        elif isinstance(x, (tuple, list)) and isinstance(y, torch.Tensor):
+            x = torch.tensor(x, dtype=y.dtype, device=y.device)
+        elif isinstance(x, torch.Tensor) and x.dim() == 0 and isinstance(y, (int, float, complex, bool)):
+            y = torch.tensor(y, dtype=x.dtype, device=x.device)
+        elif isinstance(y, torch.Tensor) and y.dim() == 0 and isinstance(x, (int, float, complex, bool)):
+            x = torch.tensor(x, dtype=y.dtype, device=y.device)
         if isinstance(x, torch.Tensor) and isinstance(y, torch.Tensor):
             _atol = atol if atol is not None else self.precision
             _rtol = rtol if rtol is not None else self.rel_tol
-            torch.testing.assert_close(x, y, atol=_atol, rtol=_rtol, msg=msg)
-        else:
-            if equal_nan and isinstance(x, float) and isinstance(y, float):
-                if math.isnan(x) and math.isnan(y):
-                    return
-            super().assertEqual(x, y, msg=msg)
+            check_dtype = True if exact_dtype is None else bool(exact_dtype)
+            torch.testing.assert_close(x, y, atol=_atol, rtol=_rtol, msg=msg, check_dtype=check_dtype)
+            return
+        if isinstance(x, (tuple, list)) and isinstance(y, (tuple, list)):
+            super().assertEqual(len(x), len(y), msg=msg)
+            for actual, expected in zip(x, y):
+                self.assertEqual(
+                    actual,
+                    expected,
+                    msg=msg,
+                    atol=atol,
+                    rtol=rtol,
+                    equal_nan=equal_nan,
+                    exact_dtype=exact_dtype,
+                )
+            return
+        if equal_nan and isinstance(x, float) and isinstance(y, float):
+            if math.isnan(x) and math.isnan(y):
+                return
+        super().assertEqual(x, y, msg=msg)
 
     @contextlib.contextmanager
     def assertWarnsOnceRegex(self, expected_warning, expected_regex=""):

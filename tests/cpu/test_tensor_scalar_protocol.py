@@ -78,7 +78,7 @@ def test_tensor_len_iter_hash_and_properties():
     assert x.is_meta is False
     assert x.is_leaf is True
     assert x.is_sparse is False
-    assert x.layout == "strided"
+    assert x.layout is torch.strided
     assert x.is_quantized is False
     assert x.storage_offset() == 0
     assert x.get_device() == -1

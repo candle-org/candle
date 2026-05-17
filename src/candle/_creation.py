@@ -3,6 +3,7 @@ from ._C._creation_ops import (  # pylint: disable=no-name-in-module
     as_tensor,
     asarray,
     empty,
+    empty_strided,
     eye,
     from_numpy,
     frombuffer,

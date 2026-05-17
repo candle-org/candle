@@ -334,12 +334,41 @@ class TestCategoryC1:
         imag = torch.tensor([3.0, 4.0])
         out = torch.complex(real, imag)
         assert out.shape == (2,)
+        assert out.dtype == torch.complex64
+
+    def test_complex_float64_outputs_complex128(self):
+        real = torch.tensor([1.0, 2.0], dtype=torch.float64)
+        imag = torch.tensor([3.0, 4.0], dtype=torch.float64)
+        assert torch.complex(real, imag).dtype == torch.complex128
+
+    @pytest.mark.parametrize("op", [torch.complex, torch.polar])
+    def test_complex_like_rejects_non_floating_inputs(self, op):
+        real = torch.tensor([1, 2], dtype=torch.int32)
+        imag = torch.tensor([3.0, 4.0], dtype=torch.float32)
+        with pytest.raises(RuntimeError, match="Expected both inputs to be Half, Float or Double tensors"):
+            op(real, imag)
+
+    @pytest.mark.parametrize("op", [torch.complex, torch.polar])
+    def test_complex_like_rejects_mismatched_floating_dtype(self, op):
+        real = torch.tensor([1.0, 2.0], dtype=torch.float32)
+        imag = torch.tensor([3.0, 4.0], dtype=torch.float64)
+        with pytest.raises(RuntimeError, match="Expected object of scalar type Float but got scalar type Double"):
+            op(real, imag)
+
+    @pytest.mark.parametrize("op", [torch.complex, torch.polar])
+    def test_complex_like_rejects_wrong_out_dtype(self, op):
+        real = torch.tensor([1.0, 2.0], dtype=torch.float32)
+        imag = torch.tensor([3.0, 4.0], dtype=torch.float32)
+        out = torch.empty((2,), dtype=torch.float32)
+        with pytest.raises(RuntimeError, match="Expected object of scalar type ComplexFloat"):
+            op(real, imag, out=out)
 
     def test_polar(self):
         abs_t = torch.tensor([1.0, 1.0])
         angle = torch.tensor([0.0, math.pi / 2])
         out = torch.polar(abs_t, angle)
         assert out.shape == (2,)
+        assert out.dtype == torch.complex64
 
 
 # ===========================================================================

@@ -313,11 +313,11 @@ def test_meta_tril_triu_indices_shape():
 
 
 def test_meta_vsplit_shape():
-    x = torch.tensor([1.0, 2.0, 3.0, 4.0], device="meta")
-    out = torch.vsplit(x, 2)
+    y = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device="meta")
+    out = torch.vsplit(y, 2)
     assert len(out) == 2
-    assert out[0].shape == (2,)
-    assert out[1].shape == (2,)
+    assert out[0].shape == (1, 2)
+    assert out[1].shape == (1, 2)
 
 
 def test_meta_hsplit_shape():
@@ -340,7 +340,7 @@ def test_meta_dsplit_shape():
     assert out[0].shape == (1, 2, 1)
     assert out[1].shape == (1, 2, 1)
     y = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device="meta")
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError, match=r"torch\.dsplit requires a tensor with at least 3 dimension"):
         torch.dsplit(y, 2)
 
 

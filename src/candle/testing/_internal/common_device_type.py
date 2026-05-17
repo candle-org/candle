@@ -208,7 +208,13 @@ def instantiate_device_type_tests(test_class, scope, except_for=None, only_for=N
                     def make_test(f, d, dtype):
                         @functools.wraps(f)
                         def test_fn(self):
-                            return f(self, device=d, dtype=dtype)
+                            sig = inspect.signature(f)
+                            kwargs = {}
+                            if "device" in sig.parameters:
+                                kwargs["device"] = d
+                            if "dtype" in sig.parameters:
+                                kwargs["dtype"] = dtype
+                            return f(self, **kwargs)
                         return test_fn
 
                     setattr(device_class, test_name, make_test(fn, device, dt))

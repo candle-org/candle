@@ -46,13 +46,16 @@ def get_all_complex_dtypes():
 
 
 def get_all_dtypes(include_half=True, include_bfloat16=True,
-                   include_complex=True, include_bool=True):
+                   include_complex=True, include_bool=True,
+                   include_complex32=False):
     dtypes = get_all_int_dtypes() + get_all_fp_dtypes(
         include_half=include_half, include_bfloat16=include_bfloat16
     )
     if include_bool:
         dtypes.append(torch.bool)
     if include_complex:
+        if include_complex32:
+            dtypes.append(torch.complex32)
         dtypes += get_all_complex_dtypes()
     return dtypes
 

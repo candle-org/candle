@@ -16,6 +16,13 @@ from ..._dtype import float64 as float64_dtype
 from ..._dtype import int64 as int64_dtype
 from ..._dtype import from_numpy_dtype
 from ..._dtype import to_numpy_dtype
+
+
+def _f32_to_bf16_bits(arr):
+    u32 = arr.astype(np.float32, copy=False).view(np.uint32)
+    rounding_bias = (u32 >> 16) & 1
+    u32 = u32 + 0x7FFF + rounding_bias
+    return (u32 >> 16).astype(np.uint16)
 from ..._C import typed_storage_from_numpy
 from ..._C import _StrideTuple
 from ..._tensor import Tensor
@@ -563,7 +570,13 @@ def stack(tensors, dim=0):
 
 def cat(tensors, dim=0):
     arrays = [_to_numpy(t) for t in tensors]
-    return _from_numpy(np.concatenate(arrays, axis=dim), tensors[0].dtype, tensors[0].device)
+    try:
+        out = np.concatenate(arrays, axis=dim)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Sizes of tensors must match except in dimension {dim}."
+        ) from exc
+    return _from_numpy(out, tensors[0].dtype, tensors[0].device)
 
 
 def concatenate(tensors, dim=0):
@@ -571,16 +584,24 @@ def concatenate(tensors, dim=0):
 
 
 def hstack(tensors):
+    if tensors[0].dim() == 0:
+        expanded = [t.reshape((1,)) for t in tensors]
+        return cat(expanded, dim=0)
     if tensors[0].dim() == 1:
         return cat(tensors, dim=0)
     return cat(tensors, dim=1)
 
 
 def vstack(tensors):
-    if tensors[0].dim() == 1:
-        expanded = [t.reshape((1, t.shape[0])) for t in tensors]
-        return cat(expanded, dim=0)
-    return cat(tensors, dim=0)
+    expanded = []
+    for t in tensors:
+        if t.dim() == 0:
+            expanded.append(t.reshape((1, 1)))
+        elif t.dim() == 1:
+            expanded.append(t.reshape((1, t.shape[0])))
+        else:
+            expanded.append(t)
+    return cat(expanded, dim=0)
 
 
 def row_stack(tensors):
@@ -591,21 +612,33 @@ def dstack(tensors):
     arrays = [_to_numpy(t) for t in tensors]
     expanded = []
     for arr in arrays:
-        if arr.ndim == 1:
+        if arr.ndim == 0:
+            expanded.append(arr.reshape(1, 1, 1))
+        elif arr.ndim == 1:
             expanded.append(arr.reshape(1, arr.shape[0], 1))
         elif arr.ndim == 2:
             expanded.append(arr.reshape(arr.shape[0], arr.shape[1], 1))
         else:
             expanded.append(arr)
-    out = np.concatenate(expanded, axis=2)
+    try:
+        out = np.concatenate(expanded, axis=2)
+    except ValueError as exc:
+        raise RuntimeError(
+            "Sizes of tensors must match except in dimension 2."
+        ) from exc
     return _from_numpy(out, tensors[0].dtype, tensors[0].device)
 
 
 def column_stack(tensors):
-    if tensors[0].dim() == 1:
-        expanded = [t.reshape((t.shape[0], 1)) for t in tensors]
-        return cat(expanded, dim=1)
-    return cat(tensors, dim=1)
+    expanded = []
+    for t in tensors:
+        if t.dim() == 0:
+            expanded.append(t.reshape((1, 1)))
+        elif t.dim() == 1:
+            expanded.append(t.reshape((t.shape[0], 1)))
+        else:
+            expanded.append(t)
+    return cat(expanded, dim=1)
 
 
 def _check_indices_layout(layout):
@@ -3052,12 +3085,79 @@ def random_(a, from_=0, to=None, generator=None):
     from ..._random import _get_cpu_rng
     rng = generator._rng if (generator is not None and hasattr(generator, '_rng') and generator._rng is not None) else _get_cpu_rng()
     arr = _to_numpy(a)
-    if to is None:
-        if np.issubdtype(arr.dtype, np.floating):
-            to = 2**24 if arr.dtype == np.float32 else 2**53
+    dtype_name = str(a.dtype).split(".")[-1]
+
+    if dtype_name == "bool":
+        min_val = 0
+        max_val = 1
+        default_high = 2
+    elif getattr(a.dtype, "is_floating_point", False):
+        min_val = -(2**63)
+        max_val = 2**63 - 1
+        if dtype_name == "float64":
+            default_high = 2**53
+        elif dtype_name == "float16":
+            default_high = 2**11
+        elif dtype_name == "bfloat16":
+            default_high = 2**8
         else:
-            to = int(np.iinfo(arr.dtype).max) + 1
-    arr[...] = rng.randint(int(from_), int(to), size=arr.shape).astype(arr.dtype)
+            default_high = 2**24
+    elif np.issubdtype(arr.dtype, np.integer):
+        info = np.iinfo(arr.dtype)
+        min_val = int(info.min)
+        max_val = int(info.max)
+        default_high = max_val + 1
+    else:
+        min_val = -(2**63)
+        max_val = 2**63 - 1
+        default_high = 2**24
+
+    from_int = int(from_)
+    single_arg_upper_bound = False
+    if to is None:
+        if from_int > 0:
+            low = 0
+            high = from_int
+            single_arg_upper_bound = True
+        else:
+            low = from_int
+            high = default_high
+    else:
+        low = from_int
+        high = int(to)
+
+    fp_limit = None
+    if dtype_name == "float64":
+        fp_limit = 2**53
+    elif dtype_name == "float32":
+        fp_limit = 2**24
+    elif dtype_name == "float16":
+        fp_limit = 2**11
+    elif dtype_name == "bfloat16":
+        fp_limit = 2**8
+
+    if high <= low:
+        raise RuntimeError(
+            f"random_ expects 'from' to be less than 'to', but got from={low} >= to={high}"
+        )
+    if low < min_val or low > max_val:
+        raise RuntimeError("from is out of bounds")
+    if high - 1 < min_val or high - 1 > max_val:
+        raise RuntimeError("to - 1 is out of bounds")
+    if fp_limit is not None and not single_arg_upper_bound:
+        import warnings
+        if low < -fp_limit:
+            warnings.warn("from is out of bounds", UserWarning, stacklevel=2)
+            low = -fp_limit
+        if high - 1 > fp_limit:
+            warnings.warn("to - 1 is out of bounds", UserWarning, stacklevel=2)
+            high = fp_limit + 1
+
+    samples = rng.randint(low, high, size=arr.shape)
+    if dtype_name == "bfloat16":
+        arr[...] = _f32_to_bf16_bits(samples.astype(np.float32))
+    else:
+        arr[...] = samples.astype(arr.dtype)
     return a
 
 

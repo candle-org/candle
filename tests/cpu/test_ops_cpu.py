@@ -712,11 +712,6 @@ def test_triu_indices_cpu():
 
 
 def test_vsplit_cpu():
-    x = torch.tensor([1.0, 2.0, 3.0, 4.0])
-    out = torch.vsplit(x, 2)
-    assert len(out) == 2
-    np.testing.assert_allclose(out[0].numpy(), np.array([1.0, 2.0]))
-    np.testing.assert_allclose(out[1].numpy(), np.array([3.0, 4.0]))
     y = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
     out = torch.vsplit(y, 2)
     assert len(out) == 2
@@ -744,8 +739,34 @@ def test_dsplit_cpu():
     np.testing.assert_allclose(out[0].numpy(), np.array([[[1.0], [3.0]]]))
     np.testing.assert_allclose(out[1].numpy(), np.array([[[2.0], [4.0]]]))
     y = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
-    with pytest.raises(ValueError):
+    with pytest.raises(RuntimeError, match=r"torch\.dsplit requires a tensor with at least 3 dimension"):
         torch.dsplit(y, 2)
+
+
+def test_hsplit_rejects_zero_dim_cpu():
+    x = torch.tensor(1.0)
+    with pytest.raises(RuntimeError, match=r"torch\.hsplit requires a tensor with at least 1 dimension"):
+        torch.hsplit(x, 3)
+    with pytest.raises(RuntimeError, match=r"torch\.hsplit requires a tensor with at least 1 dimension"):
+        torch.hsplit(x, [2, 4, 6])
+
+
+def test_hsplit_rejects_non_divisible_cpu():
+    x = torch.arange(6)
+    with pytest.raises(RuntimeError, match=r"torch\.hsplit attempted to split along dimension 0"):
+        torch.hsplit(x, 4)
+
+
+def test_vsplit_rejects_low_rank_cpu():
+    x = torch.arange(6)
+    with pytest.raises(RuntimeError, match=r"torch\.vsplit requires a tensor with at least 2 dimension"):
+        torch.vsplit(x, 2)
+
+
+def test_dsplit_rejects_low_rank_cpu():
+    x = torch.arange(6)
+    with pytest.raises(RuntimeError, match=r"torch\.dsplit requires a tensor with at least 3 dimension"):
+        torch.dsplit(x, 4)
 
 
 def test_take_cpu():
