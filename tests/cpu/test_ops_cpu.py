@@ -524,6 +524,29 @@ def test_cat_out_cpu():
     np.testing.assert_allclose(out.numpy(), expected)
 
 
+def test_cat_out_writes_into_view_storage_cpu():
+    # PyTorch parity: cat(out=view) must write through the view into its base
+    # storage rather than rebinding the view to a freshly allocated buffer.
+    y = torch.arange(0, 24, dtype=torch.float32).reshape(4, 6)
+    w = y.reshape(-1).clone()
+    a = torch.cat([w[:2], w[4:6]])
+    b = torch.cat([w[:2], w[4:6]], out=w[6:10])
+    assert b.data_ptr() == w[6:10].data_ptr()
+    np.testing.assert_allclose(b.numpy(), a.numpy())
+    np.testing.assert_allclose(w[6:10].numpy(), a.numpy())
+    np.testing.assert_allclose(w[:6].numpy(), y.reshape(-1)[:6].numpy())
+
+
+def test_cat_out_resizes_empty_out_cpu():
+    a = torch.tensor([[1.0, 2.0]])
+    b = torch.tensor([[3.0, 4.0]])
+    out = torch.empty((0,), dtype=torch.float32)
+    result = torch.cat([a, b], dim=0, out=out)
+    assert result is out
+    assert out.shape == (2, 2)
+    np.testing.assert_allclose(out.numpy(), [[1.0, 2.0], [3.0, 4.0]])
+
+
 def test_hstack_cpu():
     a = torch.tensor([1.0, 2.0])
     b = torch.tensor([3.0, 4.0])
@@ -1111,6 +1134,19 @@ def test_scalar_rmul_cpu():
     out = 0.5 * x
     expected = 0.5 * x.numpy()
     np.testing.assert_allclose(out.numpy(), expected)
+
+
+def test_scalar_radd_cpu():
+    x = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    out = 0.5 + x
+    expected = 0.5 + x.numpy()
+    np.testing.assert_allclose(out.numpy(), expected)
+
+
+def test_complex_scalar_radd_cpu():
+    x = torch.tensor([1.0 + 2.0j, 3.0 + 4.0j], dtype=torch.complex64)
+    out = (5.0 + 6.0j) + x
+    np.testing.assert_allclose(out.numpy(), [6.0 + 8.0j, 8.0 + 10.0j])
 
 
 def test_std_axis_keyword_cpu():

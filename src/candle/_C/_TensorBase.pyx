@@ -604,6 +604,7 @@ def _install_tensor_api(TensorBase):
     TensorBase.is_pinned = _tensor_api_mod.tensor_is_pinned
 
     TensorBase.__add__ = _tensor_api_mod.tensor_add
+    TensorBase.__radd__ = _tensor_api_mod.tensor_radd
     TensorBase.__sub__ = _tensor_api_mod.tensor_sub
     TensorBase.__mul__ = _tensor_api_mod.tensor_mul
     TensorBase.__matmul__ = _tensor_api_mod.tensor_matmul

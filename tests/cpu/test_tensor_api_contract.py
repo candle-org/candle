@@ -51,13 +51,9 @@ class TestDunderAdd:
         a = torch.tensor([1.0, 2.0, 3.0])
         _allclose(a + 10.0, [11.0, 12.0, 13.0])
 
-    def test_scalar_lhs_radd_not_supported(self):
-        # Current behavior: float.__add__(Tensor) falls back to NotImplemented and
-        # Tensor has no __radd__, so Python raises TypeError.
-        # This test locks that behavior; if __radd__ is added later, update it.
+    def test_scalar_lhs_radd(self):
         a = torch.tensor([1.0, 2.0, 3.0])
-        with pytest.raises(TypeError):
-            _ = 10.0 + a
+        _allclose(10.0 + a, [11.0, 12.0, 13.0])
 
     def test_does_not_modify_inputs(self):
         a = torch.tensor([1.0, 2.0])

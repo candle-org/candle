@@ -71,6 +71,31 @@ def test_logspace_rejects_negative_steps_cpu():
         torch.logspace(0.0, 1.0, -1)
 
 
+def test_linspace_infers_complex_dtype_from_complex_endpoints_cpu():
+    # PyTorch parity: complex start/end with dtype=None deduces complex64.
+    for start, end in [(1j, 2j), (0.0, 2j), (1j, 2)]:
+        assert torch.linspace(start, end, 100).dtype == torch.complex64
+
+
+def test_logspace_infers_complex_dtype_from_complex_endpoints_cpu():
+    for start, end in [(1j, 2j), (0.0, 2j), (1j, 2)]:
+        assert torch.logspace(start, end, 100).dtype == torch.complex64
+
+
+def test_linspace_rejects_complex_endpoints_with_real_dtype_cpu():
+    with pytest.raises(RuntimeError, match=r"torch.linspace\(\): inferred dtype"):
+        torch.linspace(0, 1j, 5, dtype=torch.float32)
+    with pytest.raises(RuntimeError, match=r"torch.linspace\(\): inferred dtype"):
+        torch.linspace(0j, 1, 5, dtype=torch.float32)
+    with pytest.raises(RuntimeError, match=r"torch.linspace\(\): inferred dtype"):
+        torch.linspace(0j, 1j, 5, dtype=torch.float32)
+
+
+def test_logspace_rejects_complex_endpoints_with_real_dtype_cpu():
+    with pytest.raises(RuntimeError, match=r"torch.logspace\(\): inferred dtype"):
+        torch.logspace(0, 1j, 5, dtype=torch.float32)
+
+
 def test_full_cpu():
     x = torch.full((2, 3), 1.5)
     assert x.shape == (2, 3)

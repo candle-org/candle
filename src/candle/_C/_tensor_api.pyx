@@ -2498,6 +2498,11 @@ def tensor_sub_method(self, other, *, alpha=1):
     return _functional_sub_fn(self, other, alpha=alpha)
 
 
+def tensor_radd(self, other):
+    _ensure_functional_add_sub_ref()
+    return _functional_add_fn(self, other)
+
+
 def tensor_mul_method(self, other):
     _ensure_dispatch_ref()
     return _dispatch_fn("mul", self.device.type, self, other)
