@@ -294,7 +294,11 @@ cdef class TensorImpl:
 
     @property
     def layout(self):
-        return getattr(self, "_layout", "strided")
+        existing = getattr(self, "_layout", None)
+        if existing is not None:
+            return existing
+        from candle import strided
+        return strided
 
     @layout.setter
     def layout(self, value):

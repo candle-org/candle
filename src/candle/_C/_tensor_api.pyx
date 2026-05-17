@@ -161,6 +161,28 @@ cdef inline void _ensure_grad_mode_ref():
         _is_grad_enabled_fn = is_grad_enabled
 
 
+cdef inline void _validate_as_strided_args(tuple size, tuple stride, Py_ssize_t storage_offset):
+    cdef Py_ssize_t dim
+    cdef Py_ssize_t step
+
+    if len(size) != len(stride):
+        raise RuntimeError(
+            f"mismatch in length of strides and shape: {len(stride)} != {len(size)}"
+        )
+    if storage_offset < 0:
+        raise RuntimeError(f"Tensor: invalid storage offset {storage_offset}")
+    for dim in size:
+        if dim < 0:
+            raise RuntimeError(
+                f"Storage size calculation overflowed with sizes={list(size)} and strides={list(stride)}"
+            )
+    for step in stride:
+        if step < 0:
+            raise RuntimeError(
+                f"as_strided: Negative strides are not supported at the moment, got strides: {list(stride)}"
+            )
+
+
 cdef inline void _ensure_functional_refs():
     global _add_fn, _mul_fn, _matmul_fn, _relu_fn, _neg_fn
     global _reshape_dispatch_fn, _transpose_dispatch_fn, _view_dispatch_fn
@@ -873,8 +895,11 @@ def tensor_t(self):
 
 def tensor_as_strided(self, size, stride, storage_offset=None):
     cdef object offset = storage_offset if storage_offset is not None else self.offset
+    size = tuple(int(s) for s in size)
+    stride = tuple(int(s) for s in stride)
+    _validate_as_strided_args(size, stride, int(offset))
     _ensure_view_factory_ref()
-    return _cy_make_view_tensor_fn(self, self._storage, tuple(size), tuple(stride), offset)
+    return _cy_make_view_tensor_fn(self, self._storage, size, stride, offset)
 
 
 def tensor_size(self, dim=None):
@@ -1396,9 +1421,17 @@ def tensor_unsqueeze_(self, dim):
 
 
 def tensor_as_strided_(self, size, stride, storage_offset=None):
+    cdef object offset
+    cdef tuple size_t
+    cdef tuple stride_t
+
     _ensure_dispatch_ref()
     self._check_inplace()
-    return _dispatch_fn("as_strided_", self.device.type, self, size, stride, storage_offset)
+    offset = storage_offset if storage_offset is not None else self.offset
+    size_t = tuple(int(s) for s in size)
+    stride_t = tuple(int(s) for s in stride)
+    _validate_as_strided_args(size_t, stride_t, int(offset))
+    return _dispatch_fn("as_strided_", self.device.type, self, size_t, stride_t, storage_offset)
 
 
 def tensor_swapdims_(self, dim0, dim1):
@@ -2183,13 +2216,22 @@ def tensor_hsplit(self, split_size_or_sections):
     if self.requires_grad:
         return _dispatch_fn("hsplit", self.device.type, self, split_size_or_sections)
 
+    if self.dim() < 1:
+        raise RuntimeError(
+            f"torch.hsplit requires a tensor with at least 1 dimension, but got a tensor with {self.dim()} dimensions!"
+        )
     dim = 0 if self.dim() == 1 else 1
     if isinstance(split_size_or_sections, int):
         sections = split_size_or_sections
         if sections <= 0:
-            raise ValueError("sections must be > 0")
+            raise RuntimeError("torch.hsplit sections must be > 0")
         dim_size = self.shape[dim]
         size, extra = divmod(dim_size, sections)
+        if extra != 0:
+            raise RuntimeError(
+                f"torch.hsplit attempted to split along dimension {dim}, "
+                f"but the size of the dimension {dim_size} is not divisible by the split_size {sections}!"
+            )
         sizes = [size + 1] * extra + [size] * (sections - extra)
         return tensor_split_method(self, tuple(sizes), dim)
     return tensor_split_method(self, split_size_or_sections, dim)
@@ -2207,14 +2249,21 @@ def tensor_dsplit(self, split_size_or_sections):
         return _dispatch_fn("dsplit", self.device.type, self, split_size_or_sections)
 
     if self.dim() < 3:
-        raise ValueError("dsplit expects input with at least 3 dimensions")
+        raise RuntimeError(
+            f"torch.dsplit requires a tensor with at least 3 dimension, but got a tensor with {self.dim()} dimensions!"
+        )
 
     if isinstance(split_size_or_sections, int):
         sections = split_size_or_sections
         if sections <= 0:
-            raise ValueError("sections must be > 0")
+            raise RuntimeError("torch.dsplit sections must be > 0")
         dim_size = self.shape[2]
         size, extra = divmod(dim_size, sections)
+        if extra != 0:
+            raise RuntimeError(
+                f"torch.dsplit attempted to split along dimension 2, "
+                f"but the size of the dimension {dim_size} is not divisible by the split_size {sections}!"
+            )
         sizes = [size + 1] * extra + [size] * (sections - extra)
         return tensor_split_method(self, tuple(sizes), 2)
     return tensor_split_method(self, split_size_or_sections, 2)
@@ -3147,13 +3196,29 @@ def tensor_atan_method(self):
 
 
 def tensor_as_strided_copy_method(self, size, stride, storage_offset=None):
+    cdef object offset
+    cdef tuple size_t
+    cdef tuple stride_t
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("as_strided_copy", self.device.type, self, size, stride, storage_offset)
+    size_t = tuple(int(s) for s in size)
+    stride_t = tuple(int(s) for s in stride)
+    offset = storage_offset if storage_offset is not None else self.offset
+    _validate_as_strided_args(size_t, stride_t, int(offset))
+    return _dispatch_fn("as_strided_copy", self.device.type, self, size_t, stride_t, storage_offset)
 
 
 def tensor_as_strided_scatter_method(self, src, size, stride, storage_offset=None):
+    cdef object offset
+    cdef tuple size_t
+    cdef tuple stride_t
+
     _ensure_dispatch_ref()
-    return _dispatch_fn("as_strided_scatter", self.device.type, self, src, size, stride, storage_offset)
+    size_t = tuple(int(s) for s in size)
+    stride_t = tuple(int(s) for s in stride)
+    offset = storage_offset if storage_offset is not None else self.offset
+    _validate_as_strided_args(size_t, stride_t, int(offset))
+    return _dispatch_fn("as_strided_scatter", self.device.type, self, src, size_t, stride_t, storage_offset)
 
 
 def tensor_multinomial_method(self, num_samples, replacement=False, *, generator=None):

@@ -1556,6 +1556,26 @@ def chunk(a, chunks, dim=0):
     return split(a, chunk_size, d)
 
 
+def _split_sizes_from_indices(dim_size, indices):
+    cdef list sizes = []
+    cdef object raw_index
+    cdef object index
+    cdef object start = 0
+
+    for raw_index in indices:
+        index = int(raw_index)
+        if index < 0:
+            index += dim_size
+        if index < 0:
+            index = 0
+        elif index > dim_size:
+            index = dim_size
+        sizes.append(index - start if index >= start else 0)
+        start = index
+    sizes.append(dim_size - start if dim_size >= start else 0)
+    return sizes
+
+
 def vsplit(a, split_size_or_sections):
     cdef object sizes
     cdef object sections
@@ -1569,15 +1589,25 @@ def vsplit(a, split_size_or_sections):
     if not _is_base_tensor(a):
         return _dispatch_fn("vsplit", a.device.type, a, split_size_or_sections)
 
+    if a.dim() < 2:
+        raise RuntimeError(
+            f"torch.vsplit requires a tensor with at least 2 dimension, but got a tensor with {a.dim()} dimensions!"
+        )
     if isinstance(split_size_or_sections, int):
         sections = split_size_or_sections
         if sections <= 0:
-            raise ValueError("sections must be > 0")
+            raise RuntimeError("torch.vsplit sections must be > 0")
         dim_size = a.shape[0]
         size, extra = divmod(dim_size, sections)
+        if extra != 0:
+            raise RuntimeError(
+                f"torch.vsplit attempted to split along dimension 0, "
+                f"but the size of the dimension {dim_size} is not divisible by the split_size {sections}!"
+            )
         sizes = [size + 1] * extra + [size] * (sections - extra)
         return split(a, tuple(sizes), 0)
-    return split(a, split_size_or_sections, 0)
+    sizes = _split_sizes_from_indices(a.shape[0], split_size_or_sections)
+    return split(a, tuple(sizes), 0)
 
 
 def hsplit(a, split_size_or_sections):
@@ -1594,16 +1624,26 @@ def hsplit(a, split_size_or_sections):
     if not _is_base_tensor(a):
         return _dispatch_fn("hsplit", a.device.type, a, split_size_or_sections)
 
+    if a.dim() < 1:
+        raise RuntimeError(
+            f"torch.hsplit requires a tensor with at least 1 dimension, but got a tensor with {a.dim()} dimensions!"
+        )
     dim = 0 if a.dim() == 1 else 1
     if isinstance(split_size_or_sections, int):
         sections = split_size_or_sections
         if sections <= 0:
-            raise ValueError("sections must be > 0")
+            raise RuntimeError("torch.hsplit sections must be > 0")
         dim_size = a.shape[dim]
         size, extra = divmod(dim_size, sections)
+        if extra != 0:
+            raise RuntimeError(
+                f"torch.hsplit attempted to split along dimension {dim}, "
+                f"but the size of the dimension {dim_size} is not divisible by the split_size {sections}!"
+            )
         sizes = [size + 1] * extra + [size] * (sections - extra)
         return split(a, tuple(sizes), dim)
-    return split(a, split_size_or_sections, dim)
+    sizes = _split_sizes_from_indices(a.shape[dim], split_size_or_sections)
+    return split(a, tuple(sizes), dim)
 
 
 def dsplit(a, split_size_or_sections):
@@ -1620,17 +1660,25 @@ def dsplit(a, split_size_or_sections):
         return _dispatch_fn("dsplit", a.device.type, a, split_size_or_sections)
 
     if a.dim() < 3:
-        raise ValueError("dsplit expects input with at least 3 dimensions")
+        raise RuntimeError(
+            f"torch.dsplit requires a tensor with at least 3 dimension, but got a tensor with {a.dim()} dimensions!"
+        )
 
     if isinstance(split_size_or_sections, int):
         sections = split_size_or_sections
         if sections <= 0:
-            raise ValueError("sections must be > 0")
+            raise RuntimeError("torch.dsplit sections must be > 0")
         dim_size = a.shape[2]
         size, extra = divmod(dim_size, sections)
+        if extra != 0:
+            raise RuntimeError(
+                f"torch.dsplit attempted to split along dimension 2, "
+                f"but the size of the dimension {dim_size} is not divisible by the split_size {sections}!"
+            )
         sizes = [size + 1] * extra + [size] * (sections - extra)
         return split(a, tuple(sizes), 2)
-    return split(a, split_size_or_sections, 2)
+    sizes = _split_sizes_from_indices(a.shape[2], split_size_or_sections)
+    return split(a, tuple(sizes), 2)
 
 
 def view(*args, **kwargs):

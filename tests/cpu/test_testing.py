@@ -10,6 +10,33 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 
 import candle as torch
+from candle.testing._internal.common_utils import TestCase as TorchTestCase
+
+
+
+
+class TestInternalCommonUtilsTestCase:
+    """Tests for torch.testing._internal.common_utils.TestCase."""
+
+    def test_assert_equal_compares_tuple_and_list_elementwise(self):
+        case = TorchTestCase()
+        case.assertEqual(
+            (torch.tensor([1.0, 2.0]), torch.tensor([3.0, 4.0])),
+            [np.array([1.0, 2.0], dtype=np.float32), np.array([3.0, 4.0], dtype=np.float32)],
+        )
+
+    def test_assert_equal_compares_tensor_and_list(self):
+        case = TorchTestCase()
+        case.assertEqual(torch.tensor([0.6, 0.7, 0.8]), [0.6, 0.7, 0.8])
+
+    def test_assert_equal_compares_tensor_scalar_and_python_scalar(self):
+        case = TorchTestCase()
+        case.assertEqual(torch.tensor(9.7), 9.7)
+
+    def test_assert_equal_checks_sequence_length(self):
+        case = TorchTestCase()
+        with pytest.raises(AssertionError):
+            case.assertEqual((torch.tensor([1.0]),), [np.array([1.0]), np.array([2.0])])
 
 
 class TestAssertClose:

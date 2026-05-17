@@ -3,6 +3,8 @@ import numpy as np
 
 from candle._dtype import float32, int64
 from candle._dtype import bool as bool_dtype
+
+cdef bint _frombuffer_writable_warned = False
 cdef object _get_default_dtype():
     from candle import get_default_dtype
     return get_default_dtype()
@@ -84,6 +86,51 @@ cdef bint _device_matches(object tensor, object target_device):
     return tensor.device.index == target.index
 
 
+cdef _validate_layout(object layout_arg):
+    if layout_arg is None:
+        return
+    from candle import strided
+    if layout_arg is not strided:
+        raise TypeError(
+            f"candle currently only supports torch.strided layout, got {layout_arg!r}"
+        )
+
+
+cdef _check_no_internal_overlap(object out):
+    cdef object shape = tuple(out.shape)
+    cdef object stride = tuple(out.stride())
+    for size_i, stride_i in zip(shape, stride):
+        if size_i > 1 and stride_i == 0:
+            raise RuntimeError(
+                "unsupported operation: more than one element of the written-to tensor "
+                "refers to a single memory location. Please clone() the tensor before "
+                "performing the operation."
+            )
+
+
+cdef object _finalize_out(object value, object out):
+    if out is None:
+        return value
+    _check_no_internal_overlap(out)
+    if tuple(out.shape) != tuple(value.shape):
+        if int(out.numel()) != 0 and int(out.numel()) == int(value.numel()):
+            out.copy_(value.reshape(tuple(out.shape)))
+            return out
+        if int(out.numel()) != 0:
+            import warnings
+            warnings.warn(
+                "The out tensor will be resized to match the shape of the result. "
+                "This behavior is deprecated, and in a future PyTorch release outputs will not "
+                "be resized unless they have zero elements.",
+                UserWarning,
+                stacklevel=2,
+            )
+        out.cy_set_data_runtime_truth_from(value)
+        return out
+    out.copy_(value)
+    return out
+
+
 def tensor(data, *, dtype=None, device=None, requires_grad=False):
     from candle._functional import tensor as tensor_dispatch
 
@@ -94,146 +141,244 @@ def tensor(data, *, dtype=None, device=None, requires_grad=False):
     return tensor_dispatch(data, dtype=dtype, device=device, requires_grad=requires_grad)
 
 
-def zeros(*shape, dtype=None, device=None, memory_format=None, requires_grad=False):
+def _resolve_size_kwarg(tuple shape, object size):
+    if size is None:
+        return shape
+    if len(shape) != 0:
+        raise TypeError("received an invalid combination of arguments")
+    return (size,)
+
+
+def zeros(*shape, dtype=None, device=None, memory_format=None, layout=None, out=None, requires_grad=False, size=None):
     from candle._functional import zeros as zeros_dispatch
 
+    shape = _resolve_size_kwarg(shape, size)
+    _validate_layout(layout)
     if dtype is None:
-        dtype = _get_default_dtype()
-    return _apply_requires_grad(
-        zeros_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format),
-        requires_grad,
-    )
+        dtype = _get_default_dtype() if out is None else out.dtype
+    value = zeros_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
+    if out is not None:
+        return _apply_requires_grad(_finalize_out(value, out), requires_grad)
+    return _apply_requires_grad(value, requires_grad)
 
 
-def ones(*shape, dtype=None, device=None, memory_format=None, requires_grad=False):
+def ones(*shape, dtype=None, device=None, memory_format=None, layout=None, out=None, requires_grad=False, size=None):
     from candle._functional import ones as ones_dispatch
 
+    shape = _resolve_size_kwarg(shape, size)
+    _validate_layout(layout)
     if dtype is None:
-        dtype = _get_default_dtype()
-    return _apply_requires_grad(
-        ones_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format),
-        requires_grad,
-    )
+        dtype = _get_default_dtype() if out is None else out.dtype
+    value = ones_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
+    if out is not None:
+        return _apply_requires_grad(_finalize_out(value, out), requires_grad)
+    return _apply_requires_grad(value, requires_grad)
 
 
-def empty(*shape, dtype=None, device=None, memory_format=None, requires_grad=False):
+def empty(*shape, dtype=None, device=None, memory_format=None, layout=None, out=None, requires_grad=False, size=None):
     from candle._functional import empty as empty_dispatch
 
+    shape = _resolve_size_kwarg(shape, size)
+    _validate_layout(layout)
+    if dtype is None:
+        dtype = _get_default_dtype() if out is None else out.dtype
+    value = empty_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
+    if out is not None:
+        return _apply_requires_grad(_finalize_out(value, out), requires_grad)
+    return _apply_requires_grad(value, requires_grad)
+
+
+def empty_strided(size, stride, *, dtype=None, device=None, layout=None, requires_grad=False, pin_memory=False):
+    cdef tuple size_t
+    cdef tuple stride_t
+    cdef Py_ssize_t required = 0
+    cdef Py_ssize_t max_index = 0
+    cdef Py_ssize_t dim
+    cdef Py_ssize_t step
+    cdef object base
+
+    _validate_layout(layout)
     if dtype is None:
         dtype = _get_default_dtype()
-    return _apply_requires_grad(
-        empty_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format),
-        requires_grad,
-    )
+    if pin_memory:
+        raise RuntimeError("Need to provide pin_memory allocator to use pin memory.")
+    size_t = tuple(int(s) for s in size)
+    stride_t = tuple(int(s) for s in stride)
+    if len(size_t) != len(stride_t):
+        raise RuntimeError("mismatch in length of strides and shape")
+    if size_t and all(dim > 0 for dim in size_t):
+        for dim, step in zip(size_t, stride_t):
+            max_index += (dim - 1) * step
+        required = max_index + 1
+    base = empty((required,), dtype=dtype, device=device, requires_grad=requires_grad)
+    return base.as_strided(size_t, stride_t)
 
 
-def arange(start, end=None, step=1, dtype=None, device=None, requires_grad=False):
+def _format_range_endpoint(object value):
+    if value == float("inf"):
+        return "inf"
+    if value == float("-inf"):
+        return "-inf"
+    if value != value:
+        return "nan"
+    return str(value)
+
+
+def _validate_arange_args(object start, object end, object step):
+    cdef object actual_start = 0 if end is None else start
+    cdef object actual_end = start if end is None else end
+    import math
+
+    if step == 0:
+        raise RuntimeError("step must be nonzero")
+    if isinstance(actual_start, (int, float)) and isinstance(actual_end, (int, float)) and isinstance(step, (int, float)):
+        if not math.isfinite(float(actual_start)) or not math.isfinite(float(actual_end)):
+            raise RuntimeError(
+                f"unsupported range: {_format_range_endpoint(actual_start)} -> {_format_range_endpoint(actual_end)}"
+            )
+        if math.isfinite(float(step)) and step != 0:
+            span = (float(actual_end) - float(actual_start)) / float(step)
+            if span > 9223372036854775807:
+                raise RuntimeError("overflow when unpacking long")
+
+
+def arange(start, end=None, step=1, dtype=None, device=None, layout=None, out=None, requires_grad=False):
     from candle._functional import arange as arange_dispatch
 
     cdef list args
 
+    _validate_arange_args(start, end, step)
+    _validate_layout(layout)
     if dtype is None:
-        args = [start] + ([end] if end is not None else []) + [step]
-        if all(isinstance(a, int) for a in args):
-            dtype = int64
+        if out is not None:
+            dtype = out.dtype
         else:
-            dtype = _get_default_dtype()
-    return _apply_requires_grad(
-        arange_dispatch(start, end=end, step=step, dtype=dtype, device=device),
-        requires_grad,
-    )
+            args = [start] + ([end] if end is not None else []) + [step]
+            if all(isinstance(a, int) for a in args):
+                dtype = int64
+            else:
+                dtype = _get_default_dtype()
+    value = arange_dispatch(start, end=end, step=step, dtype=dtype, device=device)
+    if out is not None:
+        return _apply_requires_grad(_finalize_out(value, out), requires_grad)
+    return _apply_requires_grad(value, requires_grad)
 
 
-def linspace(start, end, steps, dtype=None, device=None, requires_grad=False):
+def linspace(start, end, steps, dtype=None, device=None, layout=None, out=None, requires_grad=False):
     from candle._functional import linspace as linspace_dispatch
 
+    _validate_layout(layout)
+    if int(steps) < 0:
+        raise RuntimeError(f"number of steps must be non-negative, but got steps={int(steps)}")
     if dtype is None:
-        dtype = _get_default_dtype()
-    return _apply_requires_grad(
-        linspace_dispatch(start, end, steps, dtype=dtype, device=device),
-        requires_grad,
-    )
+        dtype = _get_default_dtype() if out is None else out.dtype
+    value = linspace_dispatch(start, end, steps, dtype=dtype, device=device)
+    if out is not None:
+        return _apply_requires_grad(_finalize_out(value, out), requires_grad)
+    return _apply_requires_grad(value, requires_grad)
 
 
-def full(*args, dtype=None, device=None, requires_grad=False, memory_format=None):
+def full(*args, dtype=None, device=None, requires_grad=False, memory_format=None, layout=None, out=None):
     from candle._functional import full as full_dispatch
 
+    _validate_layout(layout)
     if dtype is None:
-        dtype = _get_default_dtype()
-    return _apply_requires_grad(
-        full_dispatch(*args, dtype=dtype, device=device, memory_format=memory_format),
-        requires_grad,
-    )
+        dtype = _get_default_dtype() if out is None else out.dtype
+    value = full_dispatch(*args, dtype=dtype, device=device, memory_format=memory_format)
+    if out is not None:
+        return _apply_requires_grad(_finalize_out(value, out), requires_grad)
+    return _apply_requires_grad(value, requires_grad)
 
 
-def logspace(start, end, steps, dtype=None, device=None, requires_grad=False):
+def logspace(start, end, steps, base=10.0, dtype=None, device=None, layout=None, out=None, requires_grad=False):
     from candle._functional import logspace as logspace_dispatch
 
+    _validate_layout(layout)
+    if int(steps) < 0:
+        raise RuntimeError(f"number of steps must be non-negative, but got steps={int(steps)}")
     if dtype is None:
-        dtype = _get_default_dtype()
-    return _apply_requires_grad(
-        logspace_dispatch(start, end, steps, dtype=dtype, device=device),
-        requires_grad,
-    )
+        dtype = _get_default_dtype() if out is None else out.dtype
+    if base != 10.0:
+        # Fallback: compute via linspace + base ** x to support arbitrary base.
+        from candle._functional import linspace as linspace_dispatch
+        exponents = linspace_dispatch(start, end, steps, dtype=dtype, device=device)
+        value = base ** exponents
+    else:
+        value = logspace_dispatch(start, end, steps, dtype=dtype, device=device)
+    if out is not None:
+        return _apply_requires_grad(_finalize_out(value, out), requires_grad)
+    return _apply_requires_grad(value, requires_grad)
 
 
-def eye(n, m=None, dtype=None, device=None, out=None, requires_grad=False):
+def eye(n, m=None, dtype=None, device=None, layout=None, out=None, requires_grad=False):
     from candle._functional import eye as eye_dispatch
 
+    _validate_layout(layout)
     if dtype is None:
-        dtype = _get_default_dtype()
-    return _apply_requires_grad(
-        eye_dispatch(n, m, dtype=dtype, device=device, out=out),
-        requires_grad,
-    )
+        dtype = _get_default_dtype() if out is None else out.dtype
+    value = eye_dispatch(n, m, dtype=dtype, device=device, out=None)
+    if out is not None:
+        return _apply_requires_grad(_finalize_out(value, out), requires_grad)
+    return _apply_requires_grad(value, requires_grad)
 
 
-def range(start, end, step=1, dtype=None, device=None):
+def range(start, end, step=1, dtype=None, device=None, out=None):
     from candle._functional import range as range_dispatch
 
     if dtype is None:
-        dtype = _get_default_dtype()
-    return range_dispatch(start, end, step=step, dtype=dtype, device=device)
+        dtype = _get_default_dtype() if out is None else out.dtype
+    value = range_dispatch(start, end, step=step, dtype=dtype, device=device)
+    return _finalize_out(value, out)
 
 
-def randn(*shape, dtype=None, device=None, memory_format=None, generator=None, requires_grad=False):
+def randn(*shape, dtype=None, device=None, memory_format=None, generator=None, layout=None, out=None, requires_grad=False):
     from candle._functional import randn as randn_dispatch
 
+    _validate_layout(layout)
     if dtype is None:
-        dtype = _get_default_dtype()
-    return _apply_requires_grad(
-        randn_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format, generator=generator),
-        requires_grad,
-    )
+        dtype = _get_default_dtype() if out is None else out.dtype
+    value = randn_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format, generator=generator)
+    if out is not None:
+        return _apply_requires_grad(_finalize_out(value, out), requires_grad)
+    return _apply_requires_grad(value, requires_grad)
 
 
-def rand(*shape, dtype=None, device=None, memory_format=None, generator=None, requires_grad=False):
+def rand(*shape, dtype=None, device=None, memory_format=None, generator=None, layout=None, out=None, requires_grad=False):
     from candle._functional import rand as rand_dispatch
 
+    _validate_layout(layout)
     if dtype is None:
-        dtype = _get_default_dtype()
-    return _apply_requires_grad(
-        rand_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format, generator=generator),
-        requires_grad,
-    )
+        dtype = _get_default_dtype() if out is None else out.dtype
+    value = rand_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format, generator=generator)
+    if out is not None:
+        return _apply_requires_grad(_finalize_out(value, out), requires_grad)
+    return _apply_requires_grad(value, requires_grad)
 
 
-def randint(low, high=None, size=None, *, dtype=None, device=None, generator=None, memory_format=None):
+def randint(low, high=None, size=None, *, dtype=None, device=None, generator=None, memory_format=None, layout=None, out=None):
     from candle._functional import randint as randint_dispatch
 
+    _validate_layout(layout)
     if size is None and isinstance(high, (tuple, list)):
         size = high
         high = None
-    return randint_dispatch(
+    if dtype is None and out is not None:
+        dtype = out.dtype
+    value = randint_dispatch(
         low, high=high, size=size, dtype=dtype, device=device,
         generator=generator, memory_format=memory_format,
     )
+    return _finalize_out(value, out)
 
 
-def randperm(n, *, dtype=None, device=None, generator=None):
+def randperm(n, *, dtype=None, device=None, generator=None, layout=None, out=None):
     from candle._functional import randperm as randperm_dispatch
 
-    return randperm_dispatch(n, dtype=dtype, device=device, generator=generator)
+    _validate_layout(layout)
+    if dtype is None and out is not None:
+        dtype = out.dtype
+    value = randperm_dispatch(n, dtype=dtype, device=device, generator=generator)
+    return _finalize_out(value, out)
 
 
 def from_numpy(ndarray):
@@ -257,6 +402,25 @@ def frombuffer(buffer, *, dtype, count=-1, offset=0, requires_grad=False):
         view = memoryview(buffer)
     except TypeError as exc:
         raise ValueError("object does not implement Python buffer protocol.") from exc
+
+    try:
+        readonly = bool(view.readonly)
+    except AttributeError:
+        readonly = False
+    global _frombuffer_writable_warned
+    if readonly:
+        from candle import is_warn_always_enabled
+        if is_warn_always_enabled() or not _frombuffer_writable_warned:
+            import warnings
+            warnings.warn(
+                "The given buffer is not writable, and PyTorch does not support non-writable tensors. "
+                "This means you can write to the underlying (supposedly non-writable) buffer using the tensor. "
+                "You may want to copy the buffer to protect its data or make it writable before converting it to a tensor. "
+                "This type of warning will be suppressed for the rest of this program.",
+                UserWarning,
+                stacklevel=2,
+            )
+            _frombuffer_writable_warned = True
 
     byte_len = int(view.nbytes)
     itemsize = int(np.dtype(np_dtype).itemsize)
@@ -356,6 +520,8 @@ def asarray(obj, *, dtype=None, device=None, copy=None, requires_grad=False):
                 raise ValueError(f"can't alias tensor from device '{tensor_obj.device}' to '{dev}'.")
             if wrong_dtype:
                 raise ValueError(f"can't alias tensor with dtype '{tensor_obj.dtype}' into dtype '{dtype}'.")
+        if tensor_obj.requires_grad != bool(requires_grad):
+            tensor_obj.requires_grad_(bool(requires_grad))
         return _apply_requires_grad(tensor_obj, requires_grad)
 
     if force_alias:

@@ -1,3 +1,5 @@
+import pytest
+
 import candle as torch
 from candle._tensor import Tensor
 
@@ -270,6 +272,24 @@ def test_toplevel_as_strided_bypasses_python_common_view_backend(monkeypatch):
     assert x.tolist() == [[1, 2, 3], [4, 5, 6]]
     x._version_counter.bump()
     assert y._version_counter.value == x._version_counter.value
+
+
+def test_toplevel_as_strided_rejects_negative_stride_cpu():
+    x = torch.arange(6)
+    with pytest.raises(RuntimeError, match="Negative strides are not supported"):
+        torch.as_strided(x, (2, 3), (-1, 1), 0)
+
+
+def test_toplevel_as_strided_rejects_negative_size_cpu():
+    x = torch.arange(6)
+    with pytest.raises(RuntimeError, match="Storage size calculation overflowed"):
+        torch.as_strided(x, (-1,), (1,), 0)
+
+
+def test_toplevel_as_strided_rejects_negative_storage_offset_cpu():
+    x = torch.arange(6)
+    with pytest.raises(RuntimeError, match="invalid storage offset -1"):
+        torch.as_strided(x, (2,), (1,), -1)
 
 
 

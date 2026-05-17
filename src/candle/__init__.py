@@ -16,6 +16,7 @@ from ._dtype import (
     # info classes
     finfo, iinfo,
 )
+chalf = complex32
 from ._dtype import float as float  # noqa: F811
 from ._dtype import int as int  # noqa: F811
 from ._dtype import DType as dtype  # torch.dtype compatibility
@@ -104,6 +105,18 @@ def get_default_dtype():
     return _DEFAULT_DTYPE
 
 
+_WARN_ALWAYS = False
+
+def set_warn_always(enabled):
+    """Force WARN_ONCE-style warnings to fire every time when True."""
+    global _WARN_ALWAYS
+    _WARN_ALWAYS = _builtins.bool(enabled)
+
+
+def is_warn_always_enabled():
+    return _WARN_ALWAYS
+
+
 # Vitals (minimal compatibility)
 def vitals_enabled():
     return os.environ.get("TORCH_VITAL", "").upper() == "ON"
@@ -146,7 +159,7 @@ BoolTensor = Tensor
 ComplexFloatTensor = Tensor
 ComplexDoubleTensor = Tensor
 Size = tuple
-from ._creation import tensor, zeros, ones, empty, arange, linspace, full, logspace, eye, range, randn, rand, randint, randperm, from_numpy, frombuffer, as_tensor, asarray, normal
+from ._creation import tensor, zeros, ones, empty, empty_strided, arange, linspace, full, logspace, eye, range, randn, rand, randint, randperm, from_numpy, frombuffer, as_tensor, asarray, normal
 from ._functional import zeros_like
 from ._functional import ones_like, empty_like, full_like, randn_like, rand_like, randint_like
 from .storage import UntypedStorage, TypedStorage
@@ -196,6 +209,7 @@ from ._functional import nansum, nanmean, det, dist, matrix_power, argwhere
 # Category C1: Pure-Python functions
 from ._functional import meshgrid, atleast_1d, atleast_2d, atleast_3d
 from ._functional import broadcast_tensors, broadcast_shapes
+from ._functional import vander
 from ._functional import complex, polar
 # Category C2: Dispatch-based functions
 from ._functional import diff, bincount, cdist, aminmax
@@ -207,7 +221,7 @@ from ._functional import is_tensor, is_floating_point, is_complex, numel, square
 from ._functional import clone, detach, contiguous
 from ._functional import index_add, index_copy, index_fill, scatter_add
 from ._functional import tensor_split, split_with_sizes
-from ._functional import hann_window, hamming_window, bartlett_window, blackman_window
+from ._functional import hann_window, hamming_window, bartlett_window, blackman_window, kaiser_window
 # Aliases matching torch top-level names
 absolute = abs
 arccos = acos
@@ -1028,29 +1042,6 @@ __all__ = [
     "sparse_bsr",
     "sparse_bsc",
 ]
-
-
-strided = "strided"
-
-
-def sparse_coo(*args, **kwargs):  # noqa: ARG001
-    raise NotImplementedError("sparse_coo is not implemented in candle")
-
-
-def sparse_csr(*args, **kwargs):  # noqa: ARG001
-    raise NotImplementedError("sparse_csr is not implemented in candle")
-
-
-def sparse_csc(*args, **kwargs):  # noqa: ARG001
-    raise NotImplementedError("sparse_csc is not implemented in candle")
-
-
-def sparse_bsr(*args, **kwargs):  # noqa: ARG001
-    raise NotImplementedError("sparse_bsr is not implemented in candle")
-
-
-def sparse_bsc(*args, **kwargs):  # noqa: ARG001
-    raise NotImplementedError("sparse_bsc is not implemented in candle")
 
 
 def sparse_coo_tensor(indices, values, size=None, *, dtype=None, device=None, requires_grad=False):

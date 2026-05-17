@@ -790,7 +790,16 @@ def concat(tensors, dim=0, out=None):
     return cat(tensors, dim=dim, out=out)
 
 
+def _check_stack_tensors_arg(name, tensors):
+    from ._tensor import Tensor
+    if isinstance(tensors, Tensor):
+        raise TypeError(
+            f"{name}(): argument 'tensors' (position 1) must be tuple of Tensors, not Tensor"
+        )
+
+
 def hstack(tensors, out=None):
+    _check_stack_tensors_arg("hstack", tensors)
     result = dispatch("hstack", tensors[0].device.type, tensors)
     if out is not None:
         out._storage = result.storage()
@@ -804,6 +813,7 @@ def hstack(tensors, out=None):
 
 
 def vstack(tensors, out=None):
+    _check_stack_tensors_arg("vstack", tensors)
     result = dispatch("vstack", tensors[0].device.type, tensors)
     if out is not None:
         out._storage = result.storage()
@@ -817,6 +827,7 @@ def vstack(tensors, out=None):
 
 
 def column_stack(tensors, out=None):
+    _check_stack_tensors_arg("column_stack", tensors)
     result = dispatch("column_stack", tensors[0].device.type, tensors)
     if out is not None:
         out._storage = result.storage()
@@ -836,10 +847,12 @@ def concatenate(tensors, dim=0, axis=None):
 
 
 def row_stack(tensors):
+    _check_stack_tensors_arg("row_stack", tensors)
     return dispatch("row_stack", tensors[0].device.type, tensors)
 
 
 def dstack(tensors):
+    _check_stack_tensors_arg("dstack", tensors)
     return dispatch("dstack", tensors[0].device.type, tensors)
 
 
@@ -1767,24 +1780,103 @@ def broadcast_tensors(*tensors):
     return [t.expand(*target) for t in tensors]
 
 
-def complex(real, imag):
+def vander(x, N=None, increasing=False):
     import numpy as _np
+    if x.dim() != 1:
+        raise RuntimeError("x must be a one-dimensional tensor.")
+    if N is not None and N < 0:
+        raise RuntimeError("N must be non-negative.")
+    arr = x.numpy()
+    result = _np.vander(arr, N, increasing=increasing)
+    from ._creation import from_numpy
+    return from_numpy(result).to(device=x.device)
+
+
+def _complex_result_dtype(real_dtype):
+    from ._dtype import float16, float32, float64, complex32, complex64, complex128
+    if real_dtype == float16:
+        return complex32
+    if real_dtype == float32:
+        return complex64
+    if real_dtype == float64:
+        return complex128
+    return None
+
+
+def _torch_scalar_type_name(dtype):
+    names = {
+        "bool": "Bool",
+        "uint8": "Byte",
+        "int8": "Char",
+        "int16": "Short",
+        "int32": "Int",
+        "int64": "Long",
+        "float16": "Half",
+        "float32": "Float",
+        "float64": "Double",
+        "bfloat16": "BFloat16",
+        "complex32": "ComplexHalf",
+        "complex64": "ComplexFloat",
+        "complex128": "ComplexDouble",
+    }
+    return names.get(getattr(dtype, "name", str(dtype)), str(dtype))
+
+
+def _validate_complex_inputs(real, imag, out):
+    result_dtype = _complex_result_dtype(real.dtype)
+    if result_dtype is None or _complex_result_dtype(imag.dtype) is None:
+        raise RuntimeError(
+            "Expected both inputs to be Half, Float or Double tensors but got "
+            f"{_torch_scalar_type_name(real.dtype)} and {_torch_scalar_type_name(imag.dtype)}"
+        )
+    if real.dtype != imag.dtype:
+        raise RuntimeError(
+            f"Expected object of scalar type {_torch_scalar_type_name(real.dtype)} but got scalar type "
+            f"{_torch_scalar_type_name(imag.dtype)} for second argument"
+        )
+    if out is not None and out.dtype != result_dtype:
+        raise RuntimeError(
+            f"Expected object of scalar type {_torch_scalar_type_name(result_dtype)} but got scalar type "
+            f"{_torch_scalar_type_name(out.dtype)} for argument 'out'"
+        )
+    return result_dtype
+
+
+def complex(real, imag, *, out=None):
+    import numpy as _np
+    result_dtype = _validate_complex_inputs(real, imag, out)
     r = real.numpy() if hasattr(real, 'numpy') else _np.asarray(real)
     i = imag.numpy() if hasattr(imag, 'numpy') else _np.asarray(imag)
-    c = r.astype(_np.float64) + 1j * i.astype(_np.float64)
-    from ._dtype import complex128 as _cdouble
+    np_dtype = _np.float32 if result_dtype.name in ("complex32", "complex64") else _np.float64
+    c = r.astype(np_dtype) + 1j * i.astype(np_dtype)
     dev = _as_device(real.device if hasattr(real, 'device') else None)
-    return dispatch("tensor", dev, c.tolist(), dtype=_cdouble)
+    value = dispatch("tensor", dev, c.tolist(), dtype=result_dtype)
+    if out is not None:
+        if tuple(out.shape) != tuple(value.shape):
+            out.cy_set_data_runtime_truth_from(value)
+            return out
+        out.copy_(value)
+        return out
+    return value
 
 
-def polar(abs, angle):
+def polar(abs, angle, *, out=None):
     import numpy as _np
+    result_dtype = _validate_complex_inputs(abs, angle, out)
     a = abs.numpy() if hasattr(abs, 'numpy') else _np.asarray(abs)
     ang = angle.numpy() if hasattr(angle, 'numpy') else _np.asarray(angle)
-    c = a * _np.exp(1j * ang)
-    from ._dtype import complex128 as _cdouble
+    np_dtype = _np.float32 if result_dtype.name in ("complex32", "complex64") else _np.float64
+    c = a.astype(np_dtype) * _np.exp(1j * ang.astype(np_dtype))
     dev = _as_device(abs.device if hasattr(abs, 'device') else None)
-    return dispatch("tensor", dev, c.tolist(), dtype=_cdouble)
+    value = dispatch("tensor", dev, c.tolist(), dtype=result_dtype)
+    if out is not None:
+        if tuple(out.shape) != tuple(value.shape):
+            out.cy_set_data_runtime_truth_from(value)
+            return out
+        out.copy_(value)
+        return out
+    return value
+
 
 
 # ---------------------------------------------------------------------------
@@ -1937,6 +2029,31 @@ def tensor_split(a, indices_or_sections, dim=0):
 
 def split_with_sizes(a, split_sizes, dim=0):
     return split(a, split_sizes, dim)
+
+
+def kaiser_window(window_length, periodic=True, beta=12.0, *, dtype=None, device=None, requires_grad=False, layout=None):
+    import numpy as _np
+    from ._creation import tensor as _tensor
+    if layout is not None:
+        from . import strided
+        if layout is not strided:
+            raise TypeError("layout must be torch.strided")
+    if dtype is None:
+        from . import get_default_dtype
+        dtype = get_default_dtype()
+    if not dtype.is_floating_point:
+        raise RuntimeError("kaiser_window expects floating point dtype")
+    if window_length <= 0:
+        out = _tensor([], dtype=dtype, device=device)
+    else:
+        length = window_length + 1 if periodic and window_length > 1 else window_length
+        arr = _np.kaiser(length, beta)
+        if periodic and window_length > 1:
+            arr = arr[:-1]
+        out = _tensor(arr.tolist(), dtype=dtype, device=device)
+    if requires_grad:
+        out.requires_grad_(True)
+    return out
 
 
 def hann_window(window_length, periodic=True, *, dtype=None, device=None):

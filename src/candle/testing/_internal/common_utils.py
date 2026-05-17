@@ -38,8 +38,12 @@ TEST_NPU = (
     else False
 )
 
-# Map CUDA tests to NPU when appropriate
-TEST_CUDA = TEST_CUDA or TEST_NPU
+# ---------------------------------------------------------------------------
+# NOTE: Do NOT alias TEST_CUDA to include TEST_NPU. Downstream code in
+# common_device_type._get_available_devices treats them as distinct device
+# types; aliasing here would cause NPU-only machines to generate CUDA test
+# variants and skip NPU ones.
+# ---------------------------------------------------------------------------
 
 TEST_MULTIGPU = False
 if TEST_CUDA and hasattr(torch, "cuda") and hasattr(torch.cuda, "device_count"):
@@ -105,16 +109,69 @@ class TestCase(unittest.TestCase):
             rtol=self.rel_tol,
         )
 
-    def assertEqual(self, x, y, msg=None, *, atol=None, rtol=None, equal_nan=False):
+    def assertEqual(self, x, y, msg=None, *, atol=None, rtol=None, equal_nan=False, exact_dtype=None):
+        if isinstance(x, np.ndarray) and isinstance(y, torch.Tensor):
+            x = torch.from_numpy(np.ascontiguousarray(x))
+        elif isinstance(x, torch.Tensor) and isinstance(y, np.ndarray):
+            y = torch.from_numpy(np.ascontiguousarray(y))
+        elif isinstance(x, torch.Tensor) and isinstance(y, (tuple, list)):
+            y = torch.tensor(y, dtype=x.dtype, device=x.device)
+        elif isinstance(x, (tuple, list)) and isinstance(y, torch.Tensor):
+            x = torch.tensor(x, dtype=y.dtype, device=y.device)
+        elif isinstance(x, torch.Tensor) and x.dim() == 0 and isinstance(y, (int, float, complex, bool)):
+            y = torch.tensor(y, dtype=x.dtype, device=x.device)
+        elif isinstance(y, torch.Tensor) and y.dim() == 0 and isinstance(x, (int, float, complex, bool)):
+            x = torch.tensor(x, dtype=y.dtype, device=y.device)
         if isinstance(x, torch.Tensor) and isinstance(y, torch.Tensor):
             _atol = atol if atol is not None else self.precision
             _rtol = rtol if rtol is not None else self.rel_tol
-            torch.testing.assert_close(x, y, atol=_atol, rtol=_rtol, msg=msg)
-        else:
-            if equal_nan and isinstance(x, float) and isinstance(y, float):
-                if math.isnan(x) and math.isnan(y):
-                    return
-            super().assertEqual(x, y, msg=msg)
+            check_dtype = True if exact_dtype is None else bool(exact_dtype)
+            torch.testing.assert_close(x, y, atol=_atol, rtol=_rtol, msg=msg, check_dtype=check_dtype)
+            return
+        if isinstance(x, (tuple, list)) and isinstance(y, (tuple, list)):
+            super().assertEqual(len(x), len(y), msg=msg)
+            for actual, expected in zip(x, y):
+                self.assertEqual(
+                    actual,
+                    expected,
+                    msg=msg,
+                    atol=atol,
+                    rtol=rtol,
+                    equal_nan=equal_nan,
+                    exact_dtype=exact_dtype,
+                )
+            return
+        if equal_nan and isinstance(x, float) and isinstance(y, float):
+            if math.isnan(x) and math.isnan(y):
+                return
+        super().assertEqual(x, y, msg=msg)
+
+    @contextlib.contextmanager
+    def assertWarnsOnceRegex(self, expected_warning, expected_regex=""):
+        """Context manager that always asserts a matching warning is raised.
+
+        Forces TORCH_WARN_ONCE-style warnings to fire on every call
+        (via set_warn_always_context) so tests can rely on observing them.
+        """
+        import re
+        pattern = re.compile(expected_regex)
+        with warnings.catch_warnings(record=True) as ws:
+            warnings.simplefilter("always")
+            with set_warn_always_context():
+                yield
+            if len(ws) == 0:
+                self.fail("no warning caught")
+            assert any(isinstance(w.message, expected_warning) for w in ws), (
+                f"no {expected_warning.__name__} warning seen; got: {[type(w.message).__name__ for w in ws]}"
+            )
+            assert any(
+                re.search(pattern, str(w.message))
+                for w in ws
+                if isinstance(w.message, expected_warning)
+            ), (
+                f"no warning matching {pattern.pattern!r}; got: "
+                f"{[str(w.message) for w in ws if isinstance(w.message, expected_warning)]}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +179,7 @@ class TestCase(unittest.TestCase):
 # ---------------------------------------------------------------------------
 def skipIfNoCuda(fn):
     """Skip a test if no CUDA/NPU device is available."""
-    return unittest.skipIf(not TEST_CUDA, "No CUDA/NPU device")(fn)
+    return unittest.skipIf(not (TEST_CUDA or TEST_NPU), "No CUDA/NPU device")(fn)
 
 
 def skipIfNoMPS(fn):
@@ -195,10 +252,17 @@ def disable_gc():
 
 @contextlib.contextmanager
 def set_warn_always_context():
-    """Context manager that forces warnings to be shown."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("always")
-        yield
+    """Context manager that forces TORCH_WARN_ONCE-style warnings to fire every time."""
+    prev = torch.is_warn_always_enabled() if hasattr(torch, "is_warn_always_enabled") else False
+    if hasattr(torch, "set_warn_always"):
+        torch.set_warn_always(True)
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("always")
+            yield
+    finally:
+        if hasattr(torch, "set_warn_always"):
+            torch.set_warn_always(prev)
 
 
 def gradcheck(*args, **kwargs):  # noqa: ARG001
