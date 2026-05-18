@@ -717,6 +717,7 @@ def _install_tensor_api(TensorBase):
     TensorBase.new_ones = _tensor_api_mod.tensor_new_ones
     TensorBase.new_zeros = _tensor_api_mod.tensor_new_zeros
     TensorBase.new_full = _tensor_api_mod.tensor_new_full
+    TensorBase.new = _tensor_api_mod.tensor_new_legacy
     TensorBase.div_ = _tensor_api_mod.tensor_div_
     TensorBase.unflatten = _tensor_api_mod.tensor_unflatten
     TensorBase.bitwise_and_ = _tensor_api_mod.tensor_bitwise_and_

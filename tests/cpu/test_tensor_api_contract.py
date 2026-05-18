@@ -1239,3 +1239,50 @@ def test_frombuffer_requires_grad_only_for_floating_dtype():
     ints = array.array("i", [1, 2])
     with pytest.raises(RuntimeError, match="floating point"):
         torch.frombuffer(ints, dtype=torch.int32, requires_grad=True)
+
+
+# ---------------------------------------------------------------------------
+# Tensor.new family parity (PyTorch parity)
+# ---------------------------------------------------------------------------
+
+
+def test_tensor_new_size_factory_returns_new_empty_cpu():
+    x = torch.zeros((3, 4), dtype=torch.float32)
+    out = x.new((2, 5))
+    assert out.shape == (2, 5)
+    assert out.dtype == torch.float32
+    assert out.device.type == x.device.type
+
+
+@pytest.mark.parametrize("method", ["new_empty", "new_ones", "new_zeros", "new_full"])
+def test_tensor_new_methods_honor_requires_grad_true_cpu(method):
+    x = torch.zeros((2,), dtype=torch.float32)
+    args = ((3,),)
+    if method == "new_full":
+        args = ((3,), 1.0)
+    out = getattr(x, method)(*args, requires_grad=True)
+    assert out.requires_grad is True
+
+
+@pytest.mark.parametrize("method", ["new_empty", "new_ones", "new_zeros", "new_full"])
+def test_tensor_new_methods_reject_requires_grad_on_int_dtype_cpu(method):
+    x = torch.zeros((2,), dtype=torch.int64)
+    args = ((3,),)
+    if method == "new_full":
+        args = ((3,), 1)
+    with pytest.raises(RuntimeError, match="floating point and complex"):
+        getattr(x, method)(*args, requires_grad=True)
+
+
+def test_new_empty_strided_accepts_string_device_cpu():
+    x = torch.zeros((3, 3), dtype=torch.float32)
+    out = x.new_empty_strided((2, 3), (3, 1), dtype=torch.float32, device="cpu")
+    assert out.shape == (2, 3)
+    assert out.stride() == (3, 1)
+    assert out.device.type == "cpu"
+
+
+def test_new_empty_strided_validates_size_stride_length_cpu():
+    x = torch.zeros((2,), dtype=torch.float32)
+    with pytest.raises(RuntimeError, match="dimensionality of sizes"):
+        x.new_empty_strided((2,), ())

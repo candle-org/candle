@@ -1545,36 +1545,27 @@ def tensor_new_empty(self, size, *, dtype=None, device=None, requires_grad=False
     cdef object dev = device if device is not None else self.device
     if memory_format is not None:
         raise TypeError("new_empty() got an unexpected keyword argument 'memory_format'")
-    return empty(size, dtype=dt, device=dev)
+    return empty(size, dtype=dt, device=dev, requires_grad=requires_grad)
 
 
 def tensor_new_tensor(self, data, *, dtype=None, device=None, requires_grad=False):
     from candle._creation import tensor
     cdef object dt = dtype if dtype is not None else self.dtype
     cdef object dev = device if device is not None else self.device
-    return tensor(data, dtype=dt, device=dev)
+    return tensor(data, dtype=dt, device=dev, requires_grad=requires_grad)
 
 
 def tensor_new_empty_strided(self, size, stride, *, dtype=None, device=None, requires_grad=False):
-    from candle._creation import empty
+    from candle._creation import empty_strided
     cdef object dt = dtype if dtype is not None else self.dtype
     cdef object dev = device if device is not None else self.device
-    cdef Py_ssize_t numel = 1
-    cdef object arr
-    cdef object storage
-    cdef object t
-    cdef object s
-
-    if dev.type == "cpu":
-        _ensure_conversion_refs()
-        _ensure_tensor_factory_ref()
-        for s in size:
-            numel *= s
-        arr = np.empty(numel, dtype=_to_numpy_dtype_fn(dt))
-        storage = _typed_storage_from_numpy_fn(arr, dt, device=dev)
-        return _cy_make_tensor_from_storage_fn(storage, tuple(size), tuple(stride), 0, requires_grad)
-    t = empty(size, dtype=dt, device=dev)
-    return t
+    cdef Py_ssize_t size_len = len(size)
+    cdef Py_ssize_t stride_len = len(stride)
+    if size_len != stride_len:
+        raise RuntimeError(
+            f"dimensionality of sizes ({size_len}) must match dimensionality of strides ({stride_len})"
+        )
+    return empty_strided(size, stride, dtype=dt, device=dev, requires_grad=requires_grad)
 
 
 def tensor_ones_like(self):
@@ -1598,7 +1589,7 @@ def tensor_ones_like(self):
     return tensor
 
 
-def tensor_new_ones(self, size, dtype=None, device=None, memory_format=None):
+def tensor_new_ones(self, size, *, dtype=None, device=None, requires_grad=False, memory_format=None):
     from candle._creation import ones
     if dtype is None:
         dtype = self.dtype
@@ -1606,10 +1597,10 @@ def tensor_new_ones(self, size, dtype=None, device=None, memory_format=None):
         device = self.device
     if memory_format is not None:
         raise TypeError("new_ones() got an unexpected keyword argument 'memory_format'")
-    return ones(size, dtype=dtype, device=device)
+    return ones(size, dtype=dtype, device=device, requires_grad=requires_grad)
 
 
-def tensor_new_zeros(self, size, dtype=None, device=None, memory_format=None):
+def tensor_new_zeros(self, size, *, dtype=None, device=None, requires_grad=False, memory_format=None):
     from candle._creation import zeros
     if dtype is None:
         dtype = self.dtype
@@ -1617,14 +1608,21 @@ def tensor_new_zeros(self, size, dtype=None, device=None, memory_format=None):
         device = self.device
     if memory_format is not None:
         raise TypeError("new_zeros() got an unexpected keyword argument 'memory_format'")
-    return zeros(size, dtype=dtype, device=device)
+    return zeros(size, dtype=dtype, device=device, requires_grad=requires_grad)
 
 
 def tensor_new_full(self, size, fill_value, *, dtype=None, device=None, requires_grad=False):
     from candle._creation import full
     cdef object dt = dtype if dtype is not None else self.dtype
     cdef object dev = device if device is not None else self.device
-    return full(size, fill_value, dtype=dt, device=dev)
+    return full(size, fill_value, dtype=dt, device=dev, requires_grad=requires_grad)
+
+
+def tensor_new_legacy(self, *args, **kwargs):
+    """Legacy ``Tensor.new`` factory: behaves like ``new_empty`` when called with a size."""
+    if not args:
+        raise TypeError("Tensor.new() requires at least one positional argument (size)")
+    return tensor_new_empty(self, *args, **kwargs)
 
 
 def tensor_div_(self, other):
