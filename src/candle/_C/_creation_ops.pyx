@@ -89,11 +89,16 @@ cdef bint _device_matches(object tensor, object target_device):
 cdef _validate_layout(object layout_arg):
     if layout_arg is None:
         return
-    from candle import strided
-    if layout_arg is not strided:
-        raise TypeError(
+    from candle import strided, layout as _layout_cls
+    if layout_arg is strided:
+        return
+    if isinstance(layout_arg, _layout_cls):
+        raise RuntimeError(
             f"candle currently only supports torch.strided layout, got {layout_arg!r}"
         )
+    raise TypeError(
+        f"candle currently only supports torch.strided layout, got {layout_arg!r}"
+    )
 
 
 cdef _check_no_internal_overlap(object out):
@@ -160,6 +165,10 @@ def zeros(*shape, dtype=None, device=None, memory_format=None, layout=None, out=
     _validate_layout(layout)
     if dtype is None:
         dtype = _get_default_dtype() if out is None else out.dtype
+    elif out is not None and out.dtype != dtype:
+        raise RuntimeError(
+            f"zeros() expected a tensor of dtype {dtype} but got dtype {out.dtype} for argument 'out'"
+        )
     value = zeros_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
     if out is not None:
         return _apply_requires_grad(_finalize_out(value, out), requires_grad)
@@ -173,6 +182,10 @@ def ones(*shape, dtype=None, device=None, memory_format=None, layout=None, out=N
     _validate_layout(layout)
     if dtype is None:
         dtype = _get_default_dtype() if out is None else out.dtype
+    elif out is not None and out.dtype != dtype:
+        raise RuntimeError(
+            f"ones() expected a tensor of dtype {dtype} but got dtype {out.dtype} for argument 'out'"
+        )
     value = ones_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
     if out is not None:
         return _apply_requires_grad(_finalize_out(value, out), requires_grad)
@@ -186,6 +199,10 @@ def empty(*shape, dtype=None, device=None, memory_format=None, layout=None, out=
     _validate_layout(layout)
     if dtype is None:
         dtype = _get_default_dtype() if out is None else out.dtype
+    elif out is not None and out.dtype != dtype:
+        raise RuntimeError(
+            f"empty() expected a tensor of dtype {dtype} but got dtype {out.dtype} for argument 'out'"
+        )
     value = empty_dispatch(*shape, dtype=dtype, device=device, memory_format=memory_format)
     if out is not None:
         return _apply_requires_grad(_finalize_out(value, out), requires_grad)
@@ -329,8 +346,30 @@ def full(*args, dtype=None, device=None, requires_grad=False, memory_format=None
     from candle._functional import full as full_dispatch
 
     _validate_layout(layout)
+    cdef Py_ssize_t _nargs = len(args)
+    fill_value = args[_nargs - 1] if _nargs > 0 else None
     if dtype is None:
-        dtype = _get_default_dtype() if out is None else out.dtype
+        if out is not None:
+            dtype = out.dtype
+        elif isinstance(fill_value, bool):
+            dtype = bool_dtype
+        elif isinstance(fill_value, int):
+            dtype = int64
+        elif isinstance(fill_value, complex):
+            default_dtype = _get_default_dtype()
+            if getattr(default_dtype, "name", None) == "float64":
+                from candle._dtype import complex128 as _complex128
+                dtype = _complex128
+            else:
+                from candle._dtype import complex64 as _complex64
+                dtype = _complex64
+        else:
+            dtype = _get_default_dtype()
+    elif out is not None and out.dtype != dtype:
+        raise RuntimeError(
+            "full() expected a tensor of dtype "
+            f"{dtype} but got dtype {out.dtype} for argument 'out'"
+        )
     value = full_dispatch(*args, dtype=dtype, device=device, memory_format=memory_format)
     if out is not None:
         return _apply_requires_grad(_finalize_out(value, out), requires_grad)

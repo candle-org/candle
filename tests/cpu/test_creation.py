@@ -96,6 +96,35 @@ def test_logspace_rejects_complex_endpoints_with_real_dtype_cpu():
         torch.logspace(0, 1j, 5, dtype=torch.float32)
 
 
+def test_full_infers_bool_dtype_from_bool_fill_cpu():
+    with torch.testing._internal.common_utils.set_default_dtype(torch.float16):
+        assert torch.full((2, 2), True).dtype == torch.bool
+
+
+def test_full_infers_int64_dtype_from_int_fill_cpu():
+    with torch.testing._internal.common_utils.set_default_dtype(torch.float16):
+        assert torch.full((2, 2), 1).dtype == torch.int64
+
+
+def test_full_infers_complex_dtype_from_complex_fill_cpu():
+    with torch.testing._internal.common_utils.set_default_dtype(torch.float16):
+        assert torch.full((2, 2), 1 + 1j).dtype == torch.complex64
+    with torch.testing._internal.common_utils.set_default_dtype(torch.float64):
+        assert torch.full((2, 2), 1 + 1j).dtype == torch.complex128
+
+
+def test_full_out_dtype_overrides_inference_cpu():
+    out = torch.empty((5,), dtype=torch.int64)
+    assert torch.full((5,), 1.0, out=out).dtype == torch.int64
+    assert torch.full((5,), 1, out=out).dtype == torch.int64
+
+
+def test_full_rejects_dtype_out_conflict_cpu():
+    out = torch.empty((5,), dtype=torch.int64)
+    with pytest.raises(RuntimeError):
+        torch.full((5,), 1.0, dtype=torch.float32, out=out)
+
+
 def test_full_cpu():
     x = torch.full((2, 3), 1.5)
     assert x.shape == (2, 3)
@@ -169,6 +198,21 @@ def test_factory_accepts_layout_strided_cpu(factory):
 def test_factory_rejects_non_strided_layout_cpu(factory):
     with pytest.raises(TypeError, match="layout"):
         factory((2, 3), layout="not-a-layout")
+
+
+@pytest.mark.parametrize("factory_name", ["zeros", "ones", "empty"])
+def test_factory_rejects_sparse_layout_cpu(factory_name):
+    factory = getattr(torch, factory_name)
+    with pytest.raises(RuntimeError, match="strided layout"):
+        factory((2, 3), layout=torch.sparse_coo)
+
+
+@pytest.mark.parametrize("factory_name", ["zeros", "ones", "empty"])
+def test_factory_rejects_dtype_out_conflict_cpu(factory_name):
+    factory = getattr(torch, factory_name)
+    out = torch.empty((3, 4), dtype=torch.float32)
+    with pytest.raises(RuntimeError):
+        factory((3, 4), dtype=torch.int64, out=out)
 
 
 def test_linspace_out_aliases_output_storage_cpu():

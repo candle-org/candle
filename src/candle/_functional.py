@@ -3,7 +3,7 @@ from ._dispatch.dispatcher import dispatch
 from .autograd.grad_mode import GradMode, no_grad
 from ._device import device as Device, get_default_device
 from ._dtype import to_numpy_dtype
-from ._C._creation_ops import finalize_out as _finalize_out
+from ._C._creation_ops import finalize_out as _finalize_out  # pylint: disable=no-name-in-module
 
 import builtins as _builtins
 
