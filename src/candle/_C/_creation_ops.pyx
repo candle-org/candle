@@ -131,6 +131,10 @@ cdef object _finalize_out(object value, object out):
     return out
 
 
+def finalize_out(value, out):
+    return _finalize_out(value, out)
+
+
 def tensor(data, *, dtype=None, device=None, requires_grad=False):
     from candle._functional import tensor as tensor_dispatch
 
@@ -264,14 +268,57 @@ def arange(start, end=None, step=1, dtype=None, device=None, layout=None, out=No
     return _apply_requires_grad(value, requires_grad)
 
 
+cdef object _is_complex_scalar(object value):
+    try:
+        if isinstance(value, complex):
+            return True
+    except TypeError:
+        pass
+    return False
+
+
+cdef object _check_linspace_logspace_dtype(str fn_name, object start, object end, object dtype):
+    if not (_is_complex_scalar(start) or _is_complex_scalar(end)):
+        return dtype
+    from candle._dtype import complex64, float32
+    inferred = complex64
+    if dtype is None:
+        return inferred
+    name = getattr(dtype, "name", str(dtype))
+    if name in ("complex32", "complex64", "complex128"):
+        return dtype
+    cxx_name = {
+        "complex32": "c10::complex<at::Half>",
+        "complex64": "c10::complex<float>",
+        "complex128": "c10::complex<double>",
+    }.get(getattr(inferred, "name", "complex64"), "c10::complex<float>")
+    passed_name = {
+        "float16": "Half",
+        "float32": "Float",
+        "float64": "Double",
+        "bfloat16": "BFloat16",
+        "bool": "Bool",
+        "uint8": "Byte",
+        "int8": "Char",
+        "int16": "Short",
+        "int32": "Int",
+        "int64": "Long",
+    }.get(name, name)
+    raise RuntimeError(
+        f"torch.{fn_name}(): inferred dtype {cxx_name} can't be safely cast to passed dtype {passed_name}"
+    )
+
+
 def linspace(start, end, steps, dtype=None, device=None, layout=None, out=None, requires_grad=False):
     from candle._functional import linspace as linspace_dispatch
 
     _validate_layout(layout)
     if int(steps) < 0:
         raise RuntimeError(f"number of steps must be non-negative, but got steps={int(steps)}")
+    dtype_for_check = dtype if dtype is not None else (out.dtype if out is not None else None)
+    dtype = _check_linspace_logspace_dtype("linspace", start, end, dtype_for_check)
     if dtype is None:
-        dtype = _get_default_dtype() if out is None else out.dtype
+        dtype = _get_default_dtype()
     value = linspace_dispatch(start, end, steps, dtype=dtype, device=device)
     if out is not None:
         return _apply_requires_grad(_finalize_out(value, out), requires_grad)
@@ -296,8 +343,10 @@ def logspace(start, end, steps, base=10.0, dtype=None, device=None, layout=None,
     _validate_layout(layout)
     if int(steps) < 0:
         raise RuntimeError(f"number of steps must be non-negative, but got steps={int(steps)}")
+    dtype_for_check = dtype if dtype is not None else (out.dtype if out is not None else None)
+    dtype = _check_linspace_logspace_dtype("logspace", start, end, dtype_for_check)
     if dtype is None:
-        dtype = _get_default_dtype() if out is None else out.dtype
+        dtype = _get_default_dtype()
     if base != 10.0:
         # Fallback: compute via linspace + base ** x to support arbitrary base.
         from candle._functional import linspace as linspace_dispatch

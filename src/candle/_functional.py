@@ -3,6 +3,7 @@ from ._dispatch.dispatcher import dispatch
 from .autograd.grad_mode import GradMode, no_grad
 from ._device import device as Device, get_default_device
 from ._dtype import to_numpy_dtype
+from ._C._creation_ops import finalize_out as _finalize_out
 
 import builtins as _builtins
 
@@ -704,13 +705,7 @@ def cummax(a, dim=0):
 def argsort(a, dim=-1, descending=False, stable=False, out=None):
     result = dispatch("argsort", a.device.type, a, dim=dim, descending=descending, stable=stable)
     if out is not None:
-        out._storage = result.storage()
-        out.shape = result.shape
-        out.stride = result.stride
-        out.offset = result.offset
-        out._base = result._base
-        out._view_meta = result._view_meta
-        return out
+        return _finalize_out(result, out)
     return result
 
 
@@ -760,13 +755,7 @@ def stack(tensors, dim=0, out=None):
         return r
     result = dispatch("stack", tensors[0].device.type, tensors, dim=dim)
     if out is not None:
-        out._storage = result.storage()
-        out.shape = result.shape
-        out.stride = result.stride
-        out.offset = result.offset
-        out._base = result._base
-        out._view_meta = result._view_meta
-        return out
+        return _finalize_out(result, out)
     return result
 
 
@@ -776,13 +765,7 @@ def cat(tensors, dim=0, out=None):
         return r
     result = dispatch("cat", tensors[0].device.type, tensors, dim=dim)
     if out is not None:
-        out._storage = result.storage()
-        out.shape = result.shape
-        out.stride = result.stride
-        out.offset = result.offset
-        out._base = result._base
-        out._view_meta = result._view_meta
-        return out
+        return _finalize_out(result, out)
     return result
 
 
@@ -802,13 +785,7 @@ def hstack(tensors, out=None):
     _check_stack_tensors_arg("hstack", tensors)
     result = dispatch("hstack", tensors[0].device.type, tensors)
     if out is not None:
-        out._storage = result.storage()
-        out.shape = result.shape
-        out.stride = result.stride
-        out.offset = result.offset
-        out._base = result._base
-        out._view_meta = result._view_meta
-        return out
+        return _finalize_out(result, out)
     return result
 
 
@@ -816,13 +793,7 @@ def vstack(tensors, out=None):
     _check_stack_tensors_arg("vstack", tensors)
     result = dispatch("vstack", tensors[0].device.type, tensors)
     if out is not None:
-        out._storage = result.storage()
-        out.shape = result.shape
-        out.stride = result.stride
-        out.offset = result.offset
-        out._base = result._base
-        out._view_meta = result._view_meta
-        return out
+        return _finalize_out(result, out)
     return result
 
 
@@ -830,13 +801,8 @@ def column_stack(tensors, out=None):
     _check_stack_tensors_arg("column_stack", tensors)
     result = dispatch("column_stack", tensors[0].device.type, tensors)
     if out is not None:
-        out._storage = result.storage()
-        out.shape = result.shape
-        out.stride = result.stride
-        out.offset = result.offset
-        out._base = result._base
-        out._view_meta = result._view_meta
-        return out
+        return _finalize_out(result, out)
+    return result
     return result
 
 
