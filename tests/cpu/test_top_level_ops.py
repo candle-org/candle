@@ -257,12 +257,44 @@ class TestCategoryC1:
         assert gx[0].tolist() == [1, 1]
         assert gy[0].tolist() == [4, 5]
 
+    def test_meshgrid_warns_if_indexing_omitted(self):
+        x = torch.tensor([1, 2])
+        with pytest.warns(UserWarning, match="will be required to pass the indexing arg"):
+            (gx,) = torch.meshgrid(x)
+        assert gx.shape == (2,)
+
     def test_meshgrid_xy(self):
         x = torch.tensor([1, 2, 3])
         y = torch.tensor([4, 5])
         gx, gy = torch.meshgrid(x, y, indexing='xy')
         assert gx.shape == (2, 3)
         assert gy.shape == (2, 3)
+
+    def test_meshgrid_rejects_empty_input(self):
+        with pytest.raises(RuntimeError, match="expects a non-empty TensorList"):
+            torch.meshgrid()
+
+    def test_meshgrid_rejects_unsupported_indexing(self):
+        x = torch.tensor([1, 2])
+        with pytest.raises(RuntimeError, match='indexing must be one of "xy" or "ij"'):
+            torch.meshgrid(x, indexing='')
+
+    def test_meshgrid_rejects_non_1d_tensor(self):
+        x = torch.tensor([[1, 2], [3, 4]])
+        with pytest.raises(RuntimeError, match="Expected 0D or 1D tensor"):
+            torch.meshgrid(x)
+
+    def test_meshgrid_rejects_mixed_dtypes(self):
+        x = torch.tensor([1], dtype=torch.int32)
+        y = torch.tensor([2], dtype=torch.float32)
+        with pytest.raises(RuntimeError, match="expects all tensors to have the same dtype"):
+            torch.meshgrid(x, y)
+
+    def test_meshgrid_rejects_mixed_devices(self):
+        x = torch.tensor([1], device="cpu")
+        y = torch.tensor([2], device="meta")
+        with pytest.raises(RuntimeError, match="expects all tensors to have the same device"):
+            torch.meshgrid(x, y)
 
     def test_atleast_1d_scalar(self):
         a = torch.tensor(5.0)

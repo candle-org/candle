@@ -1637,13 +1637,29 @@ def argwhere(a):
 # Category C1: Pure-Python functions (no dispatch needed)
 # ---------------------------------------------------------------------------
 
-def meshgrid(*tensors, indexing='ij'):
+def meshgrid(*tensors, indexing=None):
     if len(tensors) == 1 and isinstance(tensors[0], (list, tuple)):
         tensors = tuple(tensors[0])
+    if indexing is None:
+        import warnings
+        warnings.warn(
+            "torch.meshgrid: in an upcoming release, it will be required to pass the indexing arg.",
+            UserWarning,
+            stacklevel=2,
+        )
+        indexing = 'ij'
     if indexing not in ('ij', 'xy'):
-        raise ValueError(f"meshgrid: indexing must be 'ij' or 'xy', got '{indexing}'")
+        raise RuntimeError('torch.meshgrid: indexing must be one of "xy" or "ij"')
     if len(tensors) == 0:
-        return []
+        raise RuntimeError("torch.meshgrid: expects a non-empty TensorList")
+    first = tensors[0]
+    for t in tensors:
+        if t.ndim > 1:
+            raise RuntimeError("torch.meshgrid: Expected 0D or 1D tensor in the tensor list")
+        if t.dtype != first.dtype:
+            raise RuntimeError("torch.meshgrid: expects all tensors to have the same dtype")
+        if t.device != first.device:
+            raise RuntimeError("torch.meshgrid: expects all tensors to have the same device")
     # For 'xy' indexing, swap the first two inputs, build 'ij', then swap outputs
     if indexing == 'xy' and len(tensors) >= 2:
         swapped = (tensors[1], tensors[0]) + tensors[2:]
