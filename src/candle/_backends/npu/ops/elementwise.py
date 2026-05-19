@@ -215,15 +215,7 @@ def logaddexp2(a, b):
 
 
 def hypot(a, b):
-    import numpy as np
-    from ...._creation import tensor as create_tensor
-
-    # Match torch_npu behavior: aten::hypot.out falls back to CPU, then returns
-    # the result on the original NPU device with the original dtype.
-    a_cpu = a.to("cpu").numpy()
-    b_cpu = b.to("cpu").numpy()
-    out_cpu = np.hypot(a_cpu, b_cpu)
-    return create_tensor(out_cpu, dtype=a.dtype, device=a.device)
+    return sqrt(add(mul(a, a), mul(b, b)))
 
 
 def _remainder_310b_fallback(a, b):
