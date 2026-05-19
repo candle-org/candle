@@ -64,6 +64,7 @@ def test_npu_forward_paths_do_not_copy_registered_ops_to_cpu():
         "src/candle/_backends/npu/ops/comparison.py": ["allclose"],
         "src/candle/_backends/npu/ops/elementwise.py": ["hypot"],
         "src/candle/_backends/npu/ops/reduce.py": ["fmin", "fmax"],
+        "src/candle/_backends/npu/ops/shape.py": ["take", "take_along_dim"],
     }
     forbidden = ['.to("cpu")', ".to('cpu')", "_copy_npu_to_cpu"]
 
