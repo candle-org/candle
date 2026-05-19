@@ -43,6 +43,13 @@ def test_cython_and_python_npu_dispatch_key_constants_stay_in_sync():
         assert re.search(pattern, core_src), f"_dispatcher_core.pyx {name} key constant drifted"
 
 
+def _function_source(src, name):
+    pattern = rf"^def {name}\(.*?(?=^def |\Z)"
+    match = re.search(pattern, src, flags=re.MULTILINE | re.DOTALL)
+    assert match is not None, f"missing function {name}"
+    return match.group(0)
+
+
 def test_npu_autograd_overrides_do_not_use_cpu_fallbacks():
     autograd_src = _source("src/candle/_backends/autograd.py")
     npu_override_src = autograd_src.split("# NPU ACLNN fused backward kernels", 1)[1]
@@ -50,6 +57,22 @@ def test_npu_autograd_overrides_do_not_use_cpu_fallbacks():
     forbidden = ["from .cpu", "import numpy", "_to_numpy", "_from_numpy"]
     for marker in forbidden:
         assert marker not in npu_override_src
+
+
+def test_npu_forward_paths_do_not_copy_registered_ops_to_cpu():
+    checked = {
+        "src/candle/_backends/npu/ops/comparison.py": ["allclose"],
+        "src/candle/_backends/npu/ops/elementwise.py": ["hypot"],
+        "src/candle/_backends/npu/ops/reduce.py": ["fmin", "fmax"],
+    }
+    forbidden = ['.to("cpu")', ".to('cpu')", "_copy_npu_to_cpu"]
+
+    for path, names in checked.items():
+        src = _source(path)
+        for name in names:
+            body = _function_source(src, name)
+            for marker in forbidden:
+                assert marker not in body
 
 
 def test_core_npu_training_ops_have_forward_and_autograd_registration():

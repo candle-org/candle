@@ -484,27 +484,17 @@ def minimum(a, b):
 
 
 def fmin(a, b):
-    import numpy as np
-    from ...._creation import tensor as create_tensor
+    from .comparison import le
+    from .elementwise import where
 
-    # Match torch_npu behavior: aten::fmin.out falls back to CPU, then returns
-    # the result on the original NPU device with the original dtype.
-    a_cpu = a.to("cpu").numpy()
-    b_cpu = b.to("cpu").numpy()
-    out_cpu = np.fmin(a_cpu, b_cpu)
-    return create_tensor(out_cpu, dtype=a.dtype, device=a.device)
+    return where(le(a, b), a, b)
 
 
 def fmax(a, b):
-    import numpy as np
-    from ...._creation import tensor as create_tensor
+    from .comparison import ge
+    from .elementwise import where
 
-    # Match torch_npu behavior: aten::fmax.out falls back to CPU, then returns
-    # the result on the original NPU device with the original dtype.
-    a_cpu = a.to("cpu").numpy()
-    b_cpu = b.to("cpu").numpy()
-    out_cpu = np.fmax(a_cpu, b_cpu)
-    return create_tensor(out_cpu, dtype=a.dtype, device=a.device)
+    return where(ge(a, b), a, b)
 
 
 def searchsorted(sorted_sequence, values, out_int32=False, right=False, side=None, sorter=None):
