@@ -1,4 +1,4 @@
-from ._C._creation_ops import (  # pylint: disable=no-name-in-module
+from ._C._creation_ops import (  # pylint: disable=import-error,no-name-in-module
     arange,
     as_tensor,
     asarray,
