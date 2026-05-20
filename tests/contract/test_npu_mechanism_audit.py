@@ -75,6 +75,14 @@ def test_npu_forward_paths_do_not_copy_registered_ops_to_cpu():
                 assert marker not in body
 
 
+def test_npu_operator_parity_shims_delegate_to_cython():
+    src = _source("src/candle/_backends/npu/ops/elementwise.py")
+    body = _function_source(src, "hypot")
+
+    assert "_fast_hypot_impl" in body
+    assert "sqrt(add(mul(" not in body
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()

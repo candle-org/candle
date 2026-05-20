@@ -3206,6 +3206,11 @@ def fast_sqrt(a):
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
+def fast_hypot(a, b):
+    """NPU hypot(a, b) implemented as an on-device Cython composite."""
+    return fast_sqrt(fast_add(fast_mul(a, a), fast_mul(b, b)))
+
+
 def fast_sin(a):
     """Optimized out-of-place sin(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()

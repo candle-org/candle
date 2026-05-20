@@ -6,23 +6,27 @@ try:
         fast_lerp_scalar as _fast_lerp_scalar_impl,
         fast_addcmul as _fast_addcmul_impl,
         fast_addcdiv as _fast_addcdiv_impl,
+        fast_hypot as _fast_hypot_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_WHERE = True
     _HAS_FAST_LERP_TENSOR = True
     _HAS_FAST_LERP_SCALAR = True
     _HAS_FAST_ADDCMUL = True
     _HAS_FAST_ADDCDIV = True
+    _HAS_FAST_HYPOT = True
 except ImportError:
     _fast_where_impl = None  # type: ignore[assignment]
     _fast_lerp_tensor_impl = None  # type: ignore[assignment]
     _fast_lerp_scalar_impl = None  # type: ignore[assignment]
     _fast_addcmul_impl = None  # type: ignore[assignment]
     _fast_addcdiv_impl = None  # type: ignore[assignment]
+    _fast_hypot_impl = None  # type: ignore[assignment]
     _HAS_FAST_WHERE = False
     _HAS_FAST_LERP_TENSOR = False
     _HAS_FAST_LERP_SCALAR = False
     _HAS_FAST_ADDCMUL = False
     _HAS_FAST_ADDCDIV = False
+    _HAS_FAST_HYPOT = False
 
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
@@ -215,7 +219,9 @@ def logaddexp2(a, b):
 
 
 def hypot(a, b):
-    return sqrt(add(mul(a, a), mul(b, b)))
+    if _HAS_FAST_HYPOT:
+        return _fast_hypot_impl(a, b)
+    raise RuntimeError("Cython NPU hypot implementation is unavailable")
 
 
 def _remainder_310b_fallback(a, b):
