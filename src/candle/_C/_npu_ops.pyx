@@ -3211,6 +3211,16 @@ def fast_hypot(a, b):
     return fast_sqrt(fast_add(fast_mul(a, a), fast_mul(b, b)))
 
 
+def fast_fmin(a, b):
+    """NPU fmin(a, b) implemented as an on-device Cython composite."""
+    return fast_where(fast_binary_op(a, b, None, "le"), a, b)
+
+
+def fast_fmax(a, b):
+    """NPU fmax(a, b) implemented as an on-device Cython composite."""
+    return fast_where(fast_binary_op(a, b, None, "ge"), a, b)
+
+
 def fast_sin(a):
     """Optimized out-of-place sin(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()

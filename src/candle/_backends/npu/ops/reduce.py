@@ -1,4 +1,17 @@
 """Reduction and cumulative operations for NPU."""
+try:
+    from candle._C._npu_ops import (  # pylint: disable=import-error,no-name-in-module
+        fast_fmin as _fast_fmin_impl,
+        fast_fmax as _fast_fmax_impl,
+    )
+    _HAS_FAST_FMIN = True
+    _HAS_FAST_FMAX = True
+except ImportError:
+    _fast_fmin_impl = None  # type: ignore[assignment]
+    _fast_fmax_impl = None  # type: ignore[assignment]
+    _HAS_FAST_FMIN = False
+    _HAS_FAST_FMAX = False
+
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
     _broadcast_shape, _broadcast_shape_checked,
@@ -484,17 +497,15 @@ def minimum(a, b):
 
 
 def fmin(a, b):
-    from .comparison import le
-    from .elementwise import where
-
-    return where(le(a, b), a, b)
+    if _HAS_FAST_FMIN:
+        return _fast_fmin_impl(a, b)
+    raise RuntimeError("Cython NPU fmin implementation is unavailable")
 
 
 def fmax(a, b):
-    from .comparison import ge
-    from .elementwise import where
-
-    return where(ge(a, b), a, b)
+    if _HAS_FAST_FMAX:
+        return _fast_fmax_impl(a, b)
+    raise RuntimeError("Cython NPU fmax implementation is unavailable")
 
 
 def searchsorted(sorted_sequence, values, out_int32=False, right=False, side=None, sorter=None):
