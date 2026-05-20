@@ -78,6 +78,7 @@ def test_npu_forward_paths_do_not_copy_registered_ops_to_cpu():
 def test_npu_operator_parity_shims_delegate_to_cython():
     elementwise_src = _source("src/candle/_backends/npu/ops/elementwise.py")
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
+    activation_src = _source("src/candle/_backends/npu/ops/activation.py")
 
     hypot_body = _function_source(elementwise_src, "hypot")
     assert "_fast_hypot_impl" in hypot_body
@@ -87,6 +88,25 @@ def test_npu_operator_parity_shims_delegate_to_cython():
         body = _function_source(reduce_src, name)
         assert fast_name in body
         assert "where(" not in body
+
+    activation_fast_names = {
+        "relu6": "_fast_relu6_impl",
+        "selu_op": "_fast_selu_impl",
+        "celu_op": "_fast_celu_impl",
+        "threshold_op": "_fast_threshold_impl",
+        "hardshrink_op": "_fast_hardshrink_impl",
+        "softshrink_op": "_fast_softshrink_impl",
+        "hardswish_op": "_fast_hardswish_impl",
+        "hardsigmoid_op": "_fast_hardsigmoid_impl",
+        "softsign_op": "_fast_softsign_impl",
+        "rrelu_op": "_fast_rrelu_impl",
+    }
+    forbidden = ["return where(", "return clamp(", "= where(", "= clamp(", "return mul(", "return div(", "return add(", "return sub("]
+    for name, fast_name in activation_fast_names.items():
+        body = _function_source(activation_src, name)
+        assert fast_name in body
+        for marker in forbidden:
+            assert marker not in body
 
 
 def test_core_npu_training_ops_have_forward_and_autograd_registration():

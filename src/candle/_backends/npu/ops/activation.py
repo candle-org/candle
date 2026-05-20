@@ -91,6 +91,33 @@ except ImportError:
     _fast_mish_impl = None  # type: ignore[assignment]
     _HAS_FAST_MISH = False
 
+try:
+    from candle._C._npu_ops import (  # pylint: disable=import-error,no-name-in-module
+        fast_relu6 as _fast_relu6_impl,
+        fast_selu as _fast_selu_impl,
+        fast_celu as _fast_celu_impl,
+        fast_threshold as _fast_threshold_impl,
+        fast_hardshrink as _fast_hardshrink_impl,
+        fast_softshrink as _fast_softshrink_impl,
+        fast_hardswish as _fast_hardswish_impl,
+        fast_hardsigmoid as _fast_hardsigmoid_impl,
+        fast_softsign as _fast_softsign_impl,
+        fast_rrelu as _fast_rrelu_impl,
+    )
+    _HAS_FAST_ACTIVATION_COMPOSITES = True
+except ImportError:
+    _fast_relu6_impl = None  # type: ignore[assignment]
+    _fast_selu_impl = None  # type: ignore[assignment]
+    _fast_celu_impl = None  # type: ignore[assignment]
+    _fast_threshold_impl = None  # type: ignore[assignment]
+    _fast_hardshrink_impl = None  # type: ignore[assignment]
+    _fast_softshrink_impl = None  # type: ignore[assignment]
+    _fast_hardswish_impl = None  # type: ignore[assignment]
+    _fast_hardsigmoid_impl = None  # type: ignore[assignment]
+    _fast_softsign_impl = None  # type: ignore[assignment]
+    _fast_rrelu_impl = None  # type: ignore[assignment]
+    _HAS_FAST_ACTIVATION_COMPOSITES = False
+
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
     _broadcast_shape, _broadcast_shape_checked,
@@ -178,7 +205,9 @@ def relu_(a):
 
 
 def relu6(a):
-    return clamp(a, 0.0, 6.0)
+    if _HAS_FAST_ACTIVATION_COMPOSITES:
+        return _fast_relu6_impl(a)
+    raise RuntimeError("Cython NPU relu6 implementation is unavailable")
 
 
 def softplus(a, beta=1.0, threshold=20.0):
@@ -395,78 +424,65 @@ def prelu(a, weight):
 
 def selu_op(a):
     """SELU activation: scale * (max(0,x) + min(0, alpha*(exp(x)-1)))."""
-    _alpha = 1.6732632423543772848170429916717
-    _scale = 1.0507009873554804934193349852946
-    return mul(elu(a, alpha=_alpha), _scalar_to_npu_tensor(_scale, a))
+    if _HAS_FAST_ACTIVATION_COMPOSITES:
+        return _fast_selu_impl(a)
+    raise RuntimeError("Cython NPU selu implementation is unavailable")
 
 
 def celu_op(a, alpha=1.0):
     """CELU activation: max(0,x) + min(0, alpha*(exp(x/alpha)-1))."""
-    inv_alpha = _scalar_to_npu_tensor(1.0 / alpha, a)
-    alpha_t = _scalar_to_npu_tensor(alpha, a)
-    one = _scalar_to_npu_tensor(1.0, a)
-    zero = _scalar_to_npu_tensor(0.0, a)
-    # exp(x / alpha) - 1
-    exp_part = sub(exp(mul(a, inv_alpha)), one)
-    neg_part = mul(alpha_t, minimum(exp_part, zero))
-    pos_part = maximum(a, zero)
-    return add(pos_part, neg_part)
+    if _HAS_FAST_ACTIVATION_COMPOSITES:
+        return _fast_celu_impl(a, float(alpha))
+    raise RuntimeError("Cython NPU celu implementation is unavailable")
 
 
 def threshold_op(a, threshold_val, value):
     """Threshold: x if x > threshold else value."""
-    thresh_t = _scalar_to_npu_tensor(threshold_val, a)
-    value_t = _scalar_to_npu_tensor(value, a)
-    mask = gt(a, thresh_t)
-    return where(mask, a, value_t)
+    if _HAS_FAST_ACTIVATION_COMPOSITES:
+        return _fast_threshold_impl(a, float(threshold_val), float(value))
+    raise RuntimeError("Cython NPU threshold implementation is unavailable")
 
 
 def hardshrink_op(a, lambd=0.5):
     """Hard shrink: x if |x| > lambd else 0."""
-    zero = _scalar_to_npu_tensor(0.0, a)
-    lambd_t = _scalar_to_npu_tensor(lambd, a)
-    mask = gt(abs(a), lambd_t)
-    return where(mask, a, zero)
+    if _HAS_FAST_ACTIVATION_COMPOSITES:
+        return _fast_hardshrink_impl(a, float(lambd))
+    raise RuntimeError("Cython NPU hardshrink implementation is unavailable")
 
 
 def softshrink_op(a, lambd=0.5):
     """Soft shrink: x-lambd if x>lambd, x+lambd if x<-lambd, else 0."""
-    zero = _scalar_to_npu_tensor(0.0, a)
-    lambd_t = _scalar_to_npu_tensor(lambd, a)
-    neg_lambd_t = _scalar_to_npu_tensor(-lambd, a)
-    pos_mask = gt(a, lambd_t)
-    neg_mask = lt(a, neg_lambd_t)
-    result = where(pos_mask, sub(a, lambd_t), zero)
-    return where(neg_mask, add(a, lambd_t), result)
+    if _HAS_FAST_ACTIVATION_COMPOSITES:
+        return _fast_softshrink_impl(a, float(lambd))
+    raise RuntimeError("Cython NPU softshrink implementation is unavailable")
 
 
 def hardswish_op(a):
     """HardSwish: x * clamp(x + 3, 0, 6) / 6."""
-    three = _scalar_to_npu_tensor(3.0, a)
-    six = _scalar_to_npu_tensor(6.0, a)
-    return div(mul(a, clamp(add(a, three), min_val=0.0, max_val=6.0)), six)
+    if _HAS_FAST_ACTIVATION_COMPOSITES:
+        return _fast_hardswish_impl(a)
+    raise RuntimeError("Cython NPU hardswish implementation is unavailable")
 
 
 def hardsigmoid_op(a):
     """HardSigmoid: clamp(x + 3, 0, 6) / 6."""
-    six = _scalar_to_npu_tensor(6.0, a)
-    three = _scalar_to_npu_tensor(3.0, a)
-    return div(clamp(add(a, three), min_val=0.0, max_val=6.0), six)
+    if _HAS_FAST_ACTIVATION_COMPOSITES:
+        return _fast_hardsigmoid_impl(a)
+    raise RuntimeError("Cython NPU hardsigmoid implementation is unavailable")
 
 
 def softsign_op(a):
     """Softsign: x / (1 + |x|)."""
-    one = _scalar_to_npu_tensor(1.0, a)
-    return div(a, add(one, abs(a)))
+    if _HAS_FAST_ACTIVATION_COMPOSITES:
+        return _fast_softsign_impl(a)
+    raise RuntimeError("Cython NPU softsign implementation is unavailable")
 
 
 def rrelu_op(a, lower=0.125, upper=0.3333333333333333, training=False):
     """RReLU: if training, random slope from [lower, upper]; else fixed (lower+upper)/2."""
-    zero = _scalar_to_npu_tensor(0.0, a)
-    slope = (lower + upper) / 2.0
-    slope_t = _scalar_to_npu_tensor(slope, a)
-    mask = gt(a, zero)
-    return where(mask, a, mul(a, slope_t))
+    if _HAS_FAST_ACTIVATION_COMPOSITES:
+        return _fast_rrelu_impl(a, float(lower), float(upper), bool(training))
+    raise RuntimeError("Cython NPU rrelu implementation is unavailable")
 
 
 def softmax(a, dim=-1):

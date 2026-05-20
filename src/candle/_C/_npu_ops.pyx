@@ -3221,6 +3221,85 @@ def fast_fmax(a, b):
     return fast_where(fast_binary_op(a, b, None, "ge"), a, b)
 
 
+def _npu_scalar_like(value, a):
+    from candle._backends.npu.ops._helpers import _scalar_to_npu_tensor
+    return _scalar_to_npu_tensor(value, a)
+
+
+def fast_relu6(a):
+    zero = _npu_scalar_like(0.0, a)
+    six = _npu_scalar_like(6.0, a)
+    return fast_binary_op(fast_binary_op(a, zero, None, "maximum"), six, None, "minimum")
+
+
+def fast_selu(a):
+    alpha = 1.6732632423543772848170429916717
+    scale = 1.0507009873554804934193349852946
+    return fast_mul(fast_elu(a, alpha), _npu_scalar_like(scale, a))
+
+
+def fast_celu(a, alpha=1.0):
+    inv_alpha = _npu_scalar_like(1.0 / alpha, a)
+    alpha_t = _npu_scalar_like(alpha, a)
+    one = _npu_scalar_like(1.0, a)
+    zero = _npu_scalar_like(0.0, a)
+    exp_part = fast_sub(fast_exp(fast_mul(a, inv_alpha)), one)
+    neg_part = fast_mul(alpha_t, fast_binary_op(exp_part, zero, None, "minimum"))
+    pos_part = fast_binary_op(a, zero, None, "maximum")
+    return fast_add(pos_part, neg_part)
+
+
+def fast_threshold(a, threshold_val, value):
+    thresh_t = _npu_scalar_like(threshold_val, a)
+    value_t = _npu_scalar_like(value, a)
+    return fast_where(fast_binary_op(a, thresh_t, None, "gt"), a, value_t)
+
+
+def fast_hardshrink(a, lambd=0.5):
+    zero = _npu_scalar_like(0.0, a)
+    lambd_t = _npu_scalar_like(lambd, a)
+    return fast_where(fast_binary_op(fast_abs(a), lambd_t, None, "gt"), a, zero)
+
+
+def fast_softshrink(a, lambd=0.5):
+    zero = _npu_scalar_like(0.0, a)
+    lambd_t = _npu_scalar_like(lambd, a)
+    neg_lambd_t = _npu_scalar_like(-lambd, a)
+    pos_mask = fast_binary_op(a, lambd_t, None, "gt")
+    neg_mask = fast_binary_op(a, neg_lambd_t, None, "lt")
+    result = fast_where(pos_mask, fast_sub(a, lambd_t), zero)
+    return fast_where(neg_mask, fast_add(a, lambd_t), result)
+
+
+def _fast_clamp06(t):
+    zero = _npu_scalar_like(0.0, t)
+    six = _npu_scalar_like(6.0, t)
+    return fast_binary_op(fast_binary_op(t, zero, None, "maximum"), six, None, "minimum")
+
+
+def fast_hardswish(a):
+    three = _npu_scalar_like(3.0, a)
+    six = _npu_scalar_like(6.0, a)
+    return fast_div(fast_mul(a, _fast_clamp06(fast_add(a, three))), six)
+
+
+def fast_hardsigmoid(a):
+    three = _npu_scalar_like(3.0, a)
+    six = _npu_scalar_like(6.0, a)
+    return fast_div(_fast_clamp06(fast_add(a, three)), six)
+
+
+def fast_softsign(a):
+    one = _npu_scalar_like(1.0, a)
+    return fast_div(a, fast_add(one, fast_abs(a)))
+
+
+def fast_rrelu(a, lower=0.125, upper=0.3333333333333333, training=False):
+    zero = _npu_scalar_like(0.0, a)
+    slope_t = _npu_scalar_like((lower + upper) / 2.0, a)
+    return fast_where(fast_binary_op(a, zero, None, "gt"), a, fast_mul(a, slope_t))
+
+
 def fast_sin(a):
     """Optimized out-of-place sin(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()
