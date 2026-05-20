@@ -1,14 +1,17 @@
 """Comparison, logical, and bitwise operations for NPU."""
 
 try:
-    from candle._C._npu_ops import fast_logical_not as _fast_logical_not_impl, fast_bitwise_not as _fast_bitwise_not_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import fast_logical_not as _fast_logical_not_impl, fast_bitwise_not as _fast_bitwise_not_impl, fast_isclose as _fast_isclose_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_LOGICAL_NOT = True
     _HAS_FAST_BITWISE_NOT = True
+    _HAS_FAST_ISCLOSE = True
 except ImportError:
     _fast_logical_not_impl = None  # type: ignore[assignment]
     _fast_bitwise_not_impl = None  # type: ignore[assignment]
+    _fast_isclose_impl = None  # type: ignore[assignment]
     _HAS_FAST_LOGICAL_NOT = False
     _HAS_FAST_BITWISE_NOT = False
+    _HAS_FAST_ISCLOSE = False
 
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
@@ -139,6 +142,10 @@ def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
 
 
 def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
+    if _HAS_FAST_ISCLOSE and _use_soc_fallback("isclose"):
+        if isinstance(b, (int, float, bool)):
+            b = _scalar_to_npu_tensor(b, a)
+        return _fast_isclose_impl(a, b, float(rtol), float(atol), bool(equal_nan))
     from .math import abs, sub, mul, add
     from .math import isnan
     if isinstance(b, (int, float, bool)):

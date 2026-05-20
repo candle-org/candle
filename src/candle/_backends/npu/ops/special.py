@@ -1,4 +1,25 @@
 """Special mathematical functions and FFT for NPU."""
+try:
+    from candle._C._npu_ops import (  # pylint: disable=import-error,no-name-in-module
+        fast_special_erfcx as _fast_special_erfcx_impl,
+        fast_special_log_ndtr as _fast_special_log_ndtr_impl,
+        fast_special_logit as _fast_special_logit_impl,
+        fast_special_ndtr as _fast_special_ndtr_impl,
+        fast_special_sinc as _fast_special_sinc_impl,
+        fast_special_xlog1py as _fast_special_xlog1py_impl,
+        fast_special_xlogy as _fast_special_xlogy_impl,
+    )
+    _HAS_FAST_SPECIAL_COMPOSITES = True
+except ImportError:
+    _fast_special_erfcx_impl = None  # type: ignore[assignment]
+    _fast_special_log_ndtr_impl = None  # type: ignore[assignment]
+    _fast_special_logit_impl = None  # type: ignore[assignment]
+    _fast_special_ndtr_impl = None  # type: ignore[assignment]
+    _fast_special_sinc_impl = None  # type: ignore[assignment]
+    _fast_special_xlog1py_impl = None  # type: ignore[assignment]
+    _fast_special_xlogy_impl = None  # type: ignore[assignment]
+    _HAS_FAST_SPECIAL_COMPOSITES = False
+
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
     _broadcast_shape, _broadcast_shape_checked,
@@ -38,17 +59,8 @@ def special_gammaln(a):
 
 
 def special_sinc(a):
-    if _use_soc_fallback("sinc"):
-        import math
-
-        # TODO: re-enable native kernel when CANN fixes aclnnSinc 561000 on 910A.
-        pi_a = mul(a, _scalar_to_npu_tensor(math.pi, a))
-        numer = sin(pi_a)
-        denom = pi_a
-        ones = _scalar_to_npu_tensor(1.0, a)
-        zero = _scalar_to_npu_tensor(0.0, a)
-        return where(eq(a, zero), ones, div(numer, denom))
-
+    if _HAS_FAST_SPECIAL_COMPOSITES:
+        return _fast_special_sinc_impl(a)
     from candle._C._npu_ops import fast_sinc as _fast_sinc_impl  # pylint: disable=import-error,no-name-in-module
     return _fast_sinc_impl(a)
 
@@ -66,12 +78,14 @@ def special_entr_op(a):
 
 
 def special_erfcx_op(a):
-    """Scaled complementary error function: exp(x^2) * erfc(x)."""
+    if _HAS_FAST_SPECIAL_COMPOSITES:
+        return _fast_special_erfcx_impl(a)
     return mul(exp(mul(a, a)), erfc(a))
 
 
 def special_logit_op(a, eps=None):
-    """Logit function: log(x / (1 - x))."""
+    if _HAS_FAST_SPECIAL_COMPOSITES:
+        return _fast_special_logit_impl(a, eps)
     one = _scalar_to_npu_tensor(1.0, a)
     if eps is not None:
         a = clamp(a, min_val=eps, max_val=1.0 - eps)
@@ -79,7 +93,8 @@ def special_logit_op(a, eps=None):
 
 
 def special_ndtr_op(a):
-    """Normal CDF: 0.5 * erfc(-x / sqrt(2))."""
+    if _HAS_FAST_SPECIAL_COMPOSITES:
+        return _fast_special_ndtr_impl(a)
     import math
     half = _scalar_to_npu_tensor(0.5, a)
     inv_sqrt2 = _scalar_to_npu_tensor(-1.0 / math.sqrt(2.0), a)
@@ -87,12 +102,14 @@ def special_ndtr_op(a):
 
 
 def special_log_ndtr_op(a):
-    """Log of normal CDF: log(0.5 * erfc(-x / sqrt(2)))."""
+    if _HAS_FAST_SPECIAL_COMPOSITES:
+        return _fast_special_log_ndtr_impl(a)
     return log(special_ndtr_op(a))
 
 
 def special_xlogy_op(a, b):
-    """x * log(y), with 0 where x == 0."""
+    if _HAS_FAST_SPECIAL_COMPOSITES:
+        return _fast_special_xlogy_impl(a, b)
     zero = _scalar_to_npu_tensor(0.0, a)
     eq_mask = eq(a, zero)
     result = mul(a, log(maximum(b, _scalar_to_npu_tensor(1e-38, b))))
@@ -100,7 +117,8 @@ def special_xlogy_op(a, b):
 
 
 def special_xlog1py_op(a, b):
-    """x * log1p(y), with 0 where x == 0."""
+    if _HAS_FAST_SPECIAL_COMPOSITES:
+        return _fast_special_xlog1py_impl(a, b)
     zero = _scalar_to_npu_tensor(0.0, a)
     eq_mask = eq(a, zero)
     result = mul(a, log1p(b))

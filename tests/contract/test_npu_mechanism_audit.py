@@ -116,6 +116,39 @@ def test_npu_operator_parity_shims_delegate_to_cython():
             assert marker not in body
 
 
+def test_bulk_npu_parity_shims_delegate_to_cython():
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")
+    special_src = _source("src/candle/_backends/npu/ops/special.py")
+
+    expectations = {
+        math_src: {
+            "square": "_fast_square_impl",
+            "trunc": "_fast_trunc_impl",
+            "isposinf": "_fast_isposinf_impl",
+            "isneginf": "_fast_isneginf_impl",
+            "isinf": "_fast_isinf_impl",
+            "isnan": "_fast_isnan_impl",
+        },
+        comparison_src: {
+            "isclose": "_fast_isclose_impl",
+        },
+        special_src: {
+            "special_sinc": "_fast_special_sinc_impl",
+            "special_erfcx_op": "_fast_special_erfcx_impl",
+            "special_logit_op": "_fast_special_logit_impl",
+            "special_ndtr_op": "_fast_special_ndtr_impl",
+            "special_log_ndtr_op": "_fast_special_log_ndtr_impl",
+            "special_xlogy_op": "_fast_special_xlogy_impl",
+            "special_xlog1py_op": "_fast_special_xlog1py_impl",
+        },
+    }
+    for src, mapping in expectations.items():
+        for name, fast_name in mapping.items():
+            body = _function_source(src, name)
+            assert fast_name in body, f"{name} does not delegate to {fast_name}"
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
