@@ -3310,6 +3310,14 @@ def fast_rrelu(a, lower=0.125, upper=0.3333333333333333, training=False):
     return fast_where(fast_binary_op(a, zero, None, "gt"), a, fast_mul(a, slope_t))
 
 
+def fast_frac(a):
+    return fast_add(a, fast_neg(fast_trunc(a)))
+
+
+def fast_reciprocal(a):
+    return fast_div(_npu_scalar_like(1.0, a), a)
+
+
 def fast_sin(a):
     """Optimized out-of-place sin(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()

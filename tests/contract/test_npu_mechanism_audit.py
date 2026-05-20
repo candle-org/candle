@@ -79,6 +79,7 @@ def test_npu_operator_parity_shims_delegate_to_cython():
     elementwise_src = _source("src/candle/_backends/npu/ops/elementwise.py")
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     activation_src = _source("src/candle/_backends/npu/ops/activation.py")
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
 
     hypot_body = _function_source(elementwise_src, "hypot")
     assert "_fast_hypot_impl" in hypot_body
@@ -104,6 +105,12 @@ def test_npu_operator_parity_shims_delegate_to_cython():
     forbidden = ["return where(", "return clamp(", "= where(", "= clamp(", "return mul(", "return div(", "return add(", "return sub("]
     for name, fast_name in activation_fast_names.items():
         body = _function_source(activation_src, name)
+        assert fast_name in body
+        for marker in forbidden:
+            assert marker not in body
+
+    for name, fast_name in {"frac": "_fast_frac_impl", "reciprocal": "_fast_reciprocal_impl"}.items():
+        body = _function_source(math_src, name)
         assert fast_name in body
         for marker in forbidden:
             assert marker not in body

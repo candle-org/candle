@@ -36,6 +36,7 @@ try:
         fast_exp2 as _fast_exp2_impl,
         fast_expm1 as _fast_expm1_impl,
         fast_floor as _fast_floor_impl,
+        fast_frac as _fast_frac_impl,
         fast_isfinite as _fast_isfinite_impl,
         fast_isneginf as _fast_isneginf_impl,
         fast_isposinf as _fast_isposinf_impl,
@@ -45,6 +46,7 @@ try:
         fast_log2 as _fast_log2_impl,
         fast_mul as _fast_mul_impl,
         fast_neg as _fast_neg_impl,
+        fast_reciprocal as _fast_reciprocal_impl,
         fast_round as _fast_round_impl,
         fast_rsqrt as _fast_rsqrt_impl,
         fast_sigmoid as _fast_sigmoid_impl,
@@ -83,6 +85,8 @@ try:
     _HAS_FAST_ERF = True
     _HAS_FAST_ERFC = True
     _HAS_FAST_FLOOR = True
+    _HAS_FAST_FRAC = True
+    _HAS_FAST_RECIPROCAL = True
     _HAS_FAST_CEIL = True
     _HAS_FAST_ROUND = True
     _HAS_FAST_TRUNC = True
@@ -122,6 +126,8 @@ except ImportError:
     _fast_erf_impl = None  # type: ignore[assignment]
     _fast_erfc_impl = None  # type: ignore[assignment]
     _fast_floor_impl = None  # type: ignore[assignment]
+    _fast_frac_impl = None  # type: ignore[assignment]
+    _fast_reciprocal_impl = None  # type: ignore[assignment]
     _fast_ceil_impl = None  # type: ignore[assignment]
     _fast_round_impl = None  # type: ignore[assignment]
     _fast_trunc_impl = None  # type: ignore[assignment]
@@ -160,6 +166,8 @@ except ImportError:
     _HAS_FAST_ERF = False
     _HAS_FAST_ERFC = False
     _HAS_FAST_FLOOR = False
+    _HAS_FAST_FRAC = False
+    _HAS_FAST_RECIPROCAL = False
     _HAS_FAST_CEIL = False
     _HAS_FAST_ROUND = False
     _HAS_FAST_TRUNC = False
@@ -590,17 +598,9 @@ def trunc(a):
 
 
 def frac(a):
-    if _use_soc_fallback("frac"):
-        # TODO: re-enable native kernel when CANN fixes aclnnFrac on 910A (561000)
-        out = trunc(a)
-        return add(a, neg(out))
-    try:
-        return _unary_op(a, aclnn.frac, "frac")
-    except RuntimeError as exc:
-        if "561103" not in str(exc):
-            raise
-    out = trunc(a)
-    return add(a, neg(out))
+    if _HAS_FAST_FRAC:
+        return _fast_frac_impl(a)
+    raise RuntimeError("Cython NPU frac implementation is unavailable")
 
 
 def log2(a):
@@ -712,7 +712,9 @@ def _pow_tensor_scalar_op(a, exponent):
 
 
 def reciprocal(a):
-    return pow(a, -1.0)
+    if _HAS_FAST_RECIPROCAL:
+        return _fast_reciprocal_impl(a)
+    raise RuntimeError("Cython NPU reciprocal implementation is unavailable")
 
 
 def pow(a, b):
