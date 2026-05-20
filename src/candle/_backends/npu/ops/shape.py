@@ -2607,8 +2607,12 @@ def take(a, index):
     _require_int64_indices(index, "take")
     flat = view_backend.reshape(a, (a.numel(),))
     dim_size = flat.shape[0]
-    _validate_index_bounds(index, dim_size, allow_negative=True, name="take")
-    norm_index = _normalize_negative_indices(index, dim_size)
+
+    idx_cpu = index.to("cpu").numpy().astype("int64", copy=True)
+    if idx_cpu.size:
+        idx_cpu[idx_cpu < 0] += int(dim_size)
+        idx_cpu %= int(dim_size)
+    norm_index = _index_tensor_from_cpu(idx_cpu, index)
 
     index_shape = norm_index.shape
     gather_index = norm_index
@@ -2628,6 +2632,17 @@ def take_along_dim(a, indices, dim):
             raise ValueError("indices shape mismatch")
     dim_size = a.shape[dim]
     _validate_index_bounds(indices, dim_size, allow_negative=True, name="take_along_dim")
+
+    # 310B-specific safety path: normalize negative indices on CPU before handing
+    # off to gather(). The generic on-device normalization path can crash on 310B
+    # for this op, while gather itself is already routed through the proven 310B
+    # fallback once indices are nonnegative.
+    if _use_soc_fallback("take_along_dim"):
+        idx_cpu = indices.to("cpu").numpy().astype("int64", copy=True)
+        idx_cpu[idx_cpu < 0] += int(dim_size)
+        from ..creation import tensor_create
+        norm_indices = tensor_create(idx_cpu, dtype=int64_dtype, device=indices.device)
+        return gather(a, dim, norm_indices)
 
     norm_indices = _normalize_negative_indices(indices, dim_size)
     return gather(a, dim, norm_indices)
