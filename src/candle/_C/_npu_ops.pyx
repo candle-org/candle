@@ -1230,6 +1230,10 @@ def fast_fmod(a, b):
     return fast_binary_op(a, b, None, "fmod")
 
 
+def fast_remainder(a, b):
+    return fast_binary_op(a, b, None, "remainder")
+
+
 def fast_maximum(a, b):
     return fast_binary_op(a, b, None, "maximum")
 

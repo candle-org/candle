@@ -480,7 +480,10 @@ def min_(a, b):
     from . import where
     from .math import isnan, add
     from .comparison import logical_or
-    result = _binary_op(a, b, aclnn.minimum, "min")
+    if _HAS_FAST_MINIMUM:
+        result = _fast_minimum_impl(a, b)
+    else:
+        raise RuntimeError("Cython NPU minimum implementation is unavailable")
     nan_mask = logical_or(isnan(a), isnan(b))
     return where(nan_mask, add(a, b), result)
 
@@ -489,7 +492,10 @@ def max_(a, b):
     from . import where
     from .math import isnan, add
     from .comparison import logical_or
-    result = _binary_op(a, b, aclnn.maximum, "max")
+    if _HAS_FAST_MAXIMUM:
+        result = _fast_maximum_impl(a, b)
+    else:
+        raise RuntimeError("Cython NPU maximum implementation is unavailable")
     nan_mask = logical_or(isnan(a), isnan(b))
     return where(nan_mask, add(a, b), result)
 
