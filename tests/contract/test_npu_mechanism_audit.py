@@ -200,6 +200,41 @@ def test_npu_thin_binary_wrappers_delegate_to_cython():
             assert "return _binary_op(" not in body
 
 
+def test_npu_existing_fast_helpers_have_no_python_fallback_bodies():
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")
+    elementwise_src = _source("src/candle/_backends/npu/ops/elementwise.py")
+
+    expectations = {
+        math_src: {
+            "add": "_fast_add_impl",
+            "mul": "_fast_mul_impl",
+        },
+        comparison_src: {
+            "bitwise_not": "_fast_bitwise_not_impl",
+        },
+        elementwise_src: {
+            "addcmul": "_fast_addcmul_impl",
+            "addcdiv": "_fast_addcdiv_impl",
+        },
+    }
+    forbidden = [
+        "return _unary_op(",
+        "return _binary_op(",
+        "aclnn.",
+        "_wrap_tensor(",
+        "npu_runtime._alloc_device",
+        "_unwrap_storage(",
+        "_to_numpy(",
+    ]
+    for src, mapping in expectations.items():
+        for name, fast_name in mapping.items():
+            body = _function_source(src, name)
+            assert fast_name in body, f"{name} does not delegate to {fast_name}"
+            for marker in forbidden:
+                assert marker not in body
+
+
 def test_npu_unary_math_wrappers_delegate_to_cython():
     math_src = _source("src/candle/_backends/npu/ops/math.py")
     comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")

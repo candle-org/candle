@@ -173,53 +173,15 @@ def lerp(a, b, weight):
 
 
 def addcmul(a, b, c, value=1.0):
-    if hasattr(value, "shape"):
-        value = float(_to_numpy(value))
     if _HAS_FAST_ADDCMUL:
         return _fast_addcmul_impl(a, b, c, float(value))
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    b_storage = _unwrap_storage(b)
-    c_storage = _unwrap_storage(c)
-    out_shape = _broadcast_shape(_broadcast_shape(a.shape, b.shape), c.shape)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    aclnn.addcmul(
-        a_storage.data_ptr(), b_storage.data_ptr(), c_storage.data_ptr(), out_ptr,
-        a.shape, a.stride, b.shape, b.stride,
-        c.shape, c.stride, out_shape, out_stride,
-        a.dtype, float(value), runtime, stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU addcmul implementation is unavailable")
 
 
 def addcdiv(a, b, c, value=1.0):
-    if hasattr(value, "shape"):
-        value = float(_to_numpy(value))
     if _HAS_FAST_ADDCDIV:
         return _fast_addcdiv_impl(a, b, c, float(value))
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    b_storage = _unwrap_storage(b)
-    c_storage = _unwrap_storage(c)
-    out_shape = _broadcast_shape(_broadcast_shape(a.shape, b.shape), c.shape)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    aclnn.addcdiv(
-        a_storage.data_ptr(), b_storage.data_ptr(), c_storage.data_ptr(), out_ptr,
-        a.shape, a.stride, b.shape, b.stride,
-        c.shape, c.stride, out_shape, out_stride,
-        a.dtype, float(value), runtime, stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU addcdiv implementation is unavailable")
 
 
 def logaddexp(a, b):

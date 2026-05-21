@@ -155,11 +155,9 @@ def logical_xor(a, b):
 
 # Bitwise operations
 def bitwise_not(a):
-    if not aclnn.bitwise_not_symbols_ok():
-        raise RuntimeError("aclnnBitwiseNot symbols not available")
     if _HAS_FAST_BITWISE_NOT:
         return _fast_bitwise_not_impl(a)
-    return _unary_op(a, aclnn.bitwise_not, "bitwise_not")
+    raise RuntimeError("Cython NPU bitwise_not implementation is unavailable")
 
 
 def bitwise_and(a, b):
