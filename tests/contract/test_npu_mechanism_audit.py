@@ -175,6 +175,35 @@ def test_npu_bulk_fast_helpers_have_no_python_fallback_bodies():
             assert marker not in body
 
 
+def test_npu_special_gamma_and_erfinv_wrappers_delegate_to_cython():
+    special_src = _source("src/candle/_backends/npu/ops/special.py")
+    random_src = _source("src/candle/_backends/npu/ops/random.py")
+
+    special_expectations = {
+        "special_digamma": "_fast_digamma_impl",
+        "special_erfinv": "_fast_erfinv_impl",
+        "special_gammaln": "_fast_lgamma_impl",
+    }
+    forbidden = [
+        "return _unary_op(",
+        "return _binary_op(",
+        "aclnn.",
+        "_wrap_tensor(",
+        "npu_runtime._alloc_device",
+        "_unwrap_storage(",
+    ]
+    for name, fast_name in special_expectations.items():
+        body = _function_source(special_src, name)
+        assert fast_name in body, f"{name} does not delegate to {fast_name}"
+        for marker in forbidden:
+            assert marker not in body
+
+    erfinv_body = _function_source(random_src, "erfinv_")
+    assert "_fast_erfinv_impl" in erfinv_body
+    for marker in forbidden:
+        assert marker not in erfinv_body
+
+
 def test_npu_comparison_thin_wrappers_delegate_to_cython():
     comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")
     expectations = {
