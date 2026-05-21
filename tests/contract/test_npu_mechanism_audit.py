@@ -200,6 +200,57 @@ def test_npu_thin_binary_wrappers_delegate_to_cython():
             assert "return _binary_op(" not in body
 
 
+def test_npu_unary_math_wrappers_delegate_to_cython():
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")
+
+    math_expectations = {
+        "abs": "_fast_abs_impl",
+        "neg": "_fast_neg_impl",
+        "sign": "_fast_sign_impl",
+        "exp": "_fast_exp_impl",
+        "log": "_fast_log_impl",
+        "sqrt": "_fast_sqrt_impl",
+        "rsqrt": "_fast_rsqrt_impl",
+        "sin": "_fast_sin_impl",
+        "cos": "_fast_cos_impl",
+        "tan": "_fast_tan_impl",
+        "tanh": "_fast_tanh_impl",
+        "sigmoid": "_fast_sigmoid_impl",
+        "sinh": "_fast_sinh_impl",
+        "cosh": "_fast_cosh_impl",
+        "erf": "_fast_erf_impl",
+        "erfc": "_fast_erfc_impl",
+        "floor": "_fast_floor_impl",
+        "ceil": "_fast_ceil_impl",
+        "round": "_fast_round_impl",
+        "log2": "_fast_log2_impl",
+        "log10": "_fast_log10_impl",
+        "exp2": "_fast_exp2_impl",
+        "asinh": "_fast_asinh_impl",
+        "acosh": "_fast_acosh_impl",
+        "atanh": "_fast_atanh_impl",
+        "atan": "_fast_atan_impl",
+        "asin": "_fast_asin_impl",
+        "acos": "_fast_acos_impl",
+        "expm1": "_fast_expm1_impl",
+        "log1p": "_fast_log1p_impl",
+        "signbit": "_fast_signbit_impl",
+        "isfinite": "_fast_isfinite_impl",
+    }
+    forbidden = ["return _unary_op(", "aclnn.", "_wrap_tensor(", "npu_runtime._alloc_device", "_unwrap_storage("]
+    for name, fast_name in math_expectations.items():
+        body = _function_source(math_src, name)
+        assert fast_name in body, f"{name} does not delegate to {fast_name}"
+        for marker in forbidden:
+            assert marker not in body
+
+    logical_not_body = _function_source(comparison_src, "logical_not")
+    assert "_fast_logical_not_impl" in logical_not_body
+    for marker in forbidden:
+        assert marker not in logical_not_body
+
+
 def test_npu_activation_native_wrappers_delegate_to_cython():
     activation_src = _source("src/candle/_backends/npu/ops/activation.py")
     expectations = {
@@ -209,6 +260,9 @@ def test_npu_activation_native_wrappers_delegate_to_cython():
         "leaky_relu": "_fast_leaky_relu_impl",
         "elu": "_fast_elu_impl",
         "prelu": "_fast_prelu_impl",
+        "softmax": "_fast_softmax_impl",
+        "log_softmax": "_fast_log_softmax_impl",
+        "embedding": "_fast_embedding_impl",
     }
     forbidden = ["return _unary_op(", "aclnn.", "_wrap_tensor(", "npu_runtime._alloc_device", "_unwrap_storage("]
     for name, fast_name in expectations.items():
