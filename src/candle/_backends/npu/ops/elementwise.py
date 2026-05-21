@@ -85,51 +85,18 @@ def where(cond, x, y):
         cond = _npu_broadcast_to(cond, out_shape)
 
     if _use_soc_fallback("where"):
-        # Arithmetic composite: avoid nonzero/index_put_ which poison 310B state.
-        # out = cond_f * x + (1 - cond_f) * y
         cond_f = _cast_tensor_dtype(cond, x.dtype)
         one_minus = sub(_scalar_to_npu_tensor(1.0, cond_f), cond_f)
         return add(mul(cond_f, x), mul(one_minus, y))
 
     if _HAS_FAST_WHERE:
         return _fast_where_impl(cond, x, y)
-
-    if not aclnn.s_where_symbols_ok():
-        raise RuntimeError("aclnnSWhere symbols not available")
-
-    runtime = npu_runtime.get_runtime((x.device.index or 0))
-    stream = npu_state.current_stream((x.device.index or 0))
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * _dtype_itemsize(x.dtype), runtime=runtime)
-    aclnn.s_where(
-        _unwrap_storage(cond).data_ptr(),
-        _unwrap_storage(x).data_ptr(),
-        _unwrap_storage(y).data_ptr(),
-        out_ptr,
-        cond.shape,
-        cond.stride,
-        cond.dtype,
-        x.shape,
-        x.stride,
-        x.dtype,
-        y.shape,
-        y.stride,
-        y.dtype,
-        out_shape,
-        out_stride,
-        x.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), x.dtype, device=x.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU where implementation is unavailable")
 
 
 def lerp(a, b, weight):
-    # 310B native aclnnLerps is still broken for float16, but works for float32.
     use_fallback = _use_soc_fallback("lerp") and a.dtype.name != "float32"
     if use_fallback:
-        # Static small-op fallback on 310B to avoid aclnnLerp 561103.
         delta = sub(b, a)
         scaled = mul(delta, weight)
         return add(a, scaled)
@@ -138,38 +105,7 @@ def lerp(a, b, weight):
         return _fast_lerp_tensor_impl(a, b, weight)
     if not hasattr(weight, "shape") and _HAS_FAST_LERP_SCALAR:
         return _fast_lerp_scalar_impl(a, b, float(weight))
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    b_storage = _unwrap_storage(b)
-    if hasattr(weight, "shape"):
-        # Tensor weight path
-        w_storage = _unwrap_storage(weight)
-        out_shape = _broadcast_shape(_broadcast_shape(a.shape, b.shape), weight.shape)
-        out_stride = npu_runtime._contiguous_stride(out_shape)
-        out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-        out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-        aclnn.lerp_tensor(
-            a_storage.data_ptr(), b_storage.data_ptr(), w_storage.data_ptr(), out_ptr,
-            a.shape, a.stride, b.shape, b.stride,
-            weight.shape, weight.stride, out_shape, out_stride,
-            a.dtype, runtime, stream=stream.stream,
-        )
-    else:
-        # Scalar weight path
-        out_shape = _broadcast_shape(a.shape, b.shape)
-        out_stride = npu_runtime._contiguous_stride(out_shape)
-        out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-        out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-        aclnn.lerp_scalar(
-            a_storage.data_ptr(), b_storage.data_ptr(), out_ptr,
-            a.shape, a.stride, b.shape, b.stride,
-            out_shape, out_stride, a.dtype, float(weight),
-            runtime, stream=stream.stream,
-        )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU lerp implementation is unavailable")
 
 
 def addcmul(a, b, c, value=1.0):

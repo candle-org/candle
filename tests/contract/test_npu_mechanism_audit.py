@@ -288,6 +288,38 @@ def test_npu_unary_math_wrappers_delegate_to_cython():
         assert marker not in logical_not_body
 
 
+def test_npu_soc_guarded_fast_helpers_do_not_keep_native_python_fallbacks():
+    activation_src = _source("src/candle/_backends/npu/ops/activation.py")
+    elementwise_src = _source("src/candle/_backends/npu/ops/elementwise.py")
+
+    expectations = {
+        activation_src: {
+            "softplus": "_fast_softplus_impl",
+            "hardtanh": "_fast_hardtanh_impl",
+            "mish": "_fast_mish_impl",
+            "dropout": "_fast_dropout_impl",
+        },
+        elementwise_src: {
+            "where": "_fast_where_impl",
+            "lerp": "_fast_lerp_tensor_impl",
+        },
+    }
+    forbidden = [
+        "return _unary_op(",
+        "return _binary_op(",
+        "aclnn.",
+        "npu_runtime._alloc_device",
+        "_unwrap_storage(",
+        "_wrap_tensor(",
+    ]
+    for src, mapping in expectations.items():
+        for name, fast_name in mapping.items():
+            body = _function_source(src, name)
+            assert fast_name in body, f"{name} does not delegate to {fast_name}"
+            for marker in forbidden:
+                assert marker not in body
+
+
 def test_npu_activation_native_wrappers_delegate_to_cython():
     activation_src = _source("src/candle/_backends/npu/ops/activation.py")
     expectations = {

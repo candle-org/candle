@@ -191,8 +191,6 @@ def relu6(a):
 
 
 def softplus(a, beta=1.0, threshold=20.0):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU softplus expects NPU tensors")
 
@@ -210,23 +208,7 @@ def softplus(a, beta=1.0, threshold=20.0):
 
     if _HAS_FAST_SOFTPLUS:
         return _fast_softplus_impl(a, beta, threshold)
-
-    out_size = _numel(a.shape) * _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    storage = _unwrap_storage(a)
-    aclnn.softplus(
-        storage.data_ptr(),
-        out_ptr,
-        a.shape,
-        a.stride,
-        a.dtype,
-        beta,
-        threshold,
-        runtime,
-        stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(a.shape), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, a.shape, a.stride)
+    raise RuntimeError("Cython NPU softplus implementation is unavailable")
 
 
 def hardtanh(a, min_val=-1.0, max_val=1.0):
@@ -236,37 +218,8 @@ def hardtanh(a, min_val=-1.0, max_val=1.0):
         except RuntimeError as exc:
             if "561103" not in str(exc):
                 raise
-            # Fallback to clamp when hardtanh kernel is unsupported.
             return clamp(a, min_val, max_val)
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU hardtanh expects NPU tensors")
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    storage = _unwrap_storage(a)
-    try:
-        aclnn.hardtanh(
-            storage.data_ptr(),
-            out_ptr,
-            a.shape,
-            a.stride,
-            a.dtype,
-            min_val,
-            max_val,
-            runtime,
-            stream=stream.stream,
-        )
-    except RuntimeError as exc:
-        if "561103" not in str(exc):
-            raise
-        # Fallback to clamp when hardtanh kernel is unsupported.
-        return clamp(a, min_val, max_val)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU hardtanh implementation is unavailable")
 
 
 def silu(a):
@@ -294,14 +247,11 @@ def elu(a, alpha=1.0):
 
 
 def mish(a):
-    """Compute Mish activation using aclnnMish."""
     if _use_soc_fallback("mish"):
         return mul(a, tanh(softplus(a)))
-    if not aclnn.mish_symbols_ok():
-        raise RuntimeError("aclnnMish not available")
     if _HAS_FAST_MISH:
         return _fast_mish_impl(a)
-    return _unary_op(a, aclnn.mish, "mish")
+    raise RuntimeError("Cython NPU mish implementation is unavailable")
 
 
 def prelu(a, weight):
@@ -415,7 +365,6 @@ def _dropout_310b_mask(a, keep_prob):
 
 
 def dropout(a, p=0.5, training=True):
-    """Compute dropout using aclnnDropoutGenMask + aclnnDropoutDoMask."""
     if not training or p == 0:
         return a
 
@@ -430,50 +379,9 @@ def dropout(a, p=0.5, training=True):
         out = where(keep, a, 0)
         return mul(out, 1.0 / keep_prob)
 
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
-    if not aclnn.dropout_symbols_ok():
-        raise RuntimeError("aclnnDropout symbols not available")
-
     if _HAS_FAST_DROPOUT:
         out, mask_ptr, mask_numel = _fast_dropout_impl(a, p)
         out._backward_data = {"mask_ptr": mask_ptr, "mask_numel": mask_numel, "p": p}
         return out
+    raise RuntimeError("Cython NPU dropout implementation is unavailable")
 
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_numel = _numel(out_shape)
-    itemsize = _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
-
-    # Allocate mask (bit-packed: align(numel, 128) / 8 bytes)
-    mask_numel = (out_numel + 127) // 128 * 128 // 8
-    mask_ptr = npu_runtime._alloc_device(mask_numel, runtime=runtime)
-
-    # Get seed and offset from npu module
-    from .... import npu as npu_mod
-    seed, offset = npu_mod._get_and_advance_offset(device_index=(a.device.index or 0), increment=10)
-
-    # Step 1: Generate mask
-    aclnn.dropout_gen_mask(
-        a.shape, p, seed, offset,
-        mask_ptr, mask_numel,
-        runtime, stream=stream.stream
-    )
-
-    # Step 2: Apply mask
-    aclnn.dropout_do_mask(
-        _unwrap_storage(a).data_ptr(),
-        mask_ptr,
-        out_ptr,
-        a.shape, a.stride, a.dtype,
-        mask_numel, p,
-        runtime, stream=stream.stream
-    )
-
-    # Save mask for backward (dropout backward reuses the same mask)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, a.dtype, device=a.device)
-    out = _wrap_tensor(out_storage, out_shape, out_stride)
-    out._backward_data = {"mask_ptr": mask_ptr, "mask_numel": mask_numel, "p": p}
-    return out
