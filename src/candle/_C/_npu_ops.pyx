@@ -1202,6 +1202,38 @@ def fast_div(a, b):
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
+def fast_pow(a, b):
+    return fast_binary_op(a, b, None, "pow")
+
+
+def fast_pow_tensor_scalar(a, exponent):
+    return fast_pow(a, _npu_scalar_like(exponent, a))
+
+
+def fast_floor_divide(a, b):
+    return fast_binary_op(a, b, None, "floor_divide")
+
+
+def fast_logaddexp(a, b):
+    return fast_binary_op(a, b, None, "logaddexp")
+
+
+def fast_logaddexp2(a, b):
+    return fast_binary_op(a, b, None, "logaddexp2")
+
+
+def fast_fmod(a, b):
+    return fast_binary_op(a, b, None, "fmod")
+
+
+def fast_maximum(a, b):
+    return fast_binary_op(a, b, None, "maximum")
+
+
+def fast_minimum(a, b):
+    return fast_binary_op(a, b, None, "minimum")
+
+
 # ---------------------------------------------------------------------------
 # fast_lerp_tensor — hardwired lerp(a, b, weight_tensor) that skips aclnn.py wrapper
 # ---------------------------------------------------------------------------

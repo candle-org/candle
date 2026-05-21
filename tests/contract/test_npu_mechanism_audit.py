@@ -171,6 +171,35 @@ def test_npu_comparison_thin_wrappers_delegate_to_cython():
         assert "return _binary_op(" not in body
 
 
+def test_npu_thin_binary_wrappers_delegate_to_cython():
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    elementwise_src = _source("src/candle/_backends/npu/ops/elementwise.py")
+    reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
+    expectations = {
+        math_src: {
+            "sub": "_fast_sub_impl",
+            "div": "_fast_div_impl",
+            "_pow_tensor_scalar_op": "_fast_pow_tensor_scalar_impl",
+            "pow": "_fast_pow_impl",
+            "floor_divide": "_fast_floor_divide_impl",
+        },
+        elementwise_src: {
+            "logaddexp": "_fast_logaddexp_impl",
+            "logaddexp2": "_fast_logaddexp2_impl",
+            "fmod": "_fast_fmod_impl",
+        },
+        reduce_src: {
+            "maximum": "_fast_maximum_impl",
+            "minimum": "_fast_minimum_impl",
+        },
+    }
+    for src, mapping in expectations.items():
+        for name, fast_name in mapping.items():
+            body = _function_source(src, name)
+            assert fast_name in body, f"{name} does not delegate to {fast_name}"
+            assert "return _binary_op(" not in body
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()

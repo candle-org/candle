@@ -6,27 +6,39 @@ try:
         fast_lerp_scalar as _fast_lerp_scalar_impl,
         fast_addcmul as _fast_addcmul_impl,
         fast_addcdiv as _fast_addcdiv_impl,
+        fast_fmod as _fast_fmod_impl,
         fast_hypot as _fast_hypot_impl,
+        fast_logaddexp as _fast_logaddexp_impl,
+        fast_logaddexp2 as _fast_logaddexp2_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_WHERE = True
     _HAS_FAST_LERP_TENSOR = True
     _HAS_FAST_LERP_SCALAR = True
     _HAS_FAST_ADDCMUL = True
     _HAS_FAST_ADDCDIV = True
+    _HAS_FAST_FMOD = True
     _HAS_FAST_HYPOT = True
+    _HAS_FAST_LOGADDEXP = True
+    _HAS_FAST_LOGADDEXP2 = True
 except ImportError:
     _fast_where_impl = None  # type: ignore[assignment]
     _fast_lerp_tensor_impl = None  # type: ignore[assignment]
     _fast_lerp_scalar_impl = None  # type: ignore[assignment]
     _fast_addcmul_impl = None  # type: ignore[assignment]
     _fast_addcdiv_impl = None  # type: ignore[assignment]
+    _fast_fmod_impl = None  # type: ignore[assignment]
     _fast_hypot_impl = None  # type: ignore[assignment]
+    _fast_logaddexp_impl = None  # type: ignore[assignment]
+    _fast_logaddexp2_impl = None  # type: ignore[assignment]
     _HAS_FAST_WHERE = False
     _HAS_FAST_LERP_TENSOR = False
     _HAS_FAST_LERP_SCALAR = False
     _HAS_FAST_ADDCMUL = False
     _HAS_FAST_ADDCDIV = False
+    _HAS_FAST_FMOD = False
     _HAS_FAST_HYPOT = False
+    _HAS_FAST_LOGADDEXP = False
+    _HAS_FAST_LOGADDEXP2 = False
 
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
@@ -211,11 +223,15 @@ def addcdiv(a, b, c, value=1.0):
 
 
 def logaddexp(a, b):
-    return _binary_op(a, b, aclnn.slogaddexp, "logaddexp")
+    if _HAS_FAST_LOGADDEXP:
+        return _fast_logaddexp_impl(a, b)
+    raise RuntimeError("Cython NPU logaddexp implementation is unavailable")
 
 
 def logaddexp2(a, b):
-    return _binary_op(a, b, aclnn.slogaddexp2, "logaddexp2")
+    if _HAS_FAST_LOGADDEXP2:
+        return _fast_logaddexp2_impl(a, b)
+    raise RuntimeError("Cython NPU logaddexp2 implementation is unavailable")
 
 
 def hypot(a, b):
@@ -247,7 +263,9 @@ def remainder(a, b):
 def fmod(a, b):
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
-    return _binary_op(a, b, aclnn.sfmod, "fmod")
+    if _HAS_FAST_FMOD:
+        return _fast_fmod_impl(a, b)
+    raise RuntimeError("Cython NPU fmod implementation is unavailable")
 
 
 def clamp(a, min_val=None, max_val=None):
