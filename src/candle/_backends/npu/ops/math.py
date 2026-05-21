@@ -212,7 +212,7 @@ def add(a, b):
         b = _scalar_to_npu_tensor(b, a)
     if _HAS_FAST_ADD:
         return _fast_add_impl(a, b)
-    return _binary_op(a, b, aclnn.add, "add")
+    raise RuntimeError("Cython NPU add implementation is unavailable")
 
 
 def mul(a, b):
@@ -220,7 +220,7 @@ def mul(a, b):
         b = _scalar_to_npu_tensor(b, a)
     if _HAS_FAST_MUL:
         return _fast_mul_impl(a, b)
-    return _binary_op(a, b, aclnn.mul, "mul")
+    raise RuntimeError("Cython NPU mul implementation is unavailable")
 
 
 def sub(a, b):
