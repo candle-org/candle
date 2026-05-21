@@ -155,6 +155,7 @@ def test_npu_bulk_fast_helpers_have_no_python_fallback_bodies():
     expectations = {
         "square": "_fast_square_impl",
         "isinf": "_fast_isinf_impl",
+        "isnan": "_fast_isnan_impl",
         "isposinf": "_fast_isposinf_impl",
         "isneginf": "_fast_isneginf_impl",
         "trunc": "_fast_trunc_impl",

@@ -73,6 +73,8 @@ try:
     _HAS_FAST_SIGN = True
     _HAS_FAST_SIGNBIT = True
     _HAS_FAST_ISFINITE = True
+    _HAS_FAST_ISINF = True
+    _HAS_FAST_ISNAN = True
     _HAS_FAST_ISPOSINF = True
     _HAS_FAST_ISNEGINF = True
     _HAS_FAST_SQUARE = True
@@ -166,6 +168,8 @@ except ImportError:
     _HAS_FAST_SIGN = False
     _HAS_FAST_SIGNBIT = False
     _HAS_FAST_ISFINITE = False
+    _HAS_FAST_ISINF = False
+    _HAS_FAST_ISNAN = False
     _HAS_FAST_ISPOSINF = False
     _HAS_FAST_ISNEGINF = False
     _HAS_FAST_SQUARE = False
@@ -415,19 +419,12 @@ def isinf(a):
 def isnan(a):
     if _HAS_FAST_ISNAN and a.dtype.is_floating_point:
         return _fast_isnan_impl(a)
-    # Lazy import to avoid circular dependency with comparison/logical ops
-    from . import logical_and, logical_not
-
     if a.device.type != "npu":
         raise ValueError("NPU isnan expects NPU tensors")
     if not a.dtype.is_floating_point:
+        from . import logical_not
         return logical_not(isfinite(a))
-    if not (aclnn.logical_not_symbols_ok() and aclnn.logical_and_symbols_ok()):
-        raise RuntimeError("aclnn logical ops missing for isnan")
-    finite = isfinite(a)
-    recip = pow(a, -1.0)
-    recip_finite = isfinite(recip)
-    return logical_and(logical_not(finite), logical_not(recip_finite))
+    raise RuntimeError("Cython NPU isnan implementation is unavailable")
 
 
 def isposinf(a):
