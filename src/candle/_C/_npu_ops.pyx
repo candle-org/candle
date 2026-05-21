@@ -1222,6 +1222,10 @@ def fast_logaddexp2(a, b):
     return fast_binary_op(a, b, None, "logaddexp2")
 
 
+def fast_atan2(a, b):
+    return fast_binary_op(a, b, None, "atan2")
+
+
 def fast_fmod(a, b):
     return fast_binary_op(a, b, None, "fmod")
 

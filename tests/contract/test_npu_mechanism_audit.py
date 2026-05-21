@@ -346,6 +346,7 @@ def test_npu_unary_math_wrappers_delegate_to_cython():
 def test_npu_soc_guarded_fast_helpers_do_not_keep_native_python_fallbacks():
     activation_src = _source("src/candle/_backends/npu/ops/activation.py")
     elementwise_src = _source("src/candle/_backends/npu/ops/elementwise.py")
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
 
     expectations = {
         activation_src: {
@@ -357,6 +358,9 @@ def test_npu_soc_guarded_fast_helpers_do_not_keep_native_python_fallbacks():
         elementwise_src: {
             "where": "_fast_where_impl",
             "lerp": "_fast_lerp_tensor_impl",
+        },
+        math_src: {
+            "atan2": "_fast_atan2_impl",
         },
     }
     forbidden = [

@@ -26,6 +26,7 @@ try:
         fast_asin as _fast_asin_impl,
         fast_asinh as _fast_asinh_impl,
         fast_atan as _fast_atan_impl,
+        fast_atan2 as _fast_atan2_impl,
         fast_atanh as _fast_atanh_impl,
         fast_ceil as _fast_ceil_impl,
         fast_cos as _fast_cos_impl,
@@ -106,6 +107,7 @@ try:
     _HAS_FAST_ACOSH = True
     _HAS_FAST_ATANH = True
     _HAS_FAST_ATAN = True
+    _HAS_FAST_ATAN2 = True
     _HAS_FAST_ASIN = True
     _HAS_FAST_ACOS = True
     _HAS_FAST_DIV = True
@@ -159,6 +161,7 @@ except ImportError:
     _fast_acosh_impl = None  # type: ignore[assignment]
     _fast_atanh_impl = None  # type: ignore[assignment]
     _fast_atan_impl = None  # type: ignore[assignment]
+    _fast_atan2_impl = None  # type: ignore[assignment]
     _fast_asin_impl = None  # type: ignore[assignment]
     _fast_acos_impl = None  # type: ignore[assignment]
     _fast_mul_impl = None  # type: ignore[assignment]
@@ -201,6 +204,7 @@ except ImportError:
     _HAS_FAST_ACOSH = False
     _HAS_FAST_ATANH = False
     _HAS_FAST_ATAN = False
+    _HAS_FAST_ATAN2 = False
     _HAS_FAST_ASIN = False
     _HAS_FAST_ACOS = False
     _HAS_FAST_DIV = False
@@ -647,7 +651,9 @@ def atan2(a, b):
         out = where(logical_and(x_eq0, y_eq0), zero, out)
         return out
 
-    return _binary_op(a, b, aclnn.atan2, "atan2")
+    if _HAS_FAST_ATAN2:
+        return _fast_atan2_impl(a, b)
+    raise RuntimeError("Cython NPU atan2 implementation is unavailable")
 
 
 def _pow_tensor_scalar_op(a, exponent):
