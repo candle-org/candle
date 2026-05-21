@@ -200,6 +200,24 @@ def test_npu_thin_binary_wrappers_delegate_to_cython():
             assert "return _binary_op(" not in body
 
 
+def test_npu_activation_native_wrappers_delegate_to_cython():
+    activation_src = _source("src/candle/_backends/npu/ops/activation.py")
+    expectations = {
+        "relu": "_fast_relu_impl",
+        "silu": "_fast_silu_impl",
+        "gelu": "_fast_gelu_impl",
+        "leaky_relu": "_fast_leaky_relu_impl",
+        "elu": "_fast_elu_impl",
+        "prelu": "_fast_prelu_impl",
+    }
+    forbidden = ["return _unary_op(", "aclnn.", "_wrap_tensor(", "npu_runtime._alloc_device", "_unwrap_storage("]
+    for name, fast_name in expectations.items():
+        body = _function_source(activation_src, name)
+        assert fast_name in body, f"{name} does not delegate to {fast_name}"
+        for marker in forbidden:
+            assert marker not in body
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
