@@ -726,6 +726,54 @@ cdef object _get_alpha_one_bytes(int dtype_code):
     return existing
 
 
+def fast_eq(a, b):
+    return fast_binary_op(a, b, None, "eq")
+
+
+def fast_ne(a, b):
+    return fast_binary_op(a, b, None, "ne")
+
+
+def fast_le(a, b):
+    return fast_binary_op(a, b, None, "le")
+
+
+def fast_lt(a, b):
+    return fast_binary_op(a, b, None, "lt")
+
+
+def fast_gt(a, b):
+    return fast_binary_op(a, b, None, "gt")
+
+
+def fast_ge(a, b):
+    return fast_binary_op(a, b, None, "ge")
+
+
+def fast_logical_and(a, b):
+    return fast_binary_op(a, b, None, "logical_and")
+
+
+def fast_logical_or(a, b):
+    return fast_binary_op(a, b, None, "logical_or")
+
+
+def fast_logical_xor(a, b):
+    return fast_binary_op(a, b, None, "logical_xor")
+
+
+def fast_bitwise_and(a, b):
+    return fast_binary_op(a, b, None, "bitwise_and")
+
+
+def fast_bitwise_or(a, b):
+    return fast_binary_op(a, b, None, "bitwise_or")
+
+
+def fast_bitwise_xor(a, b):
+    return fast_binary_op(a, b, None, "bitwise_xor")
+
+
 def fast_add(a, b):
     """Optimized add(a, b, alpha=1) that calls _ffi.binary_op_with_alpha directly.
 
@@ -1152,6 +1200,38 @@ def fast_div(a, b):
     _defer_executor_fn(executor)
 
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+def fast_pow(a, b):
+    return fast_binary_op(a, b, None, "pow")
+
+
+def fast_pow_tensor_scalar(a, exponent):
+    return fast_pow(a, _npu_scalar_like(exponent, a))
+
+
+def fast_floor_divide(a, b):
+    return fast_binary_op(a, b, None, "floor_divide")
+
+
+def fast_logaddexp(a, b):
+    return fast_binary_op(a, b, None, "logaddexp")
+
+
+def fast_logaddexp2(a, b):
+    return fast_binary_op(a, b, None, "logaddexp2")
+
+
+def fast_fmod(a, b):
+    return fast_binary_op(a, b, None, "fmod")
+
+
+def fast_maximum(a, b):
+    return fast_binary_op(a, b, None, "maximum")
+
+
+def fast_minimum(a, b):
+    return fast_binary_op(a, b, None, "minimum")
 
 
 # ---------------------------------------------------------------------------

@@ -149,6 +149,75 @@ def test_bulk_npu_parity_shims_delegate_to_cython():
             assert fast_name in body, f"{name} does not delegate to {fast_name}"
 
 
+def test_npu_comparison_thin_wrappers_delegate_to_cython():
+    comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")
+    expectations = {
+        "eq": "_fast_eq_impl",
+        "ne": "_fast_ne_impl",
+        "le": "_fast_le_impl",
+        "lt": "_fast_lt_impl",
+        "gt": "_fast_gt_impl",
+        "ge": "_fast_ge_impl",
+        "logical_and": "_fast_logical_and_impl",
+        "logical_or": "_fast_logical_or_impl",
+        "logical_xor": "_fast_logical_xor_impl",
+        "bitwise_and": "_fast_bitwise_and_impl",
+        "bitwise_or": "_fast_bitwise_or_impl",
+        "bitwise_xor": "_fast_bitwise_xor_impl",
+    }
+    for name, fast_name in expectations.items():
+        body = _function_source(comparison_src, name)
+        assert fast_name in body, f"{name} does not delegate to {fast_name}"
+        assert "return _binary_op(" not in body
+
+
+def test_npu_thin_binary_wrappers_delegate_to_cython():
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    elementwise_src = _source("src/candle/_backends/npu/ops/elementwise.py")
+    reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
+    expectations = {
+        math_src: {
+            "sub": "_fast_sub_impl",
+            "div": "_fast_div_impl",
+            "_pow_tensor_scalar_op": "_fast_pow_tensor_scalar_impl",
+            "pow": "_fast_pow_impl",
+            "floor_divide": "_fast_floor_divide_impl",
+        },
+        elementwise_src: {
+            "logaddexp": "_fast_logaddexp_impl",
+            "logaddexp2": "_fast_logaddexp2_impl",
+            "fmod": "_fast_fmod_impl",
+        },
+        reduce_src: {
+            "maximum": "_fast_maximum_impl",
+            "minimum": "_fast_minimum_impl",
+        },
+    }
+    for src, mapping in expectations.items():
+        for name, fast_name in mapping.items():
+            body = _function_source(src, name)
+            assert fast_name in body, f"{name} does not delegate to {fast_name}"
+            assert "return _binary_op(" not in body
+
+
+def test_npu_activation_native_wrappers_delegate_to_cython():
+    activation_src = _source("src/candle/_backends/npu/ops/activation.py")
+    expectations = {
+        "relu": "_fast_relu_impl",
+        "silu": "_fast_silu_impl",
+        "gelu": "_fast_gelu_impl",
+        "leaky_relu": "_fast_leaky_relu_impl",
+        "elu": "_fast_elu_impl",
+        "prelu": "_fast_prelu_impl",
+    }
+    forbidden = ["return _unary_op(", "aclnn.", "_wrap_tensor(", "npu_runtime._alloc_device", "_unwrap_storage("]
+    for name, fast_name in expectations.items():
+        body = _function_source(activation_src, name)
+        assert fast_name in body, f"{name} does not delegate to {fast_name}"
+        for marker in forbidden:
+            assert marker not in body
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()

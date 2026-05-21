@@ -3,14 +3,22 @@ try:
     from candle._C._npu_ops import (  # pylint: disable=import-error,no-name-in-module
         fast_fmin as _fast_fmin_impl,
         fast_fmax as _fast_fmax_impl,
+        fast_maximum as _fast_maximum_impl,
+        fast_minimum as _fast_minimum_impl,
     )
     _HAS_FAST_FMIN = True
     _HAS_FAST_FMAX = True
+    _HAS_FAST_MAXIMUM = True
+    _HAS_FAST_MINIMUM = True
 except ImportError:
     _fast_fmin_impl = None  # type: ignore[assignment]
     _fast_fmax_impl = None  # type: ignore[assignment]
+    _fast_maximum_impl = None  # type: ignore[assignment]
+    _fast_minimum_impl = None  # type: ignore[assignment]
     _HAS_FAST_FMIN = False
     _HAS_FAST_FMAX = False
+    _HAS_FAST_MAXIMUM = False
+    _HAS_FAST_MINIMUM = False
 
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
@@ -487,13 +495,15 @@ def max_(a, b):
 
 
 def maximum(a, b):
-    """Element-wise maximum of two tensors."""
-    return _binary_op(a, b, aclnn.maximum, "maximum")
+    if _HAS_FAST_MAXIMUM:
+        return _fast_maximum_impl(a, b)
+    raise RuntimeError("Cython NPU maximum implementation is unavailable")
 
 
 def minimum(a, b):
-    """Element-wise minimum of two tensors."""
-    return _binary_op(a, b, aclnn.minimum, "minimum")
+    if _HAS_FAST_MINIMUM:
+        return _fast_minimum_impl(a, b)
+    raise RuntimeError("Cython NPU minimum implementation is unavailable")
 
 
 def fmin(a, b):

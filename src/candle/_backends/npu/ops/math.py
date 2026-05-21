@@ -31,6 +31,7 @@ try:
         fast_cos as _fast_cos_impl,
         fast_cosh as _fast_cosh_impl,
         fast_erf as _fast_erf_impl,
+        fast_div as _fast_div_impl,
         fast_erfc as _fast_erfc_impl,
         fast_exp as _fast_exp_impl,
         fast_exp2 as _fast_exp2_impl,
@@ -46,8 +47,11 @@ try:
         fast_log1p as _fast_log1p_impl,
         fast_log10 as _fast_log10_impl,
         fast_log2 as _fast_log2_impl,
+        fast_floor_divide as _fast_floor_divide_impl,
         fast_mul as _fast_mul_impl,
         fast_neg as _fast_neg_impl,
+        fast_pow as _fast_pow_impl,
+        fast_pow_tensor_scalar as _fast_pow_tensor_scalar_impl,
         fast_reciprocal as _fast_reciprocal_impl,
         fast_round as _fast_round_impl,
         fast_rsqrt as _fast_rsqrt_impl,
@@ -58,6 +62,7 @@ try:
         fast_sinh as _fast_sinh_impl,
         fast_sqrt as _fast_sqrt_impl,
         fast_square as _fast_square_impl,
+        fast_sub as _fast_sub_impl,
         fast_tan as _fast_tan_impl,
         fast_tanh as _fast_tanh_impl,
         fast_trunc as _fast_trunc_impl,
@@ -101,11 +106,18 @@ try:
     _HAS_FAST_ATAN = True
     _HAS_FAST_ASIN = True
     _HAS_FAST_ACOS = True
+    _HAS_FAST_DIV = True
+    _HAS_FAST_FLOOR_DIVIDE = True
     _HAS_FAST_MUL = True
+    _HAS_FAST_POW = True
+    _HAS_FAST_POW_TENSOR_SCALAR = True
+    _HAS_FAST_SUB = True
 except ImportError:
     _fast_add_impl = None  # type: ignore[assignment]
     _fast_abs_impl = None  # type: ignore[assignment]
     _fast_neg_impl = None  # type: ignore[assignment]
+    _fast_pow_impl = None  # type: ignore[assignment]
+    _fast_pow_tensor_scalar_impl = None  # type: ignore[assignment]
     _fast_sign_impl = None  # type: ignore[assignment]
     _fast_signbit_impl = None  # type: ignore[assignment]
     _fast_isfinite_impl = None  # type: ignore[assignment]
@@ -114,8 +126,11 @@ except ImportError:
     _fast_isposinf_impl = None  # type: ignore[assignment]
     _fast_isneginf_impl = None  # type: ignore[assignment]
     _fast_square_impl = None  # type: ignore[assignment]
+    _fast_sub_impl = None  # type: ignore[assignment]
     _fast_exp_impl = None  # type: ignore[assignment]
+    _fast_div_impl = None  # type: ignore[assignment]
     _fast_expm1_impl = None  # type: ignore[assignment]
+    _fast_floor_divide_impl = None  # type: ignore[assignment]
     _fast_log_impl = None  # type: ignore[assignment]
     _fast_log1p_impl = None  # type: ignore[assignment]
     _fast_sqrt_impl = None  # type: ignore[assignment]
@@ -184,7 +199,12 @@ except ImportError:
     _HAS_FAST_ATAN = False
     _HAS_FAST_ASIN = False
     _HAS_FAST_ACOS = False
+    _HAS_FAST_DIV = False
+    _HAS_FAST_FLOOR_DIVIDE = False
     _HAS_FAST_MUL = False
+    _HAS_FAST_POW = False
+    _HAS_FAST_POW_TENSOR_SCALAR = False
+    _HAS_FAST_SUB = False
 
 
 def add(a, b):
@@ -206,13 +226,17 @@ def mul(a, b):
 def sub(a, b):
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
-    return _binary_op(a, b, aclnn.sub, "sub")
+    if _HAS_FAST_SUB:
+        return _fast_sub_impl(a, b)
+    raise RuntimeError("Cython NPU sub implementation is unavailable")
 
 
 def div(a, b):
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
-    return _binary_op(a, b, aclnn.div, "div")
+    if _HAS_FAST_DIV:
+        return _fast_div_impl(a, b)
+    raise RuntimeError("Cython NPU div implementation is unavailable")
 
 
 # ---------------------------------------------------------------------------
@@ -707,25 +731,9 @@ def atan2(a, b):
 
 
 def _pow_tensor_scalar_op(a, exponent):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU pow expects NPU tensors")
-    out_size = _numel(a.shape) * _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    storage = _unwrap_storage(a)
-    aclnn.pow_tensor_scalar(
-        storage.data_ptr(),
-        exponent,
-        out_ptr,
-        a.shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(a.shape), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, a.shape, a.stride)
+    if _HAS_FAST_POW_TENSOR_SCALAR:
+        return _fast_pow_tensor_scalar_impl(a, exponent)
+    raise RuntimeError("Cython NPU pow tensor-scalar implementation is unavailable")
 
 
 def reciprocal(a):
@@ -736,14 +744,17 @@ def reciprocal(a):
 
 def pow(a, b):
     if hasattr(b, "shape"):
-        return _binary_op(a, b, aclnn.pow_tensor_tensor, "pow")
+        if _HAS_FAST_POW:
+            return _fast_pow_impl(a, b)
+        raise RuntimeError("Cython NPU pow implementation is unavailable")
     return _pow_tensor_scalar_op(a, b)
 
 
 def floor_divide(a, b):
-    """Compute floor division using aclnnFloorDivide."""
     from ...._tensor import Tensor
     if not isinstance(b, Tensor):
         from ...._creation import tensor as _tensor
         b = _tensor(float(b), device=a.device)
-    return _binary_op(a, b, aclnn.floor_divide, "floor_divide")
+    if _HAS_FAST_FLOOR_DIVIDE:
+        return _fast_floor_divide_impl(a, b)
+    raise RuntimeError("Cython NPU floor_divide implementation is unavailable")

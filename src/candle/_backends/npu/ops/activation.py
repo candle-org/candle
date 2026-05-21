@@ -142,27 +142,7 @@ from .reduce import maximum, minimum
 def relu(a):
     if _HAS_FAST_RELU:
         return _fast_relu_impl(a)
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU relu expects NPU tensors")
-
-    a_storage = _unwrap_storage(a)
-    out_size = _numel(a.shape) * _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    aclnn.relu(
-        a_storage.data_ptr(),
-        out_ptr,
-        a.shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-
-    storage = npu_typed_storage_from_ptr(out_ptr, _numel(a.shape), a.dtype, device=a.device)
-    return _wrap_tensor(storage, a.shape, a.stride)
+    raise RuntimeError("Cython NPU relu implementation is unavailable")
 
 
 def relu_(a):
@@ -290,95 +270,27 @@ def hardtanh(a, min_val=-1.0, max_val=1.0):
 
 
 def silu(a):
-    """Compute SiLU (Swish) activation using aclnnSilu."""
-    if not aclnn.silu_symbols_ok():
-        raise RuntimeError("aclnnSilu not available")
     if _HAS_FAST_SILU:
         return _fast_silu_impl(a)
-    return _unary_op(a, aclnn.silu, "silu")
+    raise RuntimeError("Cython NPU silu implementation is unavailable")
 
 
 def gelu(a):
-    """Compute GELU activation using aclnnGelu."""
-    if not aclnn.gelu_symbols_ok():
-        raise RuntimeError("aclnnGelu not available")
     if _HAS_FAST_GELU:
         return _fast_gelu_impl(a)
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_numel = _numel(out_shape)
-    itemsize = _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
-
-    aclnn.gelu(
-        _unwrap_storage(a).data_ptr(),
-        out_ptr,
-        a.shape, a.stride, a.dtype,
-        runtime, stream=stream.stream
-    )
-
-    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU gelu implementation is unavailable")
 
 
 def leaky_relu(a, negative_slope=0.01):
-    """Compute Leaky ReLU activation using aclnnLeakyRelu."""
-    if not aclnn.leaky_relu_symbols_ok():
-        raise RuntimeError("aclnnLeakyRelu not available")
     if _HAS_FAST_LEAKY_RELU:
         return _fast_leaky_relu_impl(a, negative_slope)
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_numel = _numel(out_shape)
-    itemsize = _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
-
-    aclnn.leaky_relu(
-        _unwrap_storage(a).data_ptr(),
-        out_ptr,
-        a.shape, a.stride, a.dtype,
-        negative_slope,
-        runtime, stream=stream.stream
-    )
-
-    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU leaky_relu implementation is unavailable")
 
 
 def elu(a, alpha=1.0):
-    """Compute ELU activation using aclnnElu."""
-    if not aclnn.elu_symbols_ok():
-        raise RuntimeError("aclnnElu not available")
     if _HAS_FAST_ELU:
         return _fast_elu_impl(a, alpha)
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_numel = _numel(out_shape)
-    itemsize = _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
-
-    aclnn.elu(
-        _unwrap_storage(a).data_ptr(),
-        out_ptr,
-        a.shape, a.stride, a.dtype,
-        alpha,
-        runtime, stream=stream.stream
-    )
-
-    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU elu implementation is unavailable")
 
 
 def mish(a):
@@ -393,33 +305,9 @@ def mish(a):
 
 
 def prelu(a, weight):
-    """Compute PReLU activation using aclnnPrelu."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
-    if not aclnn.prelu_symbols_ok():
-        raise RuntimeError("aclnnPrelu not available")
     if _HAS_FAST_PRELU:
         return _fast_prelu_impl(a, weight)
-
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_numel = _numel(out_shape)
-    itemsize = _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
-
-    aclnn.prelu(
-        _unwrap_storage(a).data_ptr(),
-        _unwrap_storage(weight).data_ptr(),
-        out_ptr,
-        a.shape, a.stride,
-        weight.shape, weight.stride,
-        a.dtype,
-        runtime, stream=stream.stream
-    )
-
-    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU prelu implementation is unavailable")
 
 
 def selu_op(a):

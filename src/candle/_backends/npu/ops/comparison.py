@@ -1,20 +1,72 @@
 """Comparison, logical, and bitwise operations for NPU."""
 
 try:
-    from candle._C._npu_ops import fast_logical_not as _fast_logical_not_impl, fast_bitwise_not as _fast_bitwise_not_impl, fast_isclose as _fast_isclose_impl  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_ops import (
+        fast_logical_not as _fast_logical_not_impl,
+        fast_bitwise_not as _fast_bitwise_not_impl,
+        fast_isclose as _fast_isclose_impl,
+        fast_eq as _fast_eq_impl,
+        fast_ne as _fast_ne_impl,
+        fast_le as _fast_le_impl,
+        fast_lt as _fast_lt_impl,
+        fast_gt as _fast_gt_impl,
+        fast_ge as _fast_ge_impl,
+        fast_logical_and as _fast_logical_and_impl,
+        fast_logical_or as _fast_logical_or_impl,
+        fast_logical_xor as _fast_logical_xor_impl,
+        fast_bitwise_and as _fast_bitwise_and_impl,
+        fast_bitwise_or as _fast_bitwise_or_impl,
+        fast_bitwise_xor as _fast_bitwise_xor_impl,
+    )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_LOGICAL_NOT = True
     _HAS_FAST_BITWISE_NOT = True
     _HAS_FAST_ISCLOSE = True
+    _HAS_FAST_EQ = True
+    _HAS_FAST_NE = True
+    _HAS_FAST_LE = True
+    _HAS_FAST_LT = True
+    _HAS_FAST_GT = True
+    _HAS_FAST_GE = True
+    _HAS_FAST_LOGICAL_AND = True
+    _HAS_FAST_LOGICAL_OR = True
+    _HAS_FAST_LOGICAL_XOR = True
+    _HAS_FAST_BITWISE_AND = True
+    _HAS_FAST_BITWISE_OR = True
+    _HAS_FAST_BITWISE_XOR = True
 except ImportError:
     _fast_logical_not_impl = None  # type: ignore[assignment]
     _fast_bitwise_not_impl = None  # type: ignore[assignment]
     _fast_isclose_impl = None  # type: ignore[assignment]
+    _fast_eq_impl = None  # type: ignore[assignment]
+    _fast_ne_impl = None  # type: ignore[assignment]
+    _fast_le_impl = None  # type: ignore[assignment]
+    _fast_lt_impl = None  # type: ignore[assignment]
+    _fast_gt_impl = None  # type: ignore[assignment]
+    _fast_ge_impl = None  # type: ignore[assignment]
+    _fast_logical_and_impl = None  # type: ignore[assignment]
+    _fast_logical_or_impl = None  # type: ignore[assignment]
+    _fast_logical_xor_impl = None  # type: ignore[assignment]
+    _fast_bitwise_and_impl = None  # type: ignore[assignment]
+    _fast_bitwise_or_impl = None  # type: ignore[assignment]
+    _fast_bitwise_xor_impl = None  # type: ignore[assignment]
     _HAS_FAST_LOGICAL_NOT = False
     _HAS_FAST_BITWISE_NOT = False
     _HAS_FAST_ISCLOSE = False
+    _HAS_FAST_EQ = False
+    _HAS_FAST_NE = False
+    _HAS_FAST_LE = False
+    _HAS_FAST_LT = False
+    _HAS_FAST_GT = False
+    _HAS_FAST_GE = False
+    _HAS_FAST_LOGICAL_AND = False
+    _HAS_FAST_LOGICAL_OR = False
+    _HAS_FAST_LOGICAL_XOR = False
+    _HAS_FAST_BITWISE_AND = False
+    _HAS_FAST_BITWISE_OR = False
+    _HAS_FAST_BITWISE_XOR = False
 
 from ._helpers import (
-    _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
+    _unwrap_storage, _wrap_tensor, _unary_op,
     _broadcast_shape, _numel, _dtype_itemsize, _use_soc_fallback,
     _scalar_to_npu_tensor,
     bool_dtype,
@@ -28,7 +80,9 @@ def eq(a, b):
         b = _scalar_to_npu_tensor(b, a)
     if not aclnn.eq_tensor_symbols_ok():
         raise RuntimeError("aclnnEqTensor symbols not available")
-    return _binary_op(a, b, aclnn.eq_tensor, "eq")
+    if _HAS_FAST_EQ:
+        return _fast_eq_impl(a, b)
+    raise RuntimeError("Cython NPU eq implementation is unavailable")
 
 
 def ne(a, b):
@@ -36,39 +90,53 @@ def ne(a, b):
         b = _scalar_to_npu_tensor(b, a)
     if not aclnn.ne_tensor_symbols_ok():
         raise RuntimeError("aclnnNeTensor symbols not available")
-    return _binary_op(a, b, aclnn.ne_tensor, "ne")
+    if _HAS_FAST_NE:
+        return _fast_ne_impl(a, b)
+    raise RuntimeError("Cython NPU ne implementation is unavailable")
 
 
 def le(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    return _binary_op(a, b, aclnn.le_tensor, "le")
+    if _HAS_FAST_LE:
+        return _fast_le_impl(a, b)
+    raise RuntimeError("Cython NPU le implementation is unavailable")
 
 
 def lt(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    return _binary_op(a, b, aclnn.lt_tensor, "lt")
+    if _HAS_FAST_LT:
+        return _fast_lt_impl(a, b)
+    raise RuntimeError("Cython NPU lt implementation is unavailable")
 
 
 def gt(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    return _binary_op(a, b, aclnn.gt_tensor, "gt")
+    if _HAS_FAST_GT:
+        return _fast_gt_impl(a, b)
+    raise RuntimeError("Cython NPU gt implementation is unavailable")
 
 
 def ge(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    return _binary_op(a, b, aclnn.ge_tensor, "ge")
+    if _HAS_FAST_GE:
+        return _fast_ge_impl(a, b)
+    raise RuntimeError("Cython NPU ge implementation is unavailable")
 
 
 def logical_and(a, b):
-    return _binary_op(a, b, aclnn.logical_and, "logical_and")
+    if _HAS_FAST_LOGICAL_AND:
+        return _fast_logical_and_impl(a, b)
+    raise RuntimeError("Cython NPU logical_and implementation is unavailable")
 
 
 def logical_or(a, b):
-    return _binary_op(a, b, aclnn.logical_or, "logical_or")
+    if _HAS_FAST_LOGICAL_OR:
+        return _fast_logical_or_impl(a, b)
+    raise RuntimeError("Cython NPU logical_or implementation is unavailable")
 
 
 def logical_not(a):
@@ -80,7 +148,9 @@ def logical_not(a):
 def logical_xor(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    return _binary_op(a, b, aclnn.logical_xor, "logical_xor")
+    if _HAS_FAST_LOGICAL_XOR:
+        return _fast_logical_xor_impl(a, b)
+    raise RuntimeError("Cython NPU logical_xor implementation is unavailable")
 
 
 # Bitwise operations
@@ -95,19 +165,25 @@ def bitwise_not(a):
 def bitwise_and(a, b):
     if not aclnn.bitwise_and_symbols_ok():
         raise RuntimeError("aclnnBitwiseAndTensor symbols not available")
-    return _binary_op(a, b, aclnn.bitwise_and, "bitwise_and")
+    if _HAS_FAST_BITWISE_AND:
+        return _fast_bitwise_and_impl(a, b)
+    raise RuntimeError("Cython NPU bitwise_and implementation is unavailable")
 
 
 def bitwise_or(a, b):
     if not aclnn.bitwise_or_symbols_ok():
         raise RuntimeError("aclnnBitwiseOrTensor symbols not available")
-    return _binary_op(a, b, aclnn.bitwise_or, "bitwise_or")
+    if _HAS_FAST_BITWISE_OR:
+        return _fast_bitwise_or_impl(a, b)
+    raise RuntimeError("Cython NPU bitwise_or implementation is unavailable")
 
 
 def bitwise_xor(a, b):
     if not aclnn.bitwise_xor_symbols_ok():
         raise RuntimeError("aclnnBitwiseXorTensor symbols not available")
-    return _binary_op(a, b, aclnn.bitwise_xor, "bitwise_xor")
+    if _HAS_FAST_BITWISE_XOR:
+        return _fast_bitwise_xor_impl(a, b)
+    raise RuntimeError("Cython NPU bitwise_xor implementation is unavailable")
 
 
 def equal(a, b):
