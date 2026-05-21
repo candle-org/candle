@@ -78,8 +78,6 @@ from ._helpers import (
 def eq(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    if not aclnn.eq_tensor_symbols_ok():
-        raise RuntimeError("aclnnEqTensor symbols not available")
     if _HAS_FAST_EQ:
         return _fast_eq_impl(a, b)
     raise RuntimeError("Cython NPU eq implementation is unavailable")
@@ -88,8 +86,6 @@ def eq(a, b):
 def ne(a, b):
     if isinstance(b, (int, float, bool)):
         b = _scalar_to_npu_tensor(b, a)
-    if not aclnn.ne_tensor_symbols_ok():
-        raise RuntimeError("aclnnNeTensor symbols not available")
     if _HAS_FAST_NE:
         return _fast_ne_impl(a, b)
     raise RuntimeError("Cython NPU ne implementation is unavailable")
@@ -161,24 +157,18 @@ def bitwise_not(a):
 
 
 def bitwise_and(a, b):
-    if not aclnn.bitwise_and_symbols_ok():
-        raise RuntimeError("aclnnBitwiseAndTensor symbols not available")
     if _HAS_FAST_BITWISE_AND:
         return _fast_bitwise_and_impl(a, b)
     raise RuntimeError("Cython NPU bitwise_and implementation is unavailable")
 
 
 def bitwise_or(a, b):
-    if not aclnn.bitwise_or_symbols_ok():
-        raise RuntimeError("aclnnBitwiseOrTensor symbols not available")
     if _HAS_FAST_BITWISE_OR:
         return _fast_bitwise_or_impl(a, b)
     raise RuntimeError("Cython NPU bitwise_or implementation is unavailable")
 
 
 def bitwise_xor(a, b):
-    if not aclnn.bitwise_xor_symbols_ok():
-        raise RuntimeError("aclnnBitwiseXorTensor symbols not available")
     if _HAS_FAST_BITWISE_XOR:
         return _fast_bitwise_xor_impl(a, b)
     raise RuntimeError("Cython NPU bitwise_xor implementation is unavailable")
