@@ -165,10 +165,12 @@ def test_npu_comparison_thin_wrappers_delegate_to_cython():
         "bitwise_or": "_fast_bitwise_or_impl",
         "bitwise_xor": "_fast_bitwise_xor_impl",
     }
+    forbidden = ["return _binary_op(", "aclnn.", "_unwrap_storage(", "_wrap_tensor(", "npu_runtime._alloc_device"]
     for name, fast_name in expectations.items():
         body = _function_source(comparison_src, name)
         assert fast_name in body, f"{name} does not delegate to {fast_name}"
-        assert "return _binary_op(" not in body
+        for marker in forbidden:
+            assert marker not in body
 
 
 def test_npu_thin_binary_wrappers_delegate_to_cython():
