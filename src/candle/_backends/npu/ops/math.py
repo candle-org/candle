@@ -38,6 +38,8 @@ try:
         fast_floor as _fast_floor_impl,
         fast_frac as _fast_frac_impl,
         fast_isfinite as _fast_isfinite_impl,
+        fast_isinf as _fast_isinf_impl,
+        fast_isnan as _fast_isnan_impl,
         fast_isneginf as _fast_isneginf_impl,
         fast_isposinf as _fast_isposinf_impl,
         fast_log as _fast_log_impl,
@@ -107,6 +109,8 @@ except ImportError:
     _fast_sign_impl = None  # type: ignore[assignment]
     _fast_signbit_impl = None  # type: ignore[assignment]
     _fast_isfinite_impl = None  # type: ignore[assignment]
+    _fast_isinf_impl = None  # type: ignore[assignment]
+    _fast_isnan_impl = None  # type: ignore[assignment]
     _fast_isposinf_impl = None  # type: ignore[assignment]
     _fast_isneginf_impl = None  # type: ignore[assignment]
     _fast_square_impl = None  # type: ignore[assignment]
@@ -358,10 +362,10 @@ def signbit(a):
 
 
 def square(a):
+    if _HAS_FAST_SQUARE:
+        return _fast_square_impl(a)
     if aclnn.square_symbols_ok():
         try:
-            if _HAS_FAST_SQUARE:
-                return _fast_square_impl(a)
             return _unary_op(a, aclnn.square, "square")
         except RuntimeError:
             pass
@@ -384,6 +388,8 @@ def isinf(a):
     When fallback is active (910B): aclnnIsInf returns 161001 (unavailable),
     so we use composite: !isfinite(x) & isfinite(1/x).
     """
+    if _HAS_FAST_ISINF and a.dtype.is_floating_point and _use_soc_fallback("isinf"):
+        return _fast_isinf_impl(a)
     # Lazy import to avoid circular dependency with comparison/logical ops
     from . import logical_and, logical_not
 
@@ -423,6 +429,8 @@ def isinf(a):
 
 
 def isnan(a):
+    if _HAS_FAST_ISNAN and a.dtype.is_floating_point:
+        return _fast_isnan_impl(a)
     # Lazy import to avoid circular dependency with comparison/logical ops
     from . import logical_and, logical_not
 
@@ -439,13 +447,16 @@ def isnan(a):
 
 
 def isposinf(a):
+    if _HAS_FAST_ISPOSINF:
+        try:
+            return _fast_isposinf_impl(a)
+        except RuntimeError:
+            pass
     # Lazy import to avoid circular dependency with comparison/logical ops
     from . import logical_and, gt
 
     if aclnn.isposinf_symbols_ok():
         try:
-            if _HAS_FAST_ISPOSINF:
-                return _fast_isposinf_impl(a)
             return _unary_op(a, aclnn.isposinf, "isposinf", out_dtype=bool_dtype)
         except RuntimeError:
             pass
@@ -453,13 +464,16 @@ def isposinf(a):
 
 
 def isneginf(a):
+    if _HAS_FAST_ISNEGINF:
+        try:
+            return _fast_isneginf_impl(a)
+        except RuntimeError:
+            pass
     # Lazy import to avoid circular dependency with comparison/logical ops
     from . import logical_and, lt
 
     if aclnn.isneginf_symbols_ok():
         try:
-            if _HAS_FAST_ISNEGINF:
-                return _fast_isneginf_impl(a)
             return _unary_op(a, aclnn.isneginf, "isneginf", out_dtype=bool_dtype)
         except RuntimeError:
             pass
@@ -583,9 +597,12 @@ def round(a):
 
 
 def trunc(a):
-    try:
-        if _HAS_FAST_TRUNC:
+    if _HAS_FAST_TRUNC:
+        try:
             return _fast_trunc_impl(a)
+        except RuntimeError:
+            pass
+    try:
         return _unary_op(a, aclnn.trunc, "trunc")
     except RuntimeError as exc:
         if "561103" not in str(exc):

@@ -3318,6 +3318,70 @@ def fast_reciprocal(a):
     return fast_div(_npu_scalar_like(1.0, a), a)
 
 
+def fast_isinf(a):
+    finite = fast_isfinite(a)
+    recip_finite = fast_isfinite(fast_reciprocal(a))
+    return fast_binary_op(fast_logical_not(finite), recip_finite, None, "logical_and")
+
+
+def fast_isnan(a):
+    finite = fast_isfinite(a)
+    recip_finite = fast_isfinite(fast_reciprocal(a))
+    return fast_binary_op(fast_logical_not(finite), fast_logical_not(recip_finite), None, "logical_and")
+
+
+def fast_isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
+    diff = fast_abs(fast_sub(a, b))
+    tol = fast_add(_npu_scalar_like(float(atol), diff), fast_mul(_npu_scalar_like(float(rtol), diff), fast_abs(b)))
+    close = fast_binary_op(diff, tol, None, "le")
+    if equal_nan:
+        nan_both = fast_binary_op(fast_isnan(a), fast_isnan(b), None, "logical_and")
+        return fast_binary_op(close, nan_both, None, "logical_or")
+    nan_any = fast_binary_op(fast_isnan(a), fast_isnan(b), None, "logical_or")
+    return fast_binary_op(close, fast_logical_not(nan_any), None, "logical_and")
+
+
+def fast_special_sinc(a):
+    import math
+    pi_a = fast_mul(a, _npu_scalar_like(math.pi, a))
+    return fast_where(fast_binary_op(a, _npu_scalar_like(0.0, a), None, "eq"),
+                      _npu_scalar_like(1.0, a), fast_div(fast_sin(pi_a), pi_a))
+
+
+def fast_special_erfcx(a):
+    return fast_mul(fast_exp(fast_mul(a, a)), fast_erfc(a))
+
+
+def fast_special_logit(a, eps=None):
+    one = _npu_scalar_like(1.0, a)
+    if eps is not None:
+        lo = _npu_scalar_like(float(eps), a)
+        hi = _npu_scalar_like(1.0 - float(eps), a)
+        a = fast_binary_op(fast_binary_op(a, lo, None, "maximum"), hi, None, "minimum")
+    return fast_log(fast_div(a, fast_sub(one, a)))
+
+
+def fast_special_ndtr(a):
+    import math
+    return fast_mul(_npu_scalar_like(0.5, a), fast_erfc(fast_mul(a, _npu_scalar_like(-1.0 / math.sqrt(2.0), a))))
+
+
+def fast_special_log_ndtr(a):
+    return fast_log(fast_special_ndtr(a))
+
+
+def fast_special_xlogy(a, b):
+    zero = _npu_scalar_like(0.0, a)
+    result = fast_mul(a, fast_log(fast_binary_op(b, _npu_scalar_like(1e-38, b), None, "maximum")))
+    return fast_where(fast_binary_op(a, zero, None, "eq"), zero, result)
+
+
+def fast_special_xlog1py(a, b):
+    zero = _npu_scalar_like(0.0, a)
+    result = fast_mul(a, fast_log1p(b))
+    return fast_where(fast_binary_op(a, zero, None, "eq"), zero, result)
+
+
 def fast_sin(a):
     """Optimized out-of-place sin(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()
