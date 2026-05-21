@@ -364,25 +364,25 @@ def div_(a, b):
 def abs(a):
     if _HAS_FAST_ABS:
         return _fast_abs_impl(a)
-    return _unary_op(a, aclnn.abs, "abs")
+    raise RuntimeError("Cython NPU abs implementation is unavailable")
 
 
 def neg(a):
     if _HAS_FAST_NEG:
         return _fast_neg_impl(a)
-    return _unary_op(a, aclnn.neg, "neg")
+    raise RuntimeError("Cython NPU neg implementation is unavailable")
 
 
 def sign(a):
     if _HAS_FAST_SIGN:
         return _fast_sign_impl(a)
-    return _unary_op(a, aclnn.sign, "sign")
+    raise RuntimeError("Cython NPU sign implementation is unavailable")
 
 
 def signbit(a):
     if _HAS_FAST_SIGNBIT:
         return _fast_signbit_impl(a)
-    return _unary_op(a, aclnn.signbit, "signbit", out_dtype=bool_dtype)
+    raise RuntimeError("Cython NPU signbit implementation is unavailable")
 
 
 def square(a):
@@ -403,7 +403,7 @@ def square(a):
 def isfinite(a):
     if _HAS_FAST_ISFINITE:
         return _fast_isfinite_impl(a)
-    return _unary_op(a, aclnn.isfinite, "isfinite", out_dtype=bool_dtype)
+    raise RuntimeError("Cython NPU isfinite implementation is unavailable")
 
 
 def isinf(a):
@@ -511,113 +511,109 @@ def isneginf(a):
 def exp(a):
     if _HAS_FAST_EXP:
         return _fast_exp_impl(a)
-    return _unary_op(a, aclnn.exp, "exp")
+    raise RuntimeError("Cython NPU exp implementation is unavailable")
 
 
 def log(a):
     if _HAS_FAST_LOG:
         return _fast_log_impl(a)
-    return _unary_op(a, aclnn.log, "log")
+    raise RuntimeError("Cython NPU log implementation is unavailable")
 
 
 def expm1(a):
     if _HAS_FAST_EXPM1:
         return _fast_expm1_impl(a)
-    if not aclnn.expm1_symbols_ok():
-        raise RuntimeError("aclnnExpm1 symbols not available")
-    return _unary_op(a, aclnn.expm1, "expm1")
+    raise RuntimeError("Cython NPU expm1 implementation is unavailable")
 
 
 def log1p(a):
     if _HAS_FAST_LOG1P:
         return _fast_log1p_impl(a)
-    if not aclnn.log1p_symbols_ok():
-        raise RuntimeError("aclnnLog1p symbols not available")
-    return _unary_op(a, aclnn.log1p, "log1p")
+    raise RuntimeError("Cython NPU log1p implementation is unavailable")
 
 
 def sqrt(a):
     if _HAS_FAST_SQRT:
         return _fast_sqrt_impl(a)
-    return _unary_op(a, aclnn.sqrt, "sqrt")
+    raise RuntimeError("Cython NPU sqrt implementation is unavailable")
 
 
 def rsqrt(a):
     if _HAS_FAST_RSQRT:
         return _fast_rsqrt_impl(a)
-    return _unary_op(a, aclnn.rsqrt, "rsqrt")
+    raise RuntimeError("Cython NPU rsqrt implementation is unavailable")
 
 
 def sin(a):
     if _HAS_FAST_SIN:
         return _fast_sin_impl(a)
-    return _unary_op(a, aclnn.sin, "sin")
+    raise RuntimeError("Cython NPU sin implementation is unavailable")
 
 
 def cos(a):
     if _HAS_FAST_COS:
         return _fast_cos_impl(a)
-    return _unary_op(a, aclnn.cos, "cos")
+    raise RuntimeError("Cython NPU cos implementation is unavailable")
 
 
 def tan(a):
     if _HAS_FAST_TAN:
         return _fast_tan_impl(a)
-    return _unary_op(a, aclnn.tan, "tan")
+    raise RuntimeError("Cython NPU tan implementation is unavailable")
 
 
 def tanh(a):
     if _HAS_FAST_TANH:
         return _fast_tanh_impl(a)
-    return _unary_op(a, aclnn.tanh, "tanh")
+    raise RuntimeError("Cython NPU tanh implementation is unavailable")
 
 
 def sigmoid(a):
     if _HAS_FAST_SIGMOID:
         return _fast_sigmoid_impl(a)
-    return _unary_op(a, aclnn.sigmoid, "sigmoid")
+    raise RuntimeError("Cython NPU sigmoid implementation is unavailable")
 
 
 def sinh(a):
     if _HAS_FAST_SINH:
         return _fast_sinh_impl(a)
-    return _unary_op(a, aclnn.sinh, "sinh")
+    raise RuntimeError("Cython NPU sinh implementation is unavailable")
 
 
 def cosh(a):
     if _HAS_FAST_COSH:
         return _fast_cosh_impl(a)
-    return _unary_op(a, aclnn.cosh, "cosh")
+    raise RuntimeError("Cython NPU cosh implementation is unavailable")
 
 
 def erf(a):
     if _HAS_FAST_ERF:
         return _fast_erf_impl(a)
-    return _unary_op(a, aclnn.erf, "erf")
+    raise RuntimeError("Cython NPU erf implementation is unavailable")
 
 
 def erfc(a):
     if _HAS_FAST_ERFC:
         return _fast_erfc_impl(a)
-    return _unary_op(a, aclnn.erfc, "erfc")
+    raise RuntimeError("Cython NPU erfc implementation is unavailable")
 
 
 def floor(a):
     if _HAS_FAST_FLOOR:
         return _fast_floor_impl(a)
-    return _unary_op(a, aclnn.floor, "floor")
+    raise RuntimeError("Cython NPU floor implementation is unavailable")
 
 
 def ceil(a):
     if _HAS_FAST_CEIL:
         return _fast_ceil_impl(a)
-    return _unary_op(a, aclnn.ceil, "ceil")
+    raise RuntimeError("Cython NPU ceil implementation is unavailable")
 
 
 def round(a):
     if _HAS_FAST_ROUND:
         return _fast_round_impl(a)
-    return _unary_op(a, aclnn.round, "round")
+    raise RuntimeError("Cython NPU round implementation is unavailable")
 
 
 def trunc(a):
@@ -647,54 +643,55 @@ def frac(a):
 def log2(a):
     if _HAS_FAST_LOG2:
         return _fast_log2_impl(a)
-    return _unary_op(a, aclnn.log2, "log2")
+    raise RuntimeError("Cython NPU log2 implementation is unavailable")
 
 
 def log10(a):
     if _HAS_FAST_LOG10:
         return _fast_log10_impl(a)
-    return _unary_op(a, aclnn.log10, "log10")
+    raise RuntimeError("Cython NPU log10 implementation is unavailable")
 
 
 def exp2(a):
     if _HAS_FAST_EXP2:
         return _fast_exp2_impl(a)
-    return _unary_op(a, aclnn.exp2, "exp2")
+    raise RuntimeError("Cython NPU exp2 implementation is unavailable")
+
 
 def asinh(a):
     if _HAS_FAST_ASINH:
         return _fast_asinh_impl(a)
-    return _unary_op(a, aclnn.asinh, "asinh")
+    raise RuntimeError("Cython NPU asinh implementation is unavailable")
 
 
 def acosh(a):
     if _HAS_FAST_ACOSH:
         return _fast_acosh_impl(a)
-    return _unary_op(a, aclnn.acosh, "acosh")
+    raise RuntimeError("Cython NPU acosh implementation is unavailable")
 
 
 def atanh(a):
     if _HAS_FAST_ATANH:
         return _fast_atanh_impl(a)
-    return _unary_op(a, aclnn.atanh, "atanh")
+    raise RuntimeError("Cython NPU atanh implementation is unavailable")
 
 
 def atan(a):
     if _HAS_FAST_ATAN:
         return _fast_atan_impl(a)
-    return _unary_op(a, aclnn.atan, "atan")
+    raise RuntimeError("Cython NPU atan implementation is unavailable")
 
 
 def asin(a):
     if _HAS_FAST_ASIN:
         return _fast_asin_impl(a)
-    return _unary_op(a, aclnn.asin, "asin")
+    raise RuntimeError("Cython NPU asin implementation is unavailable")
 
 
 def acos(a):
     if _HAS_FAST_ACOS:
         return _fast_acos_impl(a)
-    return _unary_op(a, aclnn.acos, "acos")
+    raise RuntimeError("Cython NPU acos implementation is unavailable")
 
 
 # ---------------------------------------------------------------------------

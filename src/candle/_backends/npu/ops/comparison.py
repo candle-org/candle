@@ -142,7 +142,7 @@ def logical_or(a, b):
 def logical_not(a):
     if _HAS_FAST_LOGICAL_NOT:
         return _fast_logical_not_impl(a)
-    return _unary_op(a, aclnn.logical_not, "logical_not", out_dtype=bool_dtype)
+    raise RuntimeError("Cython NPU logical_not implementation is unavailable")
 
 
 def logical_xor(a, b):

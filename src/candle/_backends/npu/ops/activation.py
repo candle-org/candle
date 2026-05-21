@@ -374,103 +374,21 @@ def rrelu_op(a, lower=0.125, upper=0.3333333333333333, training=False):
 
 
 def softmax(a, dim=-1):
-    """Compute softmax along a dimension using aclnnSoftmax."""
-    if not aclnn.softmax_symbols_ok():
-        raise RuntimeError("aclnnSoftmax not available")
     if _HAS_FAST_SOFTMAX:
         return _fast_softmax_impl(a, dim)
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
-    # Normalize dim
-    if dim < 0:
-        dim += len(a.shape)
-
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_numel = _numel(out_shape)
-    itemsize = _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
-
-    aclnn.softmax(
-        _unwrap_storage(a).data_ptr(),
-        out_ptr,
-        a.shape, a.stride, a.dtype,
-        dim,
-        runtime, stream=stream.stream
-    )
-
-    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU softmax implementation is unavailable")
 
 
 def log_softmax(a, dim=-1):
-    """Compute log_softmax along a dimension using aclnnLogSoftmax."""
-    if not aclnn.log_softmax_symbols_ok():
-        raise RuntimeError("aclnnLogSoftmax not available")
     if _HAS_FAST_LOG_SOFTMAX:
         return _fast_log_softmax_impl(a, dim)
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-
-    # Normalize dim
-    if dim < 0:
-        dim += len(a.shape)
-
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_numel = _numel(out_shape)
-    itemsize = _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
-
-    aclnn.log_softmax(
-        _unwrap_storage(a).data_ptr(),
-        out_ptr,
-        a.shape, a.stride, a.dtype,
-        dim,
-        runtime, stream=stream.stream
-    )
-
-    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU log_softmax implementation is unavailable")
 
 
 def embedding(weight, indices, padding_idx=None, scale_grad_by_freq=False, sparse=False):
-    """Compute embedding lookup using aclnnEmbedding."""
-    runtime = npu_runtime.get_runtime((weight.device.index or 0))
-    stream = npu_state.current_stream((weight.device.index or 0))
-
-    if not aclnn.embedding_symbols_ok():
-        raise RuntimeError("aclnnEmbedding not available")
     if _HAS_FAST_EMBEDDING:
         return _fast_embedding_impl(weight, indices)
-
-    # Output shape: indices.shape + (embedding_dim,)
-    embedding_dim = weight.shape[1] if len(weight.shape) > 1 else weight.shape[0]
-    out_shape = indices.shape + (embedding_dim,)
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_numel = _numel(out_shape)
-    itemsize = _dtype_itemsize(weight.dtype)
-    out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
-
-    # Note: aclnnEmbedding doesn't support padding_idx, scale_grad_by_freq, sparse parameters
-    # These are ignored for now
-    aclnn.embedding(
-        _unwrap_storage(weight).data_ptr(),
-        _unwrap_storage(indices).data_ptr(),
-        out_ptr,
-        weight.shape, weight.stride,
-        indices.shape, indices.stride,
-        out_shape, out_stride,
-        weight.dtype,
-        indices.dtype,
-        runtime, stream=stream.stream
-    )
-
-    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, weight.dtype, device=weight.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU embedding implementation is unavailable")
 
 
 def _dropout_310b_mask(a, keep_prob):
