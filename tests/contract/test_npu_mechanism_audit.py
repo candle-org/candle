@@ -149,6 +149,31 @@ def test_bulk_npu_parity_shims_delegate_to_cython():
             assert fast_name in body, f"{name} does not delegate to {fast_name}"
 
 
+def test_npu_bulk_fast_helpers_have_no_python_fallback_bodies():
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+
+    expectations = {
+        "square": "_fast_square_impl",
+        "isinf": "_fast_isinf_impl",
+        "isposinf": "_fast_isposinf_impl",
+        "isneginf": "_fast_isneginf_impl",
+        "trunc": "_fast_trunc_impl",
+    }
+    forbidden = [
+        "return _unary_op(",
+        "return _binary_op(",
+        "aclnn.",
+        "_wrap_tensor(",
+        "npu_runtime._alloc_device",
+        "_unwrap_storage(",
+    ]
+    for name, fast_name in expectations.items():
+        body = _function_source(math_src, name)
+        assert fast_name in body, f"{name} does not delegate to {fast_name}"
+        for marker in forbidden:
+            assert marker not in body
+
+
 def test_npu_comparison_thin_wrappers_delegate_to_cython():
     comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")
     expectations = {

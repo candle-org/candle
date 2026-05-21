@@ -388,12 +388,7 @@ def signbit(a):
 def square(a):
     if _HAS_FAST_SQUARE:
         return _fast_square_impl(a)
-    if aclnn.square_symbols_ok():
-        try:
-            return _unary_op(a, aclnn.square, "square")
-        except RuntimeError:
-            pass
-    return mul(a, a)
+    raise RuntimeError("Cython NPU square implementation is unavailable")
 
 
 # ---------------------------------------------------------------------------
@@ -410,46 +405,11 @@ def isinf(a):
     """Check for infinity values.
 
     When fallback is active (910B): aclnnIsInf returns 161001 (unavailable),
-    so we use composite: !isfinite(x) & isfinite(1/x).
+    so the Cython composite (!isfinite(x) & isfinite(1/x)) is used instead.
     """
-    if _HAS_FAST_ISINF and a.dtype.is_floating_point and _use_soc_fallback("isinf"):
+    if _HAS_FAST_ISINF:
         return _fast_isinf_impl(a)
-    # Lazy import to avoid circular dependency with comparison/logical ops
-    from . import logical_and, logical_not
-
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU isinf expects NPU tensors")
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_size = _numel(out_shape) * _dtype_itemsize(bool_dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    storage = _unwrap_storage(a)
-    if not a.dtype.is_floating_point:
-        runtime.defer_free(out_ptr)
-        return logical_not(isfinite(a))
-    if _use_soc_fallback("isinf"):
-        # Composite: !isfinite(x) & isfinite(1/x)
-        if not (aclnn.logical_not_symbols_ok() and aclnn.logical_and_symbols_ok()):
-            raise RuntimeError("aclnnIsInf unavailable and logical ops missing")
-        runtime.defer_free(out_ptr)
-        finite = isfinite(a)
-        recip = pow(a, -1.0)
-        recip_finite = isfinite(recip)
-        return logical_and(logical_not(finite), recip_finite)
-    # TODO: re-enable native aclnnIsInf when CANN fixes 161001
-    aclnn.isinf(
-        storage.data_ptr(),
-        out_ptr,
-        a.shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), bool_dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    raise RuntimeError("Cython NPU isinf implementation is unavailable")
 
 
 def isnan(a):
@@ -472,36 +432,14 @@ def isnan(a):
 
 def isposinf(a):
     if _HAS_FAST_ISPOSINF:
-        try:
-            return _fast_isposinf_impl(a)
-        except RuntimeError:
-            pass
-    # Lazy import to avoid circular dependency with comparison/logical ops
-    from . import logical_and, gt
-
-    if aclnn.isposinf_symbols_ok():
-        try:
-            return _unary_op(a, aclnn.isposinf, "isposinf", out_dtype=bool_dtype)
-        except RuntimeError:
-            pass
-    return logical_and(isinf(a), gt(a, _scalar_to_npu_tensor(0, a)))
+        return _fast_isposinf_impl(a)
+    raise RuntimeError("Cython NPU isposinf implementation is unavailable")
 
 
 def isneginf(a):
     if _HAS_FAST_ISNEGINF:
-        try:
-            return _fast_isneginf_impl(a)
-        except RuntimeError:
-            pass
-    # Lazy import to avoid circular dependency with comparison/logical ops
-    from . import logical_and, lt
-
-    if aclnn.isneginf_symbols_ok():
-        try:
-            return _unary_op(a, aclnn.isneginf, "isneginf", out_dtype=bool_dtype)
-        except RuntimeError:
-            pass
-    return logical_and(isinf(a), lt(a, _scalar_to_npu_tensor(0, a)))
+        return _fast_isneginf_impl(a)
+    raise RuntimeError("Cython NPU isneginf implementation is unavailable")
 
 
 # ---------------------------------------------------------------------------
@@ -618,20 +556,8 @@ def round(a):
 
 def trunc(a):
     if _HAS_FAST_TRUNC:
-        try:
-            return _fast_trunc_impl(a)
-        except RuntimeError:
-            pass
-    try:
-        return _unary_op(a, aclnn.trunc, "trunc")
-    except RuntimeError as exc:
-        if "561103" not in str(exc):
-            raise
-    if not a.dtype.is_floating_point:
-        return a
-    if not aclnn.sign_symbols_ok():
-        raise RuntimeError("aclnnTrunc not available and aclnnSign unavailable")
-    return mul(sign(a), floor(abs(a)))
+        return _fast_trunc_impl(a)
+    raise RuntimeError("Cython NPU trunc implementation is unavailable")
 
 
 def frac(a):
