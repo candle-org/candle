@@ -726,6 +726,54 @@ cdef object _get_alpha_one_bytes(int dtype_code):
     return existing
 
 
+def fast_eq(a, b):
+    return fast_binary_op(a, b, None, "eq")
+
+
+def fast_ne(a, b):
+    return fast_binary_op(a, b, None, "ne")
+
+
+def fast_le(a, b):
+    return fast_binary_op(a, b, None, "le")
+
+
+def fast_lt(a, b):
+    return fast_binary_op(a, b, None, "lt")
+
+
+def fast_gt(a, b):
+    return fast_binary_op(a, b, None, "gt")
+
+
+def fast_ge(a, b):
+    return fast_binary_op(a, b, None, "ge")
+
+
+def fast_logical_and(a, b):
+    return fast_binary_op(a, b, None, "logical_and")
+
+
+def fast_logical_or(a, b):
+    return fast_binary_op(a, b, None, "logical_or")
+
+
+def fast_logical_xor(a, b):
+    return fast_binary_op(a, b, None, "logical_xor")
+
+
+def fast_bitwise_and(a, b):
+    return fast_binary_op(a, b, None, "bitwise_and")
+
+
+def fast_bitwise_or(a, b):
+    return fast_binary_op(a, b, None, "bitwise_or")
+
+
+def fast_bitwise_xor(a, b):
+    return fast_binary_op(a, b, None, "bitwise_xor")
+
+
 def fast_add(a, b):
     """Optimized add(a, b, alpha=1) that calls _ffi.binary_op_with_alpha directly.
 

@@ -149,6 +149,28 @@ def test_bulk_npu_parity_shims_delegate_to_cython():
             assert fast_name in body, f"{name} does not delegate to {fast_name}"
 
 
+def test_npu_comparison_thin_wrappers_delegate_to_cython():
+    comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")
+    expectations = {
+        "eq": "_fast_eq_impl",
+        "ne": "_fast_ne_impl",
+        "le": "_fast_le_impl",
+        "lt": "_fast_lt_impl",
+        "gt": "_fast_gt_impl",
+        "ge": "_fast_ge_impl",
+        "logical_and": "_fast_logical_and_impl",
+        "logical_or": "_fast_logical_or_impl",
+        "logical_xor": "_fast_logical_xor_impl",
+        "bitwise_and": "_fast_bitwise_and_impl",
+        "bitwise_or": "_fast_bitwise_or_impl",
+        "bitwise_xor": "_fast_bitwise_xor_impl",
+    }
+    for name, fast_name in expectations.items():
+        body = _function_source(comparison_src, name)
+        assert fast_name in body, f"{name} does not delegate to {fast_name}"
+        assert "return _binary_op(" not in body
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
