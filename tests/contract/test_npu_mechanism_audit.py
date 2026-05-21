@@ -244,10 +244,13 @@ def test_npu_thin_binary_wrappers_delegate_to_cython():
             "logaddexp": "_fast_logaddexp_impl",
             "logaddexp2": "_fast_logaddexp2_impl",
             "fmod": "_fast_fmod_impl",
+            "remainder": "_fast_remainder_impl",
         },
         reduce_src: {
             "maximum": "_fast_maximum_impl",
             "minimum": "_fast_minimum_impl",
+            "min_": "_fast_minimum_impl",
+            "max_": "_fast_maximum_impl",
         },
     }
     for src, mapping in expectations.items():
@@ -255,6 +258,8 @@ def test_npu_thin_binary_wrappers_delegate_to_cython():
             body = _function_source(src, name)
             assert fast_name in body, f"{name} does not delegate to {fast_name}"
             assert "return _binary_op(" not in body
+            assert "_binary_op(" not in body, f"{name} still references _binary_op"
+            assert "aclnn." not in body, f"{name} still references aclnn"
 
 
 def test_npu_existing_fast_helpers_have_no_python_fallback_bodies():

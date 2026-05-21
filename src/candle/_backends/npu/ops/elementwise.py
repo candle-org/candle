@@ -10,6 +10,7 @@ try:
         fast_hypot as _fast_hypot_impl,
         fast_logaddexp as _fast_logaddexp_impl,
         fast_logaddexp2 as _fast_logaddexp2_impl,
+        fast_remainder as _fast_remainder_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_WHERE = True
     _HAS_FAST_LERP_TENSOR = True
@@ -20,6 +21,7 @@ try:
     _HAS_FAST_HYPOT = True
     _HAS_FAST_LOGADDEXP = True
     _HAS_FAST_LOGADDEXP2 = True
+    _HAS_FAST_REMAINDER = True
 except ImportError:
     _fast_where_impl = None  # type: ignore[assignment]
     _fast_lerp_tensor_impl = None  # type: ignore[assignment]
@@ -30,6 +32,7 @@ except ImportError:
     _fast_hypot_impl = None  # type: ignore[assignment]
     _fast_logaddexp_impl = None  # type: ignore[assignment]
     _fast_logaddexp2_impl = None  # type: ignore[assignment]
+    _fast_remainder_impl = None  # type: ignore[assignment]
     _HAS_FAST_WHERE = False
     _HAS_FAST_LERP_TENSOR = False
     _HAS_FAST_LERP_SCALAR = False
@@ -39,6 +42,7 @@ except ImportError:
     _HAS_FAST_HYPOT = False
     _HAS_FAST_LOGADDEXP = False
     _HAS_FAST_LOGADDEXP2 = False
+    _HAS_FAST_REMAINDER = False
 
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
@@ -155,7 +159,9 @@ def remainder(a, b):
         b = _scalar_to_npu_tensor(b, a)
     if _use_soc_fallback("remainder"):
         return _remainder_310b_fallback(a, b)
-    return _binary_op(a, b, aclnn.sremainder, "remainder")
+    if _HAS_FAST_REMAINDER:
+        return _fast_remainder_impl(a, b)
+    raise RuntimeError("Cython NPU remainder implementation is unavailable")
 
 
 def fmod(a, b):
