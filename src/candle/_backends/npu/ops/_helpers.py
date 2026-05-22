@@ -319,7 +319,7 @@ def _unary_op(a, fn, name, out_dtype=None):
 def _binary_op_slow(a, b, fn, name):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu" or b.device.type != "npu":
+    if b.device.type != "npu":
         raise ValueError(f"NPU {name} expects NPU tensors")
     if a.dtype != b.dtype:
         raise ValueError(f"NPU {name} requires matching dtypes")
