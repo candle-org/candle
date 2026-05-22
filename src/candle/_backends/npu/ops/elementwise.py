@@ -11,6 +11,9 @@ try:
         fast_logaddexp as _fast_logaddexp_impl,
         fast_logaddexp2 as _fast_logaddexp2_impl,
         fast_remainder as _fast_remainder_impl,
+        fast_clamp as _fast_clamp_impl,
+        fast_clamp_min as _fast_clamp_min_impl,
+        fast_clamp_max as _fast_clamp_max_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_WHERE = True
     _HAS_FAST_LERP_TENSOR = True
@@ -22,6 +25,9 @@ try:
     _HAS_FAST_LOGADDEXP = True
     _HAS_FAST_LOGADDEXP2 = True
     _HAS_FAST_REMAINDER = True
+    _HAS_FAST_CLAMP = True
+    _HAS_FAST_CLAMP_MIN = True
+    _HAS_FAST_CLAMP_MAX = True
 except ImportError:
     _fast_where_impl = None  # type: ignore[assignment]
     _fast_lerp_tensor_impl = None  # type: ignore[assignment]
@@ -33,6 +39,9 @@ except ImportError:
     _fast_logaddexp_impl = None  # type: ignore[assignment]
     _fast_logaddexp2_impl = None  # type: ignore[assignment]
     _fast_remainder_impl = None  # type: ignore[assignment]
+    _fast_clamp_impl = None  # type: ignore[assignment]
+    _fast_clamp_min_impl = None  # type: ignore[assignment]
+    _fast_clamp_max_impl = None  # type: ignore[assignment]
     _HAS_FAST_WHERE = False
     _HAS_FAST_LERP_TENSOR = False
     _HAS_FAST_LERP_SCALAR = False
@@ -43,6 +52,9 @@ except ImportError:
     _HAS_FAST_LOGADDEXP = False
     _HAS_FAST_LOGADDEXP2 = False
     _HAS_FAST_REMAINDER = False
+    _HAS_FAST_CLAMP = False
+    _HAS_FAST_CLAMP_MIN = False
+    _HAS_FAST_CLAMP_MAX = False
 
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
@@ -173,100 +185,48 @@ def fmod(a, b):
 
 
 def clamp(a, min_val=None, max_val=None):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU clamp expects NPU tensors")
     if min_val is None and max_val is None:
         raise ValueError("clamp requires min or max")
-    out_shape = a.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    storage = _unwrap_storage(a)
     if hasattr(min_val, "shape") and hasattr(max_val, "shape"):
         from .reduce import maximum, minimum
         return minimum(maximum(a, min_val), max_val)
-    elif hasattr(min_val, "shape"):
+    if hasattr(min_val, "shape"):
         temp_tensor = clamp_min(a, min_val)
         if max_val is not None:
             return clamp_max(temp_tensor, max_val)
         return temp_tensor
-    elif hasattr(max_val, "shape"):
+    if hasattr(max_val, "shape"):
         temp_tensor = clamp_max(a, max_val)
         if min_val is not None:
             return clamp_min(temp_tensor, min_val)
         return temp_tensor
-    else:
-        aclnn.clamp_scalar(
-            storage.data_ptr(),
-            out_ptr,
-            a.shape,
-            a.stride,
-            a.dtype,
-            min_val,
-            max_val,
-            runtime,
-            stream=stream.stream,
-        )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    if _HAS_FAST_CLAMP:
+        return _fast_clamp_impl(a, min_val, max_val)
+    raise RuntimeError("Cython NPU clamp implementation is unavailable")
 
 
 def clamp_min(a, min_val):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU clamp_min expects NPU tensors")
-    storage = _unwrap_storage(a)
     if hasattr(min_val, "shape"):
         from .reduce import maximum
         return maximum(a, min_val)
-    else:
-        out_shape = a.shape
-        out_stride = npu_runtime._contiguous_stride(out_shape)
-        out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-        out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-        aclnn.clamp_min_scalar(
-            storage.data_ptr(),
-            out_ptr,
-            a.shape,
-            a.stride,
-            a.dtype,
-            min_val,
-            runtime,
-            stream=stream.stream,
-        )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    if _HAS_FAST_CLAMP_MIN:
+        return _fast_clamp_min_impl(a, min_val)
+    raise RuntimeError("Cython NPU clamp_min implementation is unavailable")
 
 
 def clamp_max(a, max_val):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU clamp_max expects NPU tensors")
-    storage = _unwrap_storage(a)
     if hasattr(max_val, "shape"):
         from .reduce import minimum
         return minimum(a, max_val)
-    else:
-        out_shape = a.shape
-        out_stride = npu_runtime._contiguous_stride(out_shape)
-        out_size = _numel(out_shape) * _dtype_itemsize(a.dtype)
-        out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-        aclnn.clamp_max_scalar(
-            storage.data_ptr(),
-            out_ptr,
-            a.shape,
-            a.stride,
-            a.dtype,
-            max_val,
-            runtime,
-            stream=stream.stream,
-        )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    if _HAS_FAST_CLAMP_MAX:
+        return _fast_clamp_max_impl(a, max_val)
+    raise RuntimeError("Cython NPU clamp_max implementation is unavailable")
 
 
 def heaviside_op(a, values):

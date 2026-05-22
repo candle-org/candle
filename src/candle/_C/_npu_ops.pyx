@@ -1338,6 +1338,8 @@ cdef object _log_softmax_getws_ptr = None # cached LogSoftmax getws pointer
 cdef object _log_softmax_exec_ptr = None  # cached LogSoftmax exec pointer
 cdef object _hardtanh_getws_ptr = None   # cached Hardtanh getws pointer
 cdef object _hardtanh_exec_ptr = None    # cached Hardtanh exec pointer
+cdef object _clamp_getws_ptr = None      # cached Clamp getws pointer
+cdef object _clamp_exec_ptr = None       # cached Clamp exec pointer
 cdef object _gelu_getws_ptr = None       # cached Gelu getws pointer
 cdef object _gelu_exec_ptr = None        # cached Gelu exec pointer
 cdef object _silu_getws_ptr = None       # cached Silu getws pointer
@@ -1817,6 +1819,16 @@ cdef inline void _ensure_ffi_hardtanh() except *:
     if _ffi_ref is None:
         _ensure_ffi_binary()
     _hardtanh_getws_ptr, _hardtanh_exec_ptr = _ffi_ref.resolve_op("Hardtanh")
+    _ensure_ffi_scalar_helpers()
+
+
+cdef inline void _ensure_ffi_clamp() except *:
+    global _ffi_ref, _clamp_getws_ptr, _clamp_exec_ptr
+    if _clamp_getws_ptr is not None:
+        return
+    if _ffi_ref is None:
+        _ensure_ffi_binary()
+    _clamp_getws_ptr, _clamp_exec_ptr = _ffi_ref.resolve_op("Clamp")
     _ensure_ffi_scalar_helpers()
 
 
@@ -3973,6 +3985,95 @@ def fast_elu(a, alpha):
         _destroy_scalar_fn(int(input_scale_scalar))
 
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+def fast_clamp(a, min_val=None, max_val=None):
+    """Optimized clamp(a, min_val, max_val) that calls _ffi.clamp_optional_scalars_op directly."""
+    _ensure_npu_imports()
+    _ensure_ffi_clamp()
+
+    if a.device.type != "npu":
+        raise ValueError("NPU clamp expects NPU tensors")
+    if min_val is None and max_val is None:
+        raise ValueError("clamp requires min or max")
+
+    cdef int dev_idx = a.device.index or 0
+    a_dev = _device_obj_fast(a)
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    out_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    out_stride = a.stride
+    cdef int64_t n = 1
+    for size in out_shape:
+        n *= size
+
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size_fclamp = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fclamp, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fclamp, stream=stream.stream)
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr, o_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    o_ptr = out_ptr
+
+    cdef uintptr_t min_scalar = 0
+    cdef uintptr_t max_scalar = 0
+    if min_val is not None:
+        min_scalar = _create_scalar_fn(_scalar_bytes_fn(min_val, a_dtype), dtype_code)
+    if max_val is not None:
+        max_scalar = _create_scalar_fn(_scalar_bytes_fn(max_val, a_dtype), dtype_code)
+    cdef uintptr_t stream_raw = int(stream.stream)
+    try:
+        ws_size, executor = _ffi_ref.clamp_optional_scalars_op(
+            _clamp_getws_ptr, _clamp_exec_ptr,
+            a.shape, a.stride,
+            out_shape, out_stride,
+            dtype_code, 2,
+            a_ptr, o_ptr,
+            min_scalar, max_scalar,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_ref.execute(
+                    _clamp_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnClamp execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_fn(executor)
+    finally:
+        if min_scalar:
+            _destroy_scalar_fn(int(min_scalar))
+        if max_scalar:
+            _destroy_scalar_fn(int(max_scalar))
+
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+
+def fast_clamp_min(a, min_val):
+    return fast_clamp(a, min_val, None)
+
+
+
+def fast_clamp_max(a, max_val):
+    return fast_clamp(a, None, max_val)
+
 
 
 def fast_hardtanh(a, min_val, max_val):
