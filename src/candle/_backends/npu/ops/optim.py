@@ -1,10 +1,9 @@
 """Optimizer step operations for NPU."""
 from ._helpers import (
     _unwrap_storage, _wrap_tensor,
-    _numel, _dtype_itemsize, _use_soc_fallback,
+    _numel, _dtype_itemsize,
     _scalar_to_npu_tensor,
     _npu_arange_1d,
-    _cast_tensor_dtype,
     bool_dtype, int32_dtype, int64_dtype, float_dtype,
     npu_typed_storage_from_ptr, reshape,
     aclnn, npu_runtime, npu_state, ops_soc,
