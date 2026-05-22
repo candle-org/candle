@@ -1284,14 +1284,6 @@ def nansum(a, dim=None, keepdim=False):
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
-def aminmax_op(a, dim=None, keepdim=False):
-    """Simultaneous min and max reduction."""
-    from collections import namedtuple
-    AminmaxResult = namedtuple("aminmax", ["min", "max"])
-    return AminmaxResult(amin(a, dim=dim, keepdim=keepdim),
-                         amax(a, dim=dim, keepdim=keepdim))
-
-
 def aminmax_aclnn(a, dim=None, keepdim=False):
     from collections import namedtuple
     from ...._dispatch.dispatcher import dispatch

@@ -42,7 +42,7 @@ from .reduce import (
     cumsum, cumprod, cummax, argsort, sort, topk,
     sum_, mean, var_, std_, norm_, prod_,
     cummin_op, logsumexp_op, renorm_op, nansum,
-    aminmax_op, nanmean_op, argwhere_op,
+    nanmean_op, argwhere_op,
     quantile_op, nanquantile_op, nanmedian_op,
     aminmax_aclnn,
     sum_to_size_npu,
@@ -131,7 +131,7 @@ from .elementwise import (
     clamp, clamp_min, clamp_max,
     heaviside_op, uniform_op, isreal_op,
     isin_op, bucketize_op, diff_op,
-    bincount_op, bincount_aclnn, histc_op, histogram_op,
+    bincount_aclnn, histc_op, histogram_op,
 )
 
 from .special import (
