@@ -737,6 +737,19 @@ def test_npu_adam_step_delegates_through_cython_fast_adam_step():
     )
 
 
+def test_npu_trace_delegates_through_cython_fast_trace():
+    """`linalg.py::trace_op` must delegate to the Cython `fast_trace` helper.
+    The Python shim should not reference `aclnn.strace` directly — the
+    aclnnTrace orchestration belongs in `_C/_npu_ops.pyx`.
+    """
+    linalg_src = _source("src/candle/_backends/npu/ops/linalg.py")
+    body = _function_source(linalg_src, "trace_op")
+    assert "aclnn.strace" not in body, (
+        "linalg.py::trace_op still calls aclnn.strace directly; "
+        "should delegate to the Cython fast_trace helper"
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
