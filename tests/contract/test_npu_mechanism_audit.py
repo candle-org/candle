@@ -806,6 +806,37 @@ def test_npu_helpers_no_unused_reduction_dim_helpers():
         )
 
 
+def test_npu_ops_modules_do_not_import_linalg_only_helpers():
+    """`_matmul_out_shape`, `_iter_indices`, `_broadcast_index`, and
+    `_batch_offset` are only called from `_backends/npu/ops/linalg.py`.
+    Other ops modules should not list them in their `_helpers` import
+    block — the unused names just clutter the import surface.
+    """
+    dead_names = ("_matmul_out_shape", "_iter_indices",
+                  "_broadcast_index", "_batch_offset")
+    consumer_modules = (
+        "src/candle/_backends/npu/ops/__init__.py",
+        "src/candle/_backends/npu/ops/activation.py",
+        "src/candle/_backends/npu/ops/conv.py",
+        "src/candle/_backends/npu/ops/elementwise.py",
+        "src/candle/_backends/npu/ops/norm.py",
+        "src/candle/_backends/npu/ops/optim.py",
+        "src/candle/_backends/npu/ops/random.py",
+        "src/candle/_backends/npu/ops/special.py",
+    )
+    offenders = []
+    for path in consumer_modules:
+        src = _source(path)
+        for name in dead_names:
+            if re.search(rf"\b{name}\b", src):
+                offenders.append(f"{path}: {name}")
+    assert not offenders, (
+        "These NPU ops modules still reference linalg-only helpers in their "
+        "imports — drop the unused names:\n  " + "\n  ".join(offenders)
+    )
+
+
+
 
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
