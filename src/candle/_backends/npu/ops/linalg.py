@@ -23,11 +23,15 @@ from .shape import contiguous, diag, diagonal_op, expand, index_select, split, t
 try:
     from candle._C._npu_ops import (
         fast_trace as _fast_trace_impl,
+        fast_inverse as _fast_inverse_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_TRACE = True
+    _HAS_FAST_INVERSE = True
 except ImportError:
     _fast_trace_impl = None  # type: ignore[assignment]
+    _fast_inverse_impl = None  # type: ignore[assignment]
     _HAS_FAST_TRACE = False
+    _HAS_FAST_INVERSE = False
 
 
 def matmul(a, b, out=None):
@@ -568,13 +572,9 @@ def linalg_qr(a, mode='reduced'):
 
 
 def linalg_inv(a):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    s = _unwrap_storage(a)
-    out_ptr = npu_runtime._alloc_device(s.nbytes, runtime=runtime)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(a.shape), a.dtype, device=a.device)
-    aclnn.inverse(s.data_ptr(), out_ptr, a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    return _wrap_tensor(out_storage, a.shape, a.stride)
+    if _HAS_FAST_INVERSE:
+        return _fast_inverse_impl(a)
+    raise RuntimeError("Cython NPU inverse implementation is unavailable")
 
 
 def linalg_vector_norm_op(a, ord=2, dim=None, keepdim=False):
