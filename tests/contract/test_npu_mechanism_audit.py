@@ -911,6 +911,55 @@ def test_npu_ops_modules_do_not_import_reduce_only_helpers():
     )
 
 
+def test_npu_ops_modules_do_not_import_unused_index_put_or_tensor_seq_helpers():
+    """`npu_index_put_impl` is only called from `_backends/npu/ops/conv.py`
+    and `_normalize_tensor_sequence_args` is only called from
+    `_backends/npu/ops/shape.py`. Other ops modules should not list them in
+    their `_helpers` import block — the unused names just clutter the import
+    surface.
+    """
+    cases = (
+        (
+            "npu_index_put_impl",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/elementwise.py",
+                "src/candle/_backends/npu/ops/linalg.py",
+                "src/candle/_backends/npu/ops/norm.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/random.py",
+                "src/candle/_backends/npu/ops/shape.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+        (
+            "_normalize_tensor_sequence_args",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/conv.py",
+                "src/candle/_backends/npu/ops/elementwise.py",
+                "src/candle/_backends/npu/ops/linalg.py",
+                "src/candle/_backends/npu/ops/norm.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/random.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+    )
+    offenders = []
+    for name, consumer_modules in cases:
+        for path in consumer_modules:
+            src = _source(path)
+            if re.search(rf"\b{name}\b", src):
+                offenders.append(f"{path}: {name}")
+    assert not offenders, (
+        "These NPU ops modules still reference single-consumer helpers — "
+        "drop the unused names:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
