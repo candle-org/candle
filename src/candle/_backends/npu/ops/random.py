@@ -71,11 +71,8 @@ def randperm(n, dtype=None, device=None, generator=None):
 
 
 def zero_(a):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU zero_ expects NPU tensors")
-
     fill_(a, 0.0)
     return a
 
@@ -374,24 +371,10 @@ def erfinv_(a):
 
 def reciprocal_(a):
     """In-place reciprocal: output written back to a's storage."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if a.device.type != "npu":
         raise ValueError("NPU reciprocal_ expects NPU tensors")
-
+    if not _HAS_FAST_COPY_INPLACE:
+        raise RuntimeError("Cython NPU reciprocal_ implementation is unavailable")
     from .math import pow as pow_op
-
     out = pow_op(a, -1.0)
-    aclnn.inplace_copy(
-        _unwrap_storage(a).data_ptr(),
-        _unwrap_storage(out).data_ptr(),
-        a.shape,
-        a.stride,
-        a.dtype,
-        out.shape,
-        out.stride,
-        out.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    return a
+    return _fast_copy_inplace_impl(a, out)
