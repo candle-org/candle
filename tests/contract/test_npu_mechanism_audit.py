@@ -644,6 +644,26 @@ def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
         )
 
 
+def test_npu_cython_fast_helpers_have_no_dispatch_redundant_device_guard():
+    src = _source("src/candle/_C/_npu_ops.pyx")
+    # Standalone single-tensor `if a.device.type != "npu":` guards inside
+    # `fast_*` helpers are dispatch-redundant — the helpers are only entered
+    # through Python NPU shims that the dispatcher already routed by NPU
+    # device key. Multi-tensor guards (cond/x/y on where, weight on lerp,
+    # third-input c on addcmul/addcdiv, a-and-weight on prelu) validate
+    # cross-input device parity and remain.
+    standalone_guard = re.compile(
+        r'^\s*if a\.device\.type != "npu":\s*$', flags=re.M
+    )
+    for match in standalone_guard.finditer(src):
+        line_start = src.rfind("\n", 0, match.start()) + 1
+        line_no = src.count("\n", 0, line_start) + 1
+        raise AssertionError(
+            f"_npu_ops.pyx:{line_no} still has dispatch-redundant single-tensor "
+            f"device guard: {src[line_start:match.end()].rstrip()}"
+        )
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
