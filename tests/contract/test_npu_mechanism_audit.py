@@ -525,6 +525,21 @@ def test_npu_geometric_inplace_delegates_to_cython():
         assert marker not in body, f"geometric_ still references {marker}"
 
 
+def test_npu_cauchy_inplace_delegates_to_cython():
+    random_src = _source("src/candle/_backends/npu/ops/random.py")
+    body = _function_source(random_src, "cauchy_")
+    for fast_name in [
+        "_fast_sub_inplace_impl",
+        "_fast_mul_inplace_impl",
+        "_fast_tan_inplace_impl",
+        "_fast_add_inplace_impl",
+    ]:
+        assert fast_name in body, f"cauchy_ does not delegate to {fast_name}"
+    forbidden = ["aclnn.", "npu_runtime._alloc_device", "_unwrap_storage(", "_wrap_tensor("]
+    for marker in forbidden:
+        assert marker not in body, f"cauchy_ still references {marker}"
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
