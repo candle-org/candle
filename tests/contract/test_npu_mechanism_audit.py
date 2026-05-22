@@ -1108,6 +1108,52 @@ def test_npu_ops_modules_do_not_import_unused_npu_linear_index_helper():
     )
 
 
+def test_npu_ops_modules_do_not_import_unused_cast_soc_or_scalar_helpers():
+    """`_cast_tensor_dtype`, `_use_soc_fallback`, and `_scalar_to_npu_tensor`
+    are all heavily used helpers — but a few ops modules list them in their
+    `_helpers` import block without ever calling them locally. The
+    `_backends/npu/ops/__init__.py` re-exports them as well, but no external
+    consumer reaches them via `npu_ops.<name>` (Cython hot paths and tests
+    import directly from `_helpers`). Drop the dead listings so the import
+    surface stays in sync with what is used.
+    """
+    cases = (
+        (
+            "_cast_tensor_dtype",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/shape.py",
+            ),
+        ),
+        (
+            "_use_soc_fallback",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+        (
+            "_scalar_to_npu_tensor",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+            ),
+        ),
+    )
+    offenders = []
+    for name, consumer_modules in cases:
+        for path in consumer_modules:
+            src = _source(path)
+            if re.search(rf"\b{name}\b", src):
+                offenders.append(f"{path}: {name}")
+    assert not offenders, (
+        "These NPU ops modules still reference unused helpers — "
+        "drop the unused imports:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
