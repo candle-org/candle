@@ -540,6 +540,15 @@ def test_npu_cauchy_inplace_delegates_to_cython():
         assert marker not in body, f"cauchy_ still references {marker}"
 
 
+def test_npu_random_inplace_shims_have_no_dispatch_redundant_device_guard():
+    random_src = _source("src/candle/_backends/npu/ops/random.py")
+    for name in ["zero_", "uniform_", "normal_", "reciprocal_"]:
+        body = _function_source(random_src, name)
+        assert 'a.device.type != "npu"' not in body, (
+            f"{name} still has dispatch-redundant device guard"
+        )
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()

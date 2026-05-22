@@ -2727,8 +2727,6 @@ def fast_neg_inplace(a):
     _ensure_npu_imports()
     _ensure_ffi_neg()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU neg_ expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dtype = a.dtype
     runtime = _get_runtime_fast(dev_idx)
@@ -3328,8 +3326,6 @@ def fast_exp_inplace(a):
     _ensure_npu_imports()
     _ensure_ffi_exp()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU exp_ expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dtype = a.dtype
     runtime = _get_runtime_fast(dev_idx)
@@ -3558,8 +3554,6 @@ def fast_log_inplace(a):
     _ensure_npu_imports()
     _ensure_ffi_log()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU log_ expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dtype = a.dtype
     runtime = _get_runtime_fast(dev_idx)
@@ -4086,8 +4080,6 @@ def fast_tan_inplace(a):
     _ensure_npu_imports()
     _ensure_ffi_tan()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU tan_ expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dtype = a.dtype
     runtime = _get_runtime_fast(dev_idx)
@@ -5668,8 +5660,6 @@ def fast_floor_inplace(a):
     _ensure_npu_imports()
     _ensure_ffi_floor()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU floor_ expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dtype = a.dtype
     runtime = _get_runtime_fast(dev_idx)
@@ -5776,8 +5766,6 @@ def fast_ceil_inplace(a):
     _ensure_npu_imports()
     _ensure_ffi_ceil()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU ceil_ expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dtype = a.dtype
     runtime = _get_runtime_fast(dev_idx)
