@@ -26,7 +26,6 @@ from ._helpers import (
     _numel, _dtype_itemsize, _use_soc_fallback,
     _scalar_to_npu_tensor, _scalar_to_npu_tensor_no_add,
     _normalize_reduction_dims, _reduce_out_shape,
-    _reduce_dim_sizes, _broadcast_dims_to_out,
     _cast_tensor_dtype, _npu_broadcast_to, _nan_like,
     _normalize_dim,
     bool_dtype, int32_dtype, int64_dtype, float_dtype,

@@ -7,7 +7,6 @@ from ._helpers import (
     _iter_indices, _broadcast_index, _batch_offset,
     _binary_op,
     _normalize_reduction_dims, _reduce_out_shape,
-    _reduce_dim_sizes, _broadcast_dims_to_out,
     _scalar_to_npu_tensor, _scalar_to_npu_tensor_no_add, _nan_like,
     # Re-export commonly used imports so op functions can use them
     bool_dtype, int32_dtype, int64_dtype, float_dtype,
