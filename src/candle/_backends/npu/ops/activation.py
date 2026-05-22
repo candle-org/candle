@@ -8,6 +8,13 @@ except ImportError:
     _HAS_FAST_RELU = False
 
 try:
+    from candle._C._npu_ops import fast_relu_inplace as _fast_relu_inplace_impl  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_RELU_INPLACE = True
+except ImportError:
+    _fast_relu_inplace_impl = None  # type: ignore[assignment]
+    _HAS_FAST_RELU_INPLACE = False
+
+try:
     from candle._C._npu_ops import fast_hardtanh as _fast_hardtanh_impl  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_HARDTANH = True
 except ImportError:
@@ -146,42 +153,9 @@ def relu(a):
 
 
 def relu_(a):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU relu_ expects NPU tensors")
-
-    a_storage = _unwrap_storage(a)
-    out_size = _numel(a.shape) * _dtype_itemsize(a.dtype)
-
-    if _HAS_FAST_RELU:
-        out = _fast_relu_impl(a)
-        npu_runtime.memcpy_d2d(
-            a_storage.data_ptr(),
-            out_size,
-            _unwrap_storage(out).data_ptr(),
-            runtime=runtime,
-        )
-        return a
-
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    aclnn.relu(
-        a_storage.data_ptr(),
-        out_ptr,
-        a.shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    npu_runtime.memcpy_d2d(
-        a_storage.data_ptr(),
-        out_size,
-        out_ptr,
-        runtime=runtime,
-    )
-    npu_runtime.get_runtime((a.device.index or 0)).defer_free(out_ptr)
-    return a
+    if _HAS_FAST_RELU_INPLACE:
+        return _fast_relu_inplace_impl(a)
+    raise RuntimeError("Cython NPU relu_ implementation is unavailable")
 
 
 def relu6(a):
