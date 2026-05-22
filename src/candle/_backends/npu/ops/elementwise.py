@@ -185,8 +185,6 @@ def fmod(a, b):
 
 
 def clamp(a, min_val=None, max_val=None):
-    if a.device.type != "npu":
-        raise ValueError("NPU clamp expects NPU tensors")
     if min_val is None and max_val is None:
         raise ValueError("clamp requires min or max")
     if hasattr(min_val, "shape") and hasattr(max_val, "shape"):
@@ -208,8 +206,6 @@ def clamp(a, min_val=None, max_val=None):
 
 
 def clamp_min(a, min_val):
-    if a.device.type != "npu":
-        raise ValueError("NPU clamp_min expects NPU tensors")
     if hasattr(min_val, "shape"):
         from .reduce import maximum
         return maximum(a, min_val)
@@ -219,8 +215,6 @@ def clamp_min(a, min_val):
 
 
 def clamp_max(a, max_val):
-    if a.device.type != "npu":
-        raise ValueError("NPU clamp_max expects NPU tensors")
     if hasattr(max_val, "shape"):
         from .reduce import minimum
         return minimum(a, max_val)
