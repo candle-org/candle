@@ -477,6 +477,16 @@ def test_npu_random_integer_inplace_wrappers_delegate_floor_to_cython():
             assert marker not in body, f"{name} still references {marker}"
 
 
+def test_npu_log_normal_inplace_exp_delegates_to_cython():
+    random_src = _source("src/candle/_backends/npu/ops/random.py")
+    body = _function_source(random_src, "log_normal_")
+    assert "_fast_exp_inplace_impl" in body, \
+        "log_normal_ does not delegate exp to _fast_exp_inplace_impl"
+    forbidden = ["aclnn.", "npu_runtime._alloc_device", "_unwrap_storage(", "_wrap_tensor("]
+    for marker in forbidden:
+        assert marker not in body, f"log_normal_ still references {marker}"
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
