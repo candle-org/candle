@@ -6,7 +6,7 @@ from ._helpers import (
     _numel, _dtype_itemsize, _use_soc_fallback,
     _scalar_to_npu_tensor,
     _npu_broadcast_to, _npu_arange_1d, _npu_linear_index,
-    _npu_add_scalar_, npu_index_put_impl,
+    _npu_add_scalar_,
     _cast_tensor_dtype, _normalize_tensor_sequence_args,
     _normalize_dim,
     bool_dtype, int32_dtype, int64_dtype, float_dtype,
