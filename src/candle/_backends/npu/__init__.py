@@ -277,7 +277,6 @@ from .ops import (
     unflatten_op,
     diagonal_op,
     # Missing forward ops — composites
-    aminmax_op,
     nanmean_op,
     argwhere_op,
     det_op,
@@ -290,7 +289,6 @@ from .ops import (
     uniform_op,
     isreal_op,
     isin_op,
-    bincount_op,
     bucketize_op,
     histc_op,
     histogram_op,
@@ -543,9 +541,7 @@ registry.register("mv", "npu", mv, meta=meta_infer.infer_matmul)
 registry.register("outer", "npu", outer, meta=meta_infer.infer_binary)
 registry.register("searchsorted", "npu", searchsorted, meta=meta_infer.infer_unary)
 registry.register("unique", "npu", unique)
-registry.register("randperm", "npu", randperm)
 registry.register("flatten", "npu", flatten_op, meta=meta_infer.infer_view)
-registry.register("where", "npu", where, meta=meta_infer.infer_binary)
 registry.register("lerp", "npu", lerp, meta=meta_infer.infer_binary)
 registry.register("addcmul", "npu", addcmul, meta=meta_infer.infer_binary)
 registry.register("addcdiv", "npu", addcdiv, meta=meta_infer.infer_binary)
@@ -734,7 +730,6 @@ registry.register("unflatten", "npu", unflatten_op, meta=meta_infer.infer_unflat
 registry.register("diagonal", "npu", diagonal_op, meta=meta_infer.infer_diagonal)
 
 # Missing forward ops — composites
-registry.register("aminmax", "npu", aminmax_op)
 registry.register("nanmean", "npu", nanmean_op, meta=meta_infer.infer_sum)
 registry.register("argwhere", "npu", argwhere_op)
 registry.register("det", "npu", det_op)
@@ -747,7 +742,6 @@ registry.register("cdist", "npu", cdist_op)
 registry.register("uniform", "npu", uniform_op)
 registry.register("isreal", "npu", isreal_op, meta=meta_infer.infer_unary)
 registry.register("isin", "npu", isin_op, meta=meta_infer.infer_binary)
-registry.register("bincount", "npu", bincount_op)
 registry.register("bucketize", "npu", bucketize_op)
 registry.register("histc", "npu", histc_op)
 registry.register("histogram", "npu", histogram_op)

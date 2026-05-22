@@ -307,37 +307,6 @@ def diff_op(a, n=1, dim=-1, prepend=None, append=None):
     return t
 
 
-def bincount_op(a, weights=None, minlength=0):
-    """Count occurrences of each value in a 1-D int tensor."""
-    from ...._dispatch.dispatcher import dispatch
-    from ...common import view as view_backend
-    flat = dispatch("flatten", "npu", a)
-    n = flat.shape[0]
-    if n == 0:
-        length = max(0, minlength)
-        return dispatch("zeros", "npu", (length,), dtype=float_dtype if weights is not None else int64_dtype, device=a.device)
-    max_val = dispatch("amax", "npu", flat)
-    # We need max_val as a Python int — sync to get value
-    max_val_c = contiguous(max_val)
-    import numpy as _np
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    max_np = _np.zeros(1, dtype=_np.int64)
-    npu_runtime._memcpy_d2h(max_np.ctypes.data, max_np.nbytes, _unwrap_storage(max_val_c).data_ptr(), runtime=runtime)
-    length = max(int(max_np[0]) + 1, minlength)
-    out_dtype = weights.dtype if weights is not None else int64_dtype
-    out = dispatch("zeros", "npu", (length,), dtype=out_dtype, device=a.device)
-    if weights is not None:
-        w_flat = dispatch("flatten", "npu", weights)
-    else:
-        w_flat = dispatch("ones", "npu", (n,), dtype=out_dtype, device=a.device)
-    # Use scatter_add to accumulate
-    idx = _cast_tensor_dtype(flat, int64_dtype)
-    idx = view_backend.reshape(idx, (n,))
-    from ...._functional import scatter_add_ as _scatter_add
-    _scatter_add(out, 0, idx, w_flat)
-    return out
-
-
 def bincount_aclnn(a, weights=None, minlength=0):
     import numpy as _np
     from ...._dispatch.dispatcher import dispatch

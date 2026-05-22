@@ -775,6 +775,24 @@ def test_npu_helpers_no_unused_unary_op_python_fallback():
     )
 
 
+def test_npu_init_has_no_duplicate_registry_register_calls():
+    """`src/candle/_backends/npu/__init__.py` must not register the same
+    op name twice — a later `registry.register(name, "npu", impl)` call
+    silently overrides the earlier one, leaving dead code and dead
+    imports behind. Pick exactly one implementation per op.
+    """
+    init_src = _source("src/candle/_backends/npu/__init__.py")
+    names = re.findall(r'registry\.register\(\s*"([^"]+)"\s*,\s*"npu"', init_src)
+    seen = {}
+    for name in names:
+        seen[name] = seen.get(name, 0) + 1
+    duplicates = sorted(n for n, c in seen.items() if c > 1)
+    assert not duplicates, (
+        f"duplicate NPU registry.register entries for: {duplicates}; "
+        "remove the dead earlier registration so each op has a single entry"
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
