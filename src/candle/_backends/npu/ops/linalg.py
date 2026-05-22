@@ -20,6 +20,15 @@ from .math import add, cos, div, exp, mul, sin, sqrt, sub
 from .reduce import sum_
 from .shape import contiguous, diag, diagonal_op, expand, index_select, split, tril, triu
 
+try:
+    from candle._C._npu_ops import (
+        fast_trace as _fast_trace_impl,
+    )  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_TRACE = True
+except ImportError:
+    _fast_trace_impl = None  # type: ignore[assignment]
+    _HAS_FAST_TRACE = False
+
 
 def matmul(a, b, out=None):
     user_out = out
@@ -1427,21 +1436,9 @@ def tensordot_op(a, b, dims=2):
 
 def trace_op(a):
     """Sum of diagonal elements of a 2D matrix."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    out_shape = ()
-    out_stride = ()
-    out_size = max(1, _numel(out_shape)) * _dtype_itemsize(a.dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    aclnn.strace(
-        a_storage.data_ptr(), out_ptr,
-        a.shape, a.stride, a.dtype,
-        out_shape, out_stride,
-        runtime, stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, max(1, _numel(out_shape)), a.dtype, device=a.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
+    if _HAS_FAST_TRACE:
+        return _fast_trace_impl(a)
+    raise RuntimeError("Cython NPU trace implementation is unavailable")
 
 
 def cross_op(a, b, dim=-1):
