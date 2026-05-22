@@ -405,8 +405,6 @@ def _move_dim_to_last(a, dim):
 
 
 def _slice_along_dim(a, start, end, dim):
-    if a.device.type != "npu":
-        raise ValueError("NPU slice expects NPU tensors")
     dim = _normalize_dim(dim, a.dim())
     if not a.is_contiguous():
         from ...._dispatch.dispatcher import dispatch
@@ -1427,8 +1425,6 @@ def flatten_op(a, start_dim=0, end_dim=-1):
 
 def contiguous(a):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU contiguous expects NPU tensors")
 
     a_storage = _unwrap_storage(a)
     out_size = _numel(a.shape) * _dtype_itemsize(a.dtype)
@@ -1445,8 +1441,6 @@ def contiguous(a):
 
 
 def flip(a, dims):
-    if a.device.type != "npu":
-        raise ValueError("NPU flip expects NPU tensors")
     dims = _normalize_dims_tuple(dims, a.dim(), "flip")
     if len(dims) == 0:
         return a
@@ -1477,8 +1471,6 @@ def flip(a, dims):
 
 
 def roll(a, shifts, dims=None):
-    if a.device.type != "npu":
-        raise ValueError("NPU roll expects NPU tensors")
     if dims is None:
         flat = view_backend.reshape(a, (a.numel(),))
         rolled = roll(flat, shifts, dims=0)
@@ -1508,8 +1500,6 @@ def roll(a, shifts, dims=None):
 
 
 def rot90(a, k=1, dims=(0, 1)):
-    if a.device.type != "npu":
-        raise ValueError("NPU rot90 expects NPU tensors")
     if a.dim() < 2:
         raise RuntimeError(f"expected total dims >= 2, but got total dims = {a.dim()}")
     if not isinstance(dims, (tuple, list)) or len(dims) != 2:
@@ -1531,8 +1521,6 @@ def rot90(a, k=1, dims=(0, 1)):
 
 
 def repeat(a, repeats):
-    if a.device.type != "npu":
-        raise ValueError("NPU repeat expects NPU tensors")
     repeats = _normalize_repeats_tuple(repeats, a.dim(), "repeat")
     if any(int(r) < 0 for r in repeats):
         raise RuntimeError(f"Trying to create tensor with negative dimension {tuple(int(s) * int(r) for s, r in zip(a.shape, repeats))}")
@@ -1570,8 +1558,6 @@ def tile(a, dims):
 
 
 def repeat_interleave(a, repeats, dim=None):
-    if a.device.type != "npu":
-        raise ValueError("NPU repeat_interleave expects NPU tensors")
 
     from ..creation import zeros_create
     from .reduce import sum_
@@ -1723,8 +1709,6 @@ def repeat_interleave(a, repeats, dim=None):
 
 
 def tril(a, diagonal=0):
-    if a.device.type != "npu":
-        raise ValueError("NPU tril expects NPU tensors")
     if not aclnn.tril_symbols_ok():
         raise RuntimeError("aclnnTril symbols not available")
     runtime = npu_runtime.get_runtime((a.device.index or 0))
@@ -1748,8 +1732,6 @@ def tril(a, diagonal=0):
 
 
 def triu(a, diagonal=0):
-    if a.device.type != "npu":
-        raise ValueError("NPU triu expects NPU tensors")
     if not aclnn.triu_symbols_ok():
         raise RuntimeError("aclnnTriu symbols not available")
     runtime = npu_runtime.get_runtime((a.device.index or 0))
@@ -1831,8 +1813,6 @@ def triu_indices(row, col, offset=0, dtype=None, device=None, layout=None):
 
 
 def diag(a, diagonal=0):
-    if a.device.type != "npu":
-        raise ValueError("NPU diag expects NPU tensors")
     if a.dim() not in (1, 2):
         raise ValueError("diag expects 1D or 2D tensor")
 
@@ -2094,8 +2074,6 @@ def one_hot(indices, num_classes=-1):
 
 
 def scatter(a, dim, index, src):
-    if a.device.type != "npu":
-        raise ValueError("NPU scatter expects NPU tensors")
     dim = _normalize_dim(dim, a.dim())
     _require_int64_indices(index, "scatter")
     if index.dim() != a.dim():
@@ -2149,8 +2127,6 @@ def scatter(a, dim, index, src):
 
 
 def nonzero(a, as_tuple=False):
-    if a.device.type != "npu":
-        raise ValueError("NPU nonzero expects NPU tensors")
     if not aclnn.nonzero_symbols_ok():
         raise RuntimeError("aclnnNonzero symbols not available")
     from .reduce import count_nonzero

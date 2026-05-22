@@ -611,6 +611,29 @@ def test_npu_reduce_single_tensor_shims_have_no_dispatch_redundant_device_guard(
         )
 
 
+def test_npu_shape_single_tensor_shims_have_no_dispatch_redundant_device_guard():
+    shape_src = _source("src/candle/_backends/npu/ops/shape.py")
+    targets = [
+        "_slice_along_dim",
+        "contiguous",
+        "flip",
+        "roll",
+        "rot90",
+        "repeat",
+        "repeat_interleave",
+        "tril",
+        "triu",
+        "diag",
+        "scatter",
+        "nonzero",
+    ]
+    for name in targets:
+        body = _function_source(shape_src, name)
+        assert 'a.device.type != "npu"' not in body, (
+            f"shape.py::{name} still has dispatch-redundant device guard"
+        )
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
