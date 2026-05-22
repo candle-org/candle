@@ -1604,6 +1604,8 @@ cdef object _hardtanh_getws_ptr = None   # cached Hardtanh getws pointer
 cdef object _hardtanh_exec_ptr = None    # cached Hardtanh exec pointer
 cdef object _clamp_getws_ptr = None      # cached Clamp getws pointer
 cdef object _clamp_exec_ptr = None       # cached Clamp exec pointer
+cdef object _inplace_copy_getws_ptr = None  # cached InplaceCopy getws pointer
+cdef object _inplace_copy_exec_ptr = None   # cached InplaceCopy exec pointer
 cdef object _gelu_getws_ptr = None       # cached Gelu getws pointer
 cdef object _gelu_exec_ptr = None        # cached Gelu exec pointer
 cdef object _silu_getws_ptr = None       # cached Silu getws pointer
@@ -2094,6 +2096,15 @@ cdef inline void _ensure_ffi_clamp() except *:
         _ensure_ffi_binary()
     _clamp_getws_ptr, _clamp_exec_ptr = _ffi_ref.resolve_op("Clamp")
     _ensure_ffi_scalar_helpers()
+
+
+cdef inline void _ensure_ffi_inplace_copy() except *:
+    global _ffi_ref, _inplace_copy_getws_ptr, _inplace_copy_exec_ptr
+    if _inplace_copy_getws_ptr is not None:
+        return
+    if _ffi_ref is None:
+        _ensure_ffi_binary()
+    _inplace_copy_getws_ptr, _inplace_copy_exec_ptr = _ffi_ref.resolve_op("InplaceCopy")
 
 
 cdef inline void _ensure_ffi_gelu() except *:
@@ -4337,6 +4348,128 @@ def fast_clamp_min(a, min_val):
 
 def fast_clamp_max(a, max_val):
     return fast_clamp(a, None, max_val)
+
+
+def fast_clamp_inplace(a, min_val=None, max_val=None):
+    """In-place clamp_(a, min_val, max_val) reusing _ffi.clamp_optional_scalars_op."""
+    _ensure_npu_imports()
+    _ensure_ffi_clamp()
+
+    if a.device.type != "npu":
+        raise ValueError("NPU clamp_ expects NPU tensors")
+
+    cdef int dev_idx = a.device.index or 0
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    a_stride = a.stride
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+
+    cdef uintptr_t min_scalar = 0
+    cdef uintptr_t max_scalar = 0
+    if min_val is not None:
+        min_scalar = _create_scalar_fn(_scalar_bytes_fn(min_val, a_dtype), dtype_code)
+    if max_val is not None:
+        max_scalar = _create_scalar_fn(_scalar_bytes_fn(max_val, a_dtype), dtype_code)
+    cdef uintptr_t stream_raw = int(stream.stream)
+    try:
+        ws_size, executor = _ffi_ref.clamp_optional_scalars_op(
+            _clamp_getws_ptr, _clamp_exec_ptr,
+            a_shape, a_stride,
+            a_shape, a_stride,
+            dtype_code, 2,
+            a_ptr, a_ptr,
+            min_scalar, max_scalar,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_ref.execute(
+                    _clamp_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnClamp execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_fn(executor)
+    finally:
+        if min_scalar:
+            _destroy_scalar_fn(int(min_scalar))
+        if max_scalar:
+            _destroy_scalar_fn(int(max_scalar))
+
+    return a
+
+
+def fast_copy_inplace(a, src):
+    """In-place copy_(a, src) using _ffi.inplace_copy_op."""
+    _ensure_npu_imports()
+    _ensure_ffi_inplace_copy()
+
+    if a.device.type != "npu":
+        raise ValueError("NPU copy_ expects NPU tensors")
+
+    cdef int dev_idx = a.device.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    src_shape = (<TensorImpl>src)._shape_tuple if isinstance(src, TensorImpl) else src.shape
+    cdef int dtype_code_dst = _dtype_to_acl_code(a.dtype)
+    cdef int dtype_code_src = _dtype_to_acl_code(src.dtype)
+    cdef uintptr_t a_ptr, src_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    if isinstance(src, TensorImpl):
+        src_ptr = <uintptr_t>(<TensorImpl>src)._storage._untyped._device_ptr
+    else:
+        src_ptr = <uintptr_t>src.storage().data_ptr()
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.inplace_copy_op(
+        _inplace_copy_getws_ptr, _inplace_copy_exec_ptr,
+        a_shape, a.stride,
+        src_shape, src.stride,
+        dtype_code_dst, dtype_code_src, 2,
+        a_ptr, src_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _inplace_copy_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnInplaceCopy execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
+def fast_fill_inplace(a, value):
+    """In-place fill_(a, value) by broadcasting a scalar tensor via InplaceCopy."""
+    if a.device.type != "npu":
+        raise ValueError("NPU fill_ expects NPU tensors")
+    src = _npu_scalar_like(float(value), a)
+    return fast_copy_inplace(a, src)
 
 
 
