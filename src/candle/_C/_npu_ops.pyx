@@ -1640,6 +1640,8 @@ cdef object _addcdiv_getws_ptr = None    # cached Addcdiv getws pointer
 cdef object _addcdiv_exec_ptr = None     # cached Addcdiv exec pointer
 cdef object _trace_getws_ptr = None      # cached Trace getws pointer
 cdef object _trace_exec_ptr = None       # cached Trace exec pointer
+cdef object _inverse_getws_ptr = None    # cached Inverse getws pointer
+cdef object _inverse_exec_ptr = None     # cached Inverse exec pointer
 
 
 cdef object _scalar_bytes_fn = None      # aclnn._scalar_bytes
@@ -1686,6 +1688,15 @@ cdef inline void _ensure_ffi_trace() except *:
     if _ffi_ref is None:
         _ensure_ffi_binary()
     _trace_getws_ptr, _trace_exec_ptr = _ffi_ref.resolve_op("Trace")
+
+
+cdef inline void _ensure_ffi_inverse() except *:
+    global _ffi_ref, _inverse_getws_ptr, _inverse_exec_ptr
+    if _inverse_getws_ptr is not None:
+        return
+    if _ffi_ref is None:
+        _ensure_ffi_binary()
+    _inverse_getws_ptr, _inverse_exec_ptr = _ffi_ref.resolve_op("Inverse")
 
 
 
@@ -6974,3 +6985,66 @@ def fast_trace(a):
 
     _defer_executor_fn(executor)
     return _cy_make_npu_tensor(out_ptr, 1, a_dtype, a_dev, out_shape, out_stride)
+
+
+def fast_inverse(a):
+    """Cython entry point for aclnnInverse. Replaces the Python orchestration
+    that lived in `_backends/npu/ops/linalg.py::linalg_inv`. Output shares
+    the input's shape and stride; uses the contiguous shape/stride for the
+    output FFI argument.
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_inverse()
+
+    cdef int dev_idx = a.device.index or 0
+    a_dev = _device_obj_fast(a)
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    out_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    out_stride = a.stride
+    cdef int64_t n = 1
+    for dim in out_shape:
+        n *= dim
+
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size_inv = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_inv, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_inv, stream=stream.stream)
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr, o_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    o_ptr = out_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.unary_op(
+        _inverse_getws_ptr, _inverse_exec_ptr,
+        a.shape, a.stride,
+        out_shape, out_stride,
+        dtype_code, dtype_code, 2,
+        a_ptr, o_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _inverse_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnInverse execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)

@@ -750,6 +750,19 @@ def test_npu_trace_delegates_through_cython_fast_trace():
     )
 
 
+def test_npu_linalg_inv_delegates_through_cython_fast_inverse():
+    """`linalg.py::linalg_inv` must delegate to the Cython `fast_inverse`
+    helper. The Python shim should not reference `aclnn.inverse` directly —
+    the aclnnInverse orchestration belongs in `_C/_npu_ops.pyx`.
+    """
+    linalg_src = _source("src/candle/_backends/npu/ops/linalg.py")
+    body = _function_source(linalg_src, "linalg_inv")
+    assert "aclnn.inverse" not in body, (
+        "linalg.py::linalg_inv still calls aclnn.inverse directly; "
+        "should delegate to the Cython fast_inverse helper"
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
