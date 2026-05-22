@@ -501,6 +501,16 @@ def test_npu_exponential_inplace_delegates_to_cython():
         assert marker not in body, f"exponential_ still references {marker}"
 
 
+def test_npu_bernoulli_inplace_delegates_to_device_ops_and_cython_copy():
+    random_src = _source("src/candle/_backends/npu/ops/random.py")
+    body = _function_source(random_src, "bernoulli_")
+    for expected in ["lt(", "_cast_tensor_dtype(", "_fast_copy_inplace_impl"]:
+        assert expected in body, f"bernoulli_ does not delegate to {expected}"
+    forbidden = ["aclnn.", "npu_runtime._alloc_device", "_unwrap_storage(", "_wrap_tensor("]
+    for marker in forbidden:
+        assert marker not in body, f"bernoulli_ still references {marker}"
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
