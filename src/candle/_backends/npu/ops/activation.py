@@ -165,9 +165,6 @@ def relu6(a):
 
 
 def softplus(a, beta=1.0, threshold=20.0):
-    if a.device.type != "npu":
-        raise ValueError("NPU softplus expects NPU tensors")
-
     if _use_soc_fallback("softplus"):
         beta = float(beta)
         threshold = float(threshold)

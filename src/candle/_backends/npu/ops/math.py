@@ -357,8 +357,6 @@ def isinf(a):
 def isnan(a):
     if _HAS_FAST_ISNAN and a.dtype.is_floating_point:
         return _fast_isnan_impl(a)
-    if a.device.type != "npu":
-        raise ValueError("NPU isnan expects NPU tensors")
     if not a.dtype.is_floating_point:
         from . import logical_not
         return logical_not(isfinite(a))

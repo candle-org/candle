@@ -565,6 +565,23 @@ def test_npu_relu_inplace_delegates_to_cython():
         assert marker not in body, f"relu_ still references {marker}"
 
 
+def test_npu_single_tensor_unary_shims_have_no_dispatch_redundant_device_guard():
+    targets = [
+        ("src/candle/_backends/npu/ops/activation.py", "softplus"),
+        ("src/candle/_backends/npu/ops/math.py", "isnan"),
+        ("src/candle/_backends/npu/ops/elementwise.py", "clamp"),
+        ("src/candle/_backends/npu/ops/elementwise.py", "clamp_min"),
+        ("src/candle/_backends/npu/ops/elementwise.py", "clamp_max"),
+        ("src/candle/_backends/npu/ops/_helpers.py", "_unary_op"),
+    ]
+    for path, name in targets:
+        src = _source(path)
+        body = _function_source(src, name)
+        assert 'a.device.type != "npu"' not in body, (
+            f"{path}::{name} still has dispatch-redundant device guard"
+        )
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()

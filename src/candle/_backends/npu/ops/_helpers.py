@@ -306,8 +306,6 @@ def _batch_offset(index, stride):
 def _unary_op(a, fn, name, out_dtype=None):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError(f"NPU {name} expects NPU tensors")
     if out_dtype is None:
         out_dtype = a.dtype
     out_size = _numel(a.shape) * _dtype_itemsize(out_dtype)
