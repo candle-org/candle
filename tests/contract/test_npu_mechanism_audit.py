@@ -549,6 +549,22 @@ def test_npu_random_inplace_shims_have_no_dispatch_redundant_device_guard():
         )
 
 
+def test_npu_relu_inplace_delegates_to_cython():
+    activation_src = _source("src/candle/_backends/npu/ops/activation.py")
+    body = _function_source(activation_src, "relu_")
+    assert "_fast_relu_inplace_impl" in body, (
+        "relu_ does not delegate to _fast_relu_inplace_impl"
+    )
+    forbidden = [
+        "aclnn.",
+        "npu_runtime._alloc_device",
+        "npu_runtime.memcpy_d2d",
+        "_unwrap_storage(",
+    ]
+    for marker in forbidden:
+        assert marker not in body, f"relu_ still references {marker}"
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
