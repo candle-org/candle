@@ -111,8 +111,6 @@ def randperm(n, dtype=None, device=None, generator=None):
 
 
 def zero_(a):
-    if a.device.type != "npu":
-        raise ValueError("NPU zero_ expects NPU tensors")
     fill_(a, 0.0)
     return a
 
@@ -120,8 +118,6 @@ def zero_(a):
 def uniform_(a, low=0.0, high=1.0, generator=None):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU uniform_ expects NPU tensors")
 
     if _use_soc_fallback("uniform_"):
         from .... import npu as npu_mod
@@ -173,8 +169,6 @@ def uniform_(a, low=0.0, high=1.0, generator=None):
 def normal_(a, mean=0.0, std=1.0, generator=None):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU normal_ expects NPU tensors")
 
     if _use_soc_fallback("normal_"):
         # Deterministic NPU-only fallback built from small ops.
@@ -351,8 +345,6 @@ def erfinv_(a):
 
 def reciprocal_(a):
     """In-place reciprocal: output written back to a's storage."""
-    if a.device.type != "npu":
-        raise ValueError("NPU reciprocal_ expects NPU tensors")
     if not _HAS_FAST_COPY_INPLACE:
         raise RuntimeError("Cython NPU reciprocal_ implementation is unavailable")
     from .math import pow as pow_op
