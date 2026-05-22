@@ -356,24 +356,6 @@ def _reduce_out_shape(shape, dims, keepdim):
     return tuple(out_shape)
 
 
-def _reduce_dim_sizes(shape, dims, keepdim):
-    dims = sorted(dims)
-    sizes = []
-    for d in dims:
-        sizes.append(shape[d])
-    if keepdim:
-        out_sizes = [1] * len(shape)
-        for d, size in zip(dims, sizes):
-            out_sizes[d] = size
-        return tuple(out_sizes)
-    return tuple(sizes)
-
-
-def _broadcast_dims_to_out(dims, out_shape, keepdim):
-    if keepdim:
-        return dims
-    offset = len(out_shape) - len(dims)
-    return tuple(range(offset, offset + len(dims)))
 
 
 def _scalar_to_npu_tensor(scalar, ref_tensor):

@@ -793,6 +793,20 @@ def test_npu_init_has_no_duplicate_registry_register_calls():
     )
 
 
+def test_npu_helpers_no_unused_reduction_dim_helpers():
+    """`_reduce_dim_sizes` and `_broadcast_dims_to_out` in
+    `_backends/npu/ops/_helpers.py` are dead code — only imported by
+    `reduce.py` and `ops/__init__.py`, never actually called. Remove
+    them and their imports to keep the shared helper surface honest.
+    """
+    helpers_src = _source("src/candle/_backends/npu/ops/_helpers.py")
+    for fn in ("_reduce_dim_sizes", "_broadcast_dims_to_out"):
+        assert f"def {fn}(" not in helpers_src, (
+            f"_helpers.py still defines unused {fn}; it has no live callers"
+        )
+
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
