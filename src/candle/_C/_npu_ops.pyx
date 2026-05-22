@@ -2422,8 +2422,6 @@ def fast_digamma(a):
     _ensure_npu_imports()
     _ensure_ffi_digamma()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU digamma expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -2483,8 +2481,6 @@ def fast_lgamma(a):
     _ensure_npu_imports()
     _ensure_ffi_lgamma()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU lgamma expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -2544,8 +2540,6 @@ def fast_sinc(a):
     _ensure_npu_imports()
     _ensure_ffi_sinc()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU sinc expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -2605,8 +2599,6 @@ def fast_abs(a):
     _ensure_npu_imports()
     _ensure_ffi_abs()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU abs expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -2666,8 +2658,6 @@ def fast_neg(a):
     _ensure_npu_imports()
     _ensure_ffi_neg()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU neg expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -2772,8 +2762,6 @@ def fast_sign(a):
     _ensure_npu_imports()
     _ensure_ffi_sign()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU sign expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -2833,8 +2821,6 @@ def fast_signbit(a):
     _ensure_npu_imports()
     _ensure_ffi_signbit()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU signbit expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -2895,8 +2881,6 @@ def fast_isfinite(a):
     _ensure_npu_imports()
     _ensure_ffi_isfinite()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU isfinite expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -2957,8 +2941,6 @@ def fast_isposinf(a):
     _ensure_npu_imports()
     _ensure_ffi_isposinf()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU isposinf expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3019,8 +3001,6 @@ def fast_isneginf(a):
     _ensure_npu_imports()
     _ensure_ffi_isneginf()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU isneginf expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3081,8 +3061,6 @@ def fast_logical_not(a):
     _ensure_npu_imports()
     _ensure_ffi_logical_not()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU logical_not expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3143,8 +3121,6 @@ def fast_bitwise_not(a):
     _ensure_npu_imports()
     _ensure_ffi_bitwise_not()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU bitwise_not expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3204,8 +3180,6 @@ def fast_square(a):
     _ensure_npu_imports()
     _ensure_ffi_square()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU square expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3265,8 +3239,6 @@ def fast_exp(a):
     _ensure_npu_imports()
     _ensure_ffi_exp()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU exp expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3371,8 +3343,6 @@ def fast_expm1(a):
     _ensure_npu_imports()
     _ensure_ffi_expm1()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU expm1 expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3432,8 +3402,6 @@ def fast_log1p(a):
     _ensure_npu_imports()
     _ensure_ffi_log1p()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU log1p expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3493,8 +3461,6 @@ def fast_log(a):
     _ensure_npu_imports()
     _ensure_ffi_log()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU log expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3599,8 +3565,6 @@ def fast_rsqrt(a):
     _ensure_npu_imports()
     _ensure_ffi_rsqrt()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU rsqrt expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3660,8 +3624,6 @@ def fast_sqrt(a):
     _ensure_npu_imports()
     _ensure_ffi_sqrt()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU sqrt expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3897,8 +3859,6 @@ def fast_sin(a):
     _ensure_npu_imports()
     _ensure_ffi_sin()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU sin expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -3958,8 +3918,6 @@ def fast_cos(a):
     _ensure_npu_imports()
     _ensure_ffi_cos()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU cos expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -4019,8 +3977,6 @@ def fast_tan(a):
     _ensure_npu_imports()
     _ensure_ffi_tan()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU tan expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -4125,8 +4081,6 @@ def fast_tanh(a):
     _ensure_npu_imports()
     _ensure_ffi_tanh()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU tanh expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -4187,8 +4141,6 @@ def fast_sigmoid(a):
     _ensure_npu_imports()
     _ensure_ffi_sigmoid()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU sigmoid expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -4248,8 +4200,6 @@ def fast_relu(a):
     _ensure_npu_imports()
     _ensure_ffi_relu()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU relu expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -4354,8 +4304,6 @@ def fast_leaky_relu(a, negative_slope):
     _ensure_npu_imports()
     _ensure_ffi_leaky_relu()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU leaky_relu expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -4421,8 +4369,6 @@ def fast_elu(a, alpha):
     _ensure_npu_imports()
     _ensure_ffi_elu()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU elu expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -4492,8 +4438,6 @@ def fast_clamp(a, min_val=None, max_val=None):
     _ensure_npu_imports()
     _ensure_ffi_clamp()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU clamp expects NPU tensors")
     if min_val is None and max_val is None:
         raise ValueError("clamp requires min or max")
 
@@ -4580,8 +4524,6 @@ def fast_clamp_inplace(a, min_val=None, max_val=None):
     _ensure_npu_imports()
     _ensure_ffi_clamp()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU clamp_ expects NPU tensors")
 
     cdef int dev_idx = a.device.index or 0
     a_dtype = a.dtype
@@ -4642,8 +4584,6 @@ def fast_copy_inplace(a, src):
     _ensure_npu_imports()
     _ensure_ffi_inplace_copy()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU copy_ expects NPU tensors")
 
     cdef int dev_idx = a.device.index or 0
     runtime = _get_runtime_fast(dev_idx)
@@ -4691,8 +4631,6 @@ def fast_copy_inplace(a, src):
 
 def fast_fill_inplace(a, value):
     """In-place fill_(a, value) by broadcasting a scalar tensor via InplaceCopy."""
-    if a.device.type != "npu":
-        raise ValueError("NPU fill_ expects NPU tensors")
     src = _npu_scalar_like(float(value), a)
     return fast_copy_inplace(a, src)
 
@@ -4703,8 +4641,6 @@ def fast_hardtanh(a, min_val, max_val):
     _ensure_npu_imports()
     _ensure_ffi_hardtanh()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU hardtanh expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -4852,8 +4788,6 @@ def fast_dropout(a, p):
     _ensure_ffi_dropout()
     _ensure_npu_module()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU dropout expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5022,8 +4956,6 @@ def fast_softplus(a, beta, threshold):
     _ensure_npu_imports()
     _ensure_ffi_softplus()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU softplus expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5091,8 +5023,6 @@ def fast_softmax(a, dim):
     _ensure_npu_imports()
     _ensure_ffi_softmax()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU softmax expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5154,8 +5084,6 @@ def fast_log_softmax(a, dim):
     _ensure_npu_imports()
     _ensure_ffi_log_softmax()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU log_softmax expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5217,8 +5145,6 @@ def fast_gelu(a):
     _ensure_npu_imports()
     _ensure_ffi_gelu()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU gelu expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5278,8 +5204,6 @@ def fast_silu(a):
     _ensure_npu_imports()
     _ensure_ffi_silu()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU silu expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5339,8 +5263,6 @@ def fast_mish(a):
     _ensure_npu_imports()
     _ensure_ffi_mish()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU mish expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5400,8 +5322,6 @@ def fast_sinh(a):
     _ensure_npu_imports()
     _ensure_ffi_sinh()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU sinh expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5461,8 +5381,6 @@ def fast_cosh(a):
     _ensure_npu_imports()
     _ensure_ffi_cosh()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU cosh expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5522,8 +5440,6 @@ def fast_erf(a):
     _ensure_npu_imports()
     _ensure_ffi_erf()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU erf expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5583,8 +5499,6 @@ def fast_erfc(a):
     _ensure_npu_imports()
     _ensure_ffi_erfc()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU erfc expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5644,8 +5558,6 @@ def fast_floor(a):
     _ensure_npu_imports()
     _ensure_ffi_floor()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU floor expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5750,8 +5662,6 @@ def fast_ceil(a):
     _ensure_npu_imports()
     _ensure_ffi_ceil()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU ceil expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5856,8 +5766,6 @@ def fast_round(a):
     _ensure_npu_imports()
     _ensure_ffi_round()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU round expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5918,8 +5826,6 @@ def fast_trunc(a):
     _ensure_npu_imports()
     _ensure_ffi_trunc()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU trunc expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -5979,8 +5885,6 @@ def fast_log2(a):
     _ensure_npu_imports()
     _ensure_ffi_log2()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU log2 expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -6040,8 +5944,6 @@ def fast_log10(a):
     _ensure_npu_imports()
     _ensure_ffi_log10()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU log10 expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -6101,8 +6003,6 @@ def fast_exp2(a):
     _ensure_npu_imports()
     _ensure_ffi_exp2()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU exp2 expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -6162,8 +6062,6 @@ def fast_asinh(a):
     _ensure_npu_imports()
     _ensure_ffi_asinh()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU asinh expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -6223,8 +6121,6 @@ def fast_acosh(a):
     _ensure_npu_imports()
     _ensure_ffi_acosh()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU acosh expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -6284,8 +6180,6 @@ def fast_atanh(a):
     _ensure_npu_imports()
     _ensure_ffi_atanh()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU atanh expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -6345,8 +6239,6 @@ def fast_atan(a):
     _ensure_npu_imports()
     _ensure_ffi_atan()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU atan expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -6406,8 +6298,6 @@ def fast_asin(a):
     _ensure_npu_imports()
     _ensure_ffi_asin()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU asin expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -6467,8 +6357,6 @@ def fast_acos(a):
     _ensure_npu_imports()
     _ensure_ffi_acos()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU acos expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -6528,8 +6416,6 @@ def fast_erfinv(a):
     _ensure_npu_imports()
     _ensure_ffi_erfinv()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU erfinv expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
@@ -6589,8 +6475,6 @@ def fast_erfinv_(a):
     _ensure_npu_imports()
     _ensure_ffi_erfinv()
 
-    if a.device.type != "npu":
-        raise ValueError("NPU erfinv_ expects NPU tensors")
     cdef int dev_idx = a.device.index or 0
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
