@@ -23,17 +23,21 @@ try:
         fast_clamp_inplace as _fast_clamp_inplace_impl,
         fast_copy_inplace as _fast_copy_inplace_impl,
         fast_fill_inplace as _fast_fill_inplace_impl,
+        fast_floor_inplace as _fast_floor_inplace_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_CLAMP_INPLACE = True
     _HAS_FAST_COPY_INPLACE = True
     _HAS_FAST_FILL_INPLACE = True
+    _HAS_FAST_FLOOR_INPLACE = True
 except ImportError:
     _fast_clamp_inplace_impl = None  # type: ignore[assignment]
     _fast_copy_inplace_impl = None  # type: ignore[assignment]
     _fast_fill_inplace_impl = None  # type: ignore[assignment]
+    _fast_floor_inplace_impl = None  # type: ignore[assignment]
     _HAS_FAST_CLAMP_INPLACE = False
     _HAS_FAST_COPY_INPLACE = False
     _HAS_FAST_FILL_INPLACE = False
+    _HAS_FAST_FLOOR_INPLACE = False
 
 
 def randperm(n, dtype=None, device=None, generator=None):
@@ -198,14 +202,10 @@ def randint_(a, low, high=None, generator=None):
     """In-place randint — fills tensor with random integers from [low, high)."""
     if high is None:
         low, high = 0, low
-    # Fill with uniform [low, high), then floor to get integers
     uniform_(a, float(low), float(high), generator=generator)
-    # In-place floor
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    aclnn.floor(a_storage.data_ptr(), a_storage.data_ptr(), a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    return a
+    if _HAS_FAST_FLOOR_INPLACE:
+        return _fast_floor_inplace_impl(a)
+    raise RuntimeError("Cython NPU randint_ floor implementation is unavailable")
 
 
 def random_(a, from_=0, to=None, generator=None):
@@ -218,13 +218,10 @@ def random_(a, from_=0, to=None, generator=None):
             to = 2**24 if np_dtype == np.float32 else 2**53
         else:
             to = int(np.iinfo(np_dtype).max) + 1
-    # Fill with uniform [from_, to), then floor
     uniform_(a, float(from_), float(to), generator=generator)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    aclnn.floor(a_storage.data_ptr(), a_storage.data_ptr(), a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    return a
+    if _HAS_FAST_FLOOR_INPLACE:
+        return _fast_floor_inplace_impl(a)
+    raise RuntimeError("Cython NPU random_ floor implementation is unavailable")
 
 
 def bernoulli_(a, p=0.5, generator=None):

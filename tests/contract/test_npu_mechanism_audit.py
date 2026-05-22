@@ -466,6 +466,17 @@ def test_npu_zero_and_reciprocal_inplace_have_no_python_fallback_bodies():
         assert marker not in reciprocal_body, f"reciprocal_ still references {marker}"
 
 
+def test_npu_random_integer_inplace_wrappers_delegate_floor_to_cython():
+    random_src = _source("src/candle/_backends/npu/ops/random.py")
+    forbidden = ["aclnn.", "npu_runtime._alloc_device", "_unwrap_storage(", "_wrap_tensor("]
+    for name in ["randint_", "random_"]:
+        body = _function_source(random_src, name)
+        assert "_fast_floor_inplace_impl" in body, \
+            f"{name} does not delegate floor to _fast_floor_inplace_impl"
+        for marker in forbidden:
+            assert marker not in body, f"{name} still references {marker}"
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
