@@ -60,7 +60,7 @@ from ._helpers import (
     _unwrap_storage, _wrap_tensor,
     _broadcast_shape, _broadcast_shape_checked,
     _numel, _dtype_itemsize, _use_soc_fallback,
-    _scalar_to_npu_tensor, _scalar_to_npu_tensor_no_add,
+    _scalar_to_npu_tensor,
     _npu_broadcast_to, _npu_arange_1d, _npu_linear_index,
     _npu_add_scalar_, npu_index_put_impl,
     _normalize_reduction_dims, _reduce_out_shape,

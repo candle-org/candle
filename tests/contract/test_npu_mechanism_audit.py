@@ -868,6 +868,18 @@ def test_npu_ops_modules_do_not_import_unused_binary_op_helper():
     )
 
 
+def test_npu_helpers_no_unused_scalar_to_npu_tensor_no_add_helper():
+    """`_scalar_to_npu_tensor_no_add` lives in `_helpers.py` and is
+    imported by every ops module, but nothing actually calls it. Drop
+    the helper entirely so the import surface stays in sync with what
+    is used.
+    """
+    helpers_src = _source("src/candle/_backends/npu/ops/_helpers.py")
+    assert "def _scalar_to_npu_tensor_no_add" not in helpers_src, (
+        "_helpers.py still defines _scalar_to_npu_tensor_no_add; it has no live callers"
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
