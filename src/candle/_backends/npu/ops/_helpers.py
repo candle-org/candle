@@ -413,34 +413,6 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
-def _scalar_to_npu_tensor_no_add(scalar, ref_tensor):
-    """Helper to avoid recursion: create scalar using add_scalar without add()."""
-    runtime = npu_runtime.get_runtime((ref_tensor.device.index or 0))
-    stream = npu_state.current_stream((ref_tensor.device.index or 0))
-    out_shape = ref_tensor.shape
-    out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_size = _numel(out_shape) * _dtype_itemsize(ref_tensor.dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    aclnn.inplace_zero(
-        out_ptr,
-        out_shape,
-        out_stride,
-        ref_tensor.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    aclnn.add_scalar(
-        out_ptr,
-        scalar,
-        out_ptr,
-        out_shape,
-        out_stride,
-        ref_tensor.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), ref_tensor.dtype, device=ref_tensor.device)
-    return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
 def _nan_like(a):
