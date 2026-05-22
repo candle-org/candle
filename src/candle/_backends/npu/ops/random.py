@@ -18,6 +18,23 @@ from .comparison import lt
 from .elementwise import clamp
 from .math import abs, add, ceil, cos, div, exp, floor, frac, log, mul, neg, sin, sqrt, tan
 
+try:
+    from candle._C._npu_ops import (
+        fast_clamp_inplace as _fast_clamp_inplace_impl,
+        fast_copy_inplace as _fast_copy_inplace_impl,
+        fast_fill_inplace as _fast_fill_inplace_impl,
+    )  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_CLAMP_INPLACE = True
+    _HAS_FAST_COPY_INPLACE = True
+    _HAS_FAST_FILL_INPLACE = True
+except ImportError:
+    _fast_clamp_inplace_impl = None  # type: ignore[assignment]
+    _fast_copy_inplace_impl = None  # type: ignore[assignment]
+    _fast_fill_inplace_impl = None  # type: ignore[assignment]
+    _HAS_FAST_CLAMP_INPLACE = False
+    _HAS_FAST_COPY_INPLACE = False
+    _HAS_FAST_FILL_INPLACE = False
+
 
 def randperm(n, dtype=None, device=None, generator=None):
     """Random permutation of integers from 0 to n-1."""
@@ -330,72 +347,23 @@ def geometric_(a, p, generator=None):
 
 def fill_(a, value):
     """In-place fill using scalar tensor copy-back."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU fill_ expects NPU tensors")
-
-    src = _scalar_to_npu_tensor(float(value), a)
-    aclnn.inplace_copy(
-        _unwrap_storage(a).data_ptr(),
-        _unwrap_storage(src).data_ptr(),
-        a.shape,
-        a.stride,
-        a.dtype,
-        src.shape,
-        src.stride,
-        src.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    return a
+    if _HAS_FAST_FILL_INPLACE:
+        return _fast_fill_inplace_impl(a, value)
+    raise RuntimeError("Cython NPU fill_ implementation is unavailable")
 
 
 def clamp_(a, min_val=None, max_val=None):
     """In-place clamp: output written back to a's storage."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU clamp_ expects NPU tensors")
-
-    a_storage = _unwrap_storage(a)
-    # Use clamp_scalar with output == input for in-place
-    aclnn.clamp_scalar(
-        a_storage.data_ptr(),
-        a_storage.data_ptr(),
-        a.shape,
-        a.stride,
-        a.dtype,
-        min_val,
-        max_val,
-        runtime,
-        stream=stream.stream,
-    )
-    return a
+    if _HAS_FAST_CLAMP_INPLACE:
+        return _fast_clamp_inplace_impl(a, min_val, max_val)
+    raise RuntimeError("Cython NPU clamp_ implementation is unavailable")
 
 
 def copy_(a, src):
     """In-place copy from src into a."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU copy_ expects NPU tensors")
-
-    a_storage = _unwrap_storage(a)
-    src_storage = _unwrap_storage(src)
-    aclnn.inplace_copy(
-        a_storage.data_ptr(),
-        src_storage.data_ptr(),
-        a.shape,
-        a.stride,
-        a.dtype,
-        src.shape,
-        src.stride,
-        src.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    return a
+    if _HAS_FAST_COPY_INPLACE:
+        return _fast_copy_inplace_impl(a, src)
+    raise RuntimeError("Cython NPU copy_ implementation is unavailable")
 
 
 def erfinv_(a):

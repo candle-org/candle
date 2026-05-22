@@ -435,6 +435,21 @@ def test_npu_inplace_arithmetic_wrappers_delegate_to_cython():
             assert marker not in body
 
 
+def test_npu_inplace_copy_and_clamp_wrappers_delegate_to_cython():
+    random_src = _source("src/candle/_backends/npu/ops/random.py")
+    expectations = {
+        "fill_": "_fast_fill_inplace_impl",
+        "copy_": "_fast_copy_inplace_impl",
+        "clamp_": "_fast_clamp_inplace_impl",
+    }
+    forbidden = ["aclnn.", "npu_runtime._alloc_device", "_unwrap_storage(", "_wrap_tensor("]
+    for name, fast_name in expectations.items():
+        body = _function_source(random_src, name)
+        assert fast_name in body, f"{name} does not delegate to {fast_name}"
+        for marker in forbidden:
+            assert marker not in body
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
