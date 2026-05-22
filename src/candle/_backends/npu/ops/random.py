@@ -243,24 +243,12 @@ def random_(a, from_=0, to=None, generator=None):
 def bernoulli_(a, p=0.5, generator=None):
     """In-place Bernoulli — fills tensor with 0/1 from Bernoulli(p)."""
     uniform_(a, 0.0, 1.0, generator=generator)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    numel = _numel(a.shape)
-    if hasattr(p, 'storage'):
-        p_storage = _unwrap_storage(p)
-        p_shape, p_stride = p.shape, p.stride
-    else:
-        p_tensor = _scalar_to_npu_tensor(float(p), a)
-        p_storage = _unwrap_storage(p_tensor)
-        p_shape, p_stride = p_tensor.shape, p_tensor.stride
-    bool_ptr = npu_runtime._alloc_device(numel * _dtype_itemsize("bool"), runtime=runtime)
-    aclnn.lt(a_storage.data_ptr(), p_storage.data_ptr(), bool_ptr,
-             a.shape, a.stride, p_shape, p_stride, a.shape, a.stride,
-             a.dtype, runtime, stream=stream.stream)
-    aclnn.cast(bool_ptr, a_storage.data_ptr(), a.shape, a.stride, "bool", a.dtype, runtime, stream=stream.stream)
-    runtime.defer_free(bool_ptr)
-    return a
+    if not _HAS_FAST_COPY_INPLACE:
+        raise RuntimeError("Cython NPU bernoulli_ implementation is unavailable")
+    if not hasattr(p, 'storage'):
+        p = _scalar_to_npu_tensor(float(p), a)
+    out = _cast_tensor_dtype(lt(a, p), a.dtype)
+    return _fast_copy_inplace_impl(a, out)
 
 
 def exponential_(a, lambd=1.0, generator=None):
