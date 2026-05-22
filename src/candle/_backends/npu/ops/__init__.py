@@ -1,7 +1,7 @@
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _numel, _dtype_itemsize,
     _cast_tensor_dtype,
-    _npu_broadcast_to, _npu_arange_1d, _use_soc_fallback,
+    _npu_arange_1d, _use_soc_fallback,
     _npu_linear_index,
     _scalar_to_npu_tensor, _nan_like,
     # Re-export commonly used imports so op functions can use them

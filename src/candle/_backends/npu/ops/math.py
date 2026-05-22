@@ -3,7 +3,6 @@
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _binary_op,
     _cast_tensor_dtype,
-    _npu_broadcast_to,
     _scalar_to_npu_tensor,
     _numel, _dtype_itemsize, _use_soc_fallback,
     _nan_like,
