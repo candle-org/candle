@@ -1200,8 +1200,6 @@ def affine_grid_op(theta, size, align_corners=None):
 
 
 def pad(input, pad, mode='constant', value=0):
-    if input.device.type != "npu":
-        raise ValueError("NPU pad expects NPU tensors")
     if not isinstance(pad, (tuple, list)):
         raise TypeError("pad must be a tuple/list of ints")
     if len(pad) % 2 != 0:
