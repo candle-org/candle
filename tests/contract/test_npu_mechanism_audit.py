@@ -450,6 +450,22 @@ def test_npu_inplace_copy_and_clamp_wrappers_delegate_to_cython():
             assert marker not in body
 
 
+def test_npu_zero_and_reciprocal_inplace_have_no_python_fallback_bodies():
+    random_src = _source("src/candle/_backends/npu/ops/random.py")
+    forbidden = ["aclnn.", "npu_runtime._alloc_device", "_unwrap_storage(", "_wrap_tensor("]
+
+    zero_body = _function_source(random_src, "zero_")
+    assert "fill_(" in zero_body, "zero_ should delegate to fill_"
+    for marker in forbidden:
+        assert marker not in zero_body, f"zero_ still references {marker}"
+
+    reciprocal_body = _function_source(random_src, "reciprocal_")
+    assert "_fast_copy_inplace_impl" in reciprocal_body, \
+        "reciprocal_ does not delegate to _fast_copy_inplace_impl"
+    for marker in forbidden:
+        assert marker not in reciprocal_body, f"reciprocal_ still references {marker}"
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
