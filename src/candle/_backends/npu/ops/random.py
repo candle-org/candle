@@ -25,23 +25,35 @@ try:
         fast_exp_inplace as _fast_exp_inplace_impl,
         fast_fill_inplace as _fast_fill_inplace_impl,
         fast_floor_inplace as _fast_floor_inplace_impl,
+        fast_log_inplace as _fast_log_inplace_impl,
+        fast_mul_inplace as _fast_mul_inplace_impl,
+        fast_neg_inplace as _fast_neg_inplace_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_CLAMP_INPLACE = True
     _HAS_FAST_COPY_INPLACE = True
     _HAS_FAST_EXP_INPLACE = True
     _HAS_FAST_FILL_INPLACE = True
     _HAS_FAST_FLOOR_INPLACE = True
+    _HAS_FAST_LOG_INPLACE = True
+    _HAS_FAST_MUL_INPLACE = True
+    _HAS_FAST_NEG_INPLACE = True
 except ImportError:
     _fast_clamp_inplace_impl = None  # type: ignore[assignment]
     _fast_copy_inplace_impl = None  # type: ignore[assignment]
     _fast_exp_inplace_impl = None  # type: ignore[assignment]
     _fast_fill_inplace_impl = None  # type: ignore[assignment]
     _fast_floor_inplace_impl = None  # type: ignore[assignment]
+    _fast_log_inplace_impl = None  # type: ignore[assignment]
+    _fast_mul_inplace_impl = None  # type: ignore[assignment]
+    _fast_neg_inplace_impl = None  # type: ignore[assignment]
     _HAS_FAST_CLAMP_INPLACE = False
     _HAS_FAST_COPY_INPLACE = False
     _HAS_FAST_EXP_INPLACE = False
     _HAS_FAST_FILL_INPLACE = False
     _HAS_FAST_FLOOR_INPLACE = False
+    _HAS_FAST_LOG_INPLACE = False
+    _HAS_FAST_MUL_INPLACE = False
+    _HAS_FAST_NEG_INPLACE = False
 
 
 def randperm(n, dtype=None, device=None, generator=None):
@@ -254,21 +266,15 @@ def bernoulli_(a, p=0.5, generator=None):
 def exponential_(a, lambd=1.0, generator=None):
     """In-place exponential — fills with samples from Exp(lambd)."""
     uniform_(a, 0.0, 1.0, generator=generator)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    aclnn.log(a_storage.data_ptr(), a_storage.data_ptr(), a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    aclnn.neg(a_storage.data_ptr(), a_storage.data_ptr(), a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
+    if not (_HAS_FAST_LOG_INPLACE and _HAS_FAST_NEG_INPLACE):
+        raise RuntimeError("Cython NPU exponential_ implementation is unavailable")
+    _fast_log_inplace_impl(a)
+    _fast_neg_inplace_impl(a)
     if lambd != 1.0:
+        if not _HAS_FAST_MUL_INPLACE:
+            raise RuntimeError("Cython NPU exponential_ scale implementation is unavailable")
         scale = _scalar_to_npu_tensor(1.0 / lambd, a)
-        scale_storage = _unwrap_storage(scale)
-        numel = _numel(a.shape)
-        tmp_ptr = npu_runtime._alloc_device(numel * _dtype_itemsize(a.dtype), runtime=runtime)
-        aclnn.mul(a_storage.data_ptr(), scale_storage.data_ptr(), tmp_ptr,
-                  a.shape, a.stride, scale.shape, scale.stride, a.shape, a.stride,
-                  a.dtype, runtime, stream=stream.stream)
-        aclnn.inplace_copy(a_storage.data_ptr(), tmp_ptr, a.shape, a.stride, a.dtype, a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-        runtime.defer_free(tmp_ptr)
+        return _fast_mul_inplace_impl(a, scale)
     return a
 
 
