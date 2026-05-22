@@ -514,7 +514,7 @@ def searchsorted(sorted_sequence, values, out_int32=False, right=False, side=Non
         raise RuntimeError("aclnnSearchSorted symbols not available")
     runtime = npu_runtime.get_runtime((sorted_sequence.device.index or 0))
     stream = npu_state.current_stream((sorted_sequence.device.index or 0))
-    if sorted_sequence.device.type != "npu" or values.device.type != "npu":
+    if values.device.type != "npu":
         raise ValueError("NPU searchsorted expects NPU tensors")
     if sorted_sequence.dtype != values.dtype:
         raise ValueError("NPU searchsorted requires matching dtypes")
