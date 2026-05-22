@@ -179,7 +179,7 @@ def equal(a, b):
         return False
     if a.dtype != b.dtype:
         return False
-    if a.device.type != "npu" or b.device.type != "npu":
+    if b.device.type != "npu":
         raise ValueError("NPU equal expects NPU tensors")
     neq = ne(a, b)
     # any_ is in __init__.py; use lazy import to avoid circular dependency

@@ -32,7 +32,7 @@ def matmul(a, b, out=None):
 
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu" or b.device.type != "npu":
+    if b.device.type != "npu":
         raise ValueError("NPU matmul expects NPU tensors")
     if a.dtype != b.dtype:
         raise ValueError("NPU matmul requires matching dtypes")
@@ -142,7 +142,7 @@ def matmul(a, b, out=None):
 
 def dot(a, b):
     """Dot product of two 1D tensors."""
-    if a.device.type != "npu" or b.device.type != "npu":
+    if b.device.type != "npu":
         raise ValueError("NPU dot expects NPU tensors")
     if a.dtype != b.dtype:
         raise ValueError("NPU dot requires matching dtypes")
@@ -191,7 +191,7 @@ def mv(a, b):
         raise RuntimeError("aclnnMv symbols not available")
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu" or b.device.type != "npu":
+    if b.device.type != "npu":
         raise ValueError("NPU mv expects NPU tensors")
     if a.dtype != b.dtype:
         raise ValueError("NPU mv requires matching dtypes")
@@ -242,7 +242,7 @@ def outer(a, b):
         raise RuntimeError("aclnnGer symbols not available")
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu" or b.device.type != "npu":
+    if b.device.type != "npu":
         raise ValueError("NPU outer expects NPU tensors")
     if a.dtype != b.dtype:
         raise ValueError("NPU outer requires matching dtypes")

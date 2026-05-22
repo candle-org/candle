@@ -646,6 +646,30 @@ def test_npu_conv_single_tensor_shims_have_no_dispatch_redundant_device_guard():
         )
 
 
+def test_npu_multi_input_shims_drop_dispatched_first_arg_guard():
+    """Multi-input NPU shims must not include the dispatcher-routed first arg in
+    cross-device parity checks. The dispatcher has already validated the primary
+    arg before the shim runs, so `<primary>.device.type != "npu" or` is dead
+    code on the normal path. Cross-input parity for secondary args is still
+    required.
+    """
+    expectations = [
+        ("src/candle/_backends/npu/ops/linalg.py", "matmul", "a"),
+        ("src/candle/_backends/npu/ops/linalg.py", "dot", "a"),
+        ("src/candle/_backends/npu/ops/linalg.py", "mv", "a"),
+        ("src/candle/_backends/npu/ops/linalg.py", "outer", "a"),
+        ("src/candle/_backends/npu/ops/reduce.py", "searchsorted", "sorted_sequence"),
+        ("src/candle/_backends/npu/ops/comparison.py", "equal", "a"),
+    ]
+    for path, name, primary in expectations:
+        body = _function_source(_source(path), name)
+        forbidden = f'{primary}.device.type != "npu" or'
+        assert forbidden not in body, (
+            f"{path}::{name} still has dispatch-redundant first-arg device guard: "
+            f"{forbidden}"
+        )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
