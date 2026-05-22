@@ -21,7 +21,7 @@ except ImportError:
     _HAS_FAST_MINIMUM = False
 
 from ._helpers import (
-    _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
+    _unwrap_storage, _wrap_tensor,
     _broadcast_shape, _broadcast_shape_checked,
     _numel, _dtype_itemsize, _use_soc_fallback,
     _scalar_to_npu_tensor, _scalar_to_npu_tensor_no_add,
@@ -797,9 +797,9 @@ def std_(a, dim=None, unbiased=True, keepdim=False):
     same reduction identity as PyTorch's composite math (mean -> squared diff ->
     reduction -> sqrt) rather than a result-only shortcut.
     """
-    if _use_soc_fallback("std"):
-        from .math import div, mul, sub
+    from .math import div, mul, sub, sqrt
 
+    if _use_soc_fallback("std"):
         mean_t = mean(a, dim=dim, keepdim=True)
         diff = sub(a, mean_t)
         sq = mul(diff, diff)
@@ -815,10 +815,10 @@ def std_(a, dim=None, unbiased=True, keepdim=False):
         if denom <= 0:
             raise ValueError("std requires at least one element")
         v = div(var_sum, _scalar_to_npu_tensor(float(denom), var_sum))
-        return _unary_op(v, aclnn.sqrt, "sqrt")
+        return sqrt(v)
     # TODO: re-enable native aclnnStd when CANN fixes 161002 for all-reduce
     v = var_(a, dim=dim, unbiased=unbiased, keepdim=keepdim)
-    return _unary_op(v, aclnn.sqrt, "sqrt")
+    return sqrt(v)
 
 
 def norm_(a, p=2, dim=None, keepdim=False):
