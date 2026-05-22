@@ -2307,7 +2307,7 @@ def pad_sequence(seqs, batch_first=False, padding_value=0.0, padding_side="right
     dst_base = int(_unwrap_storage(out).data_ptr())
     out_stride = out.stride
 
-    for i, t in enumerate(seqs):
+    for t in seqs[1:]:
         if t.device.type != "npu":
             raise ValueError("all tensors must be NPU tensors")
         if t.dtype != first.dtype:
@@ -2315,6 +2315,7 @@ def pad_sequence(seqs, batch_first=False, padding_value=0.0, padding_side="right
         if tuple(t.shape[1:]) != trailing:
             raise ValueError("all tensors must have the same trailing dimensions")
 
+    for i, t in enumerate(seqs):
         src = t if t.is_contiguous() else contiguous(t)
         length = int(src.shape[0])
         start_idx = max_len - length if padding_side == "left" else 0

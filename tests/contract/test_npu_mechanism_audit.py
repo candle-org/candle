@@ -707,6 +707,22 @@ def test_npu_sequence_input_shims_skip_dispatched_primary_in_parity_loop():
         )
 
 
+def test_npu_pad_sequence_lifts_dispatch_redundant_validation_out_of_memcpy_loop():
+    """`pad_sequence` is dispatched by `seqs[0].device.type`. The validation
+    block for `seqs[0]` (device dispatch-redundant, dtype vacuous, trailing
+    shape vacuous) must be lifted out of the `enumerate(seqs)` memcpy loop and
+    iterated over `seqs[1:]` instead. The memcpy loop still needs index `i`
+    for offsets so it remains over `enumerate(seqs)`.
+    """
+    shape_src = _source("src/candle/_backends/npu/ops/shape.py")
+    body = _function_source(shape_src, "pad_sequence")
+    assert "for t in seqs[1:]:" in body, (
+        "shape.py::pad_sequence should validate cross-input parity in a "
+        "separate `for t in seqs[1:]:` pre-loop so the dispatched primary "
+        "`seqs[0]` is skipped"
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
