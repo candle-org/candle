@@ -1,7 +1,7 @@
 """Shape manipulation, view, and indexing operations for NPU."""
 import ctypes
 from ._helpers import (
-    _unwrap_storage, _wrap_tensor, _unary_op, _binary_op,
+    _unwrap_storage, _wrap_tensor, _binary_op,
     _broadcast_shape, _broadcast_shape_checked,
     _numel, _dtype_itemsize, _use_soc_fallback,
     _scalar_to_npu_tensor, _scalar_to_npu_tensor_no_add,

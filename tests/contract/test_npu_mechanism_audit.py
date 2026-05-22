@@ -572,7 +572,6 @@ def test_npu_single_tensor_unary_shims_have_no_dispatch_redundant_device_guard()
         ("src/candle/_backends/npu/ops/elementwise.py", "clamp"),
         ("src/candle/_backends/npu/ops/elementwise.py", "clamp_min"),
         ("src/candle/_backends/npu/ops/elementwise.py", "clamp_max"),
-        ("src/candle/_backends/npu/ops/_helpers.py", "_unary_op"),
     ]
     for path, name in targets:
         src = _source(path)
@@ -760,6 +759,19 @@ def test_npu_linalg_inv_delegates_through_cython_fast_inverse():
     assert "aclnn.inverse" not in body, (
         "linalg.py::linalg_inv still calls aclnn.inverse directly; "
         "should delegate to the Cython fast_inverse helper"
+    )
+
+
+def test_npu_helpers_no_unused_unary_op_python_fallback():
+    """The Python-side `_unary_op` orchestration helper in
+    `_backends/npu/ops/_helpers.py` is dead code — every unary op was
+    migrated to a Cython `fast_*` helper. Remove the helper and its
+    import sites so the surface area matches what is actually in use.
+    """
+    helpers_src = _source("src/candle/_backends/npu/ops/_helpers.py")
+    assert "def _unary_op(" not in helpers_src, (
+        "_helpers.py still defines the unused _unary_op Python helper; "
+        "all NPU unary orchestration now flows through Cython fast_* helpers"
     )
 
 

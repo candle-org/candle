@@ -66,7 +66,7 @@ except ImportError:
     _HAS_FAST_BITWISE_XOR = False
 
 from ._helpers import (
-    _unwrap_storage, _wrap_tensor, _unary_op,
+    _unwrap_storage, _wrap_tensor,
     _broadcast_shape, _numel, _dtype_itemsize, _use_soc_fallback,
     _scalar_to_npu_tensor,
     bool_dtype,
