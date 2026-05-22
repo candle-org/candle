@@ -6860,3 +6860,48 @@ def cy_npu_synchronize(int device_id=0):
         from candle._backends.npu import runtime as _rt_mod
         for ptr in host_frees:
             _rt_mod.acl.rt.free_host(ptr)
+
+
+def fast_adam_step(param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq,
+                   step, double lr, double beta1, double beta2,
+                   double eps, double weight_decay,
+                   bint amsgrad, bint maximize):
+    """Cython entry point for AdamW step. Replaces the Python orchestration
+    that lived in `_backends/npu/ops/optim.py::_adam_step_op`. The actual
+    aclnn kernel invocation continues to flow through `aclnn.apply_adam_w_v2`
+    which delegates to the Cython `_aclnn_ffi.six_tensor_five_floats_two_bools_op`.
+    """
+    _ensure_npu_imports()
+
+    if param.device.type != "npu":
+        raise ValueError("NPU adam_step expects NPU param tensor")
+
+    cdef int dev_idx = param.device.index or 0
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    p_s = param.storage()
+    g_s = grad.storage()
+    ea_s = exp_avg.storage()
+    eas_s = exp_avg_sq.storage()
+
+    import numpy as _np
+    step_np = _np.array([float(step)], dtype=_np.float32)
+    step_ptr, _ = _npu_runtime._copy_cpu_to_npu(step_np, runtime=runtime)
+
+    max_v_ptr = None
+    if amsgrad and max_exp_avg_sq is not None:
+        max_v_ptr = max_exp_avg_sq.storage().data_ptr()
+
+    from candle._backends.npu import aclnn as _aclnn_mod
+    _aclnn_mod.apply_adam_w_v2(
+        p_s.data_ptr(), ea_s.data_ptr(), eas_s.data_ptr(),
+        max_v_ptr, g_s.data_ptr(), step_ptr,
+        param.shape, param.stride, (1,), (1,),
+        param.dtype,
+        lr, beta1, beta2,
+        weight_decay, eps,
+        amsgrad, maximize,
+        runtime=runtime, stream=stream.stream,
+    )
+    return param

@@ -724,6 +724,19 @@ def test_npu_pad_sequence_lifts_dispatch_redundant_validation_out_of_memcpy_loop
     )
 
 
+def test_npu_adam_step_delegates_through_cython_fast_adam_step():
+    """`optim.py::_adam_step_op` must delegate to the Cython `fast_adam_step`
+    helper. The Python shim should not reference `aclnn.apply_adam_w_v2`
+    directly — backend implementation lives in `_C/_npu_ops.pyx`.
+    """
+    optim_src = _source("src/candle/_backends/npu/ops/optim.py")
+    body = _function_source(optim_src, "_adam_step_op")
+    assert "aclnn.apply_adam_w_v2" not in body, (
+        "optim.py::_adam_step_op still calls aclnn.apply_adam_w_v2 directly; "
+        "should delegate to the Cython fast_adam_step helper"
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")

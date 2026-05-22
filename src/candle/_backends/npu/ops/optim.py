@@ -20,38 +20,26 @@ from .math import abs, add, div, mul, neg, sign, sqrt, sub
 from .random import copy_
 from .reduce import maximum, minimum
 
+try:
+    from candle._C._npu_ops import (
+        fast_adam_step as _fast_adam_step_impl,
+    )  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_ADAM_STEP = True
+except ImportError:
+    _fast_adam_step_impl = None  # type: ignore[assignment]
+    _HAS_FAST_ADAM_STEP = False
+
 
 def _adam_step_op(param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq,
                   step, lr, beta1, beta2, eps, weight_decay, amsgrad, maximize):
-    runtime = npu_runtime.get_runtime((param.device.index or 0))
-    stream = npu_state.current_stream((param.device.index or 0))
-
-    p_s = _unwrap_storage(param)
-    g_s = _unwrap_storage(grad)
-    ea_s = _unwrap_storage(exp_avg)
-    eas_s = _unwrap_storage(exp_avg_sq)
-    # Create step tensor on device
-    import numpy as _np
-    step_np = _np.array([float(step)], dtype=_np.float32)
-    step_ptr, _ = npu_runtime._copy_cpu_to_npu(step_np, runtime=runtime)
-    step_shape = (1,)
-    step_stride = (1,)
-
-    max_v_ptr = None
-    if amsgrad and max_exp_avg_sq is not None:
-        max_v_ptr = _unwrap_storage(max_exp_avg_sq).data_ptr()
-
-    aclnn.apply_adam_w_v2(
-        p_s.data_ptr(), ea_s.data_ptr(), eas_s.data_ptr(),
-        max_v_ptr, g_s.data_ptr(), step_ptr,
-        param.shape, param.stride, step_shape, step_stride,
-        param.dtype,
-        float(lr), float(beta1), float(beta2),
-        float(weight_decay), float(eps),
-        bool(amsgrad), bool(maximize),
-        runtime=runtime, stream=stream.stream,
-    )
-    return param
+    if _HAS_FAST_ADAM_STEP:
+        return _fast_adam_step_impl(
+            param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq,
+            step, float(lr), float(beta1), float(beta2),
+            float(eps), float(weight_decay),
+            bool(amsgrad), bool(maximize),
+        )
+    raise RuntimeError("Cython NPU adam_step implementation is unavailable")
 
 
 def _adamw_step_op(param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq,
