@@ -38,8 +38,6 @@ from ._helpers import (
 def argmax(a, dim=None, keepdim=False):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU argmax expects NPU tensors")
     if not aclnn.max_dim_symbols_ok():
         raise RuntimeError("aclnnMaxDim not available")
     if dim is None:
@@ -78,8 +76,6 @@ def argmax(a, dim=None, keepdim=False):
 def argmin(a, dim=None, keepdim=False):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU argmin expects NPU tensors")
     if not aclnn.min_dim_symbols_ok():
         raise RuntimeError("aclnnMinDim not available")
     if dim is None:
@@ -119,8 +115,6 @@ def median(a, dim=None, keepdim=False):
     """Median along a dimension or global median."""
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU median expects NPU tensors")
 
     storage = _unwrap_storage(a)
     itemsize = _dtype_itemsize(a.dtype)
@@ -182,8 +176,6 @@ def kthvalue(a, k, dim=None, keepdim=False):
         raise RuntimeError("aclnnKthvalue symbols not available")
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU kthvalue expects NPU tensors")
 
     storage = _unwrap_storage(a)
     itemsize = _dtype_itemsize(a.dtype)
@@ -226,8 +218,6 @@ def kthvalue(a, k, dim=None, keepdim=False):
 def amax(a, dim=None, keepdim=False):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU amax expects NPU tensors")
     if not aclnn.max_dim_symbols_ok():
         raise RuntimeError("aclnnMaxDim not available")
     if dim is None:
@@ -267,8 +257,6 @@ def amax(a, dim=None, keepdim=False):
 def amin(a, dim=None, keepdim=False):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU amin expects NPU tensors")
     if not aclnn.min_dim_symbols_ok():
         raise RuntimeError("aclnnMinDim not available")
     if dim is None:
@@ -306,8 +294,6 @@ def amin(a, dim=None, keepdim=False):
 
 
 def count_nonzero(a, dim=None, keepdim=False):
-    if a.device.type != "npu":
-        raise ValueError("NPU count_nonzero expects NPU tensors")
 
     if a.dtype == bool_dtype:
         return _cast_tensor_dtype(sum_(a, dim=dim, keepdim=keepdim, dtype=int32_dtype), int64_dtype)
@@ -388,8 +374,6 @@ def count_nonzero(a, dim=None, keepdim=False):
 def all_(a, dim=None, keepdim=False):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU all expects NPU tensors")
     if not (aclnn.eq_scalar_symbols_ok() and aclnn.logical_not_symbols_ok() and aclnn.cast_symbols_ok()):
         raise RuntimeError("aclnn eq_scalar/logical_not/cast not available")
     dims = _normalize_reduction_dims(dim, len(a.shape))
@@ -465,8 +449,6 @@ def all_(a, dim=None, keepdim=False):
 
 
 def any_(a, dim=None, keepdim=False):
-    if a.device.type != "npu":
-        raise ValueError("NPU any expects NPU tensors")
     from .comparison import gt
 
     # Workaround: repeated native bool-reduction checks can accumulate false
@@ -628,8 +610,6 @@ def unique(a, sorted=True, return_inverse=False, return_counts=False, dim=None):
         raise RuntimeError("aclnnUnique symbols not available")
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU unique expects NPU tensors")
 
     storage = _unwrap_storage(a)
     itemsize = _dtype_itemsize(a.dtype)
@@ -678,8 +658,6 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
         a = dispatch("to", "npu", a, a.device, dtype=dtype)
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
-    if a.device.type != "npu":
-        raise ValueError("NPU sum expects NPU tensors")
 
     if isinstance(dim, (list, tuple)) and len(dim) == 0:
         dim = None
@@ -923,8 +901,6 @@ def _cumulative_out_dtype(dtype):
 
 
 def cumsum(a, dim=0):
-    if a.device.type != "npu":
-        raise ValueError("NPU cumsum expects NPU tensors")
     dim = _normalize_dim(dim, a.dim())
     if not aclnn.cumsum_symbols_ok():
         raise RuntimeError("aclnnCumsum symbols not available")
@@ -951,8 +927,6 @@ def cumsum(a, dim=0):
 
 
 def cumprod(a, dim=0):
-    if a.device.type != "npu":
-        raise ValueError("NPU cumprod expects NPU tensors")
     dim = _normalize_dim(dim, a.dim())
     if not aclnn.cumprod_symbols_ok():
         raise RuntimeError("aclnnCumprod symbols not available")
@@ -979,8 +953,6 @@ def cumprod(a, dim=0):
 
 
 def cummax(a, dim=0):
-    if a.device.type != "npu":
-        raise ValueError("NPU cummax expects NPU tensors")
     dim = _normalize_dim(dim, a.dim())
     if not aclnn.cummax_symbols_ok():
         raise RuntimeError("aclnnCummax symbols not available")
@@ -1094,8 +1066,6 @@ def _topk_310b_fallback(a, k, dim, largest, sorted_flag):
 
 
 def argsort(a, dim=-1, descending=False, stable=False):
-    if a.device.type != "npu":
-        raise ValueError("NPU argsort expects NPU tensors")
     dim = _normalize_dim(dim, a.dim())
 
     if _use_soc_fallback("argsort"):
@@ -1132,8 +1102,6 @@ def argsort(a, dim=-1, descending=False, stable=False):
 
 
 def sort(a, dim=-1, descending=False, stable=False):
-    if a.device.type != "npu":
-        raise ValueError("NPU sort expects NPU tensors")
     dim = _normalize_dim(dim, a.dim())
 
     if _use_soc_fallback("sort"):
@@ -1171,8 +1139,6 @@ def sort(a, dim=-1, descending=False, stable=False):
 
 
 def topk(a, k, dim=-1, largest=True, sorted=True):
-    if a.device.type != "npu":
-        raise ValueError("NPU topk expects NPU tensors")
     k = int(k)
     dim = _normalize_dim(dim, a.dim())
     dim_size = a.shape[dim]
@@ -1263,8 +1229,6 @@ def nansum(a, dim=None, keepdim=False):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))
 
-    if a.device.type != "npu":
-        raise ValueError("NPU nansum expects NPU tensors")
     if not aclnn.nansum_symbols_ok():
         raise RuntimeError("aclnnReduceNansum symbols not available")
 

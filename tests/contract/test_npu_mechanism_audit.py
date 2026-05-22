@@ -582,6 +582,35 @@ def test_npu_single_tensor_unary_shims_have_no_dispatch_redundant_device_guard()
         )
 
 
+def test_npu_reduce_single_tensor_shims_have_no_dispatch_redundant_device_guard():
+    reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
+    targets = [
+        "argmax",
+        "argmin",
+        "median",
+        "kthvalue",
+        "amax",
+        "amin",
+        "count_nonzero",
+        "all_",
+        "any_",
+        "unique",
+        "sum_",
+        "cumsum",
+        "cumprod",
+        "cummax",
+        "argsort",
+        "sort",
+        "topk",
+        "nansum",
+    ]
+    for name in targets:
+        body = _function_source(reduce_src, name)
+        assert 'a.device.type != "npu"' not in body, (
+            f"reduce.py::{name} still has dispatch-redundant device guard"
+        )
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
