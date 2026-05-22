@@ -1852,7 +1852,9 @@ def cartesian_prod(*tensors):
     if len(tensors) == 0:
         raise RuntimeError("cartesian_prod expects at least one tensor")
     first = tensors[0]
-    for t in tensors:
+    if first.dim() != 1:
+        raise ValueError("cartesian_prod expects 1D tensors")
+    for t in tensors[1:]:
         if t.device.type != "npu":
             raise ValueError("NPU cartesian_prod expects NPU tensors")
         if t.dim() != 1:
@@ -1879,7 +1881,9 @@ def block_diag(*tensors):
         raise RuntimeError("block_diag expects at least one tensor")
 
     first = tensors[0]
-    for t in tensors:
+    if first.dim() != 2:
+        raise ValueError("block_diag expects 2D tensors")
+    for t in tensors[1:]:
         if t.device.type != "npu":
             raise ValueError("NPU block_diag expects NPU tensors")
         if t.dim() != 2:

@@ -691,6 +691,22 @@ def test_npu_multi_input_shims_drop_standalone_primary_arg_guard():
         )
 
 
+def test_npu_sequence_input_shims_skip_dispatched_primary_in_parity_loop():
+    """`cartesian_prod` and `block_diag` are dispatched by
+    `tensors[0].device.type`. Their cross-input parity loop must iterate over
+    `tensors[1:]` so the dispatch-redundant device/dtype check against
+    `tensors[0]` (which is also `first` for the dtype comparison and would be
+    vacuous) is skipped. The dim check on `first` must happen standalone.
+    """
+    shape_src = _source("src/candle/_backends/npu/ops/shape.py")
+    for name in ("cartesian_prod", "block_diag"):
+        body = _function_source(shape_src, name)
+        assert "for t in tensors[1:]:" in body, (
+            f"shape.py::{name} should iterate cross-input parity over "
+            f"`tensors[1:]` so it skips the dispatched primary `tensors[0]`"
+        )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
