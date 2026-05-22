@@ -415,10 +415,6 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
 
 
 
-def _nan_like(a):
-    return _scalar_to_npu_tensor(float("nan"), a)
-
-
 def _normalize_dim(dim, ndim):
     if dim < 0:
         dim += ndim

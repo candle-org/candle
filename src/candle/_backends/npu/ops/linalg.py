@@ -4,7 +4,7 @@ from ._helpers import (
     _broadcast_shape,
     _numel, _dtype_itemsize, _use_soc_fallback,
     _scalar_to_npu_tensor,
-    _npu_broadcast_to, _npu_arange_1d, _npu_linear_index,
+    _npu_broadcast_to, _npu_arange_1d,
     _cast_tensor_dtype,
     _matmul_out_shape,
     _iter_indices, _broadcast_index, _batch_offset,
