@@ -6,7 +6,6 @@ from ._helpers import (
     _scalar_to_npu_tensor,
     _npu_broadcast_to, _npu_arange_1d, _npu_linear_index,
     _npu_add_scalar_, npu_index_put_impl,
-    _normalize_reduction_dims, _reduce_out_shape,
     _cast_tensor_dtype, _normalize_tensor_sequence_args,
     _matmul_out_shape,
     _iter_indices, _broadcast_index, _batch_offset,
