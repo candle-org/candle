@@ -404,6 +404,20 @@ def test_npu_activation_native_wrappers_delegate_to_cython():
         for marker in forbidden:
             assert marker not in body
 
+def test_npu_clamp_wrappers_delegate_to_cython():
+    elementwise_src = _source("src/candle/_backends/npu/ops/elementwise.py")
+    expectations = {
+        "clamp": "_fast_clamp_impl",
+        "clamp_min": "_fast_clamp_min_impl",
+        "clamp_max": "_fast_clamp_max_impl",
+    }
+    forbidden = ["aclnn.", "npu_runtime._alloc_device", "_unwrap_storage(", "_wrap_tensor("]
+    for name, fast_name in expectations.items():
+        body = _function_source(elementwise_src, name)
+        assert fast_name in body, f"{name} does not delegate to {fast_name}"
+        for marker in forbidden:
+            assert marker not in body
+
 
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
