@@ -660,6 +660,7 @@ def test_npu_multi_input_shims_drop_dispatched_first_arg_guard():
         ("src/candle/_backends/npu/ops/linalg.py", "outer", "a"),
         ("src/candle/_backends/npu/ops/reduce.py", "searchsorted", "sorted_sequence"),
         ("src/candle/_backends/npu/ops/comparison.py", "equal", "a"),
+        ("src/candle/_backends/npu/ops/_helpers.py", "_binary_op_slow", "a"),
     ]
     for path, name, primary in expectations:
         body = _function_source(_source(path), name)
