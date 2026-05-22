@@ -960,6 +960,33 @@ def test_npu_ops_modules_do_not_import_unused_index_put_or_tensor_seq_helpers():
     )
 
 
+def test_npu_ops_modules_do_not_import_unused_npu_add_scalar_helper():
+    """`_npu_add_scalar_` is only called from `_backends/npu/ops/random.py`.
+    Other ops modules should not list it in their `_helpers` import block —
+    the unused name just clutters the import surface.
+    """
+    consumer_modules = (
+        "src/candle/_backends/npu/ops/__init__.py",
+        "src/candle/_backends/npu/ops/activation.py",
+        "src/candle/_backends/npu/ops/conv.py",
+        "src/candle/_backends/npu/ops/elementwise.py",
+        "src/candle/_backends/npu/ops/linalg.py",
+        "src/candle/_backends/npu/ops/norm.py",
+        "src/candle/_backends/npu/ops/optim.py",
+        "src/candle/_backends/npu/ops/shape.py",
+        "src/candle/_backends/npu/ops/special.py",
+    )
+    offenders = []
+    for path in consumer_modules:
+        src = _source(path)
+        if re.search(r"\b_npu_add_scalar_\b", src):
+            offenders.append(path)
+    assert not offenders, (
+        "These NPU ops modules still reference `_npu_add_scalar_` — "
+        "drop the unused import:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
