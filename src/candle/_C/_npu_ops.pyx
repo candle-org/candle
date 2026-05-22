@@ -3276,6 +3276,53 @@ def fast_exp(a):
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
+def fast_exp_inplace(a):
+    """In-place exp_(a) using aclnnExp with output aliased to input."""
+    _ensure_npu_imports()
+    _ensure_ffi_exp()
+
+    if a.device.type != "npu":
+        raise ValueError("NPU exp_ expects NPU tensors")
+    cdef int dev_idx = a.device.index or 0
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    a_stride = a.stride
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.unary_op(
+        _exp_getws_ptr, _exp_exec_ptr,
+        a_shape, a_stride,
+        a_shape, a_stride,
+        dtype_code, dtype_code, 2,
+        a_ptr, a_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _exp_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnExp execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
 def fast_expm1(a):
     """Optimized out-of-place expm1(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()

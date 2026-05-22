@@ -22,20 +22,24 @@ try:
     from candle._C._npu_ops import (
         fast_clamp_inplace as _fast_clamp_inplace_impl,
         fast_copy_inplace as _fast_copy_inplace_impl,
+        fast_exp_inplace as _fast_exp_inplace_impl,
         fast_fill_inplace as _fast_fill_inplace_impl,
         fast_floor_inplace as _fast_floor_inplace_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_CLAMP_INPLACE = True
     _HAS_FAST_COPY_INPLACE = True
+    _HAS_FAST_EXP_INPLACE = True
     _HAS_FAST_FILL_INPLACE = True
     _HAS_FAST_FLOOR_INPLACE = True
 except ImportError:
     _fast_clamp_inplace_impl = None  # type: ignore[assignment]
     _fast_copy_inplace_impl = None  # type: ignore[assignment]
+    _fast_exp_inplace_impl = None  # type: ignore[assignment]
     _fast_fill_inplace_impl = None  # type: ignore[assignment]
     _fast_floor_inplace_impl = None  # type: ignore[assignment]
     _HAS_FAST_CLAMP_INPLACE = False
     _HAS_FAST_COPY_INPLACE = False
+    _HAS_FAST_EXP_INPLACE = False
     _HAS_FAST_FILL_INPLACE = False
     _HAS_FAST_FLOOR_INPLACE = False
 
@@ -271,11 +275,9 @@ def exponential_(a, lambd=1.0, generator=None):
 def log_normal_(a, mean=1.0, std=2.0, generator=None):
     """In-place log-normal — fills with exp(N(mean, std))."""
     normal_(a, mean, std, generator=generator)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    aclnn.exp(a_storage.data_ptr(), a_storage.data_ptr(), a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    return a
+    if _HAS_FAST_EXP_INPLACE:
+        return _fast_exp_inplace_impl(a)
+    raise RuntimeError("Cython NPU log_normal_ implementation is unavailable")
 
 
 def cauchy_(a, median=0.0, sigma=1.0, generator=None):
