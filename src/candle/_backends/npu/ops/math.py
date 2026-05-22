@@ -23,6 +23,7 @@ try:
         fast_acos as _fast_acos_impl,
         fast_acosh as _fast_acosh_impl,
         fast_add as _fast_add_impl,
+        fast_add_inplace as _fast_add_inplace_impl,
         fast_asin as _fast_asin_impl,
         fast_asinh as _fast_asinh_impl,
         fast_atan as _fast_atan_impl,
@@ -33,6 +34,7 @@ try:
         fast_cosh as _fast_cosh_impl,
         fast_erf as _fast_erf_impl,
         fast_div as _fast_div_impl,
+        fast_div_inplace as _fast_div_inplace_impl,
         fast_erfc as _fast_erfc_impl,
         fast_exp as _fast_exp_impl,
         fast_exp2 as _fast_exp2_impl,
@@ -50,6 +52,7 @@ try:
         fast_log2 as _fast_log2_impl,
         fast_floor_divide as _fast_floor_divide_impl,
         fast_mul as _fast_mul_impl,
+        fast_mul_inplace as _fast_mul_inplace_impl,
         fast_neg as _fast_neg_impl,
         fast_pow as _fast_pow_impl,
         fast_pow_tensor_scalar as _fast_pow_tensor_scalar_impl,
@@ -64,6 +67,7 @@ try:
         fast_sqrt as _fast_sqrt_impl,
         fast_square as _fast_square_impl,
         fast_sub as _fast_sub_impl,
+        fast_sub_inplace as _fast_sub_inplace_impl,
         fast_tan as _fast_tan_impl,
         fast_tanh as _fast_tanh_impl,
         fast_trunc as _fast_trunc_impl,
@@ -116,6 +120,10 @@ try:
     _HAS_FAST_POW = True
     _HAS_FAST_POW_TENSOR_SCALAR = True
     _HAS_FAST_SUB = True
+    _HAS_FAST_ADD_INPLACE = True
+    _HAS_FAST_SUB_INPLACE = True
+    _HAS_FAST_MUL_INPLACE = True
+    _HAS_FAST_DIV_INPLACE = True
 except ImportError:
     _fast_add_impl = None  # type: ignore[assignment]
     _fast_abs_impl = None  # type: ignore[assignment]
@@ -213,6 +221,14 @@ except ImportError:
     _HAS_FAST_POW = False
     _HAS_FAST_POW_TENSOR_SCALAR = False
     _HAS_FAST_SUB = False
+    _HAS_FAST_ADD_INPLACE = False
+    _HAS_FAST_SUB_INPLACE = False
+    _HAS_FAST_MUL_INPLACE = False
+    _HAS_FAST_DIV_INPLACE = False
+    _fast_add_inplace_impl = None  # type: ignore[assignment]
+    _fast_sub_inplace_impl = None  # type: ignore[assignment]
+    _fast_mul_inplace_impl = None  # type: ignore[assignment]
+    _fast_div_inplace_impl = None  # type: ignore[assignment]
 
 
 def add(a, b):
@@ -252,117 +268,35 @@ def div(a, b):
 # ---------------------------------------------------------------------------
 
 def add_(a, b):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
-    if a.device.type != "npu" or b.device.type != "npu":
-        raise ValueError("NPU add_ expects NPU tensors")
-    if a.dtype != b.dtype:
-        raise ValueError("NPU add_ requires matching dtypes")
-    out_shape = _broadcast_shape(a.shape, b.shape)
-    if out_shape != a.shape:
-        raise ValueError("NPU add_ requires broadcastable to self shape")
-    a_storage = _unwrap_storage(a)
-    b_storage = _unwrap_storage(b)
-    aclnn.add(
-        a_storage.data_ptr(),
-        b_storage.data_ptr(),
-        a_storage.data_ptr(),
-        a.shape,
-        a.stride,
-        b.shape,
-        b.stride,
-        out_shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    return a
+    if _HAS_FAST_ADD_INPLACE:
+        return _fast_add_inplace_impl(a, b)
+    raise RuntimeError("Cython NPU add_ implementation is unavailable")
 
 
 def mul_(a, b):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
-    if a.device.type != "npu" or b.device.type != "npu":
-        raise ValueError("NPU mul_ expects NPU tensors")
-    if a.dtype != b.dtype:
-        raise ValueError("NPU mul_ requires matching dtypes")
-    out_shape = _broadcast_shape(a.shape, b.shape)
-    if out_shape != a.shape:
-        raise ValueError("NPU mul_ requires broadcastable to self shape")
-    a_storage = _unwrap_storage(a)
-    b_storage = _unwrap_storage(b)
-    aclnn.mul(
-        a_storage.data_ptr(),
-        b_storage.data_ptr(),
-        a_storage.data_ptr(),
-        a.shape,
-        a.stride,
-        b.shape,
-        b.stride,
-        out_shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    return a
+    if _HAS_FAST_MUL_INPLACE:
+        return _fast_mul_inplace_impl(a, b)
+    raise RuntimeError("Cython NPU mul_ implementation is unavailable")
 
 
 def sub_(a, b):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
-    if a.device.type != "npu" or b.device.type != "npu":
-        raise ValueError("NPU sub_ expects NPU tensors")
-    a_storage = _unwrap_storage(a)
-    b_storage = _unwrap_storage(b)
-    aclnn.sub(
-        a_storage.data_ptr(),
-        b_storage.data_ptr(),
-        a_storage.data_ptr(),
-        a.shape,
-        a.stride,
-        b.shape,
-        b.stride,
-        a.shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    return a
+    if _HAS_FAST_SUB_INPLACE:
+        return _fast_sub_inplace_impl(a, b)
+    raise RuntimeError("Cython NPU sub_ implementation is unavailable")
 
 
 def div_(a, b):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
     if isinstance(b, (int, float)):
         b = _scalar_to_npu_tensor(b, a)
-    if a.device.type != "npu" or b.device.type != "npu":
-        raise ValueError("NPU div_ expects NPU tensors")
-    a_storage = _unwrap_storage(a)
-    b_storage = _unwrap_storage(b)
-    aclnn.div(
-        a_storage.data_ptr(),
-        b_storage.data_ptr(),
-        a_storage.data_ptr(),
-        a.shape,
-        a.stride,
-        b.shape,
-        b.stride,
-        a.shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    return a
+    if _HAS_FAST_DIV_INPLACE:
+        return _fast_div_inplace_impl(a, b)
+    raise RuntimeError("Cython NPU div_ implementation is unavailable")
 
 
 # ---------------------------------------------------------------------------

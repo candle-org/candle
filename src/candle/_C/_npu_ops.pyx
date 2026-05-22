@@ -1202,6 +1202,270 @@ def fast_div(a, b):
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
+# ---------------------------------------------------------------------------
+# In-place arithmetic — hardwired add_/mul_/sub_/div_ that skip aclnn.py
+# ---------------------------------------------------------------------------
+
+def fast_add_inplace(a, b):
+    """In-place add_(a, b) that calls _ffi.binary_op_with_alpha with output aliased to a."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "add_", &dev_idx)
+
+    a_dtype = a.dtype
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf, out_shape_buf
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+    cdef int out_ndim
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+    if out_ndim != a_ndim:
+        raise ValueError("NPU add_ requires broadcastable to self shape")
+    cdef int i
+    for i in range(out_ndim):
+        if out_shape_buf[i] != a_shape_buf[i]:
+            raise ValueError("NPU add_ requires broadcastable to self shape")
+
+    runtime = _get_runtime_fast(dev_idx)
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t alpha_handle = _get_alpha_one(dtype_code)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr
+    cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.binary_op_with_alpha(
+        _add_getws_ptr, _add_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        py_a_shape, a.stride,
+        dtype_code, 2,
+        a_ptr, b_ptr, a_ptr,
+        alpha_handle,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _add_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnAdd execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
+def fast_sub_inplace(a, b):
+    """In-place sub_(a, b) that calls _ffi.binary_op_with_alpha with output aliased to a."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "sub_", &dev_idx)
+
+    a_dtype = a.dtype
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf, out_shape_buf
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+    cdef int out_ndim
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+    if out_ndim != a_ndim:
+        raise ValueError("NPU sub_ requires broadcastable to self shape")
+    cdef int i
+    for i in range(out_ndim):
+        if out_shape_buf[i] != a_shape_buf[i]:
+            raise ValueError("NPU sub_ requires broadcastable to self shape")
+
+    runtime = _get_runtime_fast(dev_idx)
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t alpha_handle = _get_alpha_one(dtype_code)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr
+    cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.binary_op_with_alpha(
+        _sub_getws_ptr, _sub_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        py_a_shape, a.stride,
+        dtype_code, 2,
+        a_ptr, b_ptr, a_ptr,
+        alpha_handle,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _sub_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnSub execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
+def fast_mul_inplace(a, b):
+    """In-place mul_(a, b) that calls _ffi.binary_op_no_alpha with output aliased to a."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "mul_", &dev_idx)
+
+    a_dtype = a.dtype
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf, out_shape_buf
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+    cdef int out_ndim
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+    if out_ndim != a_ndim:
+        raise ValueError("NPU mul_ requires broadcastable to self shape")
+    cdef int i
+    for i in range(out_ndim):
+        if out_shape_buf[i] != a_shape_buf[i]:
+            raise ValueError("NPU mul_ requires broadcastable to self shape")
+
+    runtime = _get_runtime_fast(dev_idx)
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr
+    cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.binary_op_no_alpha(
+        _mul_getws_ptr, _mul_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        py_a_shape, a.stride,
+        dtype_code, 2,
+        a_ptr, b_ptr, a_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _mul_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnMul execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
+def fast_div_inplace(a, b):
+    """In-place div_(a, b) that calls _ffi.binary_op_no_alpha with output aliased to a."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "div_", &dev_idx)
+
+    a_dtype = a.dtype
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf, out_shape_buf
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+    cdef int out_ndim
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+    if out_ndim != a_ndim:
+        raise ValueError("NPU div_ requires broadcastable to self shape")
+    cdef int i
+    for i in range(out_ndim):
+        if out_shape_buf[i] != a_shape_buf[i]:
+            raise ValueError("NPU div_ requires broadcastable to self shape")
+
+    runtime = _get_runtime_fast(dev_idx)
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr
+    cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.binary_op_no_alpha(
+        _div_getws_ptr, _div_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        py_a_shape, a.stride,
+        dtype_code, 2,
+        a_ptr, b_ptr, a_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _div_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnDiv execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
 def fast_pow(a, b):
     return fast_binary_op(a, b, None, "pow")
 
