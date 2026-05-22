@@ -634,6 +634,18 @@ def test_npu_shape_single_tensor_shims_have_no_dispatch_redundant_device_guard()
         )
 
 
+def test_npu_conv_single_tensor_shims_have_no_dispatch_redundant_device_guard():
+    conv_src = _source("src/candle/_backends/npu/ops/conv.py")
+    targets = [
+        "pad",
+    ]
+    for name in targets:
+        body = _function_source(conv_src, name)
+        assert 'input.device.type != "npu"' not in body, (
+            f"conv.py::{name} still has dispatch-redundant device guard on `input`"
+        )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
