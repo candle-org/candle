@@ -20,8 +20,10 @@ from .math import abs, add, ceil, cos, div, exp, floor, frac, log, mul, neg, sin
 
 try:
     from candle._C._npu_ops import (
+        fast_ceil_inplace as _fast_ceil_inplace_impl,
         fast_clamp_inplace as _fast_clamp_inplace_impl,
         fast_copy_inplace as _fast_copy_inplace_impl,
+        fast_div_inplace as _fast_div_inplace_impl,
         fast_exp_inplace as _fast_exp_inplace_impl,
         fast_fill_inplace as _fast_fill_inplace_impl,
         fast_floor_inplace as _fast_floor_inplace_impl,
@@ -29,8 +31,10 @@ try:
         fast_mul_inplace as _fast_mul_inplace_impl,
         fast_neg_inplace as _fast_neg_inplace_impl,
     )  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_CEIL_INPLACE = True
     _HAS_FAST_CLAMP_INPLACE = True
     _HAS_FAST_COPY_INPLACE = True
+    _HAS_FAST_DIV_INPLACE = True
     _HAS_FAST_EXP_INPLACE = True
     _HAS_FAST_FILL_INPLACE = True
     _HAS_FAST_FLOOR_INPLACE = True
@@ -38,16 +42,20 @@ try:
     _HAS_FAST_MUL_INPLACE = True
     _HAS_FAST_NEG_INPLACE = True
 except ImportError:
+    _fast_ceil_inplace_impl = None  # type: ignore[assignment]
     _fast_clamp_inplace_impl = None  # type: ignore[assignment]
     _fast_copy_inplace_impl = None  # type: ignore[assignment]
+    _fast_div_inplace_impl = None  # type: ignore[assignment]
     _fast_exp_inplace_impl = None  # type: ignore[assignment]
     _fast_fill_inplace_impl = None  # type: ignore[assignment]
     _fast_floor_inplace_impl = None  # type: ignore[assignment]
     _fast_log_inplace_impl = None  # type: ignore[assignment]
     _fast_mul_inplace_impl = None  # type: ignore[assignment]
     _fast_neg_inplace_impl = None  # type: ignore[assignment]
+    _HAS_FAST_CEIL_INPLACE = False
     _HAS_FAST_CLAMP_INPLACE = False
     _HAS_FAST_COPY_INPLACE = False
+    _HAS_FAST_DIV_INPLACE = False
     _HAS_FAST_EXP_INPLACE = False
     _HAS_FAST_FILL_INPLACE = False
     _HAS_FAST_FLOOR_INPLACE = False
@@ -315,24 +323,12 @@ def geometric_(a, p, generator=None):
     """In-place geometric — fills with ceil(ln(U) / ln(1-p))."""
     import math
     uniform_(a, 0.0, 1.0, generator=generator)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    aclnn.log(a_storage.data_ptr(), a_storage.data_ptr(), a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    # divide by log(1-p)
-    log_1_minus_p = math.log(1.0 - float(p))
-    divisor = _scalar_to_npu_tensor(log_1_minus_p, a)
-    divisor_storage = _unwrap_storage(divisor)
-    numel = _numel(a.shape)
-    tmp_ptr = npu_runtime._alloc_device(numel * _dtype_itemsize(a.dtype), runtime=runtime)
-    aclnn.div(a_storage.data_ptr(), divisor_storage.data_ptr(), tmp_ptr,
-              a.shape, a.stride, divisor.shape, divisor.stride, a.shape, a.stride,
-              a.dtype, runtime, stream=stream.stream)
-    aclnn.inplace_copy(a_storage.data_ptr(), tmp_ptr, a.shape, a.stride, a.dtype, a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    runtime.defer_free(tmp_ptr)
-    # ceil in-place
-    aclnn.ceil(a_storage.data_ptr(), a_storage.data_ptr(), a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    return a
+    if not (_HAS_FAST_LOG_INPLACE and _HAS_FAST_DIV_INPLACE and _HAS_FAST_CEIL_INPLACE):
+        raise RuntimeError("Cython NPU geometric_ implementation is unavailable")
+    _fast_log_inplace_impl(a)
+    divisor = _scalar_to_npu_tensor(math.log(1.0 - float(p)), a)
+    _fast_div_inplace_impl(a, divisor)
+    return _fast_ceil_inplace_impl(a)
 
 
 def fill_(a, value):
