@@ -303,19 +303,6 @@ def _batch_offset(index, stride):
     return sum(i * s for i, s in zip(index, stride))
 
 
-def _unary_op(a, fn, name, out_dtype=None):
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    if out_dtype is None:
-        out_dtype = a.dtype
-    out_size = _numel(a.shape) * _dtype_itemsize(out_dtype)
-    out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
-    storage = _unwrap_storage(a)
-    fn(storage.data_ptr(), out_ptr, a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(a.shape), out_dtype, device=a.device)
-    return _wrap_tensor(out_storage, a.shape, a.stride)
-
-
 def _binary_op_slow(a, b, fn, name):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))

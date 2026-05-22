@@ -5,7 +5,7 @@ from ._helpers import (
     _npu_add_scalar_, _npu_linear_index, npu_index_put_impl,
     _matmul_out_shape, _normalize_tensor_sequence_args,
     _iter_indices, _broadcast_index, _batch_offset,
-    _unary_op, _binary_op,
+    _binary_op,
     _normalize_reduction_dims, _reduce_out_shape,
     _reduce_dim_sizes, _broadcast_dims_to_out,
     _scalar_to_npu_tensor, _scalar_to_npu_tensor_no_add, _nan_like,
