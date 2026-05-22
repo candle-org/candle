@@ -78,8 +78,6 @@ from .shape import contiguous, index_put_, index_select, masked_select, nonzero,
 
 
 def where(cond, x, y):
-    if x.device.type != "npu":
-        raise ValueError("NPU where expects NPU tensors")
     if isinstance(cond, (int, float)):
         cond = _scalar_to_npu_tensor(cond, x)
     if isinstance(y, (int, float)):

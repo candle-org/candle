@@ -2280,8 +2280,6 @@ def pad_sequence(seqs, batch_first=False, padding_value=0.0, padding_side="right
         raise ValueError("pad_sequence expects a non-empty list of tensors")
 
     first = seqs[0]
-    if first.device.type != "npu":
-        raise ValueError("NPU pad_sequence expects NPU tensors")
     if padding_side not in ("left", "right"):
         raise ValueError("padding_side must be 'left' or 'right'")
 
