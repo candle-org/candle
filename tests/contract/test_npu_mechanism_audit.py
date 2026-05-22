@@ -634,6 +634,16 @@ def test_npu_shape_single_tensor_shims_have_no_dispatch_redundant_device_guard()
         )
 
 
+def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
+    reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
+    body = _function_source(reduce_src, "std_")
+    forbidden = ["_unary_op(", "aclnn.sqrt"]
+    for marker in forbidden:
+        assert marker not in body, (
+            f"reduce.py::std_ still references {marker}; must delegate to Cython-backed sqrt"
+        )
+
+
 def test_core_npu_training_ops_have_forward_and_autograd_registration():
     forward_ops = _npu_forward_ops()
     autograd_ops = _npu_autograd_ops()
