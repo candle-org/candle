@@ -1068,6 +1068,46 @@ def test_npu_ops_modules_do_not_import_unused_npu_broadcast_to_helper():
     )
 
 
+def test_npu_helpers_no_unused_nan_like_helper():
+    """`_nan_like` lives in `_helpers.py` and is imported by a few ops
+    modules, but nothing actually calls it. Drop the helper entirely so
+    the import surface stays in sync with what is used.
+    """
+    helpers_src = _source("src/candle/_backends/npu/ops/_helpers.py")
+    assert "def _nan_like" not in helpers_src, (
+        "_helpers.py still defines _nan_like; it has no live callers"
+    )
+
+
+def test_npu_ops_modules_do_not_import_unused_npu_linear_index_helper():
+    """`_npu_linear_index` is only called from `_dispatch/functionalize.py`
+    via `npu_ops._npu_linear_index`, so it stays exported from
+    `_backends/npu/ops/__init__.py`. Other ops modules should not list it
+    in their `_helpers` import block — the unused name just clutters the
+    import surface.
+    """
+    consumer_modules = (
+        "src/candle/_backends/npu/ops/activation.py",
+        "src/candle/_backends/npu/ops/conv.py",
+        "src/candle/_backends/npu/ops/elementwise.py",
+        "src/candle/_backends/npu/ops/linalg.py",
+        "src/candle/_backends/npu/ops/norm.py",
+        "src/candle/_backends/npu/ops/optim.py",
+        "src/candle/_backends/npu/ops/random.py",
+        "src/candle/_backends/npu/ops/shape.py",
+        "src/candle/_backends/npu/ops/special.py",
+    )
+    offenders = []
+    for path in consumer_modules:
+        src = _source(path)
+        if re.search(r"\b_npu_linear_index\b", src):
+            offenders.append(path)
+    assert not offenders, (
+        "These NPU ops modules still reference `_npu_linear_index` — "
+        "drop the unused import:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
