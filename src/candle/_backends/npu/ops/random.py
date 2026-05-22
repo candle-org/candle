@@ -20,6 +20,7 @@ from .math import abs, add, ceil, cos, div, exp, floor, frac, log, mul, neg, sin
 
 try:
     from candle._C._npu_ops import (
+        fast_add_inplace as _fast_add_inplace_impl,
         fast_ceil_inplace as _fast_ceil_inplace_impl,
         fast_clamp_inplace as _fast_clamp_inplace_impl,
         fast_copy_inplace as _fast_copy_inplace_impl,
@@ -30,7 +31,10 @@ try:
         fast_log_inplace as _fast_log_inplace_impl,
         fast_mul_inplace as _fast_mul_inplace_impl,
         fast_neg_inplace as _fast_neg_inplace_impl,
+        fast_sub_inplace as _fast_sub_inplace_impl,
+        fast_tan_inplace as _fast_tan_inplace_impl,
     )  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_ADD_INPLACE = True
     _HAS_FAST_CEIL_INPLACE = True
     _HAS_FAST_CLAMP_INPLACE = True
     _HAS_FAST_COPY_INPLACE = True
@@ -41,7 +45,10 @@ try:
     _HAS_FAST_LOG_INPLACE = True
     _HAS_FAST_MUL_INPLACE = True
     _HAS_FAST_NEG_INPLACE = True
+    _HAS_FAST_SUB_INPLACE = True
+    _HAS_FAST_TAN_INPLACE = True
 except ImportError:
+    _fast_add_inplace_impl = None  # type: ignore[assignment]
     _fast_ceil_inplace_impl = None  # type: ignore[assignment]
     _fast_clamp_inplace_impl = None  # type: ignore[assignment]
     _fast_copy_inplace_impl = None  # type: ignore[assignment]
@@ -52,6 +59,9 @@ except ImportError:
     _fast_log_inplace_impl = None  # type: ignore[assignment]
     _fast_mul_inplace_impl = None  # type: ignore[assignment]
     _fast_neg_inplace_impl = None  # type: ignore[assignment]
+    _fast_sub_inplace_impl = None  # type: ignore[assignment]
+    _fast_tan_inplace_impl = None  # type: ignore[assignment]
+    _HAS_FAST_ADD_INPLACE = False
     _HAS_FAST_CEIL_INPLACE = False
     _HAS_FAST_CLAMP_INPLACE = False
     _HAS_FAST_COPY_INPLACE = False
@@ -62,6 +72,8 @@ except ImportError:
     _HAS_FAST_LOG_INPLACE = False
     _HAS_FAST_MUL_INPLACE = False
     _HAS_FAST_NEG_INPLACE = False
+    _HAS_FAST_SUB_INPLACE = False
+    _HAS_FAST_TAN_INPLACE = False
 
 
 def randperm(n, dtype=None, device=None, generator=None):
@@ -286,39 +298,18 @@ def cauchy_(a, median=0.0, sigma=1.0, generator=None):
     """In-place Cauchy — fills with median + sigma * tan(pi * (U - 0.5))."""
     import math
     uniform_(a, 0.0, 1.0, generator=generator)
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    a_storage = _unwrap_storage(a)
-    numel = _numel(a.shape)
-    # sub 0.5
-    aclnn.sub_scalar(a_storage.data_ptr(), 0.5, a_storage.data_ptr(), a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    # mul pi
-    pi_tensor = _scalar_to_npu_tensor(math.pi, a)
-    pi_storage = _unwrap_storage(pi_tensor)
-    tmp_ptr = npu_runtime._alloc_device(numel * _dtype_itemsize(a.dtype), runtime=runtime)
-    aclnn.mul(a_storage.data_ptr(), pi_storage.data_ptr(), tmp_ptr,
-              a.shape, a.stride, pi_tensor.shape, pi_tensor.stride, a.shape, a.stride,
-              a.dtype, runtime, stream=stream.stream)
-    aclnn.inplace_copy(a_storage.data_ptr(), tmp_ptr, a.shape, a.stride, a.dtype, a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    runtime.defer_free(tmp_ptr)
-    # tan in-place
-    aclnn.tan(a_storage.data_ptr(), a_storage.data_ptr(), a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-    # mul sigma
+    if not (_HAS_FAST_SUB_INPLACE and _HAS_FAST_MUL_INPLACE and _HAS_FAST_TAN_INPLACE):
+        raise RuntimeError("Cython NPU cauchy_ implementation is unavailable")
+    _fast_sub_inplace_impl(a, _scalar_to_npu_tensor(0.5, a))
+    _fast_mul_inplace_impl(a, _scalar_to_npu_tensor(math.pi, a))
+    _fast_tan_inplace_impl(a)
     if sigma != 1.0:
-        sigma_tensor = _scalar_to_npu_tensor(sigma, a)
-        sigma_storage = _unwrap_storage(sigma_tensor)
-        tmp_ptr2 = npu_runtime._alloc_device(numel * _dtype_itemsize(a.dtype), runtime=runtime)
-        aclnn.mul(a_storage.data_ptr(), sigma_storage.data_ptr(), tmp_ptr2,
-                  a.shape, a.stride, sigma_tensor.shape, sigma_tensor.stride, a.shape, a.stride,
-                  a.dtype, runtime, stream=stream.stream)
-        aclnn.inplace_copy(a_storage.data_ptr(), tmp_ptr2, a.shape, a.stride, a.dtype, a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
-        runtime.defer_free(tmp_ptr2)
-    # add median
+        _fast_mul_inplace_impl(a, _scalar_to_npu_tensor(sigma, a))
     if median != 0.0:
-        aclnn.add_scalar(a_storage.data_ptr(), median, a_storage.data_ptr(), a.shape, a.stride, a.dtype, runtime, stream=stream.stream)
+        if not _HAS_FAST_ADD_INPLACE:
+            raise RuntimeError("Cython NPU cauchy_ median implementation is unavailable")
+        _fast_add_inplace_impl(a, _scalar_to_npu_tensor(median, a))
     return a
-
-
 def geometric_(a, p, generator=None):
     """In-place geometric — fills with ceil(ln(U) / ln(1-p))."""
     import math
