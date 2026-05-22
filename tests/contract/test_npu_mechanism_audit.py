@@ -670,6 +670,27 @@ def test_npu_multi_input_shims_drop_dispatched_first_arg_guard():
         )
 
 
+def test_npu_multi_input_shims_drop_standalone_primary_arg_guard():
+    """Multi-input NPU shims must not include a standalone `if <primary>.device.type
+    != "npu":` guard on the dispatcher-routed primary arg. The dispatcher has
+    already validated the primary's device key before the shim runs, so the
+    standalone guard is dead code on the normal path. Cross-input parity
+    checks on secondary args remain required.
+    """
+    expectations = [
+        # (path, function, primary-arg local name)
+        ("src/candle/_backends/npu/ops/elementwise.py", "where", "x"),
+        ("src/candle/_backends/npu/ops/shape.py", "pad_sequence", "first"),
+    ]
+    for path, name, primary in expectations:
+        body = _function_source(_source(path), name)
+        forbidden = f'if {primary}.device.type != "npu":'
+        assert forbidden not in body, (
+            f"{path}::{name} still has dispatch-redundant standalone primary-arg "
+            f"device guard: `{forbidden}`"
+        )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
