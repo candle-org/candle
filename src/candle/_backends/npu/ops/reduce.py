@@ -22,7 +22,6 @@ except ImportError:
 
 from ._helpers import (
     _unwrap_storage, _wrap_tensor,
-    _broadcast_shape, _broadcast_shape_checked,
     _numel, _dtype_itemsize, _use_soc_fallback,
     _scalar_to_npu_tensor,
     _normalize_reduction_dims, _reduce_out_shape,

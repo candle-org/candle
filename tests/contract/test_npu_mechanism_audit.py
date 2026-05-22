@@ -987,6 +987,60 @@ def test_npu_ops_modules_do_not_import_unused_npu_add_scalar_helper():
     )
 
 
+def test_npu_ops_modules_do_not_import_unused_broadcast_shape_helpers():
+    """`_broadcast_shape_checked` is only used inside `_helpers.py` itself
+    and is not called by any op module. `_broadcast_shape` is only called
+    from `comparison.py`, `elementwise.py`, and `linalg.py`. Other ops
+    modules should not list these names in their `_helpers` import block —
+    the unused names just clutter the import surface.
+    """
+    cases = (
+        (
+            "_broadcast_shape_checked",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/conv.py",
+                "src/candle/_backends/npu/ops/elementwise.py",
+                "src/candle/_backends/npu/ops/linalg.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/norm.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/random.py",
+                "src/candle/_backends/npu/ops/reduce.py",
+                "src/candle/_backends/npu/ops/shape.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+        (
+            "_broadcast_shape",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/conv.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/norm.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/random.py",
+                "src/candle/_backends/npu/ops/reduce.py",
+                "src/candle/_backends/npu/ops/shape.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+    )
+    offenders = []
+    for name, consumer_modules in cases:
+        for path in consumer_modules:
+            src = _source(path)
+            if re.search(rf"\b{name}\b", src):
+                offenders.append(f"{path}: {name}")
+    assert not offenders, (
+        "These NPU ops modules still reference broadcast-shape helpers "
+        "that they don't call — drop the unused names:\n  "
+        + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
