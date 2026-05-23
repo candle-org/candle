@@ -21,6 +21,7 @@ try:
         fast_clamp_inplace as _fast_clamp_inplace_impl,
         fast_copy_inplace as _fast_copy_inplace_impl,
         fast_div_inplace as _fast_div_inplace_impl,
+        fast_erfinv_ as _fast_erfinv_inplace_impl,
         fast_exp_inplace as _fast_exp_inplace_impl,
         fast_fill_inplace as _fast_fill_inplace_impl,
         fast_floor_inplace as _fast_floor_inplace_impl,
@@ -35,6 +36,7 @@ try:
     _HAS_FAST_CLAMP_INPLACE = True
     _HAS_FAST_COPY_INPLACE = True
     _HAS_FAST_DIV_INPLACE = True
+    _HAS_FAST_ERFINV_INPLACE = True
     _HAS_FAST_EXP_INPLACE = True
     _HAS_FAST_FILL_INPLACE = True
     _HAS_FAST_FLOOR_INPLACE = True
@@ -49,6 +51,7 @@ except ImportError:
     _fast_clamp_inplace_impl = None  # type: ignore[assignment]
     _fast_copy_inplace_impl = None  # type: ignore[assignment]
     _fast_div_inplace_impl = None  # type: ignore[assignment]
+    _fast_erfinv_inplace_impl = None  # type: ignore[assignment]
     _fast_exp_inplace_impl = None  # type: ignore[assignment]
     _fast_fill_inplace_impl = None  # type: ignore[assignment]
     _fast_floor_inplace_impl = None  # type: ignore[assignment]
@@ -62,6 +65,7 @@ except ImportError:
     _HAS_FAST_CLAMP_INPLACE = False
     _HAS_FAST_COPY_INPLACE = False
     _HAS_FAST_DIV_INPLACE = False
+    _HAS_FAST_ERFINV_INPLACE = False
     _HAS_FAST_EXP_INPLACE = False
     _HAS_FAST_FILL_INPLACE = False
     _HAS_FAST_FLOOR_INPLACE = False
@@ -335,8 +339,7 @@ def copy_(a, src):
 
 def erfinv_(a):
     """In-place erfinv using aclnnErfinv."""
-    from candle._C._npu_ops import fast_erfinv_ as _fast_erfinv_impl  # pylint: disable=import-error,no-name-in-module
-    return _fast_erfinv_impl(a)
+    return _fast_erfinv_inplace_impl(a)
 
 
 def reciprocal_(a):

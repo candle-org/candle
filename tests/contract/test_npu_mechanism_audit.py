@@ -199,7 +199,7 @@ def test_npu_special_gamma_and_erfinv_wrappers_delegate_to_cython():
             assert marker not in body
 
     erfinv_body = _function_source(random_src, "erfinv_")
-    assert "_fast_erfinv_impl" in erfinv_body
+    assert "_fast_erfinv_inplace_impl" in erfinv_body
     for marker in forbidden:
         assert marker not in erfinv_body
 
@@ -1529,6 +1529,32 @@ def test_npu_shape_does_not_duplicate_storage_meta_helper():
         "`_npu_storage_meta` — replace with `_storage_meta` from `._helpers` "
         "so the duplicate function body is removed."
     )
+
+
+def test_npu_ops_modules_lift_fast_helper_imports_to_module_level():
+    """Four ops-module functions still load their Cython `fast_*` helper via a
+    function-body `from candle._C._npu_ops import ...` line. Every other NPU
+    op resolves its Cython helper through a module-level try/except block.
+    The four laggards pay a Python import lookup on every call and obscure
+    the module's dependency surface — lift them to module level so the
+    pattern is consistent across the package.
+    """
+    targets = {
+        "src/candle/_backends/npu/ops/random.py": ["erfinv_"],
+        "src/candle/_backends/npu/ops/special.py": [
+            "special_digamma",
+            "special_erfinv",
+            "special_gammaln",
+        ],
+    }
+    for rel, names in targets.items():
+        src = _source(rel)
+        for name in names:
+            body = _function_source(src, name)
+            assert "from candle._C._npu_ops import fast_" not in body, (
+                f"{rel}::{name} still has a function-body "
+                f"`from candle._C._npu_ops import fast_*` — lift to module level."
+            )
 
 
 def test_npu_ops_modules_do_not_carry_wholly_dead_helper_defs():
