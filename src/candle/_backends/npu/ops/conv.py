@@ -12,7 +12,7 @@ from ._helpers import (
 )
 from .elementwise import logaddexp, where
 from .linalg import matmul
-from .math import add, ceil, div, floor, isinf
+from .math import add, ceil, div, isinf
 from .reduce import maximum, mean, sum_
 from .shape import contiguous, expand, gather, index_select, repeat, split, stack, tile
 

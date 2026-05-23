@@ -68,9 +68,9 @@ from ._helpers import (
     aclnn, npu_runtime, npu_state,
 )
 from .comparison import eq, gt, logical_and, logical_or, lt, ne
-from .math import add, div, mul, sqrt, sub
+from .math import add, div, mul, sub
 from .reduce import searchsorted
-from .shape import contiguous, index_put_, index_select, masked_select, nonzero, split
+from .shape import contiguous, index_select, split
 
 
 def where(cond, x, y):

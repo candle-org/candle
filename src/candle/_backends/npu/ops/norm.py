@@ -7,7 +7,6 @@ from ._helpers import (
     npu_typed_storage_from_ptr, reshape,
     aclnn, npu_runtime, npu_state,
 )
-from ...._dtype import float16 as float16_dtype
 from .math import add, div, mul, rsqrt, sqrt, sub
 from .random import copy_
 from .reduce import maximum, mean, norm_

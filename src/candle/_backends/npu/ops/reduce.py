@@ -1354,7 +1354,6 @@ def argwhere_op(a):
     ndim = len(a.shape)
     if isinstance(indices, tuple):
         if len(indices) == 0:
-            from ...._tensor import Tensor
             runtime = npu_runtime.get_runtime((a.device.index or 0))
             out_shape = (0, ndim)
             out_stride = npu_runtime._contiguous_stride(out_shape)
