@@ -1263,6 +1263,46 @@ def test_npu_ops_package_init_does_not_import_unused_ctypes():
     )
 
 
+def test_npu_helpers_does_not_carry_unused_module_level_aliases():
+    """`src/candle/_backends/npu/ops/_helpers.py` carries a bare
+    ``import ctypes`` at module scope from older code paths; the only
+    ``ctypes`` reference is inside ``_scalar_to_npu_tensor``, which
+    already does a function-local ``import ctypes``. Drop the dead
+    module-level import so the helper surface stays honest.
+    """
+    src = _source("src/candle/_backends/npu/ops/_helpers.py")
+    assert not re.search(r"^import ctypes\b", src, flags=re.MULTILINE), (
+        "src/candle/_backends/npu/ops/_helpers.py still carries a "
+        "module-level `import ctypes` but the only use is inside "
+        "_scalar_to_npu_tensor, which imports ctypes locally — drop "
+        "the dead module-level import."
+    )
+
+
+def test_npu_reduce_does_not_import_unused_reshape_alias():
+    """`src/candle/_backends/npu/ops/reduce.py` imports the ``reshape``
+    alias from ``._helpers`` but never calls it — every reshape site in
+    the file goes through the function-local
+    ``from ...common import view as view_backend`` followed by
+    ``view_backend.reshape(...)``. Drop the dead listing.
+    """
+    src = _source("src/candle/_backends/npu/ops/reduce.py")
+    in_helpers_block = False
+    helpers_block_imports = []
+    for line in src.splitlines():
+        if line.strip().startswith("from ._helpers import"):
+            in_helpers_block = True
+        if in_helpers_block:
+            helpers_block_imports.append(line)
+            if ")" in line:
+                in_helpers_block = False
+    block_src = "\n".join(helpers_block_imports)
+    assert not re.search(r"\breshape\b", block_src), (
+        "src/candle/_backends/npu/ops/reduce.py still imports `reshape` "
+        "from ._helpers but never calls it — drop the dead listing."
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")

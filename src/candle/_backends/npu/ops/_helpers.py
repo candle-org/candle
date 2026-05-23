@@ -1,6 +1,5 @@
 """Shared helper utilities for NPU ops modules."""
 
-import ctypes
 from ...._dtype import bool as bool_dtype
 from ...._dtype import int32 as int32_dtype
 from ...._dtype import int64 as int64_dtype
