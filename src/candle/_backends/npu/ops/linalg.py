@@ -469,19 +469,6 @@ def einsum_(equation, operands):
     raise NotImplementedError(f"einsum pattern not supported on NPU: {equation}")
 
 
-def _einsum_output_shape(equation, operands):
-    """Parse einsum equation to determine output shape."""
-    lhs, rhs = equation.replace(' ', '').split('->')
-    inputs = lhs.split(',')
-
-    label_sizes = {}
-    for inp_labels, operand in zip(inputs, operands):
-        for label, size in zip(inp_labels, operand.shape):
-            label_sizes[label] = size
-
-    return tuple(label_sizes[label] for label in rhs)
-
-
 def _einsum_is_matmul(equation):
     """Check if einsum is a matmul pattern like ...ij,...jk->...ik"""
     eq = equation.replace(' ', '')
