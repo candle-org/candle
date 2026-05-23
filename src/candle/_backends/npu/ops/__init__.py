@@ -1,8 +1,4 @@
-from ._helpers import (
-    _unwrap_storage, _wrap_tensor, _dtype_itemsize,
-    _npu_linear_index,
-    npu_typed_storage_from_ptr,
-)
+from ._helpers import _npu_linear_index
 
 from .math import (
     add, sub, mul, div,

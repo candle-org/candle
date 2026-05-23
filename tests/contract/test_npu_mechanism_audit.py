@@ -1531,6 +1531,32 @@ def test_npu_shape_does_not_duplicate_storage_meta_helper():
     )
 
 
+def test_npu_ops_package_init_does_not_reexport_storage_plumbing_helpers():
+    """`npu/ops/__init__.py` re-exports a small set of private plumbing
+    helpers from `_helpers.py` (and `npu_typed_storage_from_ptr` from the
+    Cython storage module). Four of those re-exports are unused outside the
+    `npu/ops/` package — no source in `src/` or `tests/` imports them via
+    `from candle._backends.npu.ops import ...` nor accesses them as
+    `npu_ops._unwrap_storage` etc. Drop the dead re-exports so the package's
+    public surface reflects only what consumers actually need (only
+    `_npu_linear_index` survives, since `_dispatch/functionalize.py` uses
+    `npu_ops._npu_linear_index`).
+    """
+    init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+    forbidden = [
+        "_unwrap_storage",
+        "_wrap_tensor",
+        "_dtype_itemsize",
+        "npu_typed_storage_from_ptr",
+    ]
+    for name in forbidden:
+        assert name not in init_src, (
+            f"`src/candle/_backends/npu/ops/__init__.py` still re-exports "
+            f"`{name}` — drop it; no external module consumes it via "
+            f"`from candle._backends.npu.ops import {name}`."
+        )
+
+
 def test_npu_ops_modules_lift_fast_helper_imports_to_module_level():
     """Four ops-module functions still load their Cython `fast_*` helper via a
     function-body `from candle._C._npu_ops import ...` line. Every other NPU
