@@ -1184,6 +1184,72 @@ def test_npu_ops_modules_do_not_import_unused_ops_soc_helper():
     )
 
 
+def test_npu_ops_modules_do_not_import_unused_backend_infrastructure():
+    """The `_helpers` re-exports backend infrastructure (`aclnn`,
+    `npu_runtime`, `npu_state`, `npu_typed_storage_from_ptr`, `reshape`)
+    for ops modules that need direct kernel access. Several ops modules
+    list these names without ever calling them — drop the dead listings
+    so the import surface stays in sync with what is used.
+    """
+    cases = (
+        (
+            "aclnn",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+        (
+            "npu_runtime",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/optim.py",
+            ),
+        ),
+        (
+            "npu_state",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+        (
+            "npu_typed_storage_from_ptr",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/optim.py",
+            ),
+        ),
+        (
+            "reshape",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/optim.py",
+            ),
+        ),
+    )
+    offenders = []
+    for name, consumer_modules in cases:
+        for path in consumer_modules:
+            src = _source(path)
+            if re.search(rf"\b{name}\b", src):
+                offenders.append(f"{path}: {name}")
+    assert not offenders, (
+        "These NPU ops modules still reference unused backend infrastructure — "
+        "drop the unused imports:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
