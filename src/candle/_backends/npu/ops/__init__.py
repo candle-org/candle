@@ -69,7 +69,7 @@ from .norm import (
 )
 
 from .linalg import (
-    matmul, dot, mv, outer, mm_op, bmm_op,
+    matmul, dot, mv, outer,
     addmm, baddbmm, einsum_,
     linalg_qr, linalg_inv, linalg_vector_norm_op,
     linalg_norm_op, linalg_matrix_norm_op,

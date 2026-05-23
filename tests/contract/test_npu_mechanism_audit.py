@@ -2172,3 +2172,70 @@ def test_npu_adamw_step_registers_adam_step_op_directly_without_rename_wrapper()
         f"`_adamw_step_op` still referenced from: {offenders}. Drop all "
         "remaining references."
     )
+
+
+def test_npu_mm_and_bmm_register_matmul_directly_without_alias_wrappers():
+    """Audit: `mm_op` and `bmm_op` in `_backends/npu/ops/linalg.py` were
+    2-line pure-delegation wrappers that just returned `matmul(a, b)`.
+    The `mm` and `bmm` schemas take exactly two tensors, so the
+    intermediate names added a hop without changing behavior.
+
+    Registering `mm` and `bmm` directly to `matmul` removes one
+    indirection per op and drops both names from the package
+    `__init__.py` re-export surface.
+    """
+    linalg_src = _source("src/candle/_backends/npu/ops/linalg.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+
+    # The wrapper definitions must be gone.
+    assert "def mm_op" not in linalg_src, (
+        "`mm_op` wrapper still defined in `linalg.py`. Register `mm` "
+        "directly with `matmul`."
+    )
+    assert "def bmm_op" not in linalg_src, (
+        "`bmm_op` wrapper still defined in `linalg.py`. Register `bmm` "
+        "directly with `matmul`."
+    )
+
+    # `mm` / `bmm` must register `matmul` directly.
+    assert (
+        'registry.register("mm", "npu", matmul, meta=meta_infer.infer_matmul)'
+        in backend_init_src
+    ), (
+        "`mm` must register `matmul` directly, not the removed `mm_op` "
+        "wrapper."
+    )
+    assert (
+        'registry.register("bmm", "npu", matmul, meta=meta_infer.infer_matmul)'
+        in backend_init_src
+    ), (
+        "`bmm` must register `matmul` directly, not the removed `bmm_op` "
+        "wrapper."
+    )
+
+    # Neither `__init__.py` should import or re-export the wrappers.
+    for name in ("mm_op", "bmm_op"):
+        assert name not in backend_init_src, (
+            f"`_backends/npu/__init__.py` still references `{name}`."
+        )
+        assert name not in ops_init_src, (
+            f"`_backends/npu/ops/__init__.py` still re-exports `{name}`."
+        )
+
+    # Cross-codebase consumer-scan: nothing else in `src/candle/` or
+    # `tests/` should reference the removed wrappers.
+    consumer_roots = ["src/candle", "tests"]
+    audit_path = Path(__file__).resolve()
+    offenders = []
+    for root in consumer_roots:
+        for path in (_REPO_ROOT / root).rglob("*.py"):
+            if path.resolve() == audit_path:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "mm_op" in text or "bmm_op" in text:
+                offenders.append(str(path.relative_to(_REPO_ROOT)))
+    assert not offenders, (
+        f"`mm_op` / `bmm_op` still referenced from: {offenders}. Drop "
+        "all remaining references."
+    )
