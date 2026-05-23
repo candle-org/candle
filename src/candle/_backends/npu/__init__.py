@@ -364,7 +364,6 @@ from .ops import (
     linalg_vander_op,
     linalg_cholesky_op,
     linalg_cond_op,
-    linalg_det_op,
     linalg_eig_op,
     linalg_eigh_op,
     linalg_eigvals_op,
@@ -825,7 +824,7 @@ registry.register("linalg_matrix_power", "npu", linalg_matrix_power_op)
 registry.register("linalg_vander", "npu", linalg_vander_op)
 registry.register("linalg_cholesky", "npu", linalg_cholesky_op)
 registry.register("linalg_cond", "npu", linalg_cond_op)
-registry.register("linalg_det", "npu", linalg_det_op)
+registry.register("linalg_det", "npu", det_op)
 registry.register("linalg_eig", "npu", linalg_eig_op)
 registry.register("linalg_eigh", "npu", linalg_eigh_op)
 registry.register("linalg_eigvals", "npu", linalg_eigvals_op)
