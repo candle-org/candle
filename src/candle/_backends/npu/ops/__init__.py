@@ -6,7 +6,6 @@ from ._helpers import (
     bool_dtype, int32_dtype, int64_dtype, float_dtype,
     npu_typed_storage_from_ptr,
 )
-import ctypes
 
 from .math import (
     add, sub, mul, div,
