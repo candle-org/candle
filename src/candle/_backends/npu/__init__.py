@@ -312,7 +312,6 @@ from .ops import (
     upsample_bicubic2d_op,
     upsample_linear1d_op,
     _adam_step_op,
-    _adamw_step_op,
     # Phase 2: activation composites
     selu_op,
     celu_op,
@@ -764,7 +763,7 @@ registry.register("adaptive_avg_pool3d", "npu", adaptive_avg_pool3d_op)
 registry.register("upsample_bicubic2d", "npu", upsample_bicubic2d_op)
 registry.register("upsample_linear1d", "npu", upsample_linear1d_op)
 registry.register("_adam_step", "npu", _adam_step_op)
-registry.register("_adamw_step", "npu", _adamw_step_op)
+registry.register("_adamw_step", "npu", _adam_step_op)
 
 # Upgrade composites to ACLNN large kernels
 registry.register("aminmax", "npu", aminmax_aclnn)

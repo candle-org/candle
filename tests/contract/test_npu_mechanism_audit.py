@@ -2114,3 +2114,61 @@ def test_npu_pow_tensor_scalar_branch_inlined_into_pow_without_wrapper_helper():
         f"`_pow_tensor_scalar_op` still referenced from: {offenders}. "
         "Drop all remaining references."
     )
+
+
+def test_npu_adamw_step_registers_adam_step_op_directly_without_rename_wrapper():
+    """Audit: `_adamw_step_op` in `_backends/npu/ops/optim.py` was a
+    4-line pure-delegation wrapper that called `_adam_step_op` with the
+    exact same argument list. Both ops dispatch to the same Cython
+    `_fast_adam_step_impl` kernel, so the wrapper added a hop without
+    changing behavior.
+
+    Dropping the wrapper registers `_adamw_step` directly to
+    `_adam_step_op`, removing one indirection and one symbol from the
+    package `__init__.py` re-export surface.
+    """
+    optim_src = _source("src/candle/_backends/npu/ops/optim.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+
+    # The wrapper function definition must be gone.
+    assert "def _adamw_step_op" not in optim_src, (
+        "`_adamw_step_op` wrapper still defined in `optim.py`. Remove "
+        "it and register `_adamw_step` directly with `_adam_step_op`."
+    )
+
+    # `_adamw_step` registration must point at `_adam_step_op` directly.
+    assert 'registry.register("_adamw_step", "npu", _adam_step_op)' in backend_init_src, (
+        "`_adamw_step` must register `_adam_step_op` directly, not the "
+        "removed `_adamw_step_op` rename wrapper."
+    )
+    assert 'registry.register("_adamw_step", "npu", _adamw_step_op)' not in backend_init_src, (
+        "`_adamw_step` still registered against the removed "
+        "`_adamw_step_op` wrapper in `_backends/npu/__init__.py`."
+    )
+
+    # Neither `__init__.py` should still import or re-export the wrapper.
+    assert "_adamw_step_op" not in backend_init_src, (
+        "`_backends/npu/__init__.py` still references `_adamw_step_op`."
+    )
+    assert "_adamw_step_op" not in ops_init_src, (
+        "`_backends/npu/ops/__init__.py` still re-exports "
+        "`_adamw_step_op`."
+    )
+
+    # Cross-codebase consumer-scan: nothing else in `src/candle/` or
+    # `tests/` should reference the removed wrapper.
+    consumer_roots = ["src/candle", "tests"]
+    audit_path = Path(__file__).resolve()
+    offenders = []
+    for root in consumer_roots:
+        for path in (_REPO_ROOT / root).rglob("*.py"):
+            if path.resolve() == audit_path:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "_adamw_step_op" in text:
+                offenders.append(str(path.relative_to(_REPO_ROOT)))
+    assert not offenders, (
+        f"`_adamw_step_op` still referenced from: {offenders}. Drop all "
+        "remaining references."
+    )
