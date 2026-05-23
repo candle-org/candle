@@ -236,7 +236,6 @@ def test_npu_thin_binary_wrappers_delegate_to_cython():
         math_src: {
             "sub": "_fast_sub_impl",
             "div": "_fast_div_impl",
-            "_pow_tensor_scalar_op": "_fast_pow_tensor_scalar_impl",
             "pow": "_fast_pow_impl",
             "floor_divide": "_fast_floor_divide_impl",
         },
@@ -2063,4 +2062,55 @@ def test_npu_linear_index_routed_directly_in_functionalize_not_via_ops_package()
         f"Unexpected direct importers of `_npu_linear_index` from "
         f"`_helpers`: {direct_consumers}. Only `_dispatch/functionalize.py` "
         "should import it directly."
+    )
+
+
+def test_npu_pow_tensor_scalar_branch_inlined_into_pow_without_wrapper_helper():
+    """Audit: `_pow_tensor_scalar_op` was a 4-line single-use helper in
+    `_backends/npu/ops/math.py` that wrapped the
+    `_fast_pow_tensor_scalar_impl` call for the scalar-exponent path of
+    `pow`. Its only caller was `pow` itself.
+
+    Inlining the scalar branch directly into `pow` removes the indirection
+    and reduces the function from a two-hop dispatch (`pow` ->
+    `_pow_tensor_scalar_op` -> `_fast_pow_tensor_scalar_impl`) to a single
+    direct call.
+    """
+    math_path = _REPO_ROOT / "src/candle/_backends/npu/ops/math.py"
+    math_src = math_path.read_text(encoding="utf-8")
+
+    # The wrapper helper itself must be gone.
+    assert "def _pow_tensor_scalar_op" not in math_src, (
+        "`_pow_tensor_scalar_op` helper still defined in math.py. "
+        "Inline its body into `pow` so the scalar-exponent path calls "
+        "`_fast_pow_tensor_scalar_impl` directly."
+    )
+
+    # `pow` must reference the fast helper directly.
+    pow_body = _function_source(math_src, "pow")
+    assert "_fast_pow_tensor_scalar_impl" in pow_body, (
+        "`pow` body must call `_fast_pow_tensor_scalar_impl` directly "
+        "after the wrapper helper is removed."
+    )
+    assert "_pow_tensor_scalar_op" not in pow_body, (
+        "`pow` still references the removed `_pow_tensor_scalar_op` "
+        "wrapper helper."
+    )
+
+    # Cross-codebase consumer-scan: the wrapper name must not appear
+    # anywhere else in `src/candle/` or `tests/` (excluding this audit
+    # file's own references to it).
+    consumer_roots = ["src/candle", "tests"]
+    audit_path = Path(__file__).resolve()
+    offenders = []
+    for root in consumer_roots:
+        for path in (_REPO_ROOT / root).rglob("*.py"):
+            if path.resolve() == audit_path:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "_pow_tensor_scalar_op" in text:
+                offenders.append(str(path.relative_to(_REPO_ROOT)))
+    assert not offenders, (
+        f"`_pow_tensor_scalar_op` still referenced from: {offenders}. "
+        "Drop all remaining references."
     )

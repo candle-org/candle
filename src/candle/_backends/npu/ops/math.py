@@ -581,12 +581,6 @@ def atan2(a, b):
     raise RuntimeError("Cython NPU atan2 implementation is unavailable")
 
 
-def _pow_tensor_scalar_op(a, exponent):
-    if _HAS_FAST_POW_TENSOR_SCALAR:
-        return _fast_pow_tensor_scalar_impl(a, exponent)
-    raise RuntimeError("Cython NPU pow tensor-scalar implementation is unavailable")
-
-
 def reciprocal(a):
     if _HAS_FAST_RECIPROCAL:
         return _fast_reciprocal_impl(a)
@@ -598,7 +592,9 @@ def pow(a, b):
         if _HAS_FAST_POW:
             return _fast_pow_impl(a, b)
         raise RuntimeError("Cython NPU pow implementation is unavailable")
-    return _pow_tensor_scalar_op(a, b)
+    if _HAS_FAST_POW_TENSOR_SCALAR:
+        return _fast_pow_tensor_scalar_impl(a, b)
+    raise RuntimeError("Cython NPU pow tensor-scalar implementation is unavailable")
 
 
 def floor_divide(a, b):
