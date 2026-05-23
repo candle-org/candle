@@ -1224,7 +1224,6 @@ def test_npu_ops_modules_do_not_import_unused_backend_infrastructure():
         (
             "npu_typed_storage_from_ptr",
             (
-                "src/candle/_backends/npu/ops/__init__.py",
                 "src/candle/_backends/npu/ops/activation.py",
                 "src/candle/_backends/npu/ops/math.py",
                 "src/candle/_backends/npu/ops/optim.py",
