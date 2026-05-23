@@ -1556,6 +1556,39 @@ def test_npu_ops_package_init_does_not_reexport_storage_plumbing_helpers():
             f"`from candle._backends.npu.ops import {name}`."
         )
 
+    # Cross-check: no consumer in src/ or tests/ should import these names
+    # via the `candle._backends.npu.ops` package path. If a new consumer
+    # appears, it must import from the actual source module (`_helpers.py`
+    # or the Cython storage module) instead of re-introducing the dead
+    # re-export.
+    consumer_roots = ["src/candle", "tests"]
+    import_patterns = [
+        # `from candle._backends.npu.ops import <name>` or
+        # `from .npu.ops import <name>` (relative form used inside _backends/)
+        re.compile(
+            r"from\s+[\w.]*\.?npu\.ops\s+import\s+[^\n]*\b("
+            + "|".join(re.escape(n) for n in forbidden)
+            + r")\b"
+        ),
+    ]
+    offenders = []
+    for root in consumer_roots:
+        for path in (_REPO_ROOT / root).rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            for pattern in import_patterns:
+                if pattern.search(text):
+                    rel = path.relative_to(_REPO_ROOT)
+                    offenders.append(str(rel))
+                    break
+    assert not offenders, (
+        "The following modules re-import dropped plumbing helpers via "
+        "`candle._backends.npu.ops`: "
+        f"{offenders}. Import from the source module "
+        "(`candle._backends.npu.ops._helpers` for `_unwrap_storage`, "
+        "`_wrap_tensor`, `_dtype_itemsize`; `candle._C` for "
+        "`npu_typed_storage_from_ptr`) instead."
+    )
+
 
 def test_npu_ops_modules_lift_fast_helper_imports_to_module_level():
     """Four ops-module functions still load their Cython `fast_*` helper via a
