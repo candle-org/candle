@@ -337,9 +337,7 @@ def copy_(a, src):
     raise RuntimeError("Cython NPU copy_ implementation is unavailable")
 
 
-def erfinv_(a):
-    """In-place erfinv using aclnnErfinv."""
-    return _fast_erfinv_inplace_impl(a)
+erfinv_ = _fast_erfinv_inplace_impl
 
 
 def reciprocal_(a):
