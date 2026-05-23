@@ -12,7 +12,7 @@ from ._helpers import (
 )
 from .comparison import lt
 from .elementwise import clamp
-from .math import abs, add, ceil, cos, div, exp, floor, frac, log, mul, neg, sin, sqrt, tan
+from .math import abs, add, ceil, cos, exp, floor, frac, log, mul, neg, sin, sqrt, tan
 
 try:
     from candle._C._npu_ops import (

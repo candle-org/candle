@@ -135,8 +135,7 @@ from ._helpers import (
 )
 from .comparison import gt, lt
 from .elementwise import clamp, where
-from .math import abs, add, div, exp, frac, log, mul, neg, sin, sub, tanh
-from .reduce import maximum, minimum
+from .math import abs, add, div, exp, frac, log, mul, neg, sin, tanh
 
 
 def relu(a):

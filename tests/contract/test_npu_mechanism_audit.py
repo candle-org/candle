@@ -1483,6 +1483,39 @@ def test_npu_ops_modules_do_not_import_unused_dtype_constants():
     )
 
 
+def test_npu_ops_modules_do_not_carry_dead_cross_module_imports():
+    """A handful of NPU ops modules still list cross-module helpers in their
+    top-level (or function-local) `from X import Y` blocks that they never
+    actually call. Drop them so the per-file import surface is honest.
+
+    Each pair below is `(file, name)` — if `name` appears in `file`, it must
+    be referenced more than once (i.e. used somewhere beyond the import line).
+    A single occurrence means the import is dead.
+    """
+    cases = (
+        ("src/candle/_backends/npu/ops/activation.py", "sub"),
+        ("src/candle/_backends/npu/ops/activation.py", "maximum"),
+        ("src/candle/_backends/npu/ops/activation.py", "minimum"),
+        ("src/candle/_backends/npu/ops/conv.py", "floor"),
+        ("src/candle/_backends/npu/ops/elementwise.py", "sqrt"),
+        ("src/candle/_backends/npu/ops/elementwise.py", "index_put_"),
+        ("src/candle/_backends/npu/ops/elementwise.py", "masked_select"),
+        ("src/candle/_backends/npu/ops/elementwise.py", "nonzero"),
+        ("src/candle/_backends/npu/ops/norm.py", "float16_dtype"),
+        ("src/candle/_backends/npu/ops/random.py", "div"),
+        ("src/candle/_backends/npu/ops/reduce.py", "Tensor"),
+    )
+    offenders = []
+    for path, name in cases:
+        src = _source(path)
+        if re.search(rf"\b{name}\b", src):
+            offenders.append(f"{path}: {name}")
+    assert not offenders, (
+        "These NPU ops modules still carry dead cross-module imports — "
+        "drop them:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
