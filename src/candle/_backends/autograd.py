@@ -7610,7 +7610,7 @@ def _npu_dropout_backward(grad, backward_data, out, a, args, kwargs):
     out_numel = 1
     for d in out_shape:
         out_numel *= d
-    from .npu.ops import _dtype_itemsize, _unwrap_storage
+    from .npu.ops._helpers import _dtype_itemsize, _unwrap_storage
     itemsize = _dtype_itemsize(grad.dtype)
     out_ptr = npu_runtime._alloc_device(max(out_numel, 1) * itemsize, runtime=runtime)
     grad_ptr = _unwrap_storage(grad).data_ptr()
@@ -7623,7 +7623,8 @@ def _npu_dropout_backward(grad, backward_data, out, a, args, kwargs):
         backward_data["p"],
         runtime, stream=stream.stream,
     )
-    from .npu.ops import npu_typed_storage_from_ptr, _wrap_tensor
+    from .._C import npu_typed_storage_from_ptr
+    from .npu.ops._helpers import _wrap_tensor
     out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1),
                                             grad.dtype, device=grad.device)
     return (_wrap_tensor(out_storage, out_shape, out_stride),)
