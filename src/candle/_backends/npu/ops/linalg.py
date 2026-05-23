@@ -10,7 +10,7 @@ from ._helpers import (
     _iter_indices, _broadcast_index, _batch_offset,
     bool_dtype, int32_dtype, int64_dtype, float_dtype,
     npu_typed_storage_from_ptr, reshape,
-    aclnn, npu_runtime, npu_state, ops_soc,
+    aclnn, npu_runtime, npu_state,
 )
 from .comparison import eq, gt
 from .elementwise import where

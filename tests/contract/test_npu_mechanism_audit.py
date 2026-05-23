@@ -1154,6 +1154,36 @@ def test_npu_ops_modules_do_not_import_unused_cast_soc_or_scalar_helpers():
     )
 
 
+def test_npu_ops_modules_do_not_import_unused_ops_soc_helper():
+    """`ops_soc` is only used from `_backends/npu/ops/shape.py` (and inside
+    `_helpers.py` itself). Other ops modules and the package `__init__`
+    list it in their `_helpers` import block but never call it — drop the
+    unused listings so the import surface stays in sync with what is used.
+    """
+    consumer_modules = (
+        "src/candle/_backends/npu/ops/__init__.py",
+        "src/candle/_backends/npu/ops/activation.py",
+        "src/candle/_backends/npu/ops/conv.py",
+        "src/candle/_backends/npu/ops/elementwise.py",
+        "src/candle/_backends/npu/ops/linalg.py",
+        "src/candle/_backends/npu/ops/math.py",
+        "src/candle/_backends/npu/ops/norm.py",
+        "src/candle/_backends/npu/ops/optim.py",
+        "src/candle/_backends/npu/ops/random.py",
+        "src/candle/_backends/npu/ops/reduce.py",
+        "src/candle/_backends/npu/ops/special.py",
+    )
+    offenders = []
+    for path in consumer_modules:
+        src = _source(path)
+        if re.search(r"\bops_soc\b", src):
+            offenders.append(path)
+    assert not offenders, (
+        "These NPU ops modules still reference `ops_soc` — "
+        "drop the unused import:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
