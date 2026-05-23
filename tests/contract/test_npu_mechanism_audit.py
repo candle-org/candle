@@ -1782,3 +1782,32 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     assert missing_autograd == expected_missing
     assert len(forward_ops) == 396
     assert len(autograd_ops & forward_ops) == 324
+
+
+def test_npu_activation_module_consolidates_fast_helper_try_blocks():
+    """`activation.py` historically grew one `try/except ImportError` block
+    per `fast_*` helper — currently 15 separate blocks (14 individual
+    primaries + 1 composites). Every other ops module that mirrors this
+    pattern (`math.py`, `comparison.py`, `reduce.py`, `elementwise.py`,
+    `linalg.py`, `random.py`, `optim.py`) uses a *single* consolidated
+    try/except block at module top, importing every `fast_*` helper inside
+    a tuple and setting each `_HAS_FAST_X` flag in the success branch /
+    `None` + `False` in the failure branch.
+
+    All `fast_*` helpers come from the same Cython extension module
+    (`candle._C._npu_ops`) — they either all exist or none do — so
+    splitting the import into 15 blocks adds clutter without changing
+    runtime semantics. Consolidate them so `activation.py` matches the
+    rest of the package and pays one ImportError check instead of 15.
+    """
+    activation_src = _source("src/candle/_backends/npu/ops/activation.py")
+    try_count = len(
+        [line for line in activation_src.splitlines() if line.startswith("try:")]
+    )
+    assert try_count <= 1, (
+        "`src/candle/_backends/npu/ops/activation.py` still has "
+        f"{try_count} top-level `try:` blocks for importing `fast_*` "
+        "helpers. Consolidate them into a single try/except block so the "
+        "module matches `math.py`, `comparison.py`, and the rest of the "
+        "ops package."
+    )
