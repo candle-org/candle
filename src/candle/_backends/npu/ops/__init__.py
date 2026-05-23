@@ -1,8 +1,6 @@
 from ._helpers import (
     _unwrap_storage, _wrap_tensor, _dtype_itemsize,
     _npu_linear_index,
-    # Re-export commonly used imports so op functions can use them
-    bool_dtype, int64_dtype, float_dtype,
     npu_typed_storage_from_ptr,
 )
 

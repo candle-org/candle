@@ -3,7 +3,6 @@
 from ._helpers import (
     _scalar_to_npu_tensor,
     _use_soc_fallback,
-    bool_dtype, int64_dtype, float_dtype,
 )
 
 

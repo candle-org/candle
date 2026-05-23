@@ -1,7 +1,6 @@
 """Optimizer step operations for NPU."""
 from ._helpers import (
     _scalar_to_npu_tensor,
-    bool_dtype, int64_dtype, float_dtype,
 )
 from .comparison import gt, lt
 from .elementwise import where
