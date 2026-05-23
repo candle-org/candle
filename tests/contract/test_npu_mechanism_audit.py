@@ -177,7 +177,6 @@ def test_npu_bulk_fast_helpers_have_no_python_fallback_bodies():
 
 def test_npu_special_gamma_and_erfinv_wrappers_delegate_to_cython():
     special_src = _source("src/candle/_backends/npu/ops/special.py")
-    random_src = _source("src/candle/_backends/npu/ops/random.py")
 
     special_expectations = {
         "special_digamma": "_fast_digamma_impl",
@@ -197,11 +196,6 @@ def test_npu_special_gamma_and_erfinv_wrappers_delegate_to_cython():
         assert fast_name in body, f"{name} does not delegate to {fast_name}"
         for marker in forbidden:
             assert marker not in body
-
-    erfinv_body = _function_source(random_src, "erfinv_")
-    assert "_fast_erfinv_inplace_impl" in erfinv_body
-    for marker in forbidden:
-        assert marker not in erfinv_body
 
 
 def test_npu_comparison_thin_wrappers_delegate_to_cython():
@@ -1588,15 +1582,13 @@ def test_npu_ops_package_init_does_not_reexport_storage_plumbing_helpers():
 
 
 def test_npu_ops_modules_lift_fast_helper_imports_to_module_level():
-    """Four ops-module functions still load their Cython `fast_*` helper via a
-    function-body `from candle._C._npu_ops import ...` line. Every other NPU
-    op resolves its Cython helper through a module-level try/except block.
-    The four laggards pay a Python import lookup on every call and obscure
-    the module's dependency surface — lift them to module level so the
-    pattern is consistent across the package.
+    """Ops-module functions must load their Cython `fast_*` helper through a
+    module-level try/except block, not via a function-body
+    `from candle._C._npu_ops import ...` line. The body-level form pays a
+    Python import lookup on every call and obscures the module's dependency
+    surface — keeping the pattern consistent across the package.
     """
     targets = {
-        "src/candle/_backends/npu/ops/random.py": ["erfinv_"],
         "src/candle/_backends/npu/ops/special.py": [
             "special_digamma",
             "special_erfinv",
@@ -2394,4 +2386,33 @@ def test_npu_shape_alias_wrappers_register_target_ops_directly():
     assert not offenders, (
         f"`broadcast_to_op` still referenced from: {offenders}. Drop "
         "all remaining references."
+    )
+
+
+def test_npu_erfinv_inplace_collapses_def_wrapper_to_cython_alias():
+    """Audit: `erfinv_` in `_backends/npu/ops/random.py` was a 3-line
+    `def` wrapper whose body just returned `_fast_erfinv_inplace_impl(a)`.
+    The schema `erfinv_(Tensor(a!) self) -> Tensor(a)` takes a single
+    tensor — identical to the Cython impl — so the wrapper added a Python
+    function-call frame without changing behavior.
+
+    Collapse the wrapper to a module-level alias:
+
+      erfinv_ = _fast_erfinv_inplace_impl
+
+    This keeps the `erfinv_` registration import surface intact while
+    eliminating the intermediate frame. The audit asserts the `def` is
+    gone and the alias assignment is present.
+    """
+    random_src = _source("src/candle/_backends/npu/ops/random.py")
+
+    assert "def erfinv_(" not in random_src, (
+        "`erfinv_` is still defined as a `def` wrapper in `random.py`. "
+        "Replace with the module-level alias "
+        "`erfinv_ = _fast_erfinv_inplace_impl`."
+    )
+    assert "erfinv_ = _fast_erfinv_inplace_impl" in random_src, (
+        "`random.py` must bind `erfinv_` to `_fast_erfinv_inplace_impl` "
+        "via a module-level alias so the registration import surface in "
+        "`_backends/npu/__init__.py` continues to work."
     )
