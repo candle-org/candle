@@ -14,9 +14,9 @@ from ._helpers import (
 )
 from .comparison import eq, gt
 from .elementwise import where
-from .math import add, cos, div, exp, mul, sin, sqrt, sub
+from .math import add, div, mul, sqrt, sub
 from .reduce import sum_
-from .shape import contiguous, diag, diagonal_op, expand, index_select, split, tril, triu
+from .shape import contiguous, diagonal_op, expand, index_select, split, tril, triu
 
 try:
     from candle._C._npu_ops import (

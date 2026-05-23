@@ -1811,3 +1811,40 @@ def test_npu_activation_module_consolidates_fast_helper_try_blocks():
         "module matches `math.py`, `comparison.py`, and the rest of the "
         "ops package."
     )
+
+
+def test_npu_linalg_module_has_no_dead_cross_module_imports():
+    """`linalg.py` imports `cos`, `exp`, `sin` from `.math` and `diag`
+    from `.shape`, but none of those names is called anywhere in the
+    file body — each only appears in code comments (DFT W matrix
+    derivation, Taylor expansion explanation, SVD pseudo-inverse
+    explanation). The imports were left behind after the corresponding
+    composites moved to Cython `fast_*` helpers and are now dead.
+
+    Drop them so the module's dependency surface reflects only the
+    cross-module helpers it actually calls.
+    """
+    linalg_src = _source("src/candle/_backends/npu/ops/linalg.py")
+    forbidden_from_math = ["cos", "exp", "sin"]
+    forbidden_from_shape = ["diag"]
+
+    # Locate the `from .math import ...` line and the `from .shape import ...`
+    # line and assert the forbidden names are not in them.
+    for line in linalg_src.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("from .math import "):
+            imported = stripped[len("from .math import "):]
+            for name in forbidden_from_math:
+                assert not re.search(rf"\b{name}\b", imported), (
+                    f"`src/candle/_backends/npu/ops/linalg.py` still imports "
+                    f"`{name}` from `.math`, but no function body calls it — "
+                    "drop the dead import."
+                )
+        if stripped.startswith("from .shape import "):
+            imported = stripped[len("from .shape import "):]
+            for name in forbidden_from_shape:
+                assert not re.search(rf"\b{name}\b", imported), (
+                    f"`src/candle/_backends/npu/ops/linalg.py` still imports "
+                    f"`{name}` from `.shape`, but no function body calls it — "
+                    "drop the dead import."
+                )
