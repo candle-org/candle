@@ -1531,6 +1531,38 @@ def test_npu_shape_does_not_duplicate_storage_meta_helper():
     )
 
 
+def test_npu_ops_modules_do_not_carry_wholly_dead_helper_defs():
+    """Several private helpers defined inside `npu/ops/*.py` modules are
+    referenced only at their own def site — no other source file in `src/`,
+    `tests/`, or `tools/` mentions them. Each represents either a workaround
+    that was later replaced by a Cython fast-helper, or a composite that was
+    inlined into its caller. Drop the dead defs so the modules stop carrying
+    code that the runtime cannot reach.
+    """
+    targets = {
+        "src/candle/_backends/npu/ops/linalg.py": [
+            "_einsum_output_shape",
+        ],
+        "src/candle/_backends/npu/ops/shape.py": [
+            "_strided_copy",
+            "_nonzero_mask_float",
+            "_positive_mask_int64",
+            "_negative_mask_int64",
+            "_below_negative_lower_bound_mask_int64",
+            "_mask_has_any",
+            "_move_dim_to_last",
+            "_is_advanced_index",
+        ],
+    }
+    for rel, names in targets.items():
+        src = _source(rel)
+        for name in names:
+            assert f"def {name}(" not in src, (
+                f"{rel} still defines `{name}` — this helper is referenced "
+                f"only at its own def site and should be deleted."
+            )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")

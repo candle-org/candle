@@ -75,30 +75,6 @@ def _normalize_repeats_tuple(repeats, ndim, name):
     return repeats
 
 
-def _strided_copy(a):
-    """Copy a non-contiguous NPU tensor into a fresh contiguous buffer using aclnnInplaceCopy."""
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    numel = _numel(a.shape)
-    out_stride = npu_runtime._contiguous_stride(a.shape)
-    out_ptr = npu_runtime._alloc_device(numel * _dtype_itemsize(a.dtype), runtime=runtime)
-    a_storage = _unwrap_storage(a)
-    aclnn.inplace_copy(
-        out_ptr,
-        a_storage.data_ptr(),
-        a.shape,
-        out_stride,
-        a.dtype,
-        a.shape,
-        a.stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    storage = npu_typed_storage_from_ptr(out_ptr, numel, a.dtype, device=a.device)
-    return _wrap_tensor(storage, a.shape, out_stride)
-
-
 def _build_repeat_interleave_indices(dim_size, repeats, device):
     from ..creation import empty_create
     from .reduce import amin, cumsum, searchsorted, sum_
@@ -183,70 +159,6 @@ def _require_int64_indices(indices, name):
     if indices.device.type != "npu":
         raise ValueError(f"{name} indices must be on NPU")
     return indices
-
-
-def _nonzero_mask_float(a):
-    from .comparison import logical_not
-
-    if not aclnn.eq_scalar_symbols_ok():
-        raise RuntimeError("aclnnEqScalar symbols not available")
-    runtime = npu_runtime.get_runtime((a.device.index or 0))
-    stream = npu_state.current_stream((a.device.index or 0))
-    shape = tuple(a.shape)
-    stride = tuple(a.stride)
-    numel = max(_numel(shape), 1)
-    out_ptr = npu_runtime._alloc_device(numel * _dtype_itemsize(bool_dtype), runtime=runtime)
-    aclnn.eq_scalar(
-        _unwrap_storage(a).data_ptr(),
-        0.0,
-        out_ptr,
-        shape,
-        stride,
-        a.dtype,
-        runtime,
-        stream=stream.stream,
-    )
-    out_storage = npu_typed_storage_from_ptr(out_ptr, numel, bool_dtype, device=a.device)
-    return logical_not(_wrap_tensor(out_storage, shape, stride))
-
-
-def _positive_mask_int64(indices, scalar):
-    from .activation import relu
-    from .math import sign, sub
-
-    delta = sub(indices, int(scalar))
-    return sign(relu(delta))
-
-
-def _negative_mask_int64(indices):
-    from .activation import relu
-    from .math import sign, neg
-
-    return relu(neg(sign(indices)))
-
-
-def _below_negative_lower_bound_mask_int64(indices, dim_size):
-    from .activation import relu
-    from .math import add, sign, neg
-
-    shifted = add(indices, int(dim_size))
-    return relu(neg(sign(shifted)))
-
-
-def _mask_has_any(mask):
-    runtime = npu_runtime.get_runtime((mask.device.index or 0))
-    stream = npu_state.current_stream((mask.device.index or 0))
-    runtime.activate()
-    if hasattr(runtime, "synchronize_stream"):
-        runtime.synchronize_stream(stream.stream)
-    arr = npu_runtime._copy_npu_to_cpu(
-        _npu_data_ptr(mask),
-        max(_numel(mask.shape), 1) * _dtype_itemsize(mask.dtype),
-        mask.shape,
-        mask.dtype,
-        runtime=runtime,
-    )
-    return bool(arr.any())
 
 
 def _read_index_tensor_to_cpu(indices):
@@ -384,14 +296,6 @@ def _split_sections_from_count(dim_size, sections):
         raise ValueError("sections must be > 0")
     size, extra = divmod(dim_size, sections)
     return [size + 1] * extra + [size] * (sections - extra)
-
-
-def _move_dim_to_last(a, dim):
-    dim = _normalize_dim(dim, a.dim())
-    out = a
-    for i in range(dim, a.dim() - 1):
-        out = view_backend.transpose(out, i, i + 1)
-    return out
 
 
 def _slice_along_dim(a, start, end, dim):
@@ -781,16 +685,6 @@ def _npu_assign_to_view(view, value):
 # ---------------------------------------------------------------------------
 # Advanced indexing (Tensor, bool mask, list, mixed)
 # ---------------------------------------------------------------------------
-
-
-def _is_advanced_index(item):
-    """True if *item* is a Tensor, list, or other advanced index."""
-    if isinstance(item, Tensor):
-        return True
-    if isinstance(item, (list, tuple)):
-        # A list/tuple of numbers is advanced indexing
-        return True
-    return False
 
 
 def _to_npu_index_tensor(key, device, dtype_hint=None):
