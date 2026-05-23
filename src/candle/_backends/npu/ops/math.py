@@ -5,8 +5,6 @@ from ._helpers import (
     _scalar_to_npu_tensor,
     _numel, _dtype_itemsize, _use_soc_fallback,
     bool_dtype, int32_dtype, int64_dtype, float_dtype,
-    npu_typed_storage_from_ptr,
-    aclnn, npu_runtime, npu_state,
 )
 
 

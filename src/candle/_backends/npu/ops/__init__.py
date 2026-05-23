@@ -4,8 +4,7 @@ from ._helpers import (
     _npu_linear_index,
     # Re-export commonly used imports so op functions can use them
     bool_dtype, int32_dtype, int64_dtype, float_dtype,
-    npu_typed_storage_from_ptr, reshape,
-    aclnn, npu_runtime, npu_state,
+    npu_typed_storage_from_ptr,
 )
 import ctypes
 
