@@ -20,6 +20,19 @@ except ImportError:
     _fast_special_xlogy_impl = None  # type: ignore[assignment]
     _HAS_FAST_SPECIAL_COMPOSITES = False
 
+try:
+    from candle._C._npu_ops import (  # pylint: disable=import-error,no-name-in-module
+        fast_digamma as _fast_digamma_impl,
+        fast_erfinv as _fast_erfinv_impl,
+        fast_lgamma as _fast_lgamma_impl,
+    )
+    _HAS_FAST_SPECIAL_UNARY = True
+except ImportError:
+    _fast_digamma_impl = None  # type: ignore[assignment]
+    _fast_erfinv_impl = None  # type: ignore[assignment]
+    _fast_lgamma_impl = None  # type: ignore[assignment]
+    _HAS_FAST_SPECIAL_UNARY = False
+
 from ._helpers import (
     _wrap_tensor,
     _scalar_to_npu_tensor,
@@ -37,17 +50,14 @@ from .shape import contiguous, index_select
 
 
 def special_digamma(a):
-    from candle._C._npu_ops import fast_digamma as _fast_digamma_impl  # pylint: disable=import-error,no-name-in-module
     return _fast_digamma_impl(a)
 
 
 def special_erfinv(a):
-    from candle._C._npu_ops import fast_erfinv as _fast_erfinv_impl  # pylint: disable=import-error,no-name-in-module
     return _fast_erfinv_impl(a)
 
 
 def special_gammaln(a):
-    from candle._C._npu_ops import fast_lgamma as _fast_lgamma_impl  # pylint: disable=import-error,no-name-in-module
     return _fast_lgamma_impl(a)
 
 
