@@ -2294,3 +2294,104 @@ def test_npu_linalg_det_registers_det_op_directly_without_alias_wrapper():
         f"`linalg_det_op` still referenced from: {offenders}. Drop all "
         "remaining references."
     )
+
+
+def test_npu_shape_alias_wrappers_register_target_ops_directly():
+    """Audit: three shape wrappers in `_backends/npu/ops/shape.py` were
+    pure-delegation aliases that just forwarded their arguments to an
+    already-registered NPU op of a different name:
+
+      - `broadcast_to_op(a, shape) -> expand(a, shape)`
+      - `concatenate(tensors, dim=0) -> cat(tensors, dim=dim)`
+      - `row_stack(tensors) -> vstack(tensors)`
+
+    Each schema (`broadcast_to`, `concatenate`, `row_stack`) matches the
+    underlying op's schema exactly, so the intermediate names added a
+    hop without changing behavior.
+
+    Registering the dispatch names directly to `expand`, `cat`, and
+    `vstack` removes one indirection per op and drops the aliases from
+    the package `__init__.py` re-export surface.
+    """
+    shape_src = _source("src/candle/_backends/npu/ops/shape.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+
+    # The wrapper definitions must be gone.
+    assert "def broadcast_to_op" not in shape_src, (
+        "`broadcast_to_op` wrapper still defined in `shape.py`. Register "
+        "`broadcast_to` directly with `expand`."
+    )
+    assert "def concatenate" not in shape_src, (
+        "`concatenate` wrapper still defined in `shape.py`. Register "
+        "`concatenate` directly with `cat`."
+    )
+    assert "def row_stack" not in shape_src, (
+        "`row_stack` wrapper still defined in `shape.py`. Register "
+        "`row_stack` directly with `vstack`."
+    )
+
+    # Each dispatch name must register the underlying op directly.
+    assert (
+        'registry.register("broadcast_to", "npu", expand, '
+        "meta=meta_infer.infer_broadcast_to)" in backend_init_src
+    ), (
+        "`broadcast_to` must register `expand` directly, not the removed "
+        "`broadcast_to_op` wrapper."
+    )
+    assert (
+        'registry.register("concatenate", "npu", cat, '
+        "meta=meta_infer.infer_cat)" in backend_init_src
+    ), (
+        "`concatenate` must register `cat` directly, not the removed "
+        "`concatenate` wrapper."
+    )
+    assert (
+        'registry.register("row_stack", "npu", vstack, '
+        "meta=meta_infer.infer_vstack)" in backend_init_src
+    ), (
+        "`row_stack` must register `vstack` directly, not the removed "
+        "`row_stack` wrapper."
+    )
+
+    # Neither `__init__.py` should import or re-export the wrappers.
+    # `broadcast_to_op` is distinctive (no collision with dispatch-name
+    # strings); `concatenate` and `row_stack` collide with the public op
+    # dispatch keys (`"concatenate"`, `"row_stack"`) so they must be
+    # checked using the import-block line pattern instead of a bare
+    # substring match.
+    assert "broadcast_to_op" not in backend_init_src, (
+        "`_backends/npu/__init__.py` still references `broadcast_to_op`."
+    )
+    assert "broadcast_to_op" not in ops_init_src, (
+        "`_backends/npu/ops/__init__.py` still re-exports `broadcast_to_op`."
+    )
+    for name in ("concatenate", "row_stack"):
+        import_line = f"\n    {name},\n"
+        assert import_line not in backend_init_src, (
+            f"`_backends/npu/__init__.py` still imports `{name}` from the "
+            "shape ops module."
+        )
+        assert import_line not in ops_init_src and f" {name}," not in ops_init_src, (
+            f"`_backends/npu/ops/__init__.py` still re-exports `{name}`."
+        )
+
+    # Cross-codebase consumer-scan for `broadcast_to_op` — `_op` suffix is
+    # distinctive enough to bare-word match across the repo. `concatenate`
+    # and `row_stack` collide with the public torch API (`torch.concatenate`,
+    # `torch.row_stack`) used throughout tests/, so they cannot be scanned
+    # by bare-word match; the file-level checks above cover them.
+    consumer_roots = ["src/candle", "tests"]
+    audit_path = Path(__file__).resolve()
+    offenders = []
+    for root in consumer_roots:
+        for path in (_REPO_ROOT / root).rglob("*.py"):
+            if path.resolve() == audit_path:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "broadcast_to_op" in text:
+                offenders.append(str(path.relative_to(_REPO_ROOT)))
+    assert not offenders, (
+        f"`broadcast_to_op` still referenced from: {offenders}. Drop "
+        "all remaining references."
+    )

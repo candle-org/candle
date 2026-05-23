@@ -1806,11 +1806,6 @@ def block_diag(*tensors):
     return out
 
 
-def broadcast_to_op(a, shape):
-    """Tensor.broadcast_to — delegates to expand."""
-    return expand(a, shape)
-
-
 def movedim_op(a, source, destination):
     """torch.movedim — compute permutation then delegate to permute."""
     from ...common import view as view_backend
@@ -2114,10 +2109,6 @@ def cat(tensors, dim=0):
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
-def concatenate(tensors, dim=0):
-    return cat(tensors, dim=dim)
-
-
 def stack(tensors, dim=0):
     """Stack tensors along a new dimension using aclnnStack."""
     if not tensors:
@@ -2318,10 +2309,6 @@ def vstack(tensors):
         expanded = [view_backend.reshape(t, (1, t.shape[0])) for t in tensors]
         return cat(expanded, dim=0)
     return cat(tensors, dim=0)
-
-
-def row_stack(tensors):
-    return vstack(tensors)
 
 
 def dstack(tensors):
