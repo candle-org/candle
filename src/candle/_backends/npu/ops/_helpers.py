@@ -19,11 +19,6 @@ except ImportError:
     _HAS_FAST_OPS = False
 
 
-def _require_native_fast_ops(op_name):
-    if not _HAS_FAST_OPS:
-        raise RuntimeError(f"native NPU hot path unavailable for op {op_name}")
-
-
 def _unwrap_storage(tensor):
     if tensor.storage().device.type != "npu":
         raise ValueError("Expected NPU storage for NPU op")
@@ -334,7 +329,8 @@ def _binary_op_slow(a, b, fn, name):
 
 
 def _binary_op(a, b, fn, name):
-    _require_native_fast_ops(name)
+    if not _HAS_FAST_OPS:
+        raise RuntimeError(f"native NPU hot path unavailable for op {name}")
     return _fast_binary_op(a, b, fn, name)
 
 

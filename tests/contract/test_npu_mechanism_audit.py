@@ -1874,3 +1874,55 @@ def test_npu_special_module_consolidates_fast_helper_try_blocks():
         "module matches `math.py`, `comparison.py`, `activation.py`, and "
         "the rest of the ops package."
     )
+
+
+def test_npu_binary_op_inlines_native_fast_ops_guard():
+    """`_helpers.py::_require_native_fast_ops` is a 3-line wrapper used
+    exactly once — by `_binary_op` immediately before calling
+    `_fast_binary_op`. The indirection adds no value: the helper just
+    raises a `RuntimeError` when `_HAS_FAST_OPS` is false, which
+    `_binary_op` could check inline at the same call site.
+
+    Inline the guard into `_binary_op` and delete the helper, so the
+    runtime check is co-located with the only call site that uses it.
+    Also drop any cross-codebase consumers — there should be none, but
+    the audit should verify that claim instead of trusting inspection
+    of `_helpers.py` alone.
+    """
+    helpers_src = _source("src/candle/_backends/npu/ops/_helpers.py")
+
+    # The helper definition should be gone.
+    assert "def _require_native_fast_ops(" not in helpers_src, (
+        "`_helpers.py` still defines `_require_native_fast_ops`; inline "
+        "the `if not _HAS_FAST_OPS:` check into `_binary_op` and drop "
+        "the helper."
+    )
+
+    # `_binary_op` body must inline the `_HAS_FAST_OPS` guard.
+    binary_src = _function_source(helpers_src, "_binary_op")
+    assert "_HAS_FAST_OPS" in binary_src, (
+        "`_binary_op` no longer guards the call to `_fast_binary_op` with "
+        "an inline `_HAS_FAST_OPS` check after dropping the helper — the "
+        "runtime safety guard must remain in place."
+    )
+    assert "_require_native_fast_ops" not in binary_src, (
+        "`_binary_op` still calls the helper `_require_native_fast_ops`; "
+        "inline the check instead."
+    )
+
+    # No other module in src/ or tests/ should reference the helper.
+    consumer_roots = ["src/candle", "tests"]
+    offenders = []
+    pattern = re.compile(r"\b_require_native_fast_ops\b")
+    audit_path = Path(__file__).resolve()
+    for root in consumer_roots:
+        for path in (_REPO_ROOT / root).rglob("*.py"):
+            if path.resolve() == audit_path:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if pattern.search(text):
+                offenders.append(str(path.relative_to(_REPO_ROOT)))
+    assert not offenders, (
+        f"`_require_native_fast_ops` still referenced from: {offenders}. "
+        "Remove all consumers before dropping the helper definition."
+    )
