@@ -851,6 +851,7 @@ def test_npu_ops_modules_do_not_import_unused_binary_op_helper():
         "src/candle/_backends/npu/ops/conv.py",
         "src/candle/_backends/npu/ops/elementwise.py",
         "src/candle/_backends/npu/ops/linalg.py",
+        "src/candle/_backends/npu/ops/math.py",
         "src/candle/_backends/npu/ops/norm.py",
         "src/candle/_backends/npu/ops/optim.py",
         "src/candle/_backends/npu/ops/random.py",
@@ -1246,6 +1247,19 @@ def test_npu_ops_modules_do_not_import_unused_backend_infrastructure():
     assert not offenders, (
         "These NPU ops modules still reference unused backend infrastructure — "
         "drop the unused imports:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_npu_ops_package_init_does_not_import_unused_ctypes():
+    """`src/candle/_backends/npu/ops/__init__.py` carries a bare
+    `import ctypes` from older code paths that have all moved to the
+    Cython helpers. Nothing in the file references `ctypes.*` anymore —
+    drop the dead import so the package surface stays honest.
+    """
+    src = _source("src/candle/_backends/npu/ops/__init__.py")
+    assert not re.search(r"\bctypes\b", src), (
+        "src/candle/_backends/npu/ops/__init__.py still references `ctypes` "
+        "but never calls it — drop the dead `import ctypes`."
     )
 
 
