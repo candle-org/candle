@@ -775,11 +775,6 @@ def linalg_cond_op(a, p=None):
     return mul(a_norm, a_inv_norm)
 
 
-def linalg_det_op(a):
-    """Determinant — delegate to existing det_op (QR-based)."""
-    return det_op(a)
-
-
 def linalg_slogdet_op(a):
     """Sign and log absolute value of determinant via QR."""
     from collections import namedtuple

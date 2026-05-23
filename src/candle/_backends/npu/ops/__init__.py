@@ -74,7 +74,7 @@ from .linalg import (
     linalg_qr, linalg_inv, linalg_vector_norm_op,
     linalg_norm_op, linalg_matrix_norm_op,
     linalg_multi_dot_op, linalg_matrix_power_op, linalg_vander_op,
-    linalg_cholesky_op, linalg_cond_op, linalg_det_op, linalg_slogdet_op,
+    linalg_cholesky_op, linalg_cond_op, linalg_slogdet_op,
     linalg_eig_op, linalg_eigh_op, linalg_eigvals_op, linalg_eigvalsh_op,
     linalg_householder_product_op, linalg_lstsq_op,
     linalg_lu_op, linalg_lu_factor_op, linalg_lu_solve_op,

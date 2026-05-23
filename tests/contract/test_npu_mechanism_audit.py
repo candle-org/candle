@@ -2239,3 +2239,58 @@ def test_npu_mm_and_bmm_register_matmul_directly_without_alias_wrappers():
         f"`mm_op` / `bmm_op` still referenced from: {offenders}. Drop "
         "all remaining references."
     )
+
+
+def test_npu_linalg_det_registers_det_op_directly_without_alias_wrapper():
+    """Audit: `linalg_det_op` in `_backends/npu/ops/linalg.py` was a
+    3-line pure-delegation wrapper that just returned `det_op(a)`.
+    The `linalg_det` schema `(Tensor input) -> Tensor` matches `det_op`'s
+    signature exactly, so the intermediate name added a hop without
+    changing behavior.
+
+    Registering `linalg_det` directly to `det_op` removes one indirection
+    and drops `linalg_det_op` from the package `__init__.py` re-export
+    surface.
+    """
+    linalg_src = _source("src/candle/_backends/npu/ops/linalg.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+
+    # The wrapper definition must be gone.
+    assert "def linalg_det_op" not in linalg_src, (
+        "`linalg_det_op` wrapper still defined in `linalg.py`. Register "
+        "`linalg_det` directly with `det_op`."
+    )
+
+    # `linalg_det` must register `det_op` directly.
+    assert (
+        'registry.register("linalg_det", "npu", det_op)' in backend_init_src
+    ), (
+        "`linalg_det` must register `det_op` directly, not the removed "
+        "`linalg_det_op` wrapper."
+    )
+
+    # Neither `__init__.py` should import or re-export the wrapper.
+    assert "linalg_det_op" not in backend_init_src, (
+        "`_backends/npu/__init__.py` still references `linalg_det_op`."
+    )
+    assert "linalg_det_op" not in ops_init_src, (
+        "`_backends/npu/ops/__init__.py` still re-exports `linalg_det_op`."
+    )
+
+    # Cross-codebase consumer-scan: nothing else in `src/candle/` or
+    # `tests/` should reference the removed wrapper.
+    consumer_roots = ["src/candle", "tests"]
+    audit_path = Path(__file__).resolve()
+    offenders = []
+    for root in consumer_roots:
+        for path in (_REPO_ROOT / root).rglob("*.py"):
+            if path.resolve() == audit_path:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if "linalg_det_op" in text:
+                offenders.append(str(path.relative_to(_REPO_ROOT)))
+    assert not offenders, (
+        f"`linalg_det_op` still referenced from: {offenders}. Drop all "
+        "remaining references."
+    )
