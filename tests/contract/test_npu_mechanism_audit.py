@@ -1334,6 +1334,47 @@ def test_npu_ops_modules_do_not_import_unused_int32_dtype():
     )
 
 
+def test_npu_ops_modules_do_not_import_unused_numel_or_arange_helpers():
+    """The `_numel` and `_npu_arange_1d` helpers are re-exported from
+    `_helpers` but only some ops modules use them. The rest list them
+    in `from ._helpers import (...)` blocks without ever calling them
+    — drop the dead listings so the helper surface stays honest.
+    """
+    cases = (
+        (
+            "_numel",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/elementwise.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+        (
+            "_npu_arange_1d",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/conv.py",
+                "src/candle/_backends/npu/ops/elementwise.py",
+                "src/candle/_backends/npu/ops/norm.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+    )
+    offenders = []
+    for name, consumer_modules in cases:
+        for path in consumer_modules:
+            src = _source(path)
+            if re.search(rf"\b{name}\b", src):
+                offenders.append(f"{path}: {name}")
+    assert not offenders, (
+        "These NPU ops modules still reference unused helpers — "
+        "drop the unused imports:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
