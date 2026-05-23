@@ -1375,6 +1375,55 @@ def test_npu_ops_modules_do_not_import_unused_numel_or_arange_helpers():
     )
 
 
+def test_npu_ops_modules_do_not_import_unused_tensor_plumbing_helpers():
+    """`_dtype_itemsize`, `_wrap_tensor`, and `_unwrap_storage` are core
+    tensor-plumbing helpers re-exported from `_helpers`. Several ops modules
+    list them in `from ._helpers import (...)` blocks without ever calling
+    them — drop the dead listings so the helper surface stays honest.
+
+    The package `__init__.py` re-export is excluded because `_backends/autograd.py`
+    consumes these helpers via `from .npu.ops import ...`.
+    """
+    cases = (
+        (
+            "_dtype_itemsize",
+            (
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+        (
+            "_wrap_tensor",
+            (
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/optim.py",
+            ),
+        ),
+        (
+            "_unwrap_storage",
+            (
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+    )
+    offenders = []
+    for name, consumer_modules in cases:
+        for path in consumer_modules:
+            src = _source(path)
+            if re.search(rf"\b{name}\b", src):
+                offenders.append(f"{path}: {name}")
+    assert not offenders, (
+        "These NPU ops modules still reference unused tensor-plumbing helpers — "
+        "drop the unused imports:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
