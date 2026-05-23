@@ -131,7 +131,7 @@ from ._helpers import (
     _scalar_to_npu_tensor,
     _npu_arange_1d,
     _cast_tensor_dtype,
-    bool_dtype, int32_dtype, int64_dtype, float_dtype,
+    bool_dtype, int64_dtype, float_dtype,
     reshape,
 )
 from .comparison import gt, lt
