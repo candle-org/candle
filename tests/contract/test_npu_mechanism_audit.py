@@ -1926,3 +1926,55 @@ def test_npu_binary_op_inlines_native_fast_ops_guard():
         f"`_require_native_fast_ops` still referenced from: {offenders}. "
         "Remove all consumers before dropping the helper definition."
     )
+
+
+def test_npu_helpers_imports_reshape_directly_without_view_backend_alias():
+    """`_helpers.py` carries two adjacent lines whose only purpose is to
+    expose `reshape` as a public name for re-export to consumer modules:
+
+        from ...common import view as view_backend
+        reshape = view_backend.reshape
+
+    Inside `_helpers.py`, `view_backend` is never referenced anywhere
+    else — it exists solely to define the `reshape` alias on the next
+    line. No consumer module imports `view_backend` from `_helpers`
+    either; the few NPU files that need `view_backend.permute` etc.
+    import `view as view_backend` directly from `..._backends.common`
+    in their own function bodies.
+
+    Collapse the two lines into a single direct import:
+
+        from ...common.view import reshape
+
+    so `_helpers.py` does not carry an unused module-level alias.
+    """
+    helpers_src = _source("src/candle/_backends/npu/ops/_helpers.py")
+
+    # The module-level alias setup line must be gone.
+    assert "view as view_backend" not in helpers_src, (
+        "`_helpers.py` still imports `view as view_backend` at module "
+        "level. The alias has no other use in this file — collapse to "
+        "`from ...common.view import reshape`."
+    )
+    assert "reshape = view_backend.reshape" not in helpers_src, (
+        "`_helpers.py` still defines `reshape = view_backend.reshape`. "
+        "Replace with a direct `from ...common.view import reshape` to "
+        "drop the indirection through `view_backend`."
+    )
+
+    # The direct import must be present (so re-export of `reshape`
+    # continues to work for consumer modules).
+    assert "from ...common.view import reshape" in helpers_src, (
+        "`_helpers.py` must import `reshape` directly from "
+        "`...common.view` so its existing re-exports (activation.py / "
+        "random.py / special.py) keep working."
+    )
+
+    # No `view_backend` name at module-level scope of `_helpers.py`.
+    for line in helpers_src.splitlines():
+        if line.startswith((" ", "\t", "#")) or not line.strip():
+            continue
+        assert "view_backend" not in line, (
+            f"`_helpers.py` still references `view_backend` at module "
+            f"level: {line!r}. The alias should be dropped entirely."
+        )

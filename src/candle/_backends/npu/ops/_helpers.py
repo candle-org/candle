@@ -5,8 +5,7 @@ from ...._dtype import int32 as int32_dtype
 from ...._dtype import int64 as int64_dtype
 from ...._dtype import float32 as float_dtype
 from ...._C import npu_typed_storage_from_ptr
-from ...common import view as view_backend
-reshape = view_backend.reshape
+from ...common.view import reshape
 from .. import aclnn
 from .. import runtime as npu_runtime
 from .. import state as npu_state
