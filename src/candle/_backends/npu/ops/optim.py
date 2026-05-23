@@ -30,12 +30,6 @@ def _adam_step_op(param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq,
     raise RuntimeError("Cython NPU adam_step implementation is unavailable")
 
 
-def _adamw_step_op(param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq,
-                   step, lr, beta1, beta2, eps, weight_decay, amsgrad, maximize):
-    return _adam_step_op(param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq,
-                         step, lr, beta1, beta2, eps, weight_decay, amsgrad, maximize)
-
-
 # ===========================================================================
 # Phase 2: Activation function composites
 # ===========================================================================
