@@ -28,7 +28,7 @@ from ._helpers import (
     _cast_tensor_dtype,
     _normalize_dim,
     bool_dtype, int32_dtype, int64_dtype, float_dtype,
-    npu_typed_storage_from_ptr, reshape,
+    npu_typed_storage_from_ptr,
     aclnn, npu_runtime, npu_state,
 )
 
