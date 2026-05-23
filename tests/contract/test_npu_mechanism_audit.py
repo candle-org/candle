@@ -1516,6 +1516,21 @@ def test_npu_ops_modules_do_not_carry_dead_cross_module_imports():
     )
 
 
+def test_npu_shape_does_not_duplicate_storage_meta_helper():
+    """`shape.py` defined its own `_npu_storage_meta` whose body is byte-identical
+    to `_storage_meta` in `_helpers.py`. Both pull through `_unwrap_storage` and
+    `_dtype_itemsize` and return `(data_ptr, offset, (storage_numel,))`. Drop the
+    shape-local copy and route through the shared helper so there is one source
+    of truth for storage metadata extraction.
+    """
+    shape_src = _source("src/candle/_backends/npu/ops/shape.py")
+    assert "_npu_storage_meta" not in shape_src, (
+        "src/candle/_backends/npu/ops/shape.py still defines or calls "
+        "`_npu_storage_meta` — replace with `_storage_meta` from `._helpers` "
+        "so the duplicate function body is removed."
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
