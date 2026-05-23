@@ -6,7 +6,7 @@ from ._helpers import (
     _npu_arange_1d,
     _npu_add_scalar_,
     _cast_tensor_dtype,
-    bool_dtype, int64_dtype, float_dtype,
+    float_dtype,
     npu_typed_storage_from_ptr, reshape,
     aclnn, npu_runtime, npu_state,
 )

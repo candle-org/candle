@@ -1424,6 +1424,65 @@ def test_npu_ops_modules_do_not_import_unused_tensor_plumbing_helpers():
     )
 
 
+def test_npu_ops_modules_do_not_import_unused_dtype_constants():
+    """`bool_dtype`, `int64_dtype`, and `float_dtype` are re-exported from
+    `_helpers` for code that needs the candle dtype singletons. Several ops
+    modules — and the package `__init__.py` re-export itself — list them
+    without ever using them. No external code in `src/` or `tests/` consumes
+    these via `from .npu.ops import` or `npu_ops.X` either, so the
+    `__init__.py` re-export is also dead.
+
+    Drop the unused listings so the dtype surface stays honest.
+    """
+    cases = (
+        (
+            "bool_dtype",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/conv.py",
+                "src/candle/_backends/npu/ops/linalg.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/norm.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/random.py",
+                "src/candle/_backends/npu/ops/special.py",
+            ),
+        ),
+        (
+            "int64_dtype",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/activation.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/norm.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/random.py",
+            ),
+        ),
+        (
+            "float_dtype",
+            (
+                "src/candle/_backends/npu/ops/__init__.py",
+                "src/candle/_backends/npu/ops/conv.py",
+                "src/candle/_backends/npu/ops/math.py",
+                "src/candle/_backends/npu/ops/norm.py",
+                "src/candle/_backends/npu/ops/optim.py",
+                "src/candle/_backends/npu/ops/shape.py",
+            ),
+        ),
+    )
+    offenders = []
+    for name, consumer_modules in cases:
+        for path in consumer_modules:
+            src = _source(path)
+            if re.search(rf"\b{name}\b", src):
+                offenders.append(f"{path}: {name}")
+    assert not offenders, (
+        "These NPU ops modules still reference unused dtype constants — "
+        "drop the unused imports:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
