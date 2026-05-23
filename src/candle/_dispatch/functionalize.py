@@ -167,6 +167,7 @@ def _writeback(target, result, op_name=None):
     if target.device.type == "npu":
         from .._backends.npu import runtime as npu_runtime
         from .._backends.npu import ops as npu_ops
+        from .._backends.npu.ops._helpers import _npu_linear_index
 
         base = target._base if target._base is not None else target
         if _is_contiguous_view(target):
@@ -186,7 +187,7 @@ def _writeback(target, result, op_name=None):
                 raise RuntimeError("functionalize writeback shape mismatch")
             base_flat = base.reshape((base.numel(),))
             values = result.reshape((result.numel(),))
-            linear = npu_ops._npu_linear_index(target.shape, target.stride, target.offset, target.device)
+            linear = _npu_linear_index(target.shape, target.stride, target.offset, target.device)
             linear = linear.reshape((linear.numel(),))
             npu_ops.scatter_(base_flat, 0, linear, values)
         if target._view_meta is None:

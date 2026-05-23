@@ -1,5 +1,3 @@
-from ._helpers import _npu_linear_index
-
 from .math import (
     add, sub, mul, div,
     add_, sub_, mul_, div_,
