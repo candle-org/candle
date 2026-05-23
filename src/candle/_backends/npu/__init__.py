@@ -303,8 +303,6 @@ from .ops import (
     special_gammaln,
     special_sinc,
     linalg_inv,
-    mm_op,
-    bmm_op,
     linalg_vector_norm_op,
     aminmax_aclnn,
     bincount_aclnn,
@@ -751,8 +749,8 @@ registry.register("matrix_power", "npu", matrix_power_op, meta=meta_infer.infer_
 registry.register("col2im", "npu", col2im_op)
 
 # Phase 1: ACLNN large kernel ops (910B confirmed working)
-registry.register("mm", "npu", mm_op, meta=meta_infer.infer_matmul)
-registry.register("bmm", "npu", bmm_op, meta=meta_infer.infer_matmul)
+registry.register("mm", "npu", matmul, meta=meta_infer.infer_matmul)
+registry.register("bmm", "npu", matmul, meta=meta_infer.infer_matmul)
 registry.register("special_digamma", "npu", special_digamma, meta=meta_infer.infer_unary)
 registry.register("special_erfinv", "npu", special_erfinv, meta=meta_infer.infer_unary)
 registry.register("special_gammaln", "npu", special_gammaln, meta=meta_infer.infer_unary)

@@ -282,14 +282,6 @@ def outer(a, b):
     return _wrap_tensor(storage, out_shape, out_stride)
 
 
-def mm_op(a, b):
-    return matmul(a, b)
-
-
-def bmm_op(a, b):
-    return matmul(a, b)
-
-
 def addmm(input, mat1, mat2, beta=1, alpha=1):
     runtime = npu_runtime.get_runtime((input.device.index or 0))
     stream = npu_state.current_stream((input.device.index or 0))
