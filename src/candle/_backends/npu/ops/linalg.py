@@ -8,7 +8,7 @@ from ._helpers import (
     _cast_tensor_dtype,
     _matmul_out_shape,
     _iter_indices, _broadcast_index, _batch_offset,
-    bool_dtype, int32_dtype, int64_dtype, float_dtype,
+    bool_dtype, int64_dtype, float_dtype,
     npu_typed_storage_from_ptr, reshape,
     aclnn, npu_runtime, npu_state,
 )

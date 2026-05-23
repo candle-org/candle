@@ -1303,6 +1303,37 @@ def test_npu_reduce_does_not_import_unused_reshape_alias():
     )
 
 
+def test_npu_ops_modules_do_not_import_unused_int32_dtype():
+    """`int32_dtype` is re-exported by `_helpers` so reduce ops (which
+    legitimately use it 13 times) can pick it up. Every other ops
+    module lists it in the `from ._helpers import (...)` block but
+    never references it — drop the dead listings so the import surface
+    stays in sync with what is used.
+    """
+    consumer_modules = (
+        "src/candle/_backends/npu/ops/__init__.py",
+        "src/candle/_backends/npu/ops/activation.py",
+        "src/candle/_backends/npu/ops/conv.py",
+        "src/candle/_backends/npu/ops/elementwise.py",
+        "src/candle/_backends/npu/ops/linalg.py",
+        "src/candle/_backends/npu/ops/math.py",
+        "src/candle/_backends/npu/ops/norm.py",
+        "src/candle/_backends/npu/ops/optim.py",
+        "src/candle/_backends/npu/ops/random.py",
+        "src/candle/_backends/npu/ops/shape.py",
+        "src/candle/_backends/npu/ops/special.py",
+    )
+    offenders = []
+    for path in consumer_modules:
+        src = _source(path)
+        if re.search(r"\bint32_dtype\b", src):
+            offenders.append(path)
+    assert not offenders, (
+        "These NPU ops modules still reference `int32_dtype` but never "
+        "use it — drop the unused import:\n  " + "\n  ".join(offenders)
+    )
+
+
 def test_npu_std_sqrt_delegates_through_cython_sqrt_shim():
     reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
     body = _function_source(reduce_src, "std_")
