@@ -1,9 +1,8 @@
 """Optimizer step operations for NPU."""
 from ._helpers import (
     _unwrap_storage, _wrap_tensor,
-    _numel, _dtype_itemsize,
+    _dtype_itemsize,
     _scalar_to_npu_tensor,
-    _npu_arange_1d,
     bool_dtype, int64_dtype, float_dtype,
 )
 from .comparison import gt, lt
