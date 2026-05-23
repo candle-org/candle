@@ -1848,3 +1848,29 @@ def test_npu_linalg_module_has_no_dead_cross_module_imports():
                     f"`{name}` from `.shape`, but no function body calls it — "
                     "drop the dead import."
                 )
+
+
+def test_npu_special_module_consolidates_fast_helper_try_blocks():
+    """`special.py` carries 2 top-level `try/except ImportError` blocks
+    that import distinct `fast_*` helpers from `candle._C._npu_ops` —
+    one for `_HAS_FAST_SPECIAL_COMPOSITES` (sinc / xlogy / ndtr etc.)
+    and one for `_HAS_FAST_SPECIAL_UNARY` (digamma / erfinv / lgamma).
+    The two blocks load from the same Cython module, so they either
+    both succeed or both fail at import time; splitting them adds an
+    extra `ImportError` check without changing runtime semantics.
+
+    Merge them into one consolidated block — matching the pattern in
+    `math.py`, `comparison.py`, `activation.py`, and the rest of the
+    ops package — so the module pays a single ImportError check.
+    """
+    special_src = _source("src/candle/_backends/npu/ops/special.py")
+    try_count = len(
+        [line for line in special_src.splitlines() if line.startswith("try:")]
+    )
+    assert try_count <= 1, (
+        "`src/candle/_backends/npu/ops/special.py` still has "
+        f"{try_count} top-level `try:` blocks for importing `fast_*` "
+        "helpers. Consolidate them into a single try/except block so the "
+        "module matches `math.py`, `comparison.py`, `activation.py`, and "
+        "the rest of the ops package."
+    )

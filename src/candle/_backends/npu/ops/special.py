@@ -8,8 +8,12 @@ try:
         fast_special_sinc as _fast_special_sinc_impl,
         fast_special_xlog1py as _fast_special_xlog1py_impl,
         fast_special_xlogy as _fast_special_xlogy_impl,
+        fast_digamma as _fast_digamma_impl,
+        fast_erfinv as _fast_erfinv_impl,
+        fast_lgamma as _fast_lgamma_impl,
     )
     _HAS_FAST_SPECIAL_COMPOSITES = True
+    _HAS_FAST_SPECIAL_UNARY = True
 except ImportError:
     _fast_special_erfcx_impl = None  # type: ignore[assignment]
     _fast_special_log_ndtr_impl = None  # type: ignore[assignment]
@@ -18,19 +22,10 @@ except ImportError:
     _fast_special_sinc_impl = None  # type: ignore[assignment]
     _fast_special_xlog1py_impl = None  # type: ignore[assignment]
     _fast_special_xlogy_impl = None  # type: ignore[assignment]
-    _HAS_FAST_SPECIAL_COMPOSITES = False
-
-try:
-    from candle._C._npu_ops import (  # pylint: disable=import-error,no-name-in-module
-        fast_digamma as _fast_digamma_impl,
-        fast_erfinv as _fast_erfinv_impl,
-        fast_lgamma as _fast_lgamma_impl,
-    )
-    _HAS_FAST_SPECIAL_UNARY = True
-except ImportError:
     _fast_digamma_impl = None  # type: ignore[assignment]
     _fast_erfinv_impl = None  # type: ignore[assignment]
     _fast_lgamma_impl = None  # type: ignore[assignment]
+    _HAS_FAST_SPECIAL_COMPOSITES = False
     _HAS_FAST_SPECIAL_UNARY = False
 
 from ._helpers import (
