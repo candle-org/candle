@@ -1081,11 +1081,10 @@ def test_npu_helpers_no_unused_nan_like_helper():
 
 
 def test_npu_ops_modules_do_not_import_unused_npu_linear_index_helper():
-    """`_npu_linear_index` is only called from `_dispatch/functionalize.py`
-    via `npu_ops._npu_linear_index`, so it stays exported from
-    `_backends/npu/ops/__init__.py`. Other ops modules should not list it
-    in their `_helpers` import block — the unused name just clutters the
-    import surface.
+    """`_npu_linear_index` is only called from `_dispatch/functionalize.py`,
+    which imports it directly from `_helpers`. Other ops modules should
+    not list it in their `_helpers` import block — the unused name just
+    clutters the import surface.
     """
     consumer_modules = (
         "src/candle/_backends/npu/ops/activation.py",
@@ -1532,15 +1531,14 @@ def test_npu_shape_does_not_duplicate_storage_meta_helper():
 
 
 def test_npu_ops_package_init_does_not_reexport_storage_plumbing_helpers():
-    """`npu/ops/__init__.py` re-exports a small set of private plumbing
-    helpers from `_helpers.py` (and `npu_typed_storage_from_ptr` from the
-    Cython storage module). Four of those re-exports are unused outside the
-    `npu/ops/` package — no source in `src/` or `tests/` imports them via
+    """`npu/ops/__init__.py` historically re-exported a small set of
+    private plumbing helpers from `_helpers.py` (and
+    `npu_typed_storage_from_ptr` from the Cython storage module).
+    None of those re-exports are used outside the `npu/ops/` package —
+    no source in `src/` or `tests/` imports them via
     `from candle._backends.npu.ops import ...` nor accesses them as
-    `npu_ops._unwrap_storage` etc. Drop the dead re-exports so the package's
-    public surface reflects only what consumers actually need (only
-    `_npu_linear_index` survives, since `_dispatch/functionalize.py` uses
-    `npu_ops._npu_linear_index`).
+    `npu_ops._unwrap_storage` etc. Drop every dead re-export so the
+    package's public surface reflects only what consumers actually need.
     """
     init_src = _source("src/candle/_backends/npu/ops/__init__.py")
     forbidden = [
@@ -1978,3 +1976,91 @@ def test_npu_helpers_imports_reshape_directly_without_view_backend_alias():
             f"`_helpers.py` still references `view_backend` at module "
             f"level: {line!r}. The alias should be dropped entirely."
         )
+
+
+def test_npu_linear_index_routed_directly_in_functionalize_not_via_ops_package():
+    """`_npu_linear_index` is a private helper that lives in
+    `_backends/npu/ops/_helpers.py`. Its only consumer is
+    `_dispatch/functionalize.py`, which historically accessed it via the
+    `npu_ops` package namespace because `_backends/npu/ops/__init__.py`
+    re-exports it at its very first line:
+
+        from ._helpers import _npu_linear_index
+
+    Re-exporting a private `_*` helper through the package's public
+    namespace is the same kind of API-surface leak that batch 64 cleaned
+    up for the other `_helpers` plumbing helpers. The sole call site can
+    import the helper directly from `_helpers`:
+
+        from .._backends.npu.ops._helpers import _npu_linear_index
+        linear = _npu_linear_index(...)
+
+    so the package's `__init__.py` no longer needs to expose a private
+    name.
+    """
+    init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+    func_src = _source("src/candle/_dispatch/functionalize.py")
+
+    # Package __init__.py must not re-export the private helper any more.
+    assert "from ._helpers import _npu_linear_index" not in init_src, (
+        "`src/candle/_backends/npu/ops/__init__.py` still re-exports "
+        "`_npu_linear_index` from `_helpers`. Drop the re-export and "
+        "have `_dispatch/functionalize.py` import the helper directly "
+        "from `_helpers`."
+    )
+    assert "_npu_linear_index" not in init_src, (
+        "`src/candle/_backends/npu/ops/__init__.py` still mentions "
+        "`_npu_linear_index`; the private helper should not be on the "
+        "package's public surface at all."
+    )
+
+    # functionalize.py must call the helper directly, not via the
+    # package namespace.
+    assert "npu_ops._npu_linear_index" not in func_src, (
+        "`_dispatch/functionalize.py` still accesses `_npu_linear_index` "
+        "via the `npu_ops` package namespace. Import it directly from "
+        "`_backends.npu.ops._helpers` and call it locally."
+    )
+    assert (
+        "from .._backends.npu.ops._helpers import _npu_linear_index"
+        in func_src
+    ), (
+        "`_dispatch/functionalize.py` must import `_npu_linear_index` "
+        "directly from `_helpers` so the package `__init__.py` no "
+        "longer needs to re-export the private helper."
+    )
+
+    # Cross-codebase consumer-scan: nothing else should reach the
+    # helper via the `npu_ops` namespace, and the only direct importer
+    # outside `_helpers.py` itself should be `_dispatch/functionalize.py`.
+    consumer_roots = ["src/candle", "tests"]
+    namespace_offenders = []
+    direct_consumers = []
+    namespace_pat = re.compile(r"\bnpu_ops\._npu_linear_index\b")
+    direct_pat = re.compile(
+        r"from\s+[\w.]*\._helpers\s+import\s+[^\n]*\b_npu_linear_index\b"
+    )
+    audit_path = Path(__file__).resolve()
+    helpers_path = (
+        _REPO_ROOT / "src/candle/_backends/npu/ops/_helpers.py"
+    ).resolve()
+    for root in consumer_roots:
+        for path in (_REPO_ROOT / root).rglob("*.py"):
+            resolved = path.resolve()
+            if resolved == audit_path or resolved == helpers_path:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if namespace_pat.search(text):
+                namespace_offenders.append(str(path.relative_to(_REPO_ROOT)))
+            if direct_pat.search(text):
+                direct_consumers.append(str(path.relative_to(_REPO_ROOT)))
+    assert not namespace_offenders, (
+        f"`npu_ops._npu_linear_index` still referenced from: "
+        f"{namespace_offenders}. Route all consumers through the direct "
+        "`_helpers` import."
+    )
+    assert direct_consumers == ["src/candle/_dispatch/functionalize.py"], (
+        f"Unexpected direct importers of `_npu_linear_index` from "
+        f"`_helpers`: {direct_consumers}. Only `_dispatch/functionalize.py` "
+        "should import it directly."
+    )
