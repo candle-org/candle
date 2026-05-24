@@ -2426,3 +2426,55 @@ def test_npu_erfinv_inplace_collapses_def_wrapper_to_cython_alias():
         "via a module-level alias so the registration import surface in "
         "`_backends/npu/__init__.py` continues to work."
     )
+
+
+def test_npu_operator_intake_tranche1_registers_required_ops():
+    """The first NPU operator intake tranche intentionally exposes only
+    existing implementations: common view metadata ops and native constant pad.
+    """
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+
+    expected = {
+        "view_as_real": "view_backend.view_as_real",
+        "view_as_complex": "view_backend.view_as_complex",
+        "constant_pad_nd": "constant_pad_nd",
+    }
+    for op_name, target in expected.items():
+        needle = f'registry.register("{op_name}", "npu", {target}'
+        assert needle in backend_init_src, (
+            f"NPU backend must register `{op_name}` directly to `{target}` "
+            "as part of operator intake tranche 1."
+        )
+
+
+def test_npu_view_as_ops_route_through_common_view_backend():
+    """`view_as_real` and `view_as_complex` are metadata/storage
+    reinterpretation ops. NPU should reuse the common view backend rather than
+    adding a device copy path or backend-specific wrapper.
+    """
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+
+    assert 'registry.register("view_as_real", "npu", view_backend.view_as_real' in backend_init_src
+    assert 'registry.register("view_as_complex", "npu", view_backend.view_as_complex' in backend_init_src
+    assert 'registry.register("view_as_real", "npu", convert_backend' not in backend_init_src
+    assert 'registry.register("view_as_complex", "npu", convert_backend' not in backend_init_src
+
+
+def test_npu_constant_pad_nd_routes_to_existing_constant_pad_path():
+    """`constant_pad_nd` should be a schema-compatible adapter over the
+    existing NPU `pad` implementation, whose constant branch calls
+    `aclnn.constant_pad_nd`.
+    """
+    conv_src = _source("src/candle/_backends/npu/ops/conv.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+
+    body = _function_source(conv_src, "constant_pad_nd")
+    assert "return pad(input, pad, mode='constant', value=value)" in body or (
+        'return pad(input, pad, mode="constant", value=value)' in body
+    ), "`constant_pad_nd` must delegate to the existing NPU constant pad path."
+    assert "aclnn.constant_pad_nd(" in _function_source(conv_src, "pad"), (
+        "NPU `pad` constant branch must remain backed by aclnn.constant_pad_nd."
+    )
+    assert "constant_pad_nd" in ops_init_src, "NPU ops package must export `constant_pad_nd`."
+    assert 'registry.register("constant_pad_nd", "npu", constant_pad_nd' in backend_init_src
