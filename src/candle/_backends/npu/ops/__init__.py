@@ -2,7 +2,7 @@ from .math import (
     add, sub, mul, div,
     add_, sub_, mul_, div_,
     neg_, exp_, log_, tan_, floor_, ceil_,
-    sin_, cos_,
+    sin_, cos_, sqrt_, sigmoid_, tanh_,
     abs, neg, sign, signbit, square,
     isfinite, isinf, isnan, isposinf, isneginf,
     exp, log, sqrt, rsqrt, sin, cos, tan, tanh, sigmoid,

@@ -100,6 +100,9 @@ from .ops import (
     ceil_,
     sin_,
     cos_,
+    sqrt_,
+    sigmoid_,
+    tanh_,
     contiguous,
     getitem,
     setitem,
@@ -525,6 +528,9 @@ registry.register("floor_", "npu", floor_, meta=meta_infer.infer_unary)
 registry.register("ceil_", "npu", ceil_, meta=meta_infer.infer_unary)
 registry.register("sin_", "npu", sin_, meta=meta_infer.infer_unary)
 registry.register("cos_", "npu", cos_, meta=meta_infer.infer_unary)
+registry.register("sqrt_", "npu", sqrt_, meta=meta_infer.infer_unary)
+registry.register("sigmoid_", "npu", sigmoid_, meta=meta_infer.infer_unary)
+registry.register("tanh_", "npu", tanh_, meta=meta_infer.infer_unary)
 registry.register("sub_", "npu", sub_, meta=meta_infer.infer_binary)
 registry.register("sub", "npu", sub, meta=meta_infer.infer_binary)
 registry.register("div", "npu", div, meta=meta_infer.infer_binary)
