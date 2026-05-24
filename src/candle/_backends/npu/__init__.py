@@ -184,6 +184,7 @@ from .ops import (
     masked_select,
     dropout,
     pad,
+    constant_pad_nd,
     pad_sequence,
     linalg_qr,
     narrow,
@@ -554,6 +555,8 @@ registry.register("gt", "npu", gt, meta=meta_infer.infer_binary_bool)
 registry.register("ge", "npu", ge, meta=meta_infer.infer_binary_bool)
 registry.register("reshape", "npu", view_backend.reshape, meta=meta_infer.infer_view)
 registry.register("view", "npu", view_backend.view, meta=meta_infer.infer_view)
+registry.register("view_as_real", "npu", view_backend.view_as_real, meta=meta_infer.infer_view)
+registry.register("view_as_complex", "npu", view_backend.view_as_complex, meta=meta_infer.infer_view)
 registry.register("transpose", "npu", view_backend.transpose, meta=meta_infer.infer_transpose)
 registry.register("squeeze", "npu", view_backend.squeeze, meta=meta_infer.infer_view)
 registry.register("unsqueeze", "npu", view_backend.unsqueeze, meta=meta_infer.infer_view)
@@ -606,6 +609,7 @@ registry.register("take", "npu", take, meta=meta_infer.infer_take)
 registry.register("take_along_dim", "npu", take_along_dim, meta=meta_infer.infer_take_along_dim)
 registry.register("masked_select", "npu", masked_select, meta=meta_infer.infer_masked_select)
 registry.register("pad", "npu", pad, meta=meta_infer.infer_unary)
+registry.register("constant_pad_nd", "npu", constant_pad_nd, meta=meta_infer.infer_unary)
 registry.register("pad_sequence", "npu", pad_sequence, meta=meta_infer.infer_pad_sequence)
 
 # Critical tier operations

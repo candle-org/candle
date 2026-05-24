@@ -97,7 +97,7 @@ from .conv import (
     upsample_bicubic2d_op, upsample_linear1d_op, upsample_nearest1d_op,
     im2col_op, col2im_op,
     grid_sample_op, affine_grid_op,
-    pad, ctc_loss_op,
+    pad, constant_pad_nd, ctc_loss_op,
 )
 
 from .random import (
