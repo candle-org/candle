@@ -23,6 +23,7 @@ try:
         fast_atan2 as _fast_atan2_impl,
         fast_atanh as _fast_atanh_impl,
         fast_ceil as _fast_ceil_impl,
+        fast_ceil_inplace as _fast_ceil_inplace_impl,
         fast_cos as _fast_cos_impl,
         fast_cosh as _fast_cosh_impl,
         fast_erf as _fast_erf_impl,
@@ -30,9 +31,11 @@ try:
         fast_div_inplace as _fast_div_inplace_impl,
         fast_erfc as _fast_erfc_impl,
         fast_exp as _fast_exp_impl,
+        fast_exp_inplace as _fast_exp_inplace_impl,
         fast_exp2 as _fast_exp2_impl,
         fast_expm1 as _fast_expm1_impl,
         fast_floor as _fast_floor_impl,
+        fast_floor_inplace as _fast_floor_inplace_impl,
         fast_frac as _fast_frac_impl,
         fast_isfinite as _fast_isfinite_impl,
         fast_isinf as _fast_isinf_impl,
@@ -40,6 +43,7 @@ try:
         fast_isneginf as _fast_isneginf_impl,
         fast_isposinf as _fast_isposinf_impl,
         fast_log as _fast_log_impl,
+        fast_log_inplace as _fast_log_inplace_impl,
         fast_log1p as _fast_log1p_impl,
         fast_log10 as _fast_log10_impl,
         fast_log2 as _fast_log2_impl,
@@ -47,6 +51,7 @@ try:
         fast_mul as _fast_mul_impl,
         fast_mul_inplace as _fast_mul_inplace_impl,
         fast_neg as _fast_neg_impl,
+        fast_neg_inplace as _fast_neg_inplace_impl,
         fast_pow as _fast_pow_impl,
         fast_pow_tensor_scalar as _fast_pow_tensor_scalar_impl,
         fast_reciprocal as _fast_reciprocal_impl,
@@ -62,6 +67,7 @@ try:
         fast_sub as _fast_sub_impl,
         fast_sub_inplace as _fast_sub_inplace_impl,
         fast_tan as _fast_tan_impl,
+        fast_tan_inplace as _fast_tan_inplace_impl,
         fast_tanh as _fast_tanh_impl,
         fast_trunc as _fast_trunc_impl,
     )  # pylint: disable=import-error,no-name-in-module
@@ -222,6 +228,12 @@ except ImportError:
     _fast_sub_inplace_impl = None  # type: ignore[assignment]
     _fast_mul_inplace_impl = None  # type: ignore[assignment]
     _fast_div_inplace_impl = None  # type: ignore[assignment]
+    _fast_neg_inplace_impl = None  # type: ignore[assignment]
+    _fast_exp_inplace_impl = None  # type: ignore[assignment]
+    _fast_log_inplace_impl = None  # type: ignore[assignment]
+    _fast_tan_inplace_impl = None  # type: ignore[assignment]
+    _fast_floor_inplace_impl = None  # type: ignore[assignment]
+    _fast_ceil_inplace_impl = None  # type: ignore[assignment]
 
 
 def add(a, b):
@@ -290,6 +302,17 @@ def div_(a, b):
     if _HAS_FAST_DIV_INPLACE:
         return _fast_div_inplace_impl(a, b)
     raise RuntimeError("Cython NPU div_ implementation is unavailable")
+
+
+# In-place unary aliases (operator intake tranche 2). Same pattern as
+# `erfinv_ = _fast_erfinv_inplace_impl` from PR #508 — direct Cython aliases
+# avoid pure-Python call frames on the dispatch hot path.
+neg_ = _fast_neg_inplace_impl
+exp_ = _fast_exp_inplace_impl
+log_ = _fast_log_inplace_impl
+tan_ = _fast_tan_inplace_impl
+floor_ = _fast_floor_inplace_impl
+ceil_ = _fast_ceil_inplace_impl
 
 
 # ---------------------------------------------------------------------------
