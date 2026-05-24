@@ -55,11 +55,15 @@ CREATION_RANDOM_OPS = {
 
 INPLACE_OR_MUTATION_OPS = {
     "abs_",
+    "acos_",
+    "asin_",
+    "atan_",
     "bitwise_and_",
     "bitwise_or_",
     "bitwise_xor_",
     "ceil_",
     "cos_",
+    "cosh_",
     "erf_",
     "erfc_",
     "erfinv_",
@@ -78,6 +82,7 @@ INPLACE_OR_MUTATION_OPS = {
     "round_",
     "sigmoid_",
     "sin_",
+    "sinh_",
     "sqrt_",
     "tan_",
     "tanh_",
@@ -226,7 +231,7 @@ def test_schema_ops_without_autograd_registration_are_categorized():
     actual_missing = _schema_ops() - _autograd_registered_ops()
     assert sorted(actual_missing - expected_missing) == []
     assert sorted(expected_missing - actual_missing) == []
-    assert len(actual_missing) == 92
+    assert len(actual_missing) == 97
 
 
 def test_derivatives_not_implemented_inventory_is_classified():

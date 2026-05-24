@@ -113,6 +113,11 @@ from .ops import (
     exp2_,
     erf_,
     erfc_,
+    asin_,
+    acos_,
+    atan_,
+    sinh_,
+    cosh_,
     contiguous,
     getitem,
     setitem,
@@ -551,6 +556,11 @@ registry.register("log1p_", "npu", log1p_, meta=meta_infer.infer_unary)
 registry.register("exp2_", "npu", exp2_, meta=meta_infer.infer_unary)
 registry.register("erf_", "npu", erf_, meta=meta_infer.infer_unary)
 registry.register("erfc_", "npu", erfc_, meta=meta_infer.infer_unary)
+registry.register("asin_", "npu", asin_, meta=meta_infer.infer_unary)
+registry.register("acos_", "npu", acos_, meta=meta_infer.infer_unary)
+registry.register("atan_", "npu", atan_, meta=meta_infer.infer_unary)
+registry.register("sinh_", "npu", sinh_, meta=meta_infer.infer_unary)
+registry.register("cosh_", "npu", cosh_, meta=meta_infer.infer_unary)
 registry.register("sub_", "npu", sub_, meta=meta_infer.infer_binary)
 registry.register("sub", "npu", sub, meta=meta_infer.infer_binary)
 registry.register("div", "npu", div, meta=meta_infer.infer_binary)
