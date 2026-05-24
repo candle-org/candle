@@ -14,8 +14,10 @@ try:
         fast_leaky_relu as _fast_leaky_relu_impl,
         fast_elu as _fast_elu_impl,
         fast_silu as _fast_silu_impl,
+        fast_silu_inplace as _fast_silu_inplace_impl,
         fast_gelu as _fast_gelu_impl,
         fast_mish as _fast_mish_impl,
+        fast_mish_inplace as _fast_mish_inplace_impl,
         fast_relu6 as _fast_relu6_impl,
         fast_selu as _fast_selu_impl,
         fast_celu as _fast_celu_impl,
@@ -39,8 +41,10 @@ try:
     _HAS_FAST_LEAKY_RELU = True
     _HAS_FAST_ELU = True
     _HAS_FAST_SILU = True
+    _HAS_FAST_SILU_INPLACE = True
     _HAS_FAST_GELU = True
     _HAS_FAST_MISH = True
+    _HAS_FAST_MISH_INPLACE = True
     _HAS_FAST_ACTIVATION_COMPOSITES = True
 except ImportError:
     _fast_relu_impl = None  # type: ignore[assignment]
@@ -55,8 +59,10 @@ except ImportError:
     _fast_leaky_relu_impl = None  # type: ignore[assignment]
     _fast_elu_impl = None  # type: ignore[assignment]
     _fast_silu_impl = None  # type: ignore[assignment]
+    _fast_silu_inplace_impl = None  # type: ignore[assignment]
     _fast_gelu_impl = None  # type: ignore[assignment]
     _fast_mish_impl = None  # type: ignore[assignment]
+    _fast_mish_inplace_impl = None  # type: ignore[assignment]
     _fast_relu6_impl = None  # type: ignore[assignment]
     _fast_selu_impl = None  # type: ignore[assignment]
     _fast_celu_impl = None  # type: ignore[assignment]
@@ -79,8 +85,10 @@ except ImportError:
     _HAS_FAST_LEAKY_RELU = False
     _HAS_FAST_ELU = False
     _HAS_FAST_SILU = False
+    _HAS_FAST_SILU_INPLACE = False
     _HAS_FAST_GELU = False
     _HAS_FAST_MISH = False
+    _HAS_FAST_MISH_INPLACE = False
     _HAS_FAST_ACTIVATION_COMPOSITES = False
 
 from ._helpers import (
@@ -149,6 +157,12 @@ def silu(a):
     raise RuntimeError("Cython NPU silu implementation is unavailable")
 
 
+def silu_(a):
+    if _HAS_FAST_SILU_INPLACE:
+        return _fast_silu_inplace_impl(a)
+    raise RuntimeError("Cython NPU silu_ implementation is unavailable")
+
+
 def gelu(a):
     if _HAS_FAST_GELU:
         return _fast_gelu_impl(a)
@@ -173,6 +187,12 @@ def mish(a):
     if _HAS_FAST_MISH:
         return _fast_mish_impl(a)
     raise RuntimeError("Cython NPU mish implementation is unavailable")
+
+
+def mish_(a):
+    if _HAS_FAST_MISH_INPLACE:
+        return _fast_mish_inplace_impl(a)
+    raise RuntimeError("Cython NPU mish_ implementation is unavailable")
 
 
 def prelu(a, weight):
