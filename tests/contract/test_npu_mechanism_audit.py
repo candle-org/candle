@@ -1717,6 +1717,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "_sgd_step",
         "_sparse_adam_step",
         "abs_",
+        "acos_",
         "allclose",
         "arange",
         "argmax",
@@ -1724,6 +1725,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "argsort",
         "argwhere",
         "as_strided_copy",
+        "asin_",
+        "atan_",
         "bincount",
         "bitwise_and",
         "bitwise_not",
@@ -1733,6 +1736,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "cartesian_prod",
         "ceil_",
         "cos_",
+        "cosh_",
         "empty",
         "empty_like",
         "equal",
@@ -1785,6 +1789,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "searchsorted",
         "sigmoid_",
         "sin_",
+        "sinh_",
         "slice_copy",
         "sqrt_",
         "squeeze",
@@ -1800,7 +1805,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 422
+    assert len(forward_ops) == 427
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2696,3 +2701,36 @@ def test_npu_operator_intake_tranche3f_registers_inplace_expm1_log1p_exp2_erf_er
     assert "def fast_exp2_inplace(a):" in pyx_src
     assert "def fast_erf_inplace(a):" in pyx_src
     assert "def fast_erfc_inplace(a):" in pyx_src
+
+
+def test_npu_operator_intake_tranche3g_registers_inplace_asin_acos_atan_sinh_cosh():
+    """Operator intake tranche 3g extends the in-place unary surface with
+    `asin_`, `acos_`, `atan_`, `sinh_`, and `cosh_`. Each reuses the
+    existing `aclnnAsin` / `aclnnAcos` / `aclnnAtan` / `aclnnSinh` /
+    `aclnnCosh` bindings via a new `fast_*_inplace` Cython helper that
+    aliases output to input — fully NPU-resident. New schemas are
+    registered in `_dispatch/schemas.py`.
+    """
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+    schemas_src = _source("src/candle/_dispatch/schemas.py")
+
+    aliases = {
+        "asin_": "_fast_asin_inplace_impl",
+        "acos_": "_fast_acos_inplace_impl",
+        "atan_": "_fast_atan_inplace_impl",
+        "sinh_": "_fast_sinh_inplace_impl",
+        "cosh_": "_fast_cosh_inplace_impl",
+    }
+    for op_name, fast_name in aliases.items():
+        assert f"def {op_name}(" not in math_src
+        assert f"{op_name} = {fast_name}" in math_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+        assert f'register_schema("{op_name}",' in schemas_src
+
+    assert "def fast_asin_inplace(a):" in pyx_src
+    assert "def fast_acos_inplace(a):" in pyx_src
+    assert "def fast_atan_inplace(a):" in pyx_src
+    assert "def fast_sinh_inplace(a):" in pyx_src
+    assert "def fast_cosh_inplace(a):" in pyx_src

@@ -15,12 +15,15 @@ try:
         fast_abs as _fast_abs_impl,
         fast_abs_inplace as _fast_abs_inplace_impl,
         fast_acos as _fast_acos_impl,
+        fast_acos_inplace as _fast_acos_inplace_impl,
         fast_acosh as _fast_acosh_impl,
         fast_add as _fast_add_impl,
         fast_add_inplace as _fast_add_inplace_impl,
         fast_asin as _fast_asin_impl,
+        fast_asin_inplace as _fast_asin_inplace_impl,
         fast_asinh as _fast_asinh_impl,
         fast_atan as _fast_atan_impl,
+        fast_atan_inplace as _fast_atan_inplace_impl,
         fast_atan2 as _fast_atan2_impl,
         fast_atanh as _fast_atanh_impl,
         fast_ceil as _fast_ceil_impl,
@@ -28,6 +31,7 @@ try:
         fast_cos as _fast_cos_impl,
         fast_cos_inplace as _fast_cos_inplace_impl,
         fast_cosh as _fast_cosh_impl,
+        fast_cosh_inplace as _fast_cosh_inplace_impl,
         fast_erf as _fast_erf_impl,
         fast_erf_inplace as _fast_erf_inplace_impl,
         fast_div as _fast_div_impl,
@@ -74,6 +78,7 @@ try:
         fast_sin as _fast_sin_impl,
         fast_sin_inplace as _fast_sin_inplace_impl,
         fast_sinh as _fast_sinh_impl,
+        fast_sinh_inplace as _fast_sinh_inplace_impl,
         fast_sqrt as _fast_sqrt_impl,
         fast_sqrt_inplace as _fast_sqrt_inplace_impl,
         fast_square as _fast_square_impl,
@@ -264,6 +269,11 @@ except ImportError:
     _fast_exp2_inplace_impl = None  # type: ignore[assignment]
     _fast_erf_inplace_impl = None  # type: ignore[assignment]
     _fast_erfc_inplace_impl = None  # type: ignore[assignment]
+    _fast_asin_inplace_impl = None  # type: ignore[assignment]
+    _fast_acos_inplace_impl = None  # type: ignore[assignment]
+    _fast_atan_inplace_impl = None  # type: ignore[assignment]
+    _fast_sinh_inplace_impl = None  # type: ignore[assignment]
+    _fast_cosh_inplace_impl = None  # type: ignore[assignment]
 
 
 def add(a, b):
@@ -358,6 +368,11 @@ log1p_ = _fast_log1p_inplace_impl
 exp2_ = _fast_exp2_inplace_impl
 erf_ = _fast_erf_inplace_impl
 erfc_ = _fast_erfc_inplace_impl
+asin_ = _fast_asin_inplace_impl
+acos_ = _fast_acos_inplace_impl
+atan_ = _fast_atan_inplace_impl
+sinh_ = _fast_sinh_inplace_impl
+cosh_ = _fast_cosh_inplace_impl
 
 
 # ---------------------------------------------------------------------------
