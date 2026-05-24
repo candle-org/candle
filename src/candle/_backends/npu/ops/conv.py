@@ -1195,6 +1195,10 @@ def affine_grid_op(theta, size, align_corners=None):
 # ---------- P1: View / reshape composite ops ----------
 
 
+def constant_pad_nd(input, padding, value=0):
+    return pad(input, padding, mode='constant', value=value)
+
+
 def pad(input, pad, mode='constant', value=0):
     if not isinstance(pad, (tuple, list)):
         raise TypeError("pad must be a tuple/list of ints")

@@ -2470,8 +2470,8 @@ def test_npu_constant_pad_nd_routes_to_existing_constant_pad_path():
     backend_init_src = _source("src/candle/_backends/npu/__init__.py")
 
     body = _function_source(conv_src, "constant_pad_nd")
-    assert "return pad(input, pad, mode='constant', value=value)" in body or (
-        'return pad(input, pad, mode="constant", value=value)' in body
+    assert "return pad(input, padding, mode='constant', value=value)" in body or (
+        'return pad(input, padding, mode="constant", value=value)' in body
     ), "`constant_pad_nd` must delegate to the existing NPU constant pad path."
     assert "aclnn.constant_pad_nd(" in _function_source(conv_src, "pad"), (
         "NPU `pad` constant branch must remain backed by aclnn.constant_pad_nd."

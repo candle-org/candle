@@ -184,6 +184,7 @@ from .ops import (
     masked_select,
     dropout,
     pad,
+    constant_pad_nd,
     pad_sequence,
     linalg_qr,
     narrow,
@@ -608,6 +609,7 @@ registry.register("take", "npu", take, meta=meta_infer.infer_take)
 registry.register("take_along_dim", "npu", take_along_dim, meta=meta_infer.infer_take_along_dim)
 registry.register("masked_select", "npu", masked_select, meta=meta_infer.infer_masked_select)
 registry.register("pad", "npu", pad, meta=meta_infer.infer_unary)
+registry.register("constant_pad_nd", "npu", constant_pad_nd, meta=meta_infer.infer_unary)
 registry.register("pad_sequence", "npu", pad_sequence, meta=meta_infer.infer_pad_sequence)
 
 # Critical tier operations
