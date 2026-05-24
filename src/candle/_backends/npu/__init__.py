@@ -202,9 +202,11 @@ from .ops import (
     layer_norm,
     embedding,
     silu,
+    silu_,
     leaky_relu,
     elu,
     mish,
+    mish_,
     prelu,
     batch_norm,
     instance_norm,
@@ -690,9 +692,11 @@ registry.register("embedding", "npu", embedding, meta=meta_infer.infer_binary)
 
 # Activation functions (composite ops)
 registry.register("silu", "npu", silu, meta=meta_infer.infer_unary)
+registry.register("silu_", "npu", silu_, meta=meta_infer.infer_unary)
 registry.register("leaky_relu", "npu", leaky_relu, meta=meta_infer.infer_unary)
 registry.register("elu", "npu", elu, meta=meta_infer.infer_unary)
 registry.register("mish", "npu", mish, meta=meta_infer.infer_unary)
+registry.register("mish_", "npu", mish_, meta=meta_infer.infer_unary)
 registry.register("prelu", "npu", prelu, meta=meta_infer.infer_binary)
 
 # Normalization (composite ops)

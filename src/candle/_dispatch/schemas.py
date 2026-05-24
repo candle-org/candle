@@ -76,6 +76,8 @@ CORE_SCHEMA_OPS = (
     "square_",
     "digamma_",
     "sign_",
+    "silu_",
+    "mish_",
     "reciprocal_",
     "pow_",
     "bitwise_and_",
@@ -319,6 +321,8 @@ def register_schemas():
     registry.register_schema("square_", "square_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("digamma_", "digamma_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("sign_", "sign_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("silu_", "silu_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("mish_", "mish_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("reciprocal_", "reciprocal_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("pow_", "pow_(Tensor(a!) self, Any exponent) -> Tensor(a)")
     registry.register_schema("bitwise_and_", "bitwise_and_(Tensor(a!) self, Any other) -> Tensor(a)")

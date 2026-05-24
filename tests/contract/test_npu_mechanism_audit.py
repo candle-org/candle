@@ -1774,6 +1774,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "logical_or",
         "logical_xor",
         "logspace",
+        "mish_",
         "movedim",
         "narrow",
         "neg_",
@@ -1794,6 +1795,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "searchsorted",
         "sigmoid_",
         "sign_",
+        "silu_",
         "sin_",
         "sinh_",
         "slice_copy",
@@ -1812,7 +1814,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 434
+    assert len(forward_ops) == 436
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2808,3 +2810,32 @@ def test_npu_operator_intake_tranche3i_registers_inplace_digamma_sign():
 
     assert "def fast_digamma_inplace(a):" in pyx_src
     assert "def fast_sign_inplace(a):" in pyx_src
+
+
+def test_npu_operator_intake_tranche3j_registers_inplace_silu_mish():
+    """Operator intake tranche 3j extends the in-place unary surface with
+    `silu_` and `mish_`. Each reuses the existing `aclnnSilu` / `aclnnMish`
+    bindings via a new `fast_*_inplace` Cython helper that aliases output
+    to input — fully NPU-resident. New schemas are registered in
+    `_dispatch/schemas.py`. Unlike prior tranches, both ops live in
+    `ops/activation.py` and use the def-with-guard pattern
+    (`def silu_(a): if _HAS_FAST_SILU_INPLACE: return ...`), not the
+    module-level alias pattern.
+    """
+    activation_src = _source("src/candle/_backends/npu/ops/activation.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+    schemas_src = _source("src/candle/_dispatch/schemas.py")
+
+    for op_name, has_flag, fast_name in (
+        ("silu_", "_HAS_FAST_SILU_INPLACE", "_fast_silu_inplace_impl"),
+        ("mish_", "_HAS_FAST_MISH_INPLACE", "_fast_mish_inplace_impl"),
+    ):
+        assert f"def {op_name}(a):" in activation_src
+        assert f"if {has_flag}:" in activation_src
+        assert f"return {fast_name}(a)" in activation_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+        assert f'register_schema("{op_name}",' in schemas_src
+
+    assert "def fast_silu_inplace(a):" in pyx_src
+    assert "def fast_mish_inplace(a):" in pyx_src
