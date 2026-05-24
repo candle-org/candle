@@ -6920,6 +6920,231 @@ def fast_cosh_inplace(a):
     return a
 
 
+def fast_asinh_inplace(a):
+    """In-place asinh_(a) using aclnnAsinh with output aliased to input."""
+    _ensure_npu_imports()
+    _ensure_ffi_asinh()
+
+    cdef int dev_idx = a.device.index or 0
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    a_stride = a.stride
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.unary_op(
+        _asinh_getws_ptr, _asinh_exec_ptr,
+        a_shape, a_stride,
+        a_shape, a_stride,
+        dtype_code, dtype_code, 2,
+        a_ptr, a_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _asinh_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnAsinh execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
+def fast_acosh_inplace(a):
+    """In-place acosh_(a) using aclnnAcosh with output aliased to input."""
+    _ensure_npu_imports()
+    _ensure_ffi_acosh()
+
+    cdef int dev_idx = a.device.index or 0
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    a_stride = a.stride
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.unary_op(
+        _acosh_getws_ptr, _acosh_exec_ptr,
+        a_shape, a_stride,
+        a_shape, a_stride,
+        dtype_code, dtype_code, 2,
+        a_ptr, a_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _acosh_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnAcosh execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
+def fast_atanh_inplace(a):
+    """In-place atanh_(a) using aclnnAtanh with output aliased to input."""
+    _ensure_npu_imports()
+    _ensure_ffi_atanh()
+
+    cdef int dev_idx = a.device.index or 0
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    a_stride = a.stride
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.unary_op(
+        _atanh_getws_ptr, _atanh_exec_ptr,
+        a_shape, a_stride,
+        a_shape, a_stride,
+        dtype_code, dtype_code, 2,
+        a_ptr, a_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _atanh_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnAtanh execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
+def fast_rsqrt_inplace(a):
+    """In-place rsqrt_(a) using aclnnRsqrt with output aliased to input."""
+    _ensure_npu_imports()
+    _ensure_ffi_rsqrt()
+
+    cdef int dev_idx = a.device.index or 0
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    a_stride = a.stride
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.unary_op(
+        _rsqrt_getws_ptr, _rsqrt_exec_ptr,
+        a_shape, a_stride,
+        a_shape, a_stride,
+        dtype_code, dtype_code, 2,
+        a_ptr, a_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _rsqrt_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnRsqrt execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
+def fast_square_inplace(a):
+    """In-place square_(a) using aclnnSquare with output aliased to input."""
+    _ensure_npu_imports()
+    _ensure_ffi_square()
+
+    cdef int dev_idx = a.device.index or 0
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    a_stride = a.stride
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.unary_op(
+        _square_getws_ptr, _square_exec_ptr,
+        a_shape, a_stride,
+        a_shape, a_stride,
+        dtype_code, dtype_code, 2,
+        a_ptr, a_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _square_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnSquare execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
 def fast_exp2(a):
     """Optimized out-of-place exp2(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()

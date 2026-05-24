@@ -6,6 +6,7 @@ from .math import (
     abs_, round_, trunc_, log2_, log10_,
     expm1_, log1p_, exp2_, erf_, erfc_,
     asin_, acos_, atan_, sinh_, cosh_,
+    asinh_, acosh_, atanh_, rsqrt_, square_,
     abs, neg, sign, signbit, square,
     isfinite, isinf, isnan, isposinf, isneginf,
     exp, log, sqrt, rsqrt, sin, cos, tan, tanh, sigmoid,

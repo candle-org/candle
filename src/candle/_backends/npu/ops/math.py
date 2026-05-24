@@ -17,15 +17,18 @@ try:
         fast_acos as _fast_acos_impl,
         fast_acos_inplace as _fast_acos_inplace_impl,
         fast_acosh as _fast_acosh_impl,
+        fast_acosh_inplace as _fast_acosh_inplace_impl,
         fast_add as _fast_add_impl,
         fast_add_inplace as _fast_add_inplace_impl,
         fast_asin as _fast_asin_impl,
         fast_asin_inplace as _fast_asin_inplace_impl,
         fast_asinh as _fast_asinh_impl,
+        fast_asinh_inplace as _fast_asinh_inplace_impl,
         fast_atan as _fast_atan_impl,
         fast_atan_inplace as _fast_atan_inplace_impl,
         fast_atan2 as _fast_atan2_impl,
         fast_atanh as _fast_atanh_impl,
+        fast_atanh_inplace as _fast_atanh_inplace_impl,
         fast_ceil as _fast_ceil_impl,
         fast_ceil_inplace as _fast_ceil_inplace_impl,
         fast_cos as _fast_cos_impl,
@@ -71,6 +74,7 @@ try:
         fast_round as _fast_round_impl,
         fast_round_inplace as _fast_round_inplace_impl,
         fast_rsqrt as _fast_rsqrt_impl,
+        fast_rsqrt_inplace as _fast_rsqrt_inplace_impl,
         fast_sigmoid as _fast_sigmoid_impl,
         fast_sigmoid_inplace as _fast_sigmoid_inplace_impl,
         fast_sign as _fast_sign_impl,
@@ -82,6 +86,7 @@ try:
         fast_sqrt as _fast_sqrt_impl,
         fast_sqrt_inplace as _fast_sqrt_inplace_impl,
         fast_square as _fast_square_impl,
+        fast_square_inplace as _fast_square_inplace_impl,
         fast_sub as _fast_sub_impl,
         fast_sub_inplace as _fast_sub_inplace_impl,
         fast_tan as _fast_tan_impl,
@@ -274,6 +279,11 @@ except ImportError:
     _fast_atan_inplace_impl = None  # type: ignore[assignment]
     _fast_sinh_inplace_impl = None  # type: ignore[assignment]
     _fast_cosh_inplace_impl = None  # type: ignore[assignment]
+    _fast_asinh_inplace_impl = None  # type: ignore[assignment]
+    _fast_acosh_inplace_impl = None  # type: ignore[assignment]
+    _fast_atanh_inplace_impl = None  # type: ignore[assignment]
+    _fast_rsqrt_inplace_impl = None  # type: ignore[assignment]
+    _fast_square_inplace_impl = None  # type: ignore[assignment]
 
 
 def add(a, b):
@@ -373,6 +383,11 @@ acos_ = _fast_acos_inplace_impl
 atan_ = _fast_atan_inplace_impl
 sinh_ = _fast_sinh_inplace_impl
 cosh_ = _fast_cosh_inplace_impl
+asinh_ = _fast_asinh_inplace_impl
+acosh_ = _fast_acosh_inplace_impl
+atanh_ = _fast_atanh_inplace_impl
+rsqrt_ = _fast_rsqrt_inplace_impl
+square_ = _fast_square_inplace_impl
 
 
 # ---------------------------------------------------------------------------

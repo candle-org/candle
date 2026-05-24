@@ -69,6 +69,11 @@ CORE_SCHEMA_OPS = (
     "atan_",
     "sinh_",
     "cosh_",
+    "asinh_",
+    "acosh_",
+    "atanh_",
+    "rsqrt_",
+    "square_",
     "reciprocal_",
     "pow_",
     "bitwise_and_",
@@ -305,6 +310,11 @@ def register_schemas():
     registry.register_schema("atan_", "atan_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("sinh_", "sinh_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("cosh_", "cosh_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("asinh_", "asinh_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("acosh_", "acosh_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("atanh_", "atanh_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("rsqrt_", "rsqrt_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("square_", "square_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("reciprocal_", "reciprocal_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("pow_", "pow_(Tensor(a!) self, Any exponent) -> Tensor(a)")
     registry.register_schema("bitwise_and_", "bitwise_and_(Tensor(a!) self, Any other) -> Tensor(a)")
