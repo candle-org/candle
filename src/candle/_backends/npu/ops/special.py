@@ -10,6 +10,7 @@ try:
         fast_special_xlogy as _fast_special_xlogy_impl,
         fast_sinc as _fast_sinc_impl,
         fast_digamma as _fast_digamma_impl,
+        fast_digamma_inplace as _fast_digamma_inplace_impl,
         fast_erfinv as _fast_erfinv_impl,
         fast_lgamma as _fast_lgamma_impl,
     )
@@ -25,6 +26,7 @@ except ImportError:
     _fast_special_xlogy_impl = None  # type: ignore[assignment]
     _fast_sinc_impl = None  # type: ignore[assignment]
     _fast_digamma_impl = None  # type: ignore[assignment]
+    _fast_digamma_inplace_impl = None  # type: ignore[assignment]
     _fast_erfinv_impl = None  # type: ignore[assignment]
     _fast_lgamma_impl = None  # type: ignore[assignment]
     _HAS_FAST_SPECIAL_COMPOSITES = False
@@ -47,6 +49,9 @@ from .shape import contiguous, index_select
 
 
 special_digamma = _fast_digamma_impl
+
+
+digamma_ = _fast_digamma_inplace_impl
 
 
 special_erfinv = _fast_erfinv_impl

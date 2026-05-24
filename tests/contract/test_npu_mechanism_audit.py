@@ -1740,6 +1740,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "ceil_",
         "cos_",
         "cosh_",
+        "digamma_",
         "empty",
         "empty_like",
         "equal",
@@ -1792,6 +1793,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "rsqrt_",
         "searchsorted",
         "sigmoid_",
+        "sign_",
         "sin_",
         "sinh_",
         "slice_copy",
@@ -1810,7 +1812,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 432
+    assert len(forward_ops) == 434
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2772,3 +2774,37 @@ def test_npu_operator_intake_tranche3h_registers_inplace_asinh_acosh_atanh_rsqrt
     assert "def fast_atanh_inplace(a):" in pyx_src
     assert "def fast_rsqrt_inplace(a):" in pyx_src
     assert "def fast_square_inplace(a):" in pyx_src
+
+
+def test_npu_operator_intake_tranche3i_registers_inplace_digamma_sign():
+    """Operator intake tranche 3i extends the in-place unary surface with
+    `digamma_` and `sign_`. Each reuses the existing `aclnnDigamma` /
+    `aclnnSign` bindings via a new `fast_*_inplace` Cython helper that
+    aliases output to input — fully NPU-resident. New schemas are
+    registered in `_dispatch/schemas.py`. Unlike prior tranches, the two
+    ops live in different modules: `sign_` in `ops/math.py`, `digamma_`
+    in `ops/special.py`.
+    """
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    special_src = _source("src/candle/_backends/npu/ops/special.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+    schemas_src = _source("src/candle/_dispatch/schemas.py")
+
+    math_aliases = {"sign_": "_fast_sign_inplace_impl"}
+    special_aliases = {"digamma_": "_fast_digamma_inplace_impl"}
+
+    for op_name, fast_name in math_aliases.items():
+        assert f"def {op_name}(" not in math_src
+        assert f"{op_name} = {fast_name}" in math_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+        assert f'register_schema("{op_name}",' in schemas_src
+
+    for op_name, fast_name in special_aliases.items():
+        assert f"def {op_name}(" not in special_src
+        assert f"{op_name} = {fast_name}" in special_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+        assert f'register_schema("{op_name}",' in schemas_src
+
+    assert "def fast_digamma_inplace(a):" in pyx_src
+    assert "def fast_sign_inplace(a):" in pyx_src

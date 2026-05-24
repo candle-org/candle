@@ -7,6 +7,7 @@ from .math import (
     expm1_, log1p_, exp2_, erf_, erfc_,
     asin_, acos_, atan_, sinh_, cosh_,
     asinh_, acosh_, atanh_, rsqrt_, square_,
+    sign_,
     abs, neg, sign, signbit, square,
     isfinite, isinf, isnan, isposinf, isneginf,
     exp, log, sqrt, rsqrt, sin, cos, tan, tanh, sigmoid,
@@ -124,6 +125,7 @@ from .elementwise import (
 
 from .special import (
     special_digamma, special_erfinv, special_gammaln, special_sinc,
+    digamma_,
     special_entr_op, special_erfcx_op, special_logit_op,
     special_ndtr_op, special_log_ndtr_op,
     special_xlogy_op, special_xlog1py_op, special_multigammaln_op,
