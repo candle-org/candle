@@ -29,13 +29,17 @@ try:
         fast_cos_inplace as _fast_cos_inplace_impl,
         fast_cosh as _fast_cosh_impl,
         fast_erf as _fast_erf_impl,
+        fast_erf_inplace as _fast_erf_inplace_impl,
         fast_div as _fast_div_impl,
         fast_div_inplace as _fast_div_inplace_impl,
         fast_erfc as _fast_erfc_impl,
+        fast_erfc_inplace as _fast_erfc_inplace_impl,
         fast_exp as _fast_exp_impl,
         fast_exp_inplace as _fast_exp_inplace_impl,
         fast_exp2 as _fast_exp2_impl,
+        fast_exp2_inplace as _fast_exp2_inplace_impl,
         fast_expm1 as _fast_expm1_impl,
+        fast_expm1_inplace as _fast_expm1_inplace_impl,
         fast_floor as _fast_floor_impl,
         fast_floor_inplace as _fast_floor_inplace_impl,
         fast_frac as _fast_frac_impl,
@@ -47,6 +51,7 @@ try:
         fast_log as _fast_log_impl,
         fast_log_inplace as _fast_log_inplace_impl,
         fast_log1p as _fast_log1p_impl,
+        fast_log1p_inplace as _fast_log1p_inplace_impl,
         fast_log10 as _fast_log10_impl,
         fast_log10_inplace as _fast_log10_inplace_impl,
         fast_log2 as _fast_log2_impl,
@@ -254,6 +259,11 @@ except ImportError:
     _fast_trunc_inplace_impl = None  # type: ignore[assignment]
     _fast_log2_inplace_impl = None  # type: ignore[assignment]
     _fast_log10_inplace_impl = None  # type: ignore[assignment]
+    _fast_expm1_inplace_impl = None  # type: ignore[assignment]
+    _fast_log1p_inplace_impl = None  # type: ignore[assignment]
+    _fast_exp2_inplace_impl = None  # type: ignore[assignment]
+    _fast_erf_inplace_impl = None  # type: ignore[assignment]
+    _fast_erfc_inplace_impl = None  # type: ignore[assignment]
 
 
 def add(a, b):
@@ -343,6 +353,11 @@ round_ = _fast_round_inplace_impl
 trunc_ = _fast_trunc_inplace_impl
 log2_ = _fast_log2_inplace_impl
 log10_ = _fast_log10_inplace_impl
+expm1_ = _fast_expm1_inplace_impl
+log1p_ = _fast_log1p_inplace_impl
+exp2_ = _fast_exp2_inplace_impl
+erf_ = _fast_erf_inplace_impl
+erfc_ = _fast_erfc_inplace_impl
 
 
 # ---------------------------------------------------------------------------
