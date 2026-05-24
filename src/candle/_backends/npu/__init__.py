@@ -212,6 +212,7 @@ from .ops import (
     expand_copy_npu, slice_op_npu, slice_copy_npu, slice_scatter_npu,
     sum_to_size_npu,
     var_,
+    var_mean,
     norm_,
     prod_,
     floor_divide,
@@ -681,6 +682,7 @@ registry.register("sum_to_size", "npu", sum_to_size_npu, meta=meta_infer.infer_s
 
 # Reduction ops (composite)
 registry.register("var", "npu", var_, meta=meta_infer.infer_sum)
+registry.register("var_mean", "npu", var_mean, meta=meta_infer.infer_var_mean)
 registry.register("norm", "npu", norm_, meta=meta_infer.infer_sum)
 registry.register("prod", "npu", prod_, meta=meta_infer.infer_sum)
 registry.register("floor_divide", "npu", floor_divide, meta=meta_infer.infer_binary)
