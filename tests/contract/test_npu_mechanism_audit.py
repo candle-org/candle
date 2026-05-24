@@ -1730,13 +1730,16 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "bitwise_xor",
         "bucketize",
         "cartesian_prod",
+        "ceil_",
         "empty",
         "empty_like",
         "equal",
         "erfinv_",
+        "exp_",
         "expand_copy",
         "eye",
         "flatten",
+        "floor_",
         "full",
         "full_like",
         "histogram",
@@ -1748,6 +1751,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "isposinf",
         "isreal",
         "linspace",
+        "log_",
         "logical_and",
         "logical_not",
         "logical_or",
@@ -1755,6 +1759,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "logspace",
         "movedim",
         "narrow",
+        "neg_",
         "ones",
         "ones_like",
         "rand",
@@ -1770,6 +1775,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "searchsorted",
         "slice_copy",
         "squeeze",
+        "tan_",
         "tensor",
         "tril_indices",
         "triu_indices",
@@ -1779,7 +1785,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 399
+    assert len(forward_ops) == 405
     assert len(autograd_ops & forward_ops) == 327
 
 
@@ -2478,3 +2484,36 @@ def test_npu_constant_pad_nd_routes_to_existing_constant_pad_path():
     )
     assert "constant_pad_nd" in ops_init_src, "NPU ops package must export `constant_pad_nd`."
     assert 'registry.register("constant_pad_nd", "npu", constant_pad_nd' in backend_init_src
+
+
+def test_npu_operator_intake_tranche2_registers_inplace_unary_ops():
+    """The second NPU operator intake tranche exposes 6 native in-place unary
+    ops that already have ACLNN-backed Cython fast helpers
+    (`fast_*_inplace`). Each is wired to its helper through a module-level
+    alias in `math.py` (the same pattern PR #508 established for `erfinv_`).
+    """
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+
+    aliases = {
+        "neg_": "_fast_neg_inplace_impl",
+        "exp_": "_fast_exp_inplace_impl",
+        "log_": "_fast_log_inplace_impl",
+        "tan_": "_fast_tan_inplace_impl",
+        "floor_": "_fast_floor_inplace_impl",
+        "ceil_": "_fast_ceil_inplace_impl",
+    }
+    for op_name, fast_name in aliases.items():
+        assert f"def {op_name}(" not in math_src, (
+            f"`{op_name}` must be a module-level alias to `{fast_name}`, "
+            "not a `def` wrapper."
+        )
+        assert f"{op_name} = {fast_name}" in math_src, (
+            f"`math.py` must bind `{op_name}` to `{fast_name}` via a "
+            "module-level alias so the registration import surface in "
+            "`_backends/npu/__init__.py` resolves correctly."
+        )
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src, (
+            f"NPU backend must register `{op_name}` directly to the "
+            "Cython-aliased function as part of operator intake tranche 2."
+        )

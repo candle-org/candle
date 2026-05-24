@@ -92,6 +92,12 @@ from .ops import (
     erfinv_,
     sub_,
     div_,
+    neg_,
+    exp_,
+    log_,
+    tan_,
+    floor_,
+    ceil_,
     contiguous,
     getitem,
     setitem,
@@ -507,6 +513,12 @@ registry.register("fill_", "npu", fill_, meta=meta_infer.infer_unary)
 registry.register("clamp_", "npu", clamp_, meta=meta_infer.infer_unary)
 registry.register("copy_", "npu", copy_, meta=meta_infer.infer_unary)
 registry.register("erfinv_", "npu", erfinv_, meta=meta_infer.infer_unary)
+registry.register("neg_", "npu", neg_, meta=meta_infer.infer_unary)
+registry.register("exp_", "npu", exp_, meta=meta_infer.infer_unary)
+registry.register("log_", "npu", log_, meta=meta_infer.infer_unary)
+registry.register("tan_", "npu", tan_, meta=meta_infer.infer_unary)
+registry.register("floor_", "npu", floor_, meta=meta_infer.infer_unary)
+registry.register("ceil_", "npu", ceil_, meta=meta_infer.infer_unary)
 registry.register("sub_", "npu", sub_, meta=meta_infer.infer_binary)
 registry.register("sub", "npu", sub, meta=meta_infer.infer_binary)
 registry.register("div", "npu", div, meta=meta_infer.infer_binary)
