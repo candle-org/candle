@@ -1731,6 +1731,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "bucketize",
         "cartesian_prod",
         "ceil_",
+        "cos_",
         "empty",
         "empty_like",
         "equal",
@@ -1773,6 +1774,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "range",
         "reciprocal_",
         "searchsorted",
+        "sin_",
         "slice_copy",
         "squeeze",
         "tan_",
@@ -1785,7 +1787,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 407
+    assert len(forward_ops) == 409
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2566,3 +2568,29 @@ def test_npu_operator_intake_tranche3b_registers_var_mean_composite():
         in backend_init_src
     )
     assert "def infer_var_mean(a, dim=None, unbiased=True, keepdim=False)" in meta_src
+
+
+def test_npu_operator_intake_tranche3c_registers_inplace_sin_cos():
+    """Operator intake tranche 3c extends the in-place unary surface (PR #508,
+    tranche 2) with `sin_` and `cos_`. Both are wired through new
+    `fast_sin_inplace` / `fast_cos_inplace` Cython helpers that reuse the
+    existing `aclnnSin` / `aclnnCos` bindings with output aliased to input —
+    so all computation stays on NPU.
+    """
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+
+    aliases = {
+        "sin_": "_fast_sin_inplace_impl",
+        "cos_": "_fast_cos_inplace_impl",
+    }
+    for op_name, fast_name in aliases.items():
+        assert f"def {op_name}(" not in math_src, (
+            f"`{op_name}` must be a module-level alias to `{fast_name}`."
+        )
+        assert f"{op_name} = {fast_name}" in math_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+
+    assert "def fast_sin_inplace(a):" in pyx_src
+    assert "def fast_cos_inplace(a):" in pyx_src
