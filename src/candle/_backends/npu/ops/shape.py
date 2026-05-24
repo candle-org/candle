@@ -2753,6 +2753,13 @@ def masked_scatter_(a, mask, source):
     return a
 
 
+def masked_scatter(a, mask, source):
+    """Non-inplace masked_scatter — clone + in-place. Fully NPU-resident."""
+    result = a.clone()
+    masked_scatter_(result, mask, source)
+    return result
+
+
 def unfold(a, dimension, size, step):
     """Unfold along a dimension — returns a higher-dimensional view/copy."""
     d = dimension if dimension >= 0 else dimension + a.dim()

@@ -175,8 +175,8 @@ def test_npu_forward_ops_autograd_coverage_categorization_snapshot():
     assert (generated_only & both) == set()
     assert (handwritten_only & both) == set()
 
-    assert len(forward) == 405
-    assert len(generated_only) == 239
+    assert len(forward) == 406
+    assert len(generated_only) == 240
     assert len(handwritten_only) == 33
     assert len(both) == 55
     assert len(missing) == 78

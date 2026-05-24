@@ -47,7 +47,7 @@ from .shape import (
     narrow, select, expand,
     masked_fill, masked_fill_,
     index_put_, index_put, index_copy_, index_fill_, index_add_,
-    scatter_, scatter_add_, masked_scatter_,
+    scatter_, scatter_add_, masked_scatter_, masked_scatter,
     unfold,
     as_strided_npu, as_strided_copy_npu, as_strided_scatter_npu,
     expand_copy_npu, slice_op_npu, slice_copy_npu, slice_scatter_npu,

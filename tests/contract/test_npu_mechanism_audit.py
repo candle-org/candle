@@ -1785,8 +1785,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 405
-    assert len(autograd_ops & forward_ops) == 327
+    assert len(forward_ops) == 406
+    assert len(autograd_ops & forward_ops) == 328
 
 
 def test_npu_activation_module_consolidates_fast_helper_try_blocks():
@@ -2517,3 +2517,26 @@ def test_npu_operator_intake_tranche2_registers_inplace_unary_ops():
             f"NPU backend must register `{op_name}` directly to the "
             "Cython-aliased function as part of operator intake tranche 2."
         )
+
+
+def test_npu_operator_intake_tranche3a_registers_functional_masked_scatter():
+    """The functional (out-of-place) `masked_scatter` is wired as a composite
+    of `clone()` + `masked_scatter_` on NPU. All ops stay on the device — no
+    CPU fallback. The op already has a generated autograd derivative
+    (`grad.masked_fill(mask, 0)` for self, `masked_scatter_backward` for
+    source), so requires_grad flows route through AutogradNPU correctly.
+    """
+    shape_src = _source("src/candle/_backends/npu/ops/shape.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+
+    assert "def masked_scatter(a, mask, source):" in shape_src
+    assert "result = a.clone()" in shape_src
+    assert "masked_scatter_(result, mask, source)" in shape_src
+
+    assert "masked_scatter," in ops_init_src
+    assert "masked_scatter,\n" in backend_init_src
+    assert (
+        'registry.register("masked_scatter", "npu", masked_scatter'
+        in backend_init_src
+    )
