@@ -59,6 +59,11 @@ CORE_SCHEMA_OPS = (
     "ceil_",
     "round_",
     "trunc_",
+    "expm1_",
+    "log1p_",
+    "exp2_",
+    "erf_",
+    "erfc_",
     "reciprocal_",
     "pow_",
     "bitwise_and_",
@@ -285,6 +290,11 @@ def register_schemas():
     registry.register_schema("ceil_", "ceil_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("round_", "round_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("trunc_", "trunc_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("expm1_", "expm1_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("log1p_", "log1p_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("exp2_", "exp2_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("erf_", "erf_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("erfc_", "erfc_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("reciprocal_", "reciprocal_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("pow_", "pow_(Tensor(a!) self, Any exponent) -> Tensor(a)")
     registry.register_schema("bitwise_and_", "bitwise_and_(Tensor(a!) self, Any other) -> Tensor(a)")
