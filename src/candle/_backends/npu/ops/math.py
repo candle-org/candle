@@ -25,6 +25,7 @@ try:
         fast_ceil as _fast_ceil_impl,
         fast_ceil_inplace as _fast_ceil_inplace_impl,
         fast_cos as _fast_cos_impl,
+        fast_cos_inplace as _fast_cos_inplace_impl,
         fast_cosh as _fast_cosh_impl,
         fast_erf as _fast_erf_impl,
         fast_div as _fast_div_impl,
@@ -61,6 +62,7 @@ try:
         fast_sign as _fast_sign_impl,
         fast_signbit as _fast_signbit_impl,
         fast_sin as _fast_sin_impl,
+        fast_sin_inplace as _fast_sin_inplace_impl,
         fast_sinh as _fast_sinh_impl,
         fast_sqrt as _fast_sqrt_impl,
         fast_square as _fast_square_impl,
@@ -234,6 +236,8 @@ except ImportError:
     _fast_tan_inplace_impl = None  # type: ignore[assignment]
     _fast_floor_inplace_impl = None  # type: ignore[assignment]
     _fast_ceil_inplace_impl = None  # type: ignore[assignment]
+    _fast_sin_inplace_impl = None  # type: ignore[assignment]
+    _fast_cos_inplace_impl = None  # type: ignore[assignment]
 
 
 def add(a, b):
@@ -313,6 +317,8 @@ log_ = _fast_log_inplace_impl
 tan_ = _fast_tan_inplace_impl
 floor_ = _fast_floor_inplace_impl
 ceil_ = _fast_ceil_inplace_impl
+sin_ = _fast_sin_inplace_impl
+cos_ = _fast_cos_inplace_impl
 
 
 # ---------------------------------------------------------------------------
