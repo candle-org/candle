@@ -59,18 +59,21 @@ try:
         fast_round as _fast_round_impl,
         fast_rsqrt as _fast_rsqrt_impl,
         fast_sigmoid as _fast_sigmoid_impl,
+        fast_sigmoid_inplace as _fast_sigmoid_inplace_impl,
         fast_sign as _fast_sign_impl,
         fast_signbit as _fast_signbit_impl,
         fast_sin as _fast_sin_impl,
         fast_sin_inplace as _fast_sin_inplace_impl,
         fast_sinh as _fast_sinh_impl,
         fast_sqrt as _fast_sqrt_impl,
+        fast_sqrt_inplace as _fast_sqrt_inplace_impl,
         fast_square as _fast_square_impl,
         fast_sub as _fast_sub_impl,
         fast_sub_inplace as _fast_sub_inplace_impl,
         fast_tan as _fast_tan_impl,
         fast_tan_inplace as _fast_tan_inplace_impl,
         fast_tanh as _fast_tanh_impl,
+        fast_tanh_inplace as _fast_tanh_inplace_impl,
         fast_trunc as _fast_trunc_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_ADD = True
@@ -238,6 +241,9 @@ except ImportError:
     _fast_ceil_inplace_impl = None  # type: ignore[assignment]
     _fast_sin_inplace_impl = None  # type: ignore[assignment]
     _fast_cos_inplace_impl = None  # type: ignore[assignment]
+    _fast_sqrt_inplace_impl = None  # type: ignore[assignment]
+    _fast_sigmoid_inplace_impl = None  # type: ignore[assignment]
+    _fast_tanh_inplace_impl = None  # type: ignore[assignment]
 
 
 def add(a, b):
@@ -319,6 +325,9 @@ floor_ = _fast_floor_inplace_impl
 ceil_ = _fast_ceil_inplace_impl
 sin_ = _fast_sin_inplace_impl
 cos_ = _fast_cos_inplace_impl
+sqrt_ = _fast_sqrt_inplace_impl
+sigmoid_ = _fast_sigmoid_inplace_impl
+tanh_ = _fast_tanh_inplace_impl
 
 
 # ---------------------------------------------------------------------------

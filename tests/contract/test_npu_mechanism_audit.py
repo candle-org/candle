@@ -1774,10 +1774,13 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "range",
         "reciprocal_",
         "searchsorted",
+        "sigmoid_",
         "sin_",
         "slice_copy",
+        "sqrt_",
         "squeeze",
         "tan_",
+        "tanh_",
         "tensor",
         "tril_indices",
         "triu_indices",
@@ -1787,7 +1790,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 409
+    assert len(forward_ops) == 412
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2594,3 +2597,29 @@ def test_npu_operator_intake_tranche3c_registers_inplace_sin_cos():
 
     assert "def fast_sin_inplace(a):" in pyx_src
     assert "def fast_cos_inplace(a):" in pyx_src
+
+
+def test_npu_operator_intake_tranche3d_registers_inplace_sqrt_sigmoid_tanh():
+    """Operator intake tranche 3d extends the in-place unary surface with
+    `sqrt_`, `sigmoid_`, and `tanh_`. Each reuses the existing
+    `aclnnSqrt` / `aclnnSigmoid` / `aclnnTanh` bindings via a new
+    `fast_*_inplace` Cython helper that aliases output to input — fully
+    NPU-resident.
+    """
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+
+    aliases = {
+        "sqrt_": "_fast_sqrt_inplace_impl",
+        "sigmoid_": "_fast_sigmoid_inplace_impl",
+        "tanh_": "_fast_tanh_inplace_impl",
+    }
+    for op_name, fast_name in aliases.items():
+        assert f"def {op_name}(" not in math_src
+        assert f"{op_name} = {fast_name}" in math_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+
+    assert "def fast_sqrt_inplace(a):" in pyx_src
+    assert "def fast_sigmoid_inplace(a):" in pyx_src
+    assert "def fast_tanh_inplace(a):" in pyx_src
