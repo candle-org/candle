@@ -123,6 +123,7 @@ from .ops import (
     atanh_,
     rsqrt_,
     square_,
+    sign_,
     contiguous,
     getitem,
     setitem,
@@ -330,6 +331,7 @@ from .ops import (
     col2im_op,
     # Phase 1: ACLNN large kernel ops (910B confirmed)
     special_digamma,
+    digamma_,
     special_erfinv,
     special_gammaln,
     special_sinc,
@@ -571,6 +573,8 @@ registry.register("acosh_", "npu", acosh_, meta=meta_infer.infer_unary)
 registry.register("atanh_", "npu", atanh_, meta=meta_infer.infer_unary)
 registry.register("rsqrt_", "npu", rsqrt_, meta=meta_infer.infer_unary)
 registry.register("square_", "npu", square_, meta=meta_infer.infer_unary)
+registry.register("sign_", "npu", sign_, meta=meta_infer.infer_unary)
+registry.register("digamma_", "npu", digamma_, meta=meta_infer.infer_unary)
 registry.register("sub_", "npu", sub_, meta=meta_infer.infer_binary)
 registry.register("sub", "npu", sub, meta=meta_infer.infer_binary)
 registry.register("div", "npu", div, meta=meta_infer.infer_binary)

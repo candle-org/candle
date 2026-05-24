@@ -78,6 +78,7 @@ try:
         fast_sigmoid as _fast_sigmoid_impl,
         fast_sigmoid_inplace as _fast_sigmoid_inplace_impl,
         fast_sign as _fast_sign_impl,
+        fast_sign_inplace as _fast_sign_inplace_impl,
         fast_signbit as _fast_signbit_impl,
         fast_sin as _fast_sin_impl,
         fast_sin_inplace as _fast_sin_inplace_impl,
@@ -284,6 +285,7 @@ except ImportError:
     _fast_atanh_inplace_impl = None  # type: ignore[assignment]
     _fast_rsqrt_inplace_impl = None  # type: ignore[assignment]
     _fast_square_inplace_impl = None  # type: ignore[assignment]
+    _fast_sign_inplace_impl = None  # type: ignore[assignment]
 
 
 def add(a, b):
@@ -388,6 +390,7 @@ acosh_ = _fast_acosh_inplace_impl
 atanh_ = _fast_atanh_inplace_impl
 rsqrt_ = _fast_rsqrt_inplace_impl
 square_ = _fast_square_inplace_impl
+sign_ = _fast_sign_inplace_impl
 
 
 # ---------------------------------------------------------------------------

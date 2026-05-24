@@ -67,6 +67,7 @@ INPLACE_OR_MUTATION_OPS = {
     "ceil_",
     "cos_",
     "cosh_",
+    "digamma_",
     "erf_",
     "erfc_",
     "erfinv_",
@@ -85,6 +86,7 @@ INPLACE_OR_MUTATION_OPS = {
     "round_",
     "rsqrt_",
     "sigmoid_",
+    "sign_",
     "sin_",
     "sinh_",
     "sqrt_",
@@ -236,7 +238,7 @@ def test_schema_ops_without_autograd_registration_are_categorized():
     actual_missing = _schema_ops() - _autograd_registered_ops()
     assert sorted(actual_missing - expected_missing) == []
     assert sorted(expected_missing - actual_missing) == []
-    assert len(actual_missing) == 102
+    assert len(actual_missing) == 104
 
 
 def test_derivatives_not_implemented_inventory_is_classified():
