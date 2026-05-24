@@ -1716,6 +1716,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "_rprop_step",
         "_sgd_step",
         "_sparse_adam_step",
+        "abs_",
         "allclose",
         "arange",
         "argmax",
@@ -1752,6 +1753,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "isposinf",
         "isreal",
         "linspace",
+        "log10_",
+        "log2_",
         "log_",
         "logical_and",
         "logical_not",
@@ -1773,6 +1776,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "randperm",
         "range",
         "reciprocal_",
+        "round_",
         "searchsorted",
         "sigmoid_",
         "sin_",
@@ -1784,13 +1788,14 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "tensor",
         "tril_indices",
         "triu_indices",
+        "trunc_",
         "unflatten",
         "zeros",
         "zeros_like",
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 412
+    assert len(forward_ops) == 417
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2623,3 +2628,33 @@ def test_npu_operator_intake_tranche3d_registers_inplace_sqrt_sigmoid_tanh():
     assert "def fast_sqrt_inplace(a):" in pyx_src
     assert "def fast_sigmoid_inplace(a):" in pyx_src
     assert "def fast_tanh_inplace(a):" in pyx_src
+
+
+def test_npu_operator_intake_tranche3e_registers_inplace_abs_round_trunc_log2_log10():
+    """Operator intake tranche 3e extends the in-place unary surface with
+    `abs_`, `round_`, `trunc_`, `log2_`, and `log10_`. Each reuses the
+    existing `aclnnAbs` / `aclnnRound` / `aclnnTrunc` / `aclnnLog2` /
+    `aclnnLog10` bindings via a new `fast_*_inplace` Cython helper that
+    aliases output to input — fully NPU-resident.
+    """
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+
+    aliases = {
+        "abs_": "_fast_abs_inplace_impl",
+        "round_": "_fast_round_inplace_impl",
+        "trunc_": "_fast_trunc_inplace_impl",
+        "log2_": "_fast_log2_inplace_impl",
+        "log10_": "_fast_log10_inplace_impl",
+    }
+    for op_name, fast_name in aliases.items():
+        assert f"def {op_name}(" not in math_src
+        assert f"{op_name} = {fast_name}" in math_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+
+    assert "def fast_abs_inplace(a):" in pyx_src
+    assert "def fast_round_inplace(a):" in pyx_src
+    assert "def fast_trunc_inplace(a):" in pyx_src
+    assert "def fast_log2_inplace(a):" in pyx_src
+    assert "def fast_log10_inplace(a):" in pyx_src

@@ -13,6 +13,7 @@ from ._helpers import (
 try:
     from candle._C._npu_ops import (
         fast_abs as _fast_abs_impl,
+        fast_abs_inplace as _fast_abs_inplace_impl,
         fast_acos as _fast_acos_impl,
         fast_acosh as _fast_acosh_impl,
         fast_add as _fast_add_impl,
@@ -47,7 +48,9 @@ try:
         fast_log_inplace as _fast_log_inplace_impl,
         fast_log1p as _fast_log1p_impl,
         fast_log10 as _fast_log10_impl,
+        fast_log10_inplace as _fast_log10_inplace_impl,
         fast_log2 as _fast_log2_impl,
+        fast_log2_inplace as _fast_log2_inplace_impl,
         fast_floor_divide as _fast_floor_divide_impl,
         fast_mul as _fast_mul_impl,
         fast_mul_inplace as _fast_mul_inplace_impl,
@@ -57,6 +60,7 @@ try:
         fast_pow_tensor_scalar as _fast_pow_tensor_scalar_impl,
         fast_reciprocal as _fast_reciprocal_impl,
         fast_round as _fast_round_impl,
+        fast_round_inplace as _fast_round_inplace_impl,
         fast_rsqrt as _fast_rsqrt_impl,
         fast_sigmoid as _fast_sigmoid_impl,
         fast_sigmoid_inplace as _fast_sigmoid_inplace_impl,
@@ -75,6 +79,7 @@ try:
         fast_tanh as _fast_tanh_impl,
         fast_tanh_inplace as _fast_tanh_inplace_impl,
         fast_trunc as _fast_trunc_impl,
+        fast_trunc_inplace as _fast_trunc_inplace_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_ADD = True
     _HAS_FAST_ABS = True
@@ -244,6 +249,11 @@ except ImportError:
     _fast_sqrt_inplace_impl = None  # type: ignore[assignment]
     _fast_sigmoid_inplace_impl = None  # type: ignore[assignment]
     _fast_tanh_inplace_impl = None  # type: ignore[assignment]
+    _fast_abs_inplace_impl = None  # type: ignore[assignment]
+    _fast_round_inplace_impl = None  # type: ignore[assignment]
+    _fast_trunc_inplace_impl = None  # type: ignore[assignment]
+    _fast_log2_inplace_impl = None  # type: ignore[assignment]
+    _fast_log10_inplace_impl = None  # type: ignore[assignment]
 
 
 def add(a, b):
@@ -328,6 +338,11 @@ cos_ = _fast_cos_inplace_impl
 sqrt_ = _fast_sqrt_inplace_impl
 sigmoid_ = _fast_sigmoid_inplace_impl
 tanh_ = _fast_tanh_inplace_impl
+abs_ = _fast_abs_inplace_impl
+round_ = _fast_round_inplace_impl
+trunc_ = _fast_trunc_inplace_impl
+log2_ = _fast_log2_inplace_impl
+log10_ = _fast_log10_inplace_impl
 
 
 # ---------------------------------------------------------------------------
