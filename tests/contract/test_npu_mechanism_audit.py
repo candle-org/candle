@@ -1779,8 +1779,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 396
-    assert len(autograd_ops & forward_ops) == 324
+    assert len(forward_ops) == 399
+    assert len(autograd_ops & forward_ops) == 327
 
 
 def test_npu_activation_module_consolidates_fast_helper_try_blocks():
