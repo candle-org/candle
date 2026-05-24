@@ -115,6 +115,11 @@ def infer_sum(a, dim=None, keepdim=False):
     return TensorSpec(shape=shape, stride=_contiguous_stride(shape), dtype=a.dtype)
 
 
+def infer_var_mean(a, dim=None, unbiased=True, keepdim=False):  # pylint: disable=unused-argument
+    spec = infer_sum(a, dim=dim, keepdim=keepdim)
+    return (spec, spec)
+
+
 def infer_reduce_bool(a, dim=None, keepdim=False):
     spec = infer_sum(a, dim=dim, keepdim=keepdim)
     return TensorSpec(shape=spec.shape, stride=spec.stride, dtype=bool_dtype)

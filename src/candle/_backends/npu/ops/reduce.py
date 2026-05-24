@@ -788,6 +788,17 @@ def var_(a, dim=None, unbiased=True, keepdim=False):
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
+def var_mean(a, dim=None, unbiased=True, keepdim=False):
+    """Compute (variance, mean) tuple as a composite of `var_` + `mean`.
+
+    Both reductions stay on the NPU device; no CPU fallback.
+    """
+    return (
+        var_(a, dim=dim, unbiased=unbiased, keepdim=keepdim),
+        mean(a, dim=dim, keepdim=keepdim),
+    )
+
+
 def std_(a, dim=None, unbiased=True, keepdim=False):
     """Compute std as sqrt(var).
 

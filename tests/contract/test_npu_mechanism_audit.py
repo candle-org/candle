@@ -1785,8 +1785,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 406
-    assert len(autograd_ops & forward_ops) == 328
+    assert len(forward_ops) == 407
+    assert len(autograd_ops & forward_ops) == 329
 
 
 def test_npu_activation_module_consolidates_fast_helper_try_blocks():
@@ -2540,3 +2540,29 @@ def test_npu_operator_intake_tranche3a_registers_functional_masked_scatter():
         'registry.register("masked_scatter", "npu", masked_scatter'
         in backend_init_src
     )
+
+
+def test_npu_operator_intake_tranche3b_registers_var_mean_composite():
+    """`var_mean` returns `(variance, mean)` and is wired on NPU as a composite
+    of the existing `var_` + `mean` kernels. Both reductions stay on the NPU
+    device — no CPU fallback. The op already has a generated autograd
+    derivative (`var_mean_backward`), so requires_grad flows route through
+    AutogradNPU correctly. Meta inference returns a `(spec, spec)` tuple
+    matching the schema's `-> (Tensor, Tensor)` return type.
+    """
+    reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+    meta_src = _source("src/candle/_backends/meta/infer.py")
+
+    assert "def var_mean(a, dim=None, unbiased=True, keepdim=False):" in reduce_src
+    assert "var_(a, dim=dim, unbiased=unbiased, keepdim=keepdim)" in reduce_src
+    assert "mean(a, dim=dim, keepdim=keepdim)" in reduce_src
+
+    assert "var_mean," in ops_init_src
+    assert "var_mean," in backend_init_src
+    assert (
+        'registry.register("var_mean", "npu", var_mean, meta=meta_infer.infer_var_mean)'
+        in backend_init_src
+    )
+    assert "def infer_var_mean(a, dim=None, unbiased=True, keepdim=False)" in meta_src

@@ -23,7 +23,7 @@ from .reduce import (
     amax, amin, count_nonzero, all_, any_,
     min_, max_, maximum, minimum, fmin, fmax,
     cumsum, cumprod, cummax, argsort, sort, topk,
-    sum_, mean, var_, std_, norm_, prod_,
+    sum_, mean, var_, var_mean, std_, norm_, prod_,
     cummin_op, logsumexp_op, renorm_op, nansum,
     nanmean_op, argwhere_op,
     quantile_op, nanquantile_op, nanmedian_op,
