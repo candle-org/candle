@@ -206,6 +206,7 @@ from .ops import (
     scatter_,
     scatter_add_,
     masked_scatter_,
+    masked_scatter,
     unfold,
     as_strided_npu, as_strided_copy_npu, as_strided_scatter_npu,
     expand_copy_npu, slice_op_npu, slice_copy_npu, slice_scatter_npu,
@@ -665,6 +666,7 @@ registry.register("index_add_", "npu", index_add_)
 registry.register("scatter_", "npu", scatter_)
 registry.register("scatter_add_", "npu", scatter_add_)
 registry.register("masked_scatter_", "npu", masked_scatter_)
+registry.register("masked_scatter", "npu", masked_scatter, meta=meta_infer.infer_unary)
 registry.register("unfold", "npu", unfold)
 
 # View/copy/slice ops
