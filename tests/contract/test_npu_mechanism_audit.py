@@ -175,27 +175,39 @@ def test_npu_bulk_fast_helpers_have_no_python_fallback_bodies():
             assert marker not in body
 
 
-def test_npu_special_gamma_and_erfinv_wrappers_delegate_to_cython():
+def test_npu_special_unary_wrappers_collapse_to_cython_aliases():
+    """Audit: `special_digamma`, `special_erfinv`, and `special_gammaln`
+    in `_backends/npu/ops/special.py` are 2-line `def` wrappers whose bodies
+    only return their module-level Cython helpers. Their schemas each take a
+    single tensor input, identical to the imported helper signatures, so the
+    wrappers add Python call frames without changing behavior.
+
+    Collapse them to module-level aliases:
+
+      special_digamma = _fast_digamma_impl
+      special_erfinv = _fast_erfinv_impl
+      special_gammaln = _fast_lgamma_impl
+
+    Keep the names intact so `_backends/npu/__init__.py` registrations and the
+    internal `special_multigammaln_op()` call site continue to work.
+    """
     special_src = _source("src/candle/_backends/npu/ops/special.py")
 
-    special_expectations = {
+    expectations = {
         "special_digamma": "_fast_digamma_impl",
         "special_erfinv": "_fast_erfinv_impl",
         "special_gammaln": "_fast_lgamma_impl",
     }
-    forbidden = [
-        "return _unary_op(",
-        "return _binary_op(",
-        "aclnn.",
-        "_wrap_tensor(",
-        "npu_runtime._alloc_device",
-        "_unwrap_storage(",
-    ]
-    for name, fast_name in special_expectations.items():
-        body = _function_source(special_src, name)
-        assert fast_name in body, f"{name} does not delegate to {fast_name}"
-        for marker in forbidden:
-            assert marker not in body
+    for name, fast_name in expectations.items():
+        assert f"def {name}(" not in special_src, (
+            f"`{name}` is still defined as a `def` wrapper in `special.py`. "
+            f"Replace it with the module-level alias `{name} = {fast_name}`."
+        )
+        assert f"{name} = {fast_name}" in special_src, (
+            f"`special.py` must bind `{name}` to `{fast_name}` via a "
+            "module-level alias so the registration/import surface stays "
+            "unchanged."
+        )
 
 
 def test_npu_comparison_thin_wrappers_delegate_to_cython():
@@ -1590,9 +1602,7 @@ def test_npu_ops_modules_lift_fast_helper_imports_to_module_level():
     """
     targets = {
         "src/candle/_backends/npu/ops/special.py": [
-            "special_digamma",
-            "special_erfinv",
-            "special_gammaln",
+            "special_sinc",
         ],
     }
     for rel, names in targets.items():

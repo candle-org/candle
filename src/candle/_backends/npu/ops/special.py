@@ -8,6 +8,7 @@ try:
         fast_special_sinc as _fast_special_sinc_impl,
         fast_special_xlog1py as _fast_special_xlog1py_impl,
         fast_special_xlogy as _fast_special_xlogy_impl,
+        fast_sinc as _fast_sinc_impl,
         fast_digamma as _fast_digamma_impl,
         fast_erfinv as _fast_erfinv_impl,
         fast_lgamma as _fast_lgamma_impl,
@@ -22,6 +23,7 @@ except ImportError:
     _fast_special_sinc_impl = None  # type: ignore[assignment]
     _fast_special_xlog1py_impl = None  # type: ignore[assignment]
     _fast_special_xlogy_impl = None  # type: ignore[assignment]
+    _fast_sinc_impl = None  # type: ignore[assignment]
     _fast_digamma_impl = None  # type: ignore[assignment]
     _fast_erfinv_impl = None  # type: ignore[assignment]
     _fast_lgamma_impl = None  # type: ignore[assignment]
@@ -44,23 +46,20 @@ from .reduce import maximum
 from .shape import contiguous, index_select
 
 
-def special_digamma(a):
-    return _fast_digamma_impl(a)
+special_digamma = _fast_digamma_impl
 
 
-def special_erfinv(a):
-    return _fast_erfinv_impl(a)
+special_erfinv = _fast_erfinv_impl
 
 
-def special_gammaln(a):
-    return _fast_lgamma_impl(a)
+special_gammaln = _fast_lgamma_impl
 
 
 def special_sinc(a):
     if _HAS_FAST_SPECIAL_COMPOSITES:
         return _fast_special_sinc_impl(a)
-    from candle._C._npu_ops import fast_sinc as _fast_sinc_impl  # pylint: disable=import-error,no-name-in-module
     return _fast_sinc_impl(a)
+
 
 
 def special_entr_op(a):
