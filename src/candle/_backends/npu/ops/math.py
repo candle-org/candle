@@ -70,6 +70,7 @@ try:
         fast_neg_inplace as _fast_neg_inplace_impl,
         fast_pow as _fast_pow_impl,
         fast_pow_tensor_scalar as _fast_pow_tensor_scalar_impl,
+        fast_pow_inplace as _fast_pow_inplace_impl,
         fast_reciprocal as _fast_reciprocal_impl,
         fast_round as _fast_round_impl,
         fast_round_inplace as _fast_round_inplace_impl,
@@ -144,6 +145,7 @@ try:
     _HAS_FAST_MUL = True
     _HAS_FAST_POW = True
     _HAS_FAST_POW_TENSOR_SCALAR = True
+    _HAS_FAST_POW_INPLACE = True
     _HAS_FAST_SUB = True
     _HAS_FAST_ADD_INPLACE = True
     _HAS_FAST_SUB_INPLACE = True
@@ -155,6 +157,7 @@ except ImportError:
     _fast_neg_impl = None  # type: ignore[assignment]
     _fast_pow_impl = None  # type: ignore[assignment]
     _fast_pow_tensor_scalar_impl = None  # type: ignore[assignment]
+    _fast_pow_inplace_impl = None  # type: ignore[assignment]
     _fast_sign_impl = None  # type: ignore[assignment]
     _fast_signbit_impl = None  # type: ignore[assignment]
     _fast_isfinite_impl = None  # type: ignore[assignment]
@@ -245,6 +248,7 @@ except ImportError:
     _HAS_FAST_MUL = False
     _HAS_FAST_POW = False
     _HAS_FAST_POW_TENSOR_SCALAR = False
+    _HAS_FAST_POW_INPLACE = False
     _HAS_FAST_SUB = False
     _HAS_FAST_ADD_INPLACE = False
     _HAS_FAST_SUB_INPLACE = False
@@ -696,6 +700,14 @@ def pow(a, b):
     if _HAS_FAST_POW_TENSOR_SCALAR:
         return _fast_pow_tensor_scalar_impl(a, b)
     raise RuntimeError("Cython NPU pow tensor-scalar implementation is unavailable")
+
+
+def pow_(a, b):
+    if isinstance(b, (int, float)):
+        b = _scalar_to_npu_tensor(b, a)
+    if _HAS_FAST_POW_INPLACE:
+        return _fast_pow_inplace_impl(a, b)
+    raise RuntimeError("Cython NPU pow_ implementation is unavailable")
 
 
 def floor_divide(a, b):

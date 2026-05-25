@@ -623,6 +623,8 @@ cdef object _bitwise_or_getws_ptr = None   # cached BitwiseOrTensor getws pointe
 cdef object _bitwise_or_exec_ptr = None    # cached BitwiseOrTensor exec pointer
 cdef object _bitwise_xor_getws_ptr = None  # cached BitwiseXorTensor getws pointer
 cdef object _bitwise_xor_exec_ptr = None   # cached BitwiseXorTensor exec pointer
+cdef object _pow_getws_ptr = None          # cached PowTensorTensor getws pointer
+cdef object _pow_exec_ptr = None           # cached PowTensorTensor exec pointer
 cdef object _defer_executor_fn = None    # aclnn._defer_executor
 cdef object _acl_rt_malloc_fn = None     # acl.rt.malloc
 cdef object _acl_rt_free_fn = None       # acl.rt.free (for workspace)
@@ -674,6 +676,15 @@ cdef inline void _ensure_ffi_bitwise() except *:
     _bitwise_and_getws_ptr, _bitwise_and_exec_ptr = _ffi_ref.resolve_op("BitwiseAndTensor")
     _bitwise_or_getws_ptr, _bitwise_or_exec_ptr = _ffi_ref.resolve_op("BitwiseOrTensor")
     _bitwise_xor_getws_ptr, _bitwise_xor_exec_ptr = _ffi_ref.resolve_op("BitwiseXorTensor")
+
+
+cdef inline void _ensure_ffi_pow() except *:
+    """Resolve and cache PowTensorTensor getws/exec ptrs (lazy)."""
+    global _pow_getws_ptr, _pow_exec_ptr
+    if _pow_getws_ptr is not None:
+        return
+    _ensure_ffi_binary()
+    _pow_getws_ptr, _pow_exec_ptr = _ffi_ref.resolve_op("PowTensorTensor")
 
 
 cdef uintptr_t _get_alpha_one(int dtype_code) except? 0:
@@ -1594,6 +1605,76 @@ def fast_pow(a, b):
 
 def fast_pow_tensor_scalar(a, exponent):
     return fast_pow(a, _npu_scalar_like(exponent, a))
+
+
+def fast_pow_inplace(a, b):
+    """In-place pow_(a, b) — aliases output ptr to a via aclnnPowTensorTensor.
+
+    Reuses the existing out-of-place aclnnPowTensorTensor with the output
+    pointer aliased to the `a` pointer. Caller must ensure b is broadcastable
+    to a's shape.
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_pow()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "pow_", &dev_idx)
+
+    a_dtype = a.dtype
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf, out_shape_buf
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+    cdef int out_ndim
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+    if out_ndim != a_ndim:
+        raise ValueError("NPU pow_ requires broadcastable to self shape")
+    cdef int i
+    for i in range(out_ndim):
+        if out_shape_buf[i] != a_shape_buf[i]:
+            raise ValueError("NPU pow_ requires broadcastable to self shape")
+
+    runtime = _get_runtime_fast(dev_idx)
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr
+    cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    ws_size, executor = _ffi_ref.binary_two_inputs_op(
+        _pow_getws_ptr, _pow_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        py_a_shape, a.stride,
+        dtype_code, dtype_code, dtype_code,
+        2,
+        int(a_ptr), int(b_ptr), int(a_ptr),
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _pow_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnPowTensorTensor execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
 
 
 def fast_floor_divide(a, b):
