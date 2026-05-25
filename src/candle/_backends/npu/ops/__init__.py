@@ -62,7 +62,7 @@ from .shape import (
 
 from .activation import (
     relu, relu_, relu6, relu6_, softplus, hardtanh, hardtanh_,
-    silu, silu_, gelu, leaky_relu, elu, mish, mish_, prelu,
+    silu, silu_, gelu, leaky_relu, leaky_relu_, elu, elu_, mish, mish_, prelu,
     selu_op, celu_op, threshold_op,
     hardshrink_op, softshrink_op, hardswish_op, hardsigmoid_op,
     softsign_op, rrelu_op,

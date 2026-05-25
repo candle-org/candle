@@ -1744,6 +1744,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "cos_",
         "cosh_",
         "digamma_",
+        "elu_",
         "empty",
         "empty_like",
         "equal",
@@ -1768,6 +1769,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "isneginf",
         "isposinf",
         "isreal",
+        "leaky_relu_",
         "linspace",
         "log10_",
         "log1p_",
@@ -1820,7 +1822,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 442
+    assert len(forward_ops) == 444
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2922,3 +2924,33 @@ def test_npu_operator_intake_tranche3m_registers_inplace_pow():
     assert 'register_schema("pow_",' in schemas_src
     assert "def fast_pow_inplace(a, b):" in pyx_src
     assert "_ensure_ffi_pow()" in pyx_src
+
+
+def test_npu_operator_intake_tranche3n_registers_inplace_elu_leaky_relu():
+    """Operator intake tranche 3n extends the in-place activation surface with
+    `elu_` and `leaky_relu_`. Each reuses the existing `aclnnElu` /
+    `aclnnLeakyRelu` bindings via new `fast_elu_inplace` /
+    `fast_leaky_relu_inplace` Cython helpers that alias the output ptr to
+    the `a` ptr — fully NPU-resident. New schemas are added in
+    `_dispatch/schemas.py`. Both ops live in `ops/activation.py` and use
+    the def-with-guard pattern (`def elu_(a, alpha=1.0): if
+    _HAS_FAST_ELU_INPLACE: ...`) since they take scalar parameters.
+    """
+    activation_src = _source("src/candle/_backends/npu/ops/activation.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+    schemas_src = _source("src/candle/_dispatch/schemas.py")
+
+    for op_name, fast_name, guard in (
+        ("elu_", "_fast_elu_inplace_impl", "_HAS_FAST_ELU_INPLACE"),
+        ("leaky_relu_", "_fast_leaky_relu_inplace_impl",
+         "_HAS_FAST_LEAKY_RELU_INPLACE"),
+    ):
+        assert f"def {op_name}(" in activation_src
+        assert fast_name in activation_src
+        assert guard in activation_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+        assert f'register_schema(\n        "{op_name}",' in schemas_src
+
+    assert "def fast_elu_inplace(a, alpha):" in pyx_src
+    assert "def fast_leaky_relu_inplace(a, negative_slope):" in pyx_src

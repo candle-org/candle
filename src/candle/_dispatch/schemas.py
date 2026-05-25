@@ -330,6 +330,14 @@ def register_schemas():
         "hardtanh_",
         "hardtanh_(Tensor(a!) self, Scalar min_val=-1.0, Scalar max_val=1.0) -> Tensor(a)",
     )
+    registry.register_schema(
+        "elu_",
+        "elu_(Tensor(a!) self, Scalar alpha=1.0) -> Tensor(a)",
+    )
+    registry.register_schema(
+        "leaky_relu_",
+        "leaky_relu_(Tensor(a!) self, Scalar negative_slope=0.01) -> Tensor(a)",
+    )
     registry.register_schema("reciprocal_", "reciprocal_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("pow_", "pow_(Tensor(a!) self, Any exponent) -> Tensor(a)")
     registry.register_schema("bitwise_and_", "bitwise_and_(Tensor(a!) self, Any other) -> Tensor(a)")
