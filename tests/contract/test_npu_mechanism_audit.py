@@ -1829,8 +1829,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 452
-    assert len(autograd_ops & forward_ops) == 330
+    assert len(forward_ops) == 453
+    assert len(autograd_ops & forward_ops) == 331
 
 
 def test_npu_activation_module_consolidates_fast_helper_try_blocks():
@@ -3126,3 +3126,33 @@ def test_npu_operator_intake_tranche3s_registers_unique_consecutive():
     assert 'registry.register("unique_consecutive", "npu", unique_consecutive)' in backend_init_src
 
     assert "def unary_two_bools_int_three_outputs_op(" in ffi_pyx_src
+
+
+def test_npu_operator_intake_tranche3t_registers_max_unpool2d():
+    """Operator intake tranche 3t adds NPU forward registration for
+    `max_unpool2d`. Wires up new `aclnnMaxUnpool2d*` ctypes bindings plus
+    a new `two_tensor_int_array_op` FFI helper — pattern matches the existing
+    `aclnnMaxUnpool2d` C signature `(self, indices, outputSize, out)`.
+
+    `max_unpool2d` has generated autograd via `_VT.max_unpool2d_autograd`, so
+    NPU forward registration lands it in the `generated_only` bucket.
+    """
+    aclnn_src = _source("src/candle/_backends/npu/aclnn.py")
+    conv_src = _source("src/candle/_backends/npu/ops/conv.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+    ffi_pyx_src = _source("src/candle/_C/_aclnn_ffi.pyx")
+
+    assert "aclnnMaxUnpool2dGetWorkspaceSize" in aclnn_src
+    assert "aclnnMaxUnpool2d" in aclnn_src
+    assert "def max_unpool2d_symbols_ok()" in aclnn_src
+    assert "def max_unpool2d(" in aclnn_src
+    assert 'resolve_op("MaxUnpool2d")' in aclnn_src
+
+    assert "def max_unpool2d(" in conv_src
+    assert "aclnn.max_unpool2d(" in conv_src
+
+    assert "max_unpool2d," in ops_init_src
+    assert 'registry.register("max_unpool2d", "npu", max_unpool2d)' in backend_init_src
+
+    assert "def two_tensor_int_array_op(" in ffi_pyx_src
