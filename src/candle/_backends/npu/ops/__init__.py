@@ -102,6 +102,7 @@ from .conv import (
     adaptive_avg_pool2d, adaptive_max_pool2d,
     adaptive_avg_pool3d_op, avg_pool3d_op,
     adaptive_avg_pool1d_op, avg_pool1d_op, max_pool1d_op, adaptive_max_pool1d_op,
+    adaptive_max_pool3d_op,
     upsample_nearest2d, upsample_bilinear2d,
     upsample_bicubic2d_op, upsample_linear1d_op, upsample_nearest1d_op,
     im2col_op, col2im_op,

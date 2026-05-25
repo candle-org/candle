@@ -3402,6 +3402,20 @@ class AclnnBindings:
             [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
         )
 
+        # aclnnAdaptiveMaxPool3d (forward) — returns output + indices (int64)
+        self.aclnn_adaptive_max_pool3d_get_workspace = _optional_symbol(
+            libs, "aclnnAdaptiveMaxPool3dGetWorkspaceSize", ctypes.c_int32,
+            [ctypes.c_void_p,                   # const aclTensor* self
+             ctypes.c_void_p,                   # const aclIntArray* outputSize
+             ctypes.c_void_p,                   # aclTensor* outputOut
+             ctypes.c_void_p,                   # aclTensor* indicesOut
+             ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p)],
+        )
+        self.aclnn_adaptive_max_pool3d = _optional_symbol(
+            libs, "aclnnAdaptiveMaxPool3d", ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
+        )
+
         # aclnnMaxPool3dWithArgmaxBackward — uses argmax indices from forward
         self.aclnn_max_pool3d_with_argmax_backward_get_workspace = _optional_symbol(
             libs, "aclnnMaxPool3dWithArgmaxBackwardGetWorkspaceSize", ctypes.c_int32,
@@ -4027,6 +4041,7 @@ _ACL_DTYPE = {
 
 _ACL_FORMAT_ND = 2
 _ACL_FORMAT_NCHW = 0
+_ACL_FORMAT_NCDHW = 30
 
 
 def _normalize_dtype(dtype):
@@ -16070,6 +16085,78 @@ def adaptive_max_pool2d(self_ptr, out_ptr, indices_ptr,
             ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
             if ret != 0:
                 raise RuntimeError(f"aclnnAdaptiveMaxPool2d failed: {ret}")
+        _maybe_sync(runtime)
+    finally:
+        _defer_executor(ctypes.c_void_p(executor))
+        if workspace is not None:
+            runtime.defer_raw_free(workspace)
+
+
+# ---------------------------------------------------------------
+# adaptive_max_pool3d (forward)
+# ---------------------------------------------------------------
+
+def adaptive_max_pool3d_symbols_ok():
+    try:
+        b = get_bindings()
+        return all([b.aclnn_adaptive_max_pool3d_get_workspace,
+                    b.aclnn_adaptive_max_pool3d])
+    except Exception:
+        return False
+
+
+def adaptive_max_pool3d(self_ptr, out_ptr, indices_ptr,
+                         shape, stride_t, dtype,
+                         output_size,
+                         out_shape, out_stride,
+                         indices_shape, indices_stride,
+                         runtime, stream=None):
+    """AdaptiveMaxPool3d via aclnnAdaptiveMaxPool3d.
+
+    Returns output + indices (int32 — matches MaxPool3dWithArgmax convention).
+    """
+    global acl
+    if acl is None:
+        acl = ensure_acl()
+    bindings = get_bindings()
+    if not adaptive_max_pool3d_symbols_ok():
+        raise RuntimeError("aclnnAdaptiveMaxPool3d symbols not available")
+    stream_ptr = int(runtime.stream if stream is None else stream)
+    dtype_code = _dtype_to_acl(dtype)
+    idx_dtype_code = _dtype_to_acl("int32")
+
+    _require_native_npu_ffi("adaptive_max_pool3d")
+    executor = 0
+    workspace = None
+    try:
+        getws_ptr, exec_ptr = _ffi.resolve_op("AdaptiveMaxPool3d")
+        ws_size, executor = _ffi.tensor_int_array_two_outputs_op(
+            getws_ptr,
+            exec_ptr,
+            shape,
+            stride_t,
+            out_shape,
+            out_stride,
+            indices_shape,
+            indices_stride,
+            tuple(output_size),
+            dtype_code,
+            dtype_code,
+            idx_dtype_code,
+            _ACL_FORMAT_NCDHW,
+            int(self_ptr),
+            int(out_ptr),
+            int(indices_ptr),
+            stream_ptr,
+        )
+        if ws_size:
+            workspace_ptr, ret = acl.rt.malloc(int(ws_size), 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            workspace = workspace_ptr
+            ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
+            if ret != 0:
+                raise RuntimeError(f"aclnnAdaptiveMaxPool3d failed: {ret}")
         _maybe_sync(runtime)
     finally:
         _defer_executor(ctypes.c_void_p(executor))

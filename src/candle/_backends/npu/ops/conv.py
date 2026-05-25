@@ -7,6 +7,7 @@ from ._helpers import (
     npu_index_put_impl,
     _cast_tensor_dtype,
     int64_dtype,
+    int32_dtype,
     npu_typed_storage_from_ptr, reshape,
     aclnn, npu_runtime, npu_state,
 )
@@ -1479,6 +1480,69 @@ def max_unpool2d(input, indices, kernel_size, stride, padding, output_size=None)
 
     out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), input.dtype, device=input.device)
     return _wrap_tensor(out_storage, out_shape, out_stride)
+
+
+def adaptive_max_pool3d_op(input, output_size, return_indices=False):
+    """AdaptiveMaxPool3d forward using aclnnAdaptiveMaxPool3d.
+
+    Supports 4D (C, D, H, W) and 5D (N, C, D, H, W) input. Returns indices
+    on int64. When ``return_indices`` is True, returns (output, indices).
+    """
+    runtime = npu_runtime.get_runtime((input.device.index or 0))
+    stream = npu_state.current_stream((input.device.index or 0))
+
+    if isinstance(output_size, int):
+        oD = oH = oW = output_size
+    else:
+        oD, oH, oW = output_size
+
+    unsqueezed = False
+    if len(input.shape) == 4:
+        unsqueezed = True
+        C, D, H, W = input.shape
+        input = input.unsqueeze(0)  # (1, C, D, H, W)
+        N = 1
+    else:
+        N, C, D, H, W = input.shape
+
+    out_shape = (N, C, oD, oH, oW)
+    out_stride = npu_runtime._contiguous_stride(out_shape)
+    out_numel = _numel(out_shape)
+    itemsize = _dtype_itemsize(input.dtype)
+    out_ptr = npu_runtime._alloc_device(max(out_numel, 1) * itemsize, runtime=runtime)
+
+    indices_shape = out_shape
+    indices_stride = out_stride
+    indices_numel = out_numel
+    indices_ptr = npu_runtime._alloc_device(max(indices_numel, 1) * 4, runtime=runtime)
+
+    aclnn.adaptive_max_pool3d(
+        _unwrap_storage(input).data_ptr(), out_ptr, indices_ptr,
+        input.shape, input.stride, input.dtype,
+        [oD, oH, oW],
+        out_shape, out_stride,
+        indices_shape, indices_stride,
+        runtime, stream=stream.stream,
+    )
+
+    out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), input.dtype, device=input.device)
+    out = _wrap_tensor(out_storage, out_shape, out_stride)
+    out._backward_data = {
+        "indices_ptr": indices_ptr, "indices_shape": indices_shape,
+        "indices_stride": indices_stride,
+    }
+
+    if unsqueezed:
+        out = out.squeeze(0)
+
+    if return_indices:
+        indices_storage = npu_typed_storage_from_ptr(indices_ptr, max(indices_numel, 1), int32_dtype, device=input.device)
+        indices_tensor = _wrap_tensor(indices_storage, indices_shape, indices_stride)
+        if unsqueezed:
+            indices_tensor = indices_tensor.squeeze(0)
+        return out, indices_tensor
+
+    return out
 
 
 # ---------- Other missing ops ----------
