@@ -1719,6 +1719,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "abs_",
         "acos_",
         "acosh_",
+        "addcdiv_",
+        "addcmul_",
         "allclose",
         "arange",
         "argmax",
@@ -1770,6 +1772,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "isposinf",
         "isreal",
         "leaky_relu_",
+        "lerp_",
         "linspace",
         "log10_",
         "log1p_",
@@ -1822,7 +1825,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 444
+    assert len(forward_ops) == 447
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2954,3 +2957,43 @@ def test_npu_operator_intake_tranche3n_registers_inplace_elu_leaky_relu():
 
     assert "def fast_elu_inplace(a, alpha):" in pyx_src
     assert "def fast_leaky_relu_inplace(a, negative_slope):" in pyx_src
+
+
+def test_npu_operator_intake_tranche3o_registers_inplace_addcmul_addcdiv_lerp():
+    """Operator intake tranche 3o extends the in-place elementwise surface
+    with `addcmul_`, `addcdiv_`, and `lerp_`. Each reuses the existing
+    `aclnnAddcmul`, `aclnnAddcdiv`, `aclnnLerp`, and `aclnnLerps` bindings
+    via new `fast_addcmul_inplace`, `fast_addcdiv_inplace`,
+    `fast_lerp_tensor_inplace`, and `fast_lerp_scalar_inplace` Cython
+    helpers that alias the output ptr to the `a` ptr — fully NPU-resident.
+    New schemas are added in `_dispatch/schemas.py`. All three ops live
+    in `ops/elementwise.py` and use the def-with-guard pattern since they
+    take ternary inputs plus scalar parameters. `lerp_` dispatches between
+    tensor-weight and scalar-weight paths.
+    """
+    elementwise_src = _source("src/candle/_backends/npu/ops/elementwise.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+    schemas_src = _source("src/candle/_dispatch/schemas.py")
+
+    for op_name, fast_name, guard in (
+        ("addcmul_", "_fast_addcmul_inplace_impl",
+         "_HAS_FAST_ADDCMUL_INPLACE"),
+        ("addcdiv_", "_fast_addcdiv_inplace_impl",
+         "_HAS_FAST_ADDCDIV_INPLACE"),
+        ("lerp_", "_fast_lerp_tensor_inplace_impl",
+         "_HAS_FAST_LERP_TENSOR_INPLACE"),
+    ):
+        assert f"def {op_name}(" in elementwise_src
+        assert fast_name in elementwise_src
+        assert guard in elementwise_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+        assert f'register_schema(\n        "{op_name}",' in schemas_src
+
+    assert "_fast_lerp_scalar_inplace_impl" in elementwise_src
+    assert "_HAS_FAST_LERP_SCALAR_INPLACE" in elementwise_src
+
+    assert "def fast_addcmul_inplace(a, b, c, value):" in pyx_src
+    assert "def fast_addcdiv_inplace(a, b, c, value):" in pyx_src
+    assert "def fast_lerp_tensor_inplace(a, b, weight):" in pyx_src
+    assert "def fast_lerp_scalar_inplace(a, b, value):" in pyx_src

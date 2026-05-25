@@ -115,7 +115,7 @@ from .random import (
 )
 
 from .elementwise import (
-    where, lerp, addcmul, addcdiv,
+    where, lerp, lerp_, addcmul, addcmul_, addcdiv, addcdiv_,
     logaddexp, logaddexp2, hypot,
     remainder, fmod,
     clamp, clamp_min, clamp_max,
