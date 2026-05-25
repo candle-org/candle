@@ -338,6 +338,18 @@ def register_schemas():
         "leaky_relu_",
         "leaky_relu_(Tensor(a!) self, Scalar negative_slope=0.01) -> Tensor(a)",
     )
+    registry.register_schema(
+        "addcmul_",
+        "addcmul_(Tensor(a!) self, Tensor tensor1, Tensor tensor2, *, Scalar value=1.0) -> Tensor(a)",
+    )
+    registry.register_schema(
+        "addcdiv_",
+        "addcdiv_(Tensor(a!) self, Tensor tensor1, Tensor tensor2, *, Scalar value=1.0) -> Tensor(a)",
+    )
+    registry.register_schema(
+        "lerp_",
+        "lerp_(Tensor(a!) self, Tensor end, Any weight) -> Tensor(a)",
+    )
     registry.register_schema("reciprocal_", "reciprocal_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("pow_", "pow_(Tensor(a!) self, Any exponent) -> Tensor(a)")
     registry.register_schema("bitwise_and_", "bitwise_and_(Tensor(a!) self, Any other) -> Tensor(a)")

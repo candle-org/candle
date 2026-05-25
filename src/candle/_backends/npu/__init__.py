@@ -171,7 +171,9 @@ from .ops import (
     div,
     acosh,
     addcdiv,
+    addcdiv_,
     addcmul,
+    addcmul_,
     allclose,
     asin,
     asinh,
@@ -191,6 +193,7 @@ from .ops import (
     hypot,
     isclose,
     lerp,
+    lerp_,
     logaddexp,
     logaddexp2,
     max_,
@@ -621,8 +624,11 @@ registry.register("searchsorted", "npu", searchsorted, meta=meta_infer.infer_una
 registry.register("unique", "npu", unique)
 registry.register("flatten", "npu", flatten_op, meta=meta_infer.infer_view)
 registry.register("lerp", "npu", lerp, meta=meta_infer.infer_binary)
+registry.register("lerp_", "npu", lerp_, meta=meta_infer.infer_binary)
 registry.register("addcmul", "npu", addcmul, meta=meta_infer.infer_binary)
+registry.register("addcmul_", "npu", addcmul_, meta=meta_infer.infer_binary)
 registry.register("addcdiv", "npu", addcdiv, meta=meta_infer.infer_binary)
+registry.register("addcdiv_", "npu", addcdiv_, meta=meta_infer.infer_binary)
 registry.register("logaddexp", "npu", logaddexp, meta=meta_infer.infer_binary)
 registry.register("logaddexp2", "npu", logaddexp2, meta=meta_infer.infer_binary)
 registry.register("hypot", "npu", hypot, meta=meta_infer.infer_binary)

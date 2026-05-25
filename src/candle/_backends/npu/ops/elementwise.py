@@ -4,8 +4,12 @@ try:
         fast_where as _fast_where_impl,
         fast_lerp_tensor as _fast_lerp_tensor_impl,
         fast_lerp_scalar as _fast_lerp_scalar_impl,
+        fast_lerp_tensor_inplace as _fast_lerp_tensor_inplace_impl,
+        fast_lerp_scalar_inplace as _fast_lerp_scalar_inplace_impl,
         fast_addcmul as _fast_addcmul_impl,
         fast_addcdiv as _fast_addcdiv_impl,
+        fast_addcmul_inplace as _fast_addcmul_inplace_impl,
+        fast_addcdiv_inplace as _fast_addcdiv_inplace_impl,
         fast_fmod as _fast_fmod_impl,
         fast_hypot as _fast_hypot_impl,
         fast_logaddexp as _fast_logaddexp_impl,
@@ -18,8 +22,12 @@ try:
     _HAS_FAST_WHERE = True
     _HAS_FAST_LERP_TENSOR = True
     _HAS_FAST_LERP_SCALAR = True
+    _HAS_FAST_LERP_TENSOR_INPLACE = True
+    _HAS_FAST_LERP_SCALAR_INPLACE = True
     _HAS_FAST_ADDCMUL = True
     _HAS_FAST_ADDCDIV = True
+    _HAS_FAST_ADDCMUL_INPLACE = True
+    _HAS_FAST_ADDCDIV_INPLACE = True
     _HAS_FAST_FMOD = True
     _HAS_FAST_HYPOT = True
     _HAS_FAST_LOGADDEXP = True
@@ -32,8 +40,12 @@ except ImportError:
     _fast_where_impl = None  # type: ignore[assignment]
     _fast_lerp_tensor_impl = None  # type: ignore[assignment]
     _fast_lerp_scalar_impl = None  # type: ignore[assignment]
+    _fast_lerp_tensor_inplace_impl = None  # type: ignore[assignment]
+    _fast_lerp_scalar_inplace_impl = None  # type: ignore[assignment]
     _fast_addcmul_impl = None  # type: ignore[assignment]
     _fast_addcdiv_impl = None  # type: ignore[assignment]
+    _fast_addcmul_inplace_impl = None  # type: ignore[assignment]
+    _fast_addcdiv_inplace_impl = None  # type: ignore[assignment]
     _fast_fmod_impl = None  # type: ignore[assignment]
     _fast_hypot_impl = None  # type: ignore[assignment]
     _fast_logaddexp_impl = None  # type: ignore[assignment]
@@ -45,8 +57,12 @@ except ImportError:
     _HAS_FAST_WHERE = False
     _HAS_FAST_LERP_TENSOR = False
     _HAS_FAST_LERP_SCALAR = False
+    _HAS_FAST_LERP_TENSOR_INPLACE = False
+    _HAS_FAST_LERP_SCALAR_INPLACE = False
     _HAS_FAST_ADDCMUL = False
     _HAS_FAST_ADDCDIV = False
+    _HAS_FAST_ADDCMUL_INPLACE = False
+    _HAS_FAST_ADDCDIV_INPLACE = False
     _HAS_FAST_FMOD = False
     _HAS_FAST_HYPOT = False
     _HAS_FAST_LOGADDEXP = False
@@ -118,16 +134,36 @@ def lerp(a, b, weight):
     raise RuntimeError("Cython NPU lerp implementation is unavailable")
 
 
+def lerp_(a, b, weight):
+    if hasattr(weight, "shape") and _HAS_FAST_LERP_TENSOR_INPLACE:
+        return _fast_lerp_tensor_inplace_impl(a, b, weight)
+    if not hasattr(weight, "shape") and _HAS_FAST_LERP_SCALAR_INPLACE:
+        return _fast_lerp_scalar_inplace_impl(a, b, float(weight))
+    raise RuntimeError("Cython NPU lerp_ implementation is unavailable")
+
+
 def addcmul(a, b, c, value=1.0):
     if _HAS_FAST_ADDCMUL:
         return _fast_addcmul_impl(a, b, c, float(value))
     raise RuntimeError("Cython NPU addcmul implementation is unavailable")
 
 
+def addcmul_(a, b, c, value=1.0):
+    if _HAS_FAST_ADDCMUL_INPLACE:
+        return _fast_addcmul_inplace_impl(a, b, c, float(value))
+    raise RuntimeError("Cython NPU addcmul_ implementation is unavailable")
+
+
 def addcdiv(a, b, c, value=1.0):
     if _HAS_FAST_ADDCDIV:
         return _fast_addcdiv_impl(a, b, c, float(value))
     raise RuntimeError("Cython NPU addcdiv implementation is unavailable")
+
+
+def addcdiv_(a, b, c, value=1.0):
+    if _HAS_FAST_ADDCDIV_INPLACE:
+        return _fast_addcdiv_inplace_impl(a, b, c, float(value))
+    raise RuntimeError("Cython NPU addcdiv_ implementation is unavailable")
 
 
 def logaddexp(a, b):

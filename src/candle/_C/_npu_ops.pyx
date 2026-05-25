@@ -8451,6 +8451,267 @@ def fast_addcdiv(a, b, c, value):
 
 
 
+def fast_addcmul_inplace(a, b, c, value):
+    """In-place addcmul_(a, b, c, value) — aliases output ptr to a via aclnnAddcmul."""
+    _ensure_npu_imports()
+    _ensure_ffi_addcmul()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "addcmul_", &dev_idx)
+    if c.device.type != "npu":
+        raise ValueError("NPU addcmul_ expects NPU tensors")
+    if c.dtype != a.dtype:
+        raise ValueError("NPU addcmul_ requires matching dtypes")
+
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    py_c_shape = (<TensorImpl>c)._shape_tuple if isinstance(c, TensorImpl) else c.shape
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr, b_ptr, c_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    if isinstance(b, TensorImpl):
+        b_ptr = <uintptr_t>(<TensorImpl>b)._storage._untyped._device_ptr
+    else:
+        b_ptr = <uintptr_t>b.storage().data_ptr()
+    if isinstance(c, TensorImpl):
+        c_ptr = <uintptr_t>(<TensorImpl>c)._storage._untyped._device_ptr
+    else:
+        c_ptr = <uintptr_t>c.storage().data_ptr()
+
+    scalar_handle = _create_scalar_fn(_scalar_bytes_fn(value, a_dtype), dtype_code)
+    cdef uintptr_t stream_raw = int(stream.stream)
+    try:
+        ws_size, executor = _ffi_ref.three_tensor_scalar_op(
+            _addcmul_getws_ptr, _addcmul_exec_ptr,
+            py_a_shape, a.stride,
+            py_b_shape, b.stride,
+            py_c_shape, c.stride,
+            py_a_shape, a.stride,
+            dtype_code, dtype_code, dtype_code, dtype_code, 2,
+            a_ptr, b_ptr, c_ptr, a_ptr,
+            scalar_handle,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_ref.execute(
+                    _addcmul_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnAddcmul execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_fn(executor)
+    finally:
+        _destroy_scalar_fn(int(scalar_handle))
+
+    return a
+
+
+def fast_addcdiv_inplace(a, b, c, value):
+    """In-place addcdiv_(a, b, c, value) — aliases output ptr to a via aclnnAddcdiv."""
+    _ensure_npu_imports()
+    _ensure_ffi_addcdiv()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "addcdiv_", &dev_idx)
+    if c.device.type != "npu":
+        raise ValueError("NPU addcdiv_ expects NPU tensors")
+    if c.dtype != a.dtype:
+        raise ValueError("NPU addcdiv_ requires matching dtypes")
+
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    py_c_shape = (<TensorImpl>c)._shape_tuple if isinstance(c, TensorImpl) else c.shape
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr, b_ptr, c_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    if isinstance(b, TensorImpl):
+        b_ptr = <uintptr_t>(<TensorImpl>b)._storage._untyped._device_ptr
+    else:
+        b_ptr = <uintptr_t>b.storage().data_ptr()
+    if isinstance(c, TensorImpl):
+        c_ptr = <uintptr_t>(<TensorImpl>c)._storage._untyped._device_ptr
+    else:
+        c_ptr = <uintptr_t>c.storage().data_ptr()
+
+    scalar_handle = _create_scalar_fn(_scalar_bytes_fn(value, a_dtype), dtype_code)
+    cdef uintptr_t stream_raw = int(stream.stream)
+    try:
+        ws_size, executor = _ffi_ref.three_tensor_scalar_op(
+            _addcdiv_getws_ptr, _addcdiv_exec_ptr,
+            py_a_shape, a.stride,
+            py_b_shape, b.stride,
+            py_c_shape, c.stride,
+            py_a_shape, a.stride,
+            dtype_code, dtype_code, dtype_code, dtype_code, 2,
+            a_ptr, b_ptr, c_ptr, a_ptr,
+            scalar_handle,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_ref.execute(
+                    _addcdiv_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnAddcdiv execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_fn(executor)
+    finally:
+        _destroy_scalar_fn(int(scalar_handle))
+
+    return a
+
+
+def fast_lerp_tensor_inplace(a, b, weight):
+    """In-place lerp_(a, b, weight_tensor) — aliases output ptr to a via aclnnLerp."""
+    _ensure_npu_imports()
+    _ensure_ffi_lerp()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "lerp_", &dev_idx)
+    if weight.device.type != "npu":
+        raise ValueError("NPU lerp_ expects NPU tensors")
+    if weight.dtype != a.dtype:
+        raise ValueError("NPU lerp_ requires matching dtypes")
+
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    py_w_shape = (<TensorImpl>weight)._shape_tuple if isinstance(weight, TensorImpl) else weight.shape
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr, b_ptr, w_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    if isinstance(b, TensorImpl):
+        b_ptr = <uintptr_t>(<TensorImpl>b)._storage._untyped._device_ptr
+    else:
+        b_ptr = <uintptr_t>b.storage().data_ptr()
+    if isinstance(weight, TensorImpl):
+        w_ptr = <uintptr_t>(<TensorImpl>weight)._storage._untyped._device_ptr
+    else:
+        w_ptr = <uintptr_t>weight.storage().data_ptr()
+
+    cdef uintptr_t stream_raw = int(stream.stream)
+    ws_size, executor = _ffi_ref.four_tensor_op(
+        _lerp_getws_ptr, _lerp_exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        py_w_shape, weight.stride,
+        py_a_shape, a.stride,
+        dtype_code, dtype_code, dtype_code, dtype_code, 2,
+        a_ptr, b_ptr, w_ptr, a_ptr,
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                _lerp_exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"aclnnLerp execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
+def fast_lerp_scalar_inplace(a, b, value):
+    """In-place lerp_(a, b, scalar) — aliases output ptr to a via aclnnLerps."""
+    _ensure_npu_imports()
+    _ensure_ffi_lerps()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, b, "lerp_", &dev_idx)
+
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr, b_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    if isinstance(b, TensorImpl):
+        b_ptr = <uintptr_t>(<TensorImpl>b)._storage._untyped._device_ptr
+    else:
+        b_ptr = <uintptr_t>b.storage().data_ptr()
+
+    scalar_handle = _create_scalar_fn(_scalar_bytes_fn(value, a_dtype), dtype_code)
+    cdef uintptr_t stream_raw = int(stream.stream)
+    try:
+        ws_size, executor = _ffi_ref.two_tensor_scalar_op(
+            _lerps_getws_ptr, _lerps_exec_ptr,
+            py_a_shape, a.stride,
+            py_b_shape, b.stride,
+            py_a_shape, a.stride,
+            dtype_code, dtype_code, dtype_code, 2,
+            a_ptr, b_ptr, a_ptr,
+            scalar_handle,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_ref.execute(
+                    _lerps_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnLerps execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_fn(executor)
+    finally:
+        _destroy_scalar_fn(int(scalar_handle))
+
+    return a
+
+
+
 def cy_npu_synchronize(int device_id=0):
     """Fast NPU synchronize: skip Python imports, Device construction, activate().
 
