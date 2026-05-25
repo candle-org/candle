@@ -1308,16 +1308,15 @@ def test_npu_reduce_does_not_import_unused_reshape_alias():
 
 
 def test_npu_ops_modules_do_not_import_unused_int32_dtype():
-    """`int32_dtype` is re-exported by `_helpers` so reduce ops (which
-    legitimately use it 13 times) can pick it up. Every other ops
-    module lists it in the `from ._helpers import (...)` block but
-    never references it — drop the dead listings so the import surface
-    stays in sync with what is used.
+    """`int32_dtype` is re-exported by `_helpers` so ops that legitimately
+    use it (reduce ops 13 times, conv.py once for adaptive_max_pool3d
+    indices) can pick it up. Every other ops module lists it in the
+    `from ._helpers import (...)` block but never references it — drop the
+    dead listings so the import surface stays in sync with what is used.
     """
     consumer_modules = (
         "src/candle/_backends/npu/ops/__init__.py",
         "src/candle/_backends/npu/ops/activation.py",
-        "src/candle/_backends/npu/ops/conv.py",
         "src/candle/_backends/npu/ops/elementwise.py",
         "src/candle/_backends/npu/ops/linalg.py",
         "src/candle/_backends/npu/ops/math.py",
@@ -1829,8 +1828,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 453
-    assert len(autograd_ops & forward_ops) == 331
+    assert len(forward_ops) == 454
+    assert len(autograd_ops & forward_ops) == 332
 
 
 def test_npu_activation_module_consolidates_fast_helper_try_blocks():
@@ -3156,3 +3155,31 @@ def test_npu_operator_intake_tranche3t_registers_max_unpool2d():
     assert 'registry.register("max_unpool2d", "npu", max_unpool2d)' in backend_init_src
 
     assert "def two_tensor_int_array_op(" in ffi_pyx_src
+
+
+def test_npu_operator_intake_tranche3u_registers_adaptive_max_pool3d():
+    """Operator intake tranche 3u adds NPU forward registration for
+    `adaptive_max_pool3d` via the existing `tensor_int_array_two_outputs_op`
+    FFI helper. The 3d kernel mirrors `adaptive_max_pool2d`'s
+    `(self, outputSize, output, indices)` C signature.
+
+    `adaptive_max_pool3d` has generated autograd via
+    `_VT.adaptive_max_pool3d_autograd`, so NPU forward registration lands it
+    in the `generated_only` bucket.
+    """
+    aclnn_src = _source("src/candle/_backends/npu/aclnn.py")
+    conv_src = _source("src/candle/_backends/npu/ops/conv.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+
+    assert "aclnnAdaptiveMaxPool3dGetWorkspaceSize" in aclnn_src
+    assert "aclnnAdaptiveMaxPool3d" in aclnn_src
+    assert "def adaptive_max_pool3d_symbols_ok()" in aclnn_src
+    assert "def adaptive_max_pool3d(" in aclnn_src
+    assert 'resolve_op("AdaptiveMaxPool3d")' in aclnn_src
+
+    assert "def adaptive_max_pool3d_op(" in conv_src
+    assert "aclnn.adaptive_max_pool3d(" in conv_src
+
+    assert "adaptive_max_pool3d_op," in ops_init_src
+    assert 'registry.register("adaptive_max_pool3d", "npu", adaptive_max_pool3d_op)' in backend_init_src
