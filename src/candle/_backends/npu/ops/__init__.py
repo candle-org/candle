@@ -109,6 +109,7 @@ from .conv import (
     grid_sample_op, affine_grid_op,
     pad, constant_pad_nd, ctc_loss_op,
     max_unpool2d,
+    max_unpool3d,
 )
 
 from .random import (
