@@ -107,6 +107,7 @@ from .conv import (
     im2col_op, col2im_op,
     grid_sample_op, affine_grid_op,
     pad, constant_pad_nd, ctc_loss_op,
+    max_unpool2d,
 )
 
 from .random import (

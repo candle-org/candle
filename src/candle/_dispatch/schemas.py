@@ -196,7 +196,7 @@ CORE_SCHEMA_OPS = (
 )
 
 
-def register_schemas():
+def register_schemas():  # pylint: disable=too-many-statements
     registry.register_schema("add", "add(Tensor input, Tensor other, *, Scalar alpha=1) -> Tensor")
     registry.register_error_overrides(
         "add",

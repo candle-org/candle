@@ -2016,6 +2016,19 @@ class AclnnBindings:
             ctypes.c_int32,
             [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
         )
+        # MaxUnpool2d: aclnnMaxUnpool2dGetWorkspaceSize(self, indices, outputSize, out, workspaceSize, executor)
+        self.aclnn_max_unpool2d_get_workspace = _optional_symbol(
+            libs,
+            "aclnnMaxUnpool2dGetWorkspaceSize",
+            ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p)],
+        )
+        self.aclnn_max_unpool2d = _optional_symbol(
+            libs,
+            "aclnnMaxUnpool2d",
+            ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
+        )
         # Randperm: aclnnRandpermGetWorkspaceSize(n, seed, offset, out, workspaceSize, executor)
         self.aclnn_randperm_get_workspace = _optional_symbol(
             libs,
@@ -7788,6 +7801,14 @@ def unique_consecutive_symbols_ok():
         return False
 
 
+def max_unpool2d_symbols_ok():
+    try:
+        bindings = get_bindings()
+        return all([bindings.aclnn_max_unpool2d_get_workspace, bindings.aclnn_max_unpool2d])
+    except Exception:
+        return False
+
+
 def randperm_symbols_ok():
     try:
         bindings = get_bindings()
@@ -12185,6 +12206,63 @@ def unique_consecutive(self_ptr, out_ptr, inverse_indices_ptr, counts_ptr,
             ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
             if ret != 0:
                 raise RuntimeError(f"aclnnUniqueConsecutive failed: {ret}")
+        _maybe_sync(runtime)
+    finally:
+        _defer_executor(ctypes.c_void_p(executor))
+        if workspace is not None:
+            runtime.defer_raw_free(workspace)
+
+
+# MaxUnpool2d
+def max_unpool2d(self_ptr, indices_ptr, out_ptr,
+                 self_shape, self_stride, self_dtype,
+                 indices_shape, indices_stride, indices_dtype,
+                 out_shape, out_stride,
+                 output_size,
+                 runtime, stream=None):
+    global acl
+    if acl is None:
+        acl = ensure_acl()
+    bindings = get_bindings()
+    if bindings.aclnn_max_unpool2d_get_workspace is None or bindings.aclnn_max_unpool2d is None:
+        raise RuntimeError("aclnnMaxUnpool2d symbols not available")
+
+    stream_ptr = int(runtime.stream if stream is None else stream)
+    self_dtype_code = _dtype_to_acl(self_dtype)
+    indices_dtype_code = _dtype_to_acl(indices_dtype)
+
+    _require_native_npu_ffi("max_unpool2d")
+    executor = 0
+    workspace = None
+    try:
+        getws_ptr, exec_ptr = _ffi.resolve_op("MaxUnpool2d")
+        ws_size, executor = _ffi.two_tensor_int_array_op(
+            getws_ptr,
+            exec_ptr,
+            self_shape,
+            self_stride,
+            indices_shape,
+            indices_stride,
+            tuple(int(v) for v in output_size),
+            out_shape,
+            out_stride,
+            self_dtype_code,
+            indices_dtype_code,
+            self_dtype_code,
+            _ACL_FORMAT_ND,
+            int(self_ptr),
+            int(indices_ptr),
+            int(out_ptr),
+            stream_ptr,
+        )
+        if ws_size:
+            workspace_ptr, ret = acl.rt.malloc(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            workspace = workspace_ptr
+            ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
+            if ret != 0:
+                raise RuntimeError(f"aclnnMaxUnpool2d failed: {ret}")
         _maybe_sync(runtime)
     finally:
         _defer_executor(ctypes.c_void_p(executor))

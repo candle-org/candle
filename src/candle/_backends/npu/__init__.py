@@ -262,6 +262,7 @@ from .ops import (
     avg_pool2d,
     adaptive_avg_pool2d,
     adaptive_max_pool2d,
+    max_unpool2d,
     # P1 ops
     std_,
     reciprocal,
@@ -790,6 +791,7 @@ registry.register("max_pool3d", "npu", max_pool3d)
 registry.register("avg_pool2d", "npu", avg_pool2d)
 registry.register("adaptive_avg_pool2d", "npu", adaptive_avg_pool2d)
 registry.register("adaptive_max_pool2d", "npu", adaptive_max_pool2d)
+registry.register("max_unpool2d", "npu", max_unpool2d)
 
 # P1 ops
 registry.register("std", "npu", std_, meta=meta_infer.infer_sum)

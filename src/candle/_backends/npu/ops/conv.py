@@ -1424,4 +1424,61 @@ def ctc_loss_op(log_probs, targets, input_lengths, target_lengths,
                                                  log_probs.dtype, device=log_probs.device)
     return _wrap_tensor(result_storage, result_shape, result_stride)
 
+
+def max_unpool2d(input, indices, kernel_size, stride, padding, output_size=None):
+    """MaxUnpool2d forward via aclnnMaxUnpool2d.
+
+    Scatters pooled values back to their original positions using flat HW indices.
+    Indices must be int64 and shape-match input. Computes output spatial size from
+    kernel_size/stride/padding when ``output_size`` is None, matching torch semantics.
+    """
+    if input.shape != indices.shape:
+        raise ValueError("input and indices must have the same shape")
+    if len(input.shape) != 4:
+        raise ValueError(f"Expected 4D input, got {len(input.shape)}D")
+
+    runtime = npu_runtime.get_runtime((input.device.index or 0))
+    stream = npu_state.current_stream((input.device.index or 0))
+
+    N, C, H_in, W_in = input.shape
+    kH, kW = (int(kernel_size[0]), int(kernel_size[1]))
+    sH, sW = (int(stride[0]), int(stride[1]))
+    pH, pW = (int(padding[0]), int(padding[1]))
+
+    if output_size is not None:
+        if len(output_size) == 4:
+            out_shape = tuple(int(v) for v in output_size)
+        elif len(output_size) == 2:
+            out_shape = (N, C, int(output_size[0]), int(output_size[1]))
+        else:
+            raise ValueError("output_size must have length 2 or 4 for max_unpool2d")
+        if out_shape[0] != N or out_shape[1] != C:
+            raise ValueError("output_size batch/channel dimensions must match input")
+    else:
+        H_out = (H_in - 1) * sH - 2 * pH + kH
+        W_out = (W_in - 1) * sW - 2 * pW + kW
+        out_shape = (N, C, H_out, W_out)
+
+    indices_c = contiguous(indices) if indices.dtype == int64_dtype else _cast_tensor_dtype(indices, int64_dtype)
+
+    out_stride = npu_runtime._contiguous_stride(out_shape)
+    out_numel = _numel(out_shape)
+    itemsize = _dtype_itemsize(input.dtype)
+    out_ptr = npu_runtime._alloc_device(max(out_numel, 1) * itemsize, runtime=runtime)
+
+    aclnn.max_unpool2d(
+        _unwrap_storage(input).data_ptr(),
+        _unwrap_storage(indices_c).data_ptr(),
+        out_ptr,
+        input.shape, input.stride, input.dtype,
+        indices_c.shape, indices_c.stride, indices_c.dtype,
+        out_shape, out_stride,
+        [out_shape[2], out_shape[3]],
+        runtime, stream=stream.stream,
+    )
+
+    out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), input.dtype, device=input.device)
+    return _wrap_tensor(out_storage, out_shape, out_stride)
+
+
 # ---------- Other missing ops ----------
