@@ -64,6 +64,7 @@ INPLACE_OR_MUTATION_OPS = {
     "atan_",
     "atanh_",
     "bitwise_and_",
+    "bitwise_not_",
     "bitwise_or_",
     "bitwise_xor_",
     "ceil_",
@@ -248,7 +249,7 @@ def test_schema_ops_without_autograd_registration_are_categorized():
     actual_missing = _schema_ops() - _autograd_registered_ops()
     assert sorted(actual_missing - expected_missing) == []
     assert sorted(expected_missing - actual_missing) == []
-    assert len(actual_missing) == 114
+    assert len(actual_missing) == 115
 
 
 def test_derivatives_not_implemented_inventory_is_classified():

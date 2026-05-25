@@ -86,6 +86,7 @@ CORE_SCHEMA_OPS = (
     "bitwise_and_",
     "bitwise_or_",
     "bitwise_xor_",
+    "bitwise_not_",
     "uniform_",
     "normal_",
     "fill_",
@@ -357,6 +358,7 @@ def register_schemas():
     registry.register_schema("bitwise_and_", "bitwise_and_(Tensor(a!) self, Any other) -> Tensor(a)")
     registry.register_schema("bitwise_or_", "bitwise_or_(Tensor(a!) self, Any other) -> Tensor(a)")
     registry.register_schema("bitwise_xor_", "bitwise_xor_(Tensor(a!) self, Any other) -> Tensor(a)")
+    registry.register_schema("bitwise_not_", "bitwise_not_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("uniform_", "uniform_(Tensor(a!) self, float low=0.0, float high=1.0, *, Generator? generator=None) -> Tensor(a)")
     registry.register_schema("normal_", "normal_(Tensor(a!) self, float mean=0.0, float std=1.0, *, Generator? generator=None) -> Tensor(a)")
     registry.register_schema("fill_", "fill_(Tensor(a!) self, Scalar value) -> Tensor(a)")

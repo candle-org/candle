@@ -1737,6 +1737,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "bitwise_and_",
         "bitwise_left_shift",
         "bitwise_not",
+        "bitwise_not_",
         "bitwise_or",
         "bitwise_or_",
         "bitwise_right_shift",
@@ -1828,7 +1829,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 450
+    assert len(forward_ops) == 451
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -3065,3 +3066,29 @@ def test_npu_operator_intake_tranche3q_registers_inplace_lgamma():
     assert 'register_schema("lgamma_",' in schemas_src
     assert "def fast_lgamma_inplace(a):" in pyx_src
     assert "_ensure_ffi_lgamma()" in pyx_src
+
+
+def test_npu_operator_intake_tranche3r_registers_inplace_bitwise_not():
+    """Operator intake tranche 3r extends the in-place bitwise surface with
+    `bitwise_not_`. It reuses the existing `aclnnBitwiseNot` binding via a
+    new `fast_bitwise_not_inplace` Cython helper that aliases output to
+    input — fully NPU-resident. The schema is added to
+    `_dispatch/schemas.py` after `bitwise_xor_`. The Python alias lives
+    in `ops/comparison.py` alongside `bitwise_and_`, `bitwise_or_`, and
+    `bitwise_xor_`.
+
+    `bitwise_not_` lands in the missing-autograd bucket (no derivative
+    formula for the in-place form), tracked in
+    `INPLACE_OR_MUTATION_OPS`.
+    """
+    comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+    schemas_src = _source("src/candle/_dispatch/schemas.py")
+
+    assert "def bitwise_not_(" not in comparison_src
+    assert "bitwise_not_ = _fast_bitwise_not_inplace_impl" in comparison_src
+    assert 'registry.register("bitwise_not_", "npu", bitwise_not_' in backend_init_src
+    assert 'register_schema("bitwise_not_",' in schemas_src
+    assert "def fast_bitwise_not_inplace(a):" in pyx_src
+    assert "_ensure_ffi_bitwise_not()" in pyx_src

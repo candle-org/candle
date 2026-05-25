@@ -285,6 +285,7 @@ from .ops import (
     bitwise_and_,
     bitwise_or_,
     bitwise_xor_,
+    bitwise_not_,
     # Math ops
     expm1,
     log1p,
@@ -620,6 +621,7 @@ registry.register("bitwise_right_shift", "npu", bitwise_right_shift, meta=meta_i
 registry.register("bitwise_and_", "npu", bitwise_and_, meta=meta_infer.infer_binary)
 registry.register("bitwise_or_", "npu", bitwise_or_, meta=meta_infer.infer_binary)
 registry.register("bitwise_xor_", "npu", bitwise_xor_, meta=meta_infer.infer_binary)
+registry.register("bitwise_not_", "npu", bitwise_not_, meta=meta_infer.infer_unary)
 # Math ops
 registry.register("expm1", "npu", expm1, meta=meta_infer.infer_unary)
 registry.register("log1p", "npu", log1p, meta=meta_infer.infer_unary)
