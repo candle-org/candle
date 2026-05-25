@@ -22,7 +22,7 @@ from .comparison import (
     logical_and, logical_or, logical_not, logical_xor,
     bitwise_not, bitwise_and, bitwise_or, bitwise_xor,
     bitwise_left_shift, bitwise_right_shift,
-    bitwise_and_, bitwise_or_, bitwise_xor_,
+    bitwise_and_, bitwise_or_, bitwise_xor_, bitwise_not_,
     equal, allclose, isclose,
 )
 
