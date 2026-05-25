@@ -3505,6 +3505,19 @@ class AclnnBindings:
             [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
         )
 
+        # aclnnUpsampleTrilinear3d: (self, outputSize, alignCorners, scalesD, scalesH, scalesW, out)
+        self.aclnn_upsample_trilinear3d_get_workspace = _optional_symbol(
+            libs, "aclnnUpsampleTrilinear3dGetWorkspaceSize", ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool,
+             ctypes.c_double, ctypes.c_double, ctypes.c_double,
+             ctypes.c_void_p,
+             ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p)],
+        )
+        self.aclnn_upsample_trilinear3d = _optional_symbol(
+            libs, "aclnnUpsampleTrilinear3d", ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
+        )
+
         # aclnnUpsampleNearest2dBackward(gradOut, outputSize, inputSize, scalesH, scalesW, gradInput)
         self.aclnn_upsample_nearest2d_backward_get_workspace = _optional_symbol(
             libs, "aclnnUpsampleNearest2dBackwardGetWorkspaceSize", ctypes.c_int32,
@@ -11706,6 +11719,61 @@ def upsample_bilinear2d(input_ptr, out_ptr, input_shape, input_stride, dtype,
             ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
             if ret != 0:
                 raise RuntimeError(f"aclnnUpsampleBilinear2d failed: {ret}")
+        _maybe_sync(runtime)
+    finally:
+        _defer_executor(ctypes.c_void_p(executor))
+        if workspace is not None:
+            runtime.defer_raw_free(workspace)
+
+
+def upsample_trilinear3d_symbols_ok():
+    b = get_bindings()
+    return b.aclnn_upsample_trilinear3d_get_workspace is not None and b.aclnn_upsample_trilinear3d is not None
+
+
+def upsample_trilinear3d(input_ptr, out_ptr, input_shape, input_stride, dtype,
+                         output_size, align_corners, scales_d, scales_h, scales_w,
+                         out_shape, out_stride, runtime, stream=None):
+    global acl
+    if acl is None:
+        acl = ensure_acl()
+    if not upsample_trilinear3d_symbols_ok():
+        raise RuntimeError("aclnnUpsampleTrilinear3d symbols not available")
+    stream_ptr = int(runtime.stream if stream is None else stream)
+    dtype_code = _dtype_to_acl(dtype)
+
+    _require_native_npu_ffi("upsample_trilinear3d")
+    executor = 0
+    workspace = None
+    try:
+        getws_ptr, exec_ptr = _ffi.resolve_op("UpsampleTrilinear3d")
+        ws_size, executor = _ffi.tensor_int_array_bool_three_doubles_op(
+            getws_ptr,
+            exec_ptr,
+            input_shape,
+            input_stride,
+            out_shape,
+            out_stride,
+            tuple(output_size),
+            bool(align_corners),
+            0.0 if scales_d is None else float(scales_d),
+            0.0 if scales_h is None else float(scales_h),
+            0.0 if scales_w is None else float(scales_w),
+            dtype_code,
+            dtype_code,
+            _ACL_FORMAT_NCDHW,
+            int(input_ptr),
+            int(out_ptr),
+            stream_ptr,
+        )
+        if ws_size:
+            workspace_ptr, ret = acl.rt.malloc(int(ws_size), 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            workspace = workspace_ptr
+            ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
+            if ret != 0:
+                raise RuntimeError(f"aclnnUpsampleTrilinear3d failed: {ret}")
         _maybe_sync(runtime)
     finally:
         _defer_executor(ctypes.c_void_p(executor))

@@ -105,6 +105,7 @@ from .conv import (
     adaptive_max_pool3d_op,
     upsample_nearest2d, upsample_bilinear2d,
     upsample_bicubic2d_op, upsample_linear1d_op, upsample_nearest1d_op,
+    upsample_trilinear3d_op,
     im2col_op, col2im_op,
     grid_sample_op, affine_grid_op,
     pad, constant_pad_nd, ctc_loss_op,

@@ -1828,8 +1828,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 455
-    assert len(autograd_ops & forward_ops) == 333
+    assert len(forward_ops) == 456
+    assert len(autograd_ops & forward_ops) == 334
 
 
 def test_npu_activation_module_consolidates_fast_helper_try_blocks():
@@ -3215,3 +3215,34 @@ def test_npu_operator_intake_tranche3v_registers_max_unpool3d():
     assert 'registry.register("max_unpool3d", "npu", max_unpool3d)' in backend_init_src
 
     assert "def two_tensor_three_int_arrays_op(" in ffi_pyx_src
+
+
+def test_npu_operator_intake_tranche3w_registers_upsample_trilinear3d():
+    """Operator intake tranche 3w adds NPU forward registration for
+    `upsample_trilinear3d` via a new `tensor_int_array_bool_three_doubles_op`
+    FFI helper. The 3d signature mirrors aclnnUpsampleBilinear2d but with one
+    more double parameter (scalesD) for the depth dimension.
+
+    `upsample_trilinear3d` has generated autograd via
+    `_VT.upsample_trilinear3d_autograd`, so NPU forward registration lands it
+    in the `generated_only` bucket.
+    """
+    aclnn_src = _source("src/candle/_backends/npu/aclnn.py")
+    conv_src = _source("src/candle/_backends/npu/ops/conv.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+    ffi_pyx_src = _source("src/candle/_C/_aclnn_ffi.pyx")
+
+    assert "aclnnUpsampleTrilinear3dGetWorkspaceSize" in aclnn_src
+    assert "aclnnUpsampleTrilinear3d" in aclnn_src
+    assert "def upsample_trilinear3d_symbols_ok()" in aclnn_src
+    assert "def upsample_trilinear3d(" in aclnn_src
+    assert 'resolve_op("UpsampleTrilinear3d")' in aclnn_src
+
+    assert "def upsample_trilinear3d_op(" in conv_src
+    assert "aclnn.upsample_trilinear3d(" in conv_src
+
+    assert "upsample_trilinear3d_op," in ops_init_src
+    assert 'registry.register("upsample_trilinear3d", "npu", upsample_trilinear3d_op)' in backend_init_src
+
+    assert "def tensor_int_array_bool_three_doubles_op(" in ffi_pyx_src
