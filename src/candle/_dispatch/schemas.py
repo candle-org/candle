@@ -75,6 +75,7 @@ CORE_SCHEMA_OPS = (
     "rsqrt_",
     "square_",
     "digamma_",
+    "lgamma_",
     "sign_",
     "silu_",
     "mish_",
@@ -322,6 +323,7 @@ def register_schemas():
     registry.register_schema("rsqrt_", "rsqrt_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("square_", "square_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("digamma_", "digamma_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("lgamma_", "lgamma_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("sign_", "sign_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("silu_", "silu_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("mish_", "mish_(Tensor(a!) self) -> Tensor(a)")

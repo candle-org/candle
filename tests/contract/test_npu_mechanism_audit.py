@@ -1775,6 +1775,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "isreal",
         "leaky_relu_",
         "lerp_",
+        "lgamma_",
         "linspace",
         "log10_",
         "log1p_",
@@ -1827,7 +1828,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 449
+    assert len(forward_ops) == 450
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -3038,3 +3039,29 @@ def test_npu_operator_intake_tranche3p_registers_bitwise_left_right_shift():
     assert 'name == "bitwise_right_shift"' in pyx_src
     assert '"LeftShift"' in pyx_src
     assert '"RightShift"' in pyx_src
+
+
+def test_npu_operator_intake_tranche3q_registers_inplace_lgamma():
+    """Operator intake tranche 3q extends the in-place unary surface with
+    `lgamma_`. It reuses the existing `aclnnLgamma` binding via a new
+    `fast_lgamma_inplace` Cython helper that aliases output to input —
+    fully NPU-resident. The schema is added to `_dispatch/schemas.py`
+    after `digamma_`. The Python alias lives in `ops/special.py`
+    alongside `digamma_` and `special_gammaln` (which already aliases
+    `_fast_lgamma_impl`).
+
+    `lgamma_` lands in the missing-autograd bucket (no derivative
+    formula for the in-place form), tracked in
+    `INPLACE_OR_MUTATION_OPS`.
+    """
+    special_src = _source("src/candle/_backends/npu/ops/special.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+    schemas_src = _source("src/candle/_dispatch/schemas.py")
+
+    assert "def lgamma_(" not in special_src
+    assert "lgamma_ = _fast_lgamma_inplace_impl" in special_src
+    assert 'registry.register("lgamma_", "npu", lgamma_' in backend_init_src
+    assert 'register_schema("lgamma_",' in schemas_src
+    assert "def fast_lgamma_inplace(a):" in pyx_src
+    assert "_ensure_ffi_lgamma()" in pyx_src

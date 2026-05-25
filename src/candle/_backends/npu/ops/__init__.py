@@ -128,6 +128,7 @@ from .elementwise import (
 from .special import (
     special_digamma, special_erfinv, special_gammaln, special_sinc,
     digamma_,
+    lgamma_,
     special_entr_op, special_erfcx_op, special_logit_op,
     special_ndtr_op, special_log_ndtr_op,
     special_xlogy_op, special_xlog1py_op, special_multigammaln_op,

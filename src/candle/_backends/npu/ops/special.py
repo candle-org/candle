@@ -13,6 +13,7 @@ try:
         fast_digamma_inplace as _fast_digamma_inplace_impl,
         fast_erfinv as _fast_erfinv_impl,
         fast_lgamma as _fast_lgamma_impl,
+        fast_lgamma_inplace as _fast_lgamma_inplace_impl,
     )
     _HAS_FAST_SPECIAL_COMPOSITES = True
     _HAS_FAST_SPECIAL_UNARY = True
@@ -29,6 +30,7 @@ except ImportError:
     _fast_digamma_inplace_impl = None  # type: ignore[assignment]
     _fast_erfinv_impl = None  # type: ignore[assignment]
     _fast_lgamma_impl = None  # type: ignore[assignment]
+    _fast_lgamma_inplace_impl = None  # type: ignore[assignment]
     _HAS_FAST_SPECIAL_COMPOSITES = False
     _HAS_FAST_SPECIAL_UNARY = False
 
@@ -58,6 +60,9 @@ special_erfinv = _fast_erfinv_impl
 
 
 special_gammaln = _fast_lgamma_impl
+
+
+lgamma_ = _fast_lgamma_inplace_impl
 
 
 def special_sinc(a):
