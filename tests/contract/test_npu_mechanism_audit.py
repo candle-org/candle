@@ -1828,8 +1828,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 454
-    assert len(autograd_ops & forward_ops) == 332
+    assert len(forward_ops) == 455
+    assert len(autograd_ops & forward_ops) == 333
 
 
 def test_npu_activation_module_consolidates_fast_helper_try_blocks():
@@ -3183,3 +3183,35 @@ def test_npu_operator_intake_tranche3u_registers_adaptive_max_pool3d():
 
     assert "adaptive_max_pool3d_op," in ops_init_src
     assert 'registry.register("adaptive_max_pool3d", "npu", adaptive_max_pool3d_op)' in backend_init_src
+
+
+def test_npu_operator_intake_tranche3v_registers_max_unpool3d():
+    """Operator intake tranche 3v adds NPU forward registration for
+    `max_unpool3d` via a new `two_tensor_three_int_arrays_op` FFI helper.
+    The 3d kernel mirrors `max_unpool2d` but takes three IntArray parameters
+    (outputSize, stride, padding) instead of one (outputSize), so the existing
+    `two_tensor_int_array_op` helper is insufficient.
+
+    `max_unpool3d` has generated autograd via
+    `_VT.max_unpool3d_autograd`, so NPU forward registration lands it in the
+    `generated_only` bucket.
+    """
+    aclnn_src = _source("src/candle/_backends/npu/aclnn.py")
+    conv_src = _source("src/candle/_backends/npu/ops/conv.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+    ffi_pyx_src = _source("src/candle/_C/_aclnn_ffi.pyx")
+
+    assert "aclnnMaxUnpool3dGetWorkspaceSize" in aclnn_src
+    assert "aclnnMaxUnpool3d" in aclnn_src
+    assert "def max_unpool3d_symbols_ok()" in aclnn_src
+    assert "def max_unpool3d(" in aclnn_src
+    assert 'resolve_op("MaxUnpool3d")' in aclnn_src
+
+    assert "def max_unpool3d(" in conv_src
+    assert "aclnn.max_unpool3d(" in conv_src
+
+    assert "max_unpool3d," in ops_init_src
+    assert 'registry.register("max_unpool3d", "npu", max_unpool3d)' in backend_init_src
+
+    assert "def two_tensor_three_int_arrays_op(" in ffi_pyx_src

@@ -9857,3 +9857,159 @@ def two_tensor_int_array_op(
         if array_buf != NULL:
             free(array_buf)
 
+
+def two_tensor_three_int_arrays_op(
+        uintptr_t getws_ptr, uintptr_t exec_ptr,
+        self_shape, self_stride,
+        indices_shape, indices_stride,
+        first_values, second_values, third_values,
+        out_shape, out_stride,
+        int32_t self_dtype_code, int32_t indices_dtype_code,
+        int32_t out_dtype_code, int32_t fmt,
+        uintptr_t self_ptr, uintptr_t indices_ptr, uintptr_t out_ptr,
+        uintptr_t stream):
+    cdef int self_ndim = len(self_shape)
+    cdef int indices_ndim = len(indices_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int first_ndim = len(first_values)
+    cdef int second_ndim = len(second_values)
+    cdef int third_ndim = len(third_values)
+    cdef int64_t[MAX_NDIM] self_shape_buf, self_stride_buf
+    cdef int64_t[MAX_NDIM] indices_shape_buf, indices_stride_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+    cdef int64_t* first_buf = NULL
+    cdef int64_t* second_buf = NULL
+    cdef int64_t* third_buf = NULL
+    cdef int i
+    cdef void* self_t = NULL
+    cdef void* indices_t = NULL
+    cdef void* out_t = NULL
+    cdef void* first_handle = NULL
+    cdef void* second_handle = NULL
+    cdef void* third_handle = NULL
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef int32_t ret
+    for i in range(self_ndim):
+        self_shape_buf[i] = self_shape[i]
+        self_stride_buf[i] = self_stride[i]
+    for i in range(indices_ndim):
+        indices_shape_buf[i] = indices_shape[i]
+        indices_stride_buf[i] = indices_stride[i]
+    for i in range(out_ndim):
+        out_shape_buf[i] = out_shape[i]
+        out_stride_buf[i] = out_stride[i]
+    if first_ndim > 0:
+        first_buf = <int64_t*>malloc(first_ndim * sizeof(int64_t))
+        if first_buf == NULL:
+            raise MemoryError("malloc failed for first int array buffer")
+        for i in range(first_ndim):
+            first_buf[i] = first_values[i]
+    if second_ndim > 0:
+        second_buf = <int64_t*>malloc(second_ndim * sizeof(int64_t))
+        if second_buf == NULL:
+            if first_buf != NULL:
+                free(first_buf)
+            raise MemoryError("malloc failed for second int array buffer")
+        for i in range(second_ndim):
+            second_buf[i] = second_values[i]
+    if third_ndim > 0:
+        third_buf = <int64_t*>malloc(third_ndim * sizeof(int64_t))
+        if third_buf == NULL:
+            if first_buf != NULL:
+                free(first_buf)
+            if second_buf != NULL:
+                free(second_buf)
+            raise MemoryError("malloc failed for third int array buffer")
+        for i in range(third_ndim):
+            third_buf[i] = third_values[i]
+    with nogil:
+        self_t = _fast_create_tensor(self_shape_buf, self_stride_buf, <uint64_t>self_ndim, self_dtype_code, fmt, <void*>self_ptr)
+        indices_t = _fast_create_tensor(indices_shape_buf, indices_stride_buf, <uint64_t>indices_ndim, indices_dtype_code, fmt, <void*>indices_ptr)
+        out_t = _fast_create_tensor(out_shape_buf, out_stride_buf, <uint64_t>out_ndim, out_dtype_code, fmt, <void*>out_ptr)
+        if first_ndim > 0:
+            first_handle = _fn_create_int_array(first_buf, <uint64_t>first_ndim)
+        if second_ndim > 0:
+            second_handle = _fn_create_int_array(second_buf, <uint64_t>second_ndim)
+        if third_ndim > 0:
+            third_handle = _fn_create_int_array(third_buf, <uint64_t>third_ndim)
+    if (self_t == NULL or indices_t == NULL or out_t == NULL
+            or (first_ndim > 0 and first_handle == NULL)
+            or (second_ndim > 0 and second_handle == NULL)
+            or (third_ndim > 0 and third_handle == NULL)):
+        if self_t != NULL:
+            _fast_destroy_tensor(self_t)
+        if indices_t != NULL:
+            _fast_destroy_tensor(indices_t)
+        if out_t != NULL:
+            _fast_destroy_tensor(out_t)
+        if first_handle != NULL:
+            _fn_destroy_int_array(first_handle)
+        if second_handle != NULL:
+            _fn_destroy_int_array(second_handle)
+        if third_handle != NULL:
+            _fn_destroy_int_array(third_handle)
+        if first_buf != NULL:
+            free(first_buf)
+        if second_buf != NULL:
+            free(second_buf)
+        if third_buf != NULL:
+            free(third_buf)
+        if ((first_ndim > 0 and first_handle == NULL)
+                or (second_ndim > 0 and second_handle == NULL)
+                or (third_ndim > 0 and third_handle == NULL)):
+            raise RuntimeError("aclCreateIntArray returned null")
+        raise RuntimeError("aclCreateTensor returned null")
+    try:
+        with nogil:
+            ret = (<int32_t (*)(void*, void*, void*, void*, void*, void*, uint64_t*, void**) noexcept nogil>getws_ptr)(
+                self_t, indices_t, first_handle, second_handle, third_handle, out_t, &ws_size, &executor)
+        if ret != 0:
+            raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>first_handle)] if first_handle != NULL else [])
+            + ([('i', <uintptr_t>second_handle)] if second_handle != NULL else [])
+            + ([('i', <uintptr_t>third_handle)] if third_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>indices_t)] if indices_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        first_handle = NULL
+        second_handle = NULL
+        third_handle = NULL
+        self_t = NULL
+        indices_t = NULL
+        out_t = NULL
+        if ws_size == 0:
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
+        return (ws_size, <uintptr_t>executor)
+    finally:
+        with nogil:
+            if first_handle != NULL:
+                _fn_destroy_int_array(first_handle)
+            if second_handle != NULL:
+                _fn_destroy_int_array(second_handle)
+            if third_handle != NULL:
+                _fn_destroy_int_array(third_handle)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if indices_t != NULL:
+                _fast_destroy_tensor(indices_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
+        if first_buf != NULL:
+            free(first_buf)
+        if second_buf != NULL:
+            free(second_buf)
+        if third_buf != NULL:
+            free(third_buf)
+
