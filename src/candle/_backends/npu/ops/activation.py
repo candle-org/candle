@@ -12,7 +12,9 @@ try:
         fast_softmax as _fast_softmax_impl,
         fast_log_softmax as _fast_log_softmax_impl,
         fast_leaky_relu as _fast_leaky_relu_impl,
+        fast_leaky_relu_inplace as _fast_leaky_relu_inplace_impl,
         fast_elu as _fast_elu_impl,
+        fast_elu_inplace as _fast_elu_inplace_impl,
         fast_silu as _fast_silu_impl,
         fast_silu_inplace as _fast_silu_inplace_impl,
         fast_gelu as _fast_gelu_impl,
@@ -40,6 +42,8 @@ try:
     _HAS_FAST_LOG_SOFTMAX = True
     _HAS_FAST_LEAKY_RELU = True
     _HAS_FAST_ELU = True
+    _HAS_FAST_LEAKY_RELU_INPLACE = True
+    _HAS_FAST_ELU_INPLACE = True
     _HAS_FAST_SILU = True
     _HAS_FAST_SILU_INPLACE = True
     _HAS_FAST_GELU = True
@@ -57,7 +61,9 @@ except ImportError:
     _fast_softmax_impl = None  # type: ignore[assignment]
     _fast_log_softmax_impl = None  # type: ignore[assignment]
     _fast_leaky_relu_impl = None  # type: ignore[assignment]
+    _fast_leaky_relu_inplace_impl = None  # type: ignore[assignment]
     _fast_elu_impl = None  # type: ignore[assignment]
+    _fast_elu_inplace_impl = None  # type: ignore[assignment]
     _fast_silu_impl = None  # type: ignore[assignment]
     _fast_silu_inplace_impl = None  # type: ignore[assignment]
     _fast_gelu_impl = None  # type: ignore[assignment]
@@ -84,6 +90,8 @@ except ImportError:
     _HAS_FAST_LOG_SOFTMAX = False
     _HAS_FAST_LEAKY_RELU = False
     _HAS_FAST_ELU = False
+    _HAS_FAST_LEAKY_RELU_INPLACE = False
+    _HAS_FAST_ELU_INPLACE = False
     _HAS_FAST_SILU = False
     _HAS_FAST_SILU_INPLACE = False
     _HAS_FAST_GELU = False
@@ -184,10 +192,22 @@ def leaky_relu(a, negative_slope=0.01):
     raise RuntimeError("Cython NPU leaky_relu implementation is unavailable")
 
 
+def leaky_relu_(a, negative_slope=0.01):
+    if _HAS_FAST_LEAKY_RELU_INPLACE:
+        return _fast_leaky_relu_inplace_impl(a, negative_slope)
+    raise RuntimeError("Cython NPU leaky_relu_ implementation is unavailable")
+
+
 def elu(a, alpha=1.0):
     if _HAS_FAST_ELU:
         return _fast_elu_impl(a, alpha)
     raise RuntimeError("Cython NPU elu implementation is unavailable")
+
+
+def elu_(a, alpha=1.0):
+    if _HAS_FAST_ELU_INPLACE:
+        return _fast_elu_inplace_impl(a, alpha)
+    raise RuntimeError("Cython NPU elu_ implementation is unavailable")
 
 
 def mish(a):

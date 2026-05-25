@@ -4928,6 +4928,112 @@ def fast_elu(a, alpha):
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
+def fast_leaky_relu_inplace(a, negative_slope):
+    """In-place leaky_relu_(a, negative_slope) using aclnnLeakyRelu with output aliased to input."""
+    _ensure_npu_imports()
+    _ensure_ffi_leaky_relu()
+
+    cdef int dev_idx = a.device.index or 0
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    a_stride = a.stride
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+
+    scalar_handle = _create_scalar_fn(_scalar_bytes_fn(negative_slope, a_dtype), dtype_code)
+    cdef uintptr_t stream_raw = int(stream.stream)
+    try:
+        ws_size, executor = _ffi_ref.leaky_relu_op(
+            _leaky_relu_getws_ptr, _leaky_relu_exec_ptr,
+            a_shape, a_stride,
+            a_shape, a_stride,
+            dtype_code, 2,
+            a_ptr, a_ptr,
+            scalar_handle,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_ref.execute(
+                    _leaky_relu_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnLeakyRelu execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_fn(executor)
+    finally:
+        _destroy_scalar_fn(int(scalar_handle))
+
+    return a
+
+
+def fast_elu_inplace(a, alpha):
+    """In-place elu_(a, alpha) using aclnnElu with output aliased to input."""
+    _ensure_npu_imports()
+    _ensure_ffi_elu()
+
+    cdef int dev_idx = a.device.index or 0
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    a_stride = a.stride
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+
+    alpha_scalar = _create_scalar_fn(_scalar_bytes_fn(alpha, a_dtype), dtype_code)
+    scale_scalar = _create_scalar_fn(_scalar_bytes_fn(1.0, a_dtype), dtype_code)
+    input_scale_scalar = _create_scalar_fn(_scalar_bytes_fn(1.0, a_dtype), dtype_code)
+    cdef uintptr_t stream_raw = int(stream.stream)
+    try:
+        ws_size, executor = _ffi_ref.tensor_three_scalars_op(
+            _elu_getws_ptr, _elu_exec_ptr,
+            a_shape, a_stride,
+            a_shape, a_stride,
+            dtype_code, dtype_code, 2,
+            a_ptr, a_ptr,
+            alpha_scalar, scale_scalar, input_scale_scalar,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_ref.execute(
+                    _elu_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnElu execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_fn(executor)
+    finally:
+        _destroy_scalar_fn(int(alpha_scalar))
+        _destroy_scalar_fn(int(scale_scalar))
+        _destroy_scalar_fn(int(input_scale_scalar))
+
+    return a
+
+
 def fast_clamp(a, min_val=None, max_val=None):
     """Optimized clamp(a, min_val, max_val) that calls _ffi.clamp_optional_scalars_op directly."""
     _ensure_npu_imports()

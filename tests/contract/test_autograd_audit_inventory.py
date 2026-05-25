@@ -68,6 +68,7 @@ INPLACE_OR_MUTATION_OPS = {
     "cos_",
     "cosh_",
     "digamma_",
+    "elu_",
     "erf_",
     "erfc_",
     "erfinv_",
@@ -76,6 +77,7 @@ INPLACE_OR_MUTATION_OPS = {
     "expm1_",
     "floor_",
     "hardtanh_",
+    "leaky_relu_",
     "log10_",
     "log1p_",
     "log2_",
@@ -242,7 +244,7 @@ def test_schema_ops_without_autograd_registration_are_categorized():
     actual_missing = _schema_ops() - _autograd_registered_ops()
     assert sorted(actual_missing - expected_missing) == []
     assert sorted(expected_missing - actual_missing) == []
-    assert len(actual_missing) == 108
+    assert len(actual_missing) == 110
 
 
 def test_derivatives_not_implemented_inventory_is_classified():
