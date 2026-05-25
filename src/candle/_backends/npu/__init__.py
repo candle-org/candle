@@ -56,6 +56,7 @@ from .ops import (
     signbit,
     square,
     pow,
+    pow_,
     relu,
     round,
     rsqrt,
@@ -523,6 +524,7 @@ registry.register("hardtanh_", "npu", hardtanh_, meta=meta_infer.infer_unary)
 registry.register("min", "npu", min_, meta=meta_infer.infer_binary)
 registry.register("max", "npu", max_, meta=meta_infer.infer_binary)
 registry.register("pow", "npu", pow, meta=meta_infer.infer_binary)
+registry.register("pow_", "npu", pow_, meta=meta_infer.infer_binary)
 # Element-wise min/max
 registry.register("maximum", "npu", maximum, meta=meta_infer.infer_binary)
 registry.register("minimum", "npu", minimum, meta=meta_infer.infer_binary)

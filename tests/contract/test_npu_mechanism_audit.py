@@ -1784,6 +1784,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "neg_",
         "ones",
         "ones_like",
+        "pow_",
         "rand",
         "rand_like",
         "randint",
@@ -1819,7 +1820,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 441
+    assert len(forward_ops) == 442
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2897,3 +2898,27 @@ def test_npu_operator_intake_tranche3l_registers_inplace_bitwise_ops():
     assert "def fast_bitwise_or_inplace(a, b):" in pyx_src
     assert "def fast_bitwise_xor_inplace(a, b):" in pyx_src
     assert "_ensure_ffi_bitwise()" in pyx_src
+
+
+def test_npu_operator_intake_tranche3m_registers_inplace_pow():
+    """Operator intake tranche 3m extends the in-place binary surface with
+    `pow_`. It reuses the existing `aclnnPowTensorTensor` binding via a new
+    `fast_pow_inplace` Cython helper that aliases the output ptr to the `a`
+    ptr through `_ffi_ref.binary_two_inputs_op` — fully NPU-resident.
+    Schema already exists in `_dispatch/schemas.py`. `pow_` lives in
+    `ops/math.py` and uses the def-with-guard pattern (not the module-level
+    alias) so it can promote scalar exponents to NPU tensors before
+    delegating to the fast helper.
+    """
+    math_src = _source("src/candle/_backends/npu/ops/math.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+    schemas_src = _source("src/candle/_dispatch/schemas.py")
+
+    assert "def pow_(a, b):" in math_src
+    assert "_fast_pow_inplace_impl" in math_src
+    assert "_HAS_FAST_POW_INPLACE" in math_src
+    assert 'registry.register("pow_", "npu", pow_' in backend_init_src
+    assert 'register_schema("pow_",' in schemas_src
+    assert "def fast_pow_inplace(a, b):" in pyx_src
+    assert "_ensure_ffi_pow()" in pyx_src
