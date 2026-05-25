@@ -27,7 +27,7 @@ from .comparison import (
 )
 
 from .reduce import (
-    argmax, argmin, median, kthvalue, searchsorted, unique,
+    argmax, argmin, median, kthvalue, searchsorted, unique, unique_consecutive,
     amax, amin, count_nonzero, all_, any_,
     min_, max_, maximum, minimum, fmin, fmax,
     cumsum, cumprod, cummax, argsort, sort, topk,

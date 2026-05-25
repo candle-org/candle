@@ -302,6 +302,7 @@ from .ops import (
     # Search / unique
     searchsorted,
     unique,
+    unique_consecutive,
     # Random
     randperm,
     # Shape
@@ -630,6 +631,7 @@ registry.register("mv", "npu", mv, meta=meta_infer.infer_matmul)
 registry.register("outer", "npu", outer, meta=meta_infer.infer_binary)
 registry.register("searchsorted", "npu", searchsorted, meta=meta_infer.infer_unary)
 registry.register("unique", "npu", unique)
+registry.register("unique_consecutive", "npu", unique_consecutive)
 registry.register("flatten", "npu", flatten_op, meta=meta_infer.infer_view)
 registry.register("lerp", "npu", lerp, meta=meta_infer.infer_binary)
 registry.register("lerp_", "npu", lerp_, meta=meta_infer.infer_binary)

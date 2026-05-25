@@ -649,6 +649,85 @@ def unique(a, sorted=True, return_inverse=False, return_counts=False, dim=None):
         return out
 
 
+def unique_consecutive(a, return_inverse=False, return_counts=False, dim=None):
+    """Eliminates all but the first element from every consecutive group of equivalent elements."""
+    if not aclnn.unique_consecutive_symbols_ok():
+        raise RuntimeError("aclnnUniqueConsecutive symbols not available")
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
+
+    storage = _unwrap_storage(a)
+    itemsize = _dtype_itemsize(a.dtype)
+    numel = _numel(a.shape)
+
+    if dim is None:
+        # When dim is None, behavior matches dim=0 with flattened input per ACLNN convention;
+        # ACLNN signature requires int64 dim — use 0 as sentinel and rely on flat output shapes.
+        dim_val = 0
+        out_shape = (numel,)
+        out_stride = (1,)
+        inverse_shape = (numel,)
+        inverse_stride = (1,)
+        counts_shape = (numel,)
+        counts_stride = (1,)
+    else:
+        ndim = len(a.shape)
+        if dim < -ndim or dim >= ndim:
+            raise IndexError(
+                f"Dimension out of range (expected to be in range of [{-ndim}, {ndim - 1}], but got {dim})"
+            )
+        dim_val = dim if dim >= 0 else dim + ndim
+        # Worst-case sizes: dim dimension can have up to its original length
+        out_shape = tuple(a.shape)
+        out_stride = tuple(a.stride)
+        inverse_shape = (a.shape[dim_val],)
+        inverse_stride = (1,)
+        counts_shape = (a.shape[dim_val],)
+        counts_stride = (1,)
+
+    out_ptr = npu_runtime._alloc_device(_numel(out_shape) * itemsize, runtime=runtime)
+    inverse_ptr = npu_runtime._alloc_device(_numel(inverse_shape) * _dtype_itemsize("int64"), runtime=runtime)
+    counts_ptr = npu_runtime._alloc_device(_numel(counts_shape) * _dtype_itemsize("int64"), runtime=runtime)
+
+    aclnn.unique_consecutive(
+        storage.data_ptr(),
+        out_ptr,
+        inverse_ptr,
+        counts_ptr,
+        a.shape, a.stride, a.dtype,
+        out_shape, out_stride,
+        inverse_shape, inverse_stride,
+        counts_shape, counts_stride,
+        return_inverse, return_counts, dim_val,
+        runtime, stream=stream.stream,
+    )
+
+    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
+    out = _wrap_tensor(out_storage, out_shape, out_stride)
+
+    inv = None
+    if return_inverse:
+        inv_storage = npu_typed_storage_from_ptr(inverse_ptr, _numel(inverse_shape), "int64", device=a.device)
+        inv = _wrap_tensor(inv_storage, inverse_shape, inverse_stride)
+    else:
+        runtime.defer_free(inverse_ptr)
+
+    counts = None
+    if return_counts:
+        counts_storage = npu_typed_storage_from_ptr(counts_ptr, _numel(counts_shape), "int64", device=a.device)
+        counts = _wrap_tensor(counts_storage, counts_shape, counts_stride)
+    else:
+        runtime.defer_free(counts_ptr)
+
+    if return_inverse and return_counts:
+        return out, inv, counts
+    if return_inverse:
+        return out, inv
+    if return_counts:
+        return out, counts
+    return out
+
+
 def sum_(a, dim=None, keepdim=False, dtype=None):
     if dtype is not None:
         # Cast input to target dtype before summing
