@@ -102,6 +102,7 @@ from ._helpers import (
 from .comparison import gt, lt
 from .elementwise import clamp, where
 from .math import abs, add, div, exp, frac, log, mul, neg, sin, tanh
+from .random import clamp_
 
 
 def relu(a):
@@ -120,6 +121,10 @@ def relu6(a):
     if _HAS_FAST_ACTIVATION_COMPOSITES:
         return _fast_relu6_impl(a)
     raise RuntimeError("Cython NPU relu6 implementation is unavailable")
+
+
+def relu6_(a):
+    return clamp_(a, 0.0, 6.0)
 
 
 def softplus(a, beta=1.0, threshold=20.0):
@@ -149,6 +154,10 @@ def hardtanh(a, min_val=-1.0, max_val=1.0):
                 raise
             return clamp(a, min_val, max_val)
     raise RuntimeError("Cython NPU hardtanh implementation is unavailable")
+
+
+def hardtanh_(a, min_val=-1.0, max_val=1.0):
+    return clamp_(a, min_val, max_val)
 
 
 def silu(a):

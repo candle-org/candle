@@ -78,6 +78,8 @@ CORE_SCHEMA_OPS = (
     "sign_",
     "silu_",
     "mish_",
+    "relu6_",
+    "hardtanh_",
     "reciprocal_",
     "pow_",
     "bitwise_and_",
@@ -323,6 +325,11 @@ def register_schemas():
     registry.register_schema("sign_", "sign_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("silu_", "silu_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("mish_", "mish_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema("relu6_", "relu6_(Tensor(a!) self) -> Tensor(a)")
+    registry.register_schema(
+        "hardtanh_",
+        "hardtanh_(Tensor(a!) self, Scalar min_val=-1.0, Scalar max_val=1.0) -> Tensor(a)",
+    )
     registry.register_schema("reciprocal_", "reciprocal_(Tensor(a!) self) -> Tensor(a)")
     registry.register_schema("pow_", "pow_(Tensor(a!) self, Any exponent) -> Tensor(a)")
     registry.register_schema("bitwise_and_", "bitwise_and_(Tensor(a!) self, Any other) -> Tensor(a)")

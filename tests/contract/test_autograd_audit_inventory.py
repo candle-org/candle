@@ -75,6 +75,7 @@ INPLACE_OR_MUTATION_OPS = {
     "exp_",
     "expm1_",
     "floor_",
+    "hardtanh_",
     "log10_",
     "log1p_",
     "log2_",
@@ -84,6 +85,7 @@ INPLACE_OR_MUTATION_OPS = {
     "pow_",
     "randint_",
     "reciprocal_",
+    "relu6_",
     "round_",
     "rsqrt_",
     "sigmoid_",
@@ -240,7 +242,7 @@ def test_schema_ops_without_autograd_registration_are_categorized():
     actual_missing = _schema_ops() - _autograd_registered_ops()
     assert sorted(actual_missing - expected_missing) == []
     assert sorted(expected_missing - actual_missing) == []
-    assert len(actual_missing) == 106
+    assert len(actual_missing) == 108
 
 
 def test_derivatives_not_implemented_inventory_is_classified():

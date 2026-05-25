@@ -1756,6 +1756,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "floor_",
         "full",
         "full_like",
+        "hardtanh_",
         "histogram",
         "isclose",
         "isfinite",
@@ -1790,6 +1791,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "randperm",
         "range",
         "reciprocal_",
+        "relu6_",
         "round_",
         "rsqrt_",
         "searchsorted",
@@ -1814,7 +1816,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 436
+    assert len(forward_ops) == 438
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2839,3 +2841,26 @@ def test_npu_operator_intake_tranche3j_registers_inplace_silu_mish():
 
     assert "def fast_silu_inplace(a):" in pyx_src
     assert "def fast_mish_inplace(a):" in pyx_src
+
+
+def test_npu_operator_intake_tranche3k_registers_inplace_relu6_hardtanh():
+    """Operator intake tranche 3k extends the in-place activation surface
+    with `relu6_` and `hardtanh_`. Unlike prior tranches, these are pure
+    Python composites delegating to the existing `clamp_` in-place op:
+    `relu6_(a) = clamp_(a, 0, 6)`, `hardtanh_(a, mn, mx) = clamp_(a, mn, mx)`.
+    No new Cython work; reuses existing `fast_clamp_inplace` indirectly.
+    """
+    activation_src = _source("src/candle/_backends/npu/ops/activation.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    schemas_src = _source("src/candle/_dispatch/schemas.py")
+
+    assert "from .random import clamp_" in activation_src
+    assert "def relu6_(a):" in activation_src
+    assert "return clamp_(a, 0.0, 6.0)" in activation_src
+    assert "def hardtanh_(a, min_val=-1.0, max_val=1.0):" in activation_src
+    assert "return clamp_(a, min_val, max_val)" in activation_src
+
+    for op_name in ("relu6_", "hardtanh_"):
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+        assert f'register_schema(\n        "{op_name}",' in schemas_src or \
+            f'register_schema("{op_name}",' in schemas_src
