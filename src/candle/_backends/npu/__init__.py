@@ -38,6 +38,7 @@ from .ops import (
     floor,
     frac,
     hardtanh,
+    hardtanh_,
     isfinite,
     isinf,
     isnan,
@@ -50,6 +51,7 @@ from .ops import (
     mul,
     neg,
     relu6,
+    relu6_,
     sign,
     signbit,
     square,
@@ -512,7 +514,9 @@ registry.register("clamp", "npu", clamp, meta=meta_infer.infer_unary)
 registry.register("clamp_min", "npu", clamp_min, meta=meta_infer.infer_unary)
 registry.register("clamp_max", "npu", clamp_max, meta=meta_infer.infer_unary)
 registry.register("relu6", "npu", relu6, meta=meta_infer.infer_unary)
+registry.register("relu6_", "npu", relu6_, meta=meta_infer.infer_unary)
 registry.register("hardtanh", "npu", hardtanh, meta=meta_infer.infer_unary)
+registry.register("hardtanh_", "npu", hardtanh_, meta=meta_infer.infer_unary)
 registry.register("min", "npu", min_, meta=meta_infer.infer_binary)
 registry.register("max", "npu", max_, meta=meta_infer.infer_binary)
 registry.register("pow", "npu", pow, meta=meta_infer.infer_binary)
