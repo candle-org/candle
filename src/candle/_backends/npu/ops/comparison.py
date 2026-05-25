@@ -17,6 +17,8 @@ try:
         fast_bitwise_and as _fast_bitwise_and_impl,
         fast_bitwise_or as _fast_bitwise_or_impl,
         fast_bitwise_xor as _fast_bitwise_xor_impl,
+        fast_bitwise_left_shift as _fast_bitwise_left_shift_impl,
+        fast_bitwise_right_shift as _fast_bitwise_right_shift_impl,
         fast_bitwise_and_inplace as _fast_bitwise_and_inplace_impl,
         fast_bitwise_or_inplace as _fast_bitwise_or_inplace_impl,
         fast_bitwise_xor_inplace as _fast_bitwise_xor_inplace_impl,
@@ -36,6 +38,8 @@ try:
     _HAS_FAST_BITWISE_AND = True
     _HAS_FAST_BITWISE_OR = True
     _HAS_FAST_BITWISE_XOR = True
+    _HAS_FAST_BITWISE_LEFT_SHIFT = True
+    _HAS_FAST_BITWISE_RIGHT_SHIFT = True
     _HAS_FAST_BITWISE_AND_INPLACE = True
     _HAS_FAST_BITWISE_OR_INPLACE = True
     _HAS_FAST_BITWISE_XOR_INPLACE = True
@@ -55,6 +59,8 @@ except ImportError:
     _fast_bitwise_and_impl = None  # type: ignore[assignment]
     _fast_bitwise_or_impl = None  # type: ignore[assignment]
     _fast_bitwise_xor_impl = None  # type: ignore[assignment]
+    _fast_bitwise_left_shift_impl = None  # type: ignore[assignment]
+    _fast_bitwise_right_shift_impl = None  # type: ignore[assignment]
     _fast_bitwise_and_inplace_impl = None  # type: ignore[assignment]
     _fast_bitwise_or_inplace_impl = None  # type: ignore[assignment]
     _fast_bitwise_xor_inplace_impl = None  # type: ignore[assignment]
@@ -73,6 +79,8 @@ except ImportError:
     _HAS_FAST_BITWISE_AND = False
     _HAS_FAST_BITWISE_OR = False
     _HAS_FAST_BITWISE_XOR = False
+    _HAS_FAST_BITWISE_LEFT_SHIFT = False
+    _HAS_FAST_BITWISE_RIGHT_SHIFT = False
     _HAS_FAST_BITWISE_AND_INPLACE = False
     _HAS_FAST_BITWISE_OR_INPLACE = False
     _HAS_FAST_BITWISE_XOR_INPLACE = False
@@ -184,6 +192,22 @@ def bitwise_xor(a, b):
     if _HAS_FAST_BITWISE_XOR:
         return _fast_bitwise_xor_impl(a, b)
     raise RuntimeError("Cython NPU bitwise_xor implementation is unavailable")
+
+
+def bitwise_left_shift(a, b):
+    if isinstance(b, (int, float)):
+        b = _scalar_to_npu_tensor(b, a)
+    if _HAS_FAST_BITWISE_LEFT_SHIFT:
+        return _fast_bitwise_left_shift_impl(a, b)
+    raise RuntimeError("Cython NPU bitwise_left_shift implementation is unavailable")
+
+
+def bitwise_right_shift(a, b):
+    if isinstance(b, (int, float)):
+        b = _scalar_to_npu_tensor(b, a)
+    if _HAS_FAST_BITWISE_RIGHT_SHIFT:
+        return _fast_bitwise_right_shift_impl(a, b)
+    raise RuntimeError("Cython NPU bitwise_right_shift implementation is unavailable")
 
 
 bitwise_and_ = _fast_bitwise_and_inplace_impl

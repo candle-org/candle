@@ -1735,9 +1735,11 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "bincount",
         "bitwise_and",
         "bitwise_and_",
+        "bitwise_left_shift",
         "bitwise_not",
         "bitwise_or",
         "bitwise_or_",
+        "bitwise_right_shift",
         "bitwise_xor",
         "bitwise_xor_",
         "bucketize",
@@ -1825,7 +1827,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 447
+    assert len(forward_ops) == 449
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2997,3 +2999,42 @@ def test_npu_operator_intake_tranche3o_registers_inplace_addcmul_addcdiv_lerp():
     assert "def fast_addcdiv_inplace(a, b, c, value):" in pyx_src
     assert "def fast_lerp_tensor_inplace(a, b, weight):" in pyx_src
     assert "def fast_lerp_scalar_inplace(a, b, value):" in pyx_src
+
+
+def test_npu_operator_intake_tranche3p_registers_bitwise_left_right_shift():
+    """Operator intake tranche 3p extends the bitwise binary surface with
+    `bitwise_left_shift` and `bitwise_right_shift`. Both schemas already
+    exist in `_dispatch/schemas.py` but lacked NPU forward registration.
+
+    Both reuse the existing `aclnnLeftShift` and `aclnnRightShift`
+    bindings via new `fast_bitwise_left_shift` and
+    `fast_bitwise_right_shift` Cython entry points that route through the
+    shared `fast_binary_op` path with new `LeftShift` / `RightShift`
+    branches. Python wrappers in `ops/comparison.py` follow the
+    def-with-guard pattern and accept scalar `b` via `_scalar_to_npu_tensor`.
+
+    Both ops are classified `NONDIFFERENTIABLE_OUTPUT_OPS` (integer
+    output, no gradient), so they remain in the missing-autograd bucket
+    after forward registration.
+    """
+    comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+
+    for op_name, fast_name, guard in (
+        ("bitwise_left_shift", "_fast_bitwise_left_shift_impl",
+         "_HAS_FAST_BITWISE_LEFT_SHIFT"),
+        ("bitwise_right_shift", "_fast_bitwise_right_shift_impl",
+         "_HAS_FAST_BITWISE_RIGHT_SHIFT"),
+    ):
+        assert f"def {op_name}(" in comparison_src
+        assert fast_name in comparison_src
+        assert guard in comparison_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+
+    assert "def fast_bitwise_left_shift(a, b):" in pyx_src
+    assert "def fast_bitwise_right_shift(a, b):" in pyx_src
+    assert 'name == "bitwise_left_shift"' in pyx_src
+    assert 'name == "bitwise_right_shift"' in pyx_src
+    assert '"LeftShift"' in pyx_src
+    assert '"RightShift"' in pyx_src

@@ -318,7 +318,7 @@ def fast_binary_op(a, b, fn, str name):
         b_ptr = <uintptr_t>b.storage().data_ptr()
 
     # 8. Call aclnn
-    if name in ("atan2", "logaddexp", "logaddexp2", "remainder", "fmod", "pow", "floor_divide", "eq", "ne", "lt", "le", "gt", "ge", "logical_and", "logical_or", "logical_xor", "bitwise_and", "bitwise_or", "bitwise_xor", "max", "maximum", "min", "minimum"):
+    if name in ("atan2", "logaddexp", "logaddexp2", "remainder", "fmod", "pow", "floor_divide", "eq", "ne", "lt", "le", "gt", "ge", "logical_and", "logical_or", "logical_xor", "bitwise_and", "bitwise_or", "bitwise_xor", "bitwise_left_shift", "bitwise_right_shift", "max", "maximum", "min", "minimum"):
         from candle._C import _aclnn_ffi as _ffi  # pylint: disable=import-error,no-name-in-module
         from candle._backends.npu.aclnn import ensure_acl as _ensure_acl
 
@@ -540,6 +540,30 @@ def fast_binary_op(a, b, fn, str name):
         elif name == "bitwise_xor":
             pretty = "aclnnBitwiseXorTensor"
             getws_ptr, exec_ptr = _ffi.resolve_op("BitwiseXorTensor")
+            ws_size, executor = _ffi.binary_two_inputs_op(
+                getws_ptr, exec_ptr,
+                py_a_shape, a.stride,
+                py_b_shape, b.stride,
+                out_shape, out_stride,
+                dtype_code, dtype_code, dtype_code,
+                2,
+                int(a_ptr), int(b_ptr), int(out_ptr),
+                int(stream.stream))
+        elif name == "bitwise_left_shift":
+            pretty = "aclnnLeftShift"
+            getws_ptr, exec_ptr = _ffi.resolve_op("LeftShift")
+            ws_size, executor = _ffi.binary_two_inputs_op(
+                getws_ptr, exec_ptr,
+                py_a_shape, a.stride,
+                py_b_shape, b.stride,
+                out_shape, out_stride,
+                dtype_code, dtype_code, dtype_code,
+                2,
+                int(a_ptr), int(b_ptr), int(out_ptr),
+                int(stream.stream))
+        elif name == "bitwise_right_shift":
+            pretty = "aclnnRightShift"
+            getws_ptr, exec_ptr = _ffi.resolve_op("RightShift")
             ws_size, executor = _ffi.binary_two_inputs_op(
                 getws_ptr, exec_ptr,
                 py_a_shape, a.stride,
@@ -802,6 +826,14 @@ def fast_bitwise_or(a, b):
 
 def fast_bitwise_xor(a, b):
     return fast_binary_op(a, b, None, "bitwise_xor")
+
+
+def fast_bitwise_left_shift(a, b):
+    return fast_binary_op(a, b, None, "bitwise_left_shift")
+
+
+def fast_bitwise_right_shift(a, b):
+    return fast_binary_op(a, b, None, "bitwise_right_shift")
 
 
 def fast_add(a, b):
