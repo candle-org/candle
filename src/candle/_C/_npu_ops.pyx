@@ -617,6 +617,12 @@ cdef object _sub_getws_ptr = None        # cached Sub getws pointer
 cdef object _sub_exec_ptr = None         # cached Sub exec pointer
 cdef object _div_getws_ptr = None        # cached Div getws pointer
 cdef object _div_exec_ptr = None         # cached Div exec pointer
+cdef object _bitwise_and_getws_ptr = None  # cached BitwiseAndTensor getws pointer
+cdef object _bitwise_and_exec_ptr = None   # cached BitwiseAndTensor exec pointer
+cdef object _bitwise_or_getws_ptr = None   # cached BitwiseOrTensor getws pointer
+cdef object _bitwise_or_exec_ptr = None    # cached BitwiseOrTensor exec pointer
+cdef object _bitwise_xor_getws_ptr = None  # cached BitwiseXorTensor getws pointer
+cdef object _bitwise_xor_exec_ptr = None   # cached BitwiseXorTensor exec pointer
 cdef object _defer_executor_fn = None    # aclnn._defer_executor
 cdef object _acl_rt_malloc_fn = None     # acl.rt.malloc
 cdef object _acl_rt_free_fn = None       # acl.rt.free (for workspace)
@@ -655,6 +661,19 @@ cdef inline void _ensure_ffi_binary() except *:
     if _f.is_pta_cache_available():
         _pta_cache_begin_fn = _f.pta_begin_add_cache_lookup
         _pta_cache_end_fn = _f.pta_end_cache_lookup
+
+
+cdef inline void _ensure_ffi_bitwise() except *:
+    """Resolve and cache BitwiseAnd/Or/Xor getws/exec ptrs (lazy)."""
+    global _bitwise_and_getws_ptr, _bitwise_and_exec_ptr
+    global _bitwise_or_getws_ptr, _bitwise_or_exec_ptr
+    global _bitwise_xor_getws_ptr, _bitwise_xor_exec_ptr
+    if _bitwise_and_getws_ptr is not None:
+        return
+    _ensure_ffi_binary()
+    _bitwise_and_getws_ptr, _bitwise_and_exec_ptr = _ffi_ref.resolve_op("BitwiseAndTensor")
+    _bitwise_or_getws_ptr, _bitwise_or_exec_ptr = _ffi_ref.resolve_op("BitwiseOrTensor")
+    _bitwise_xor_getws_ptr, _bitwise_xor_exec_ptr = _ffi_ref.resolve_op("BitwiseXorTensor")
 
 
 cdef uintptr_t _get_alpha_one(int dtype_code) except? 0:
@@ -1459,6 +1478,109 @@ def fast_div_inplace(a, b):
                 executor, stream_raw)
             if ret != 0:
                 raise RuntimeError(f"aclnnDiv execute failed: {ret}")
+        finally:
+            runtime.defer_raw_free(workspace_ptr)
+
+    _defer_executor_fn(executor)
+    return a
+
+
+def fast_bitwise_and_inplace(a, b):
+    """In-place bitwise_and_(a, b) — aliases output ptr to a via aclnnBitwiseAndTensor."""
+    return _fast_bitwise_inplace_dispatch(a, b, "bitwise_and_",
+                                          _bitwise_and_getws_ptr,
+                                          _bitwise_and_exec_ptr,
+                                          "aclnnBitwiseAndTensor")
+
+
+def fast_bitwise_or_inplace(a, b):
+    """In-place bitwise_or_(a, b) — aliases output ptr to a via aclnnBitwiseOrTensor."""
+    return _fast_bitwise_inplace_dispatch(a, b, "bitwise_or_",
+                                          _bitwise_or_getws_ptr,
+                                          _bitwise_or_exec_ptr,
+                                          "aclnnBitwiseOrTensor")
+
+
+def fast_bitwise_xor_inplace(a, b):
+    """In-place bitwise_xor_(a, b) — aliases output ptr to a via aclnnBitwiseXorTensor."""
+    return _fast_bitwise_inplace_dispatch(a, b, "bitwise_xor_",
+                                          _bitwise_xor_getws_ptr,
+                                          _bitwise_xor_exec_ptr,
+                                          "aclnnBitwiseXorTensor")
+
+
+cdef object _fast_bitwise_inplace_dispatch(object a, object b, str name,
+                                            object getws_ptr_unused,
+                                            object exec_ptr_unused,
+                                            str pretty):
+    """Common in-place bitwise tensor op (a = a op b) reusing the existing
+    out-of-place aclnnBitwise<And|Or|Xor>Tensor with output ptr aliased to a."""
+    _ensure_npu_imports()
+    _ensure_ffi_bitwise()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, b, name, &dev_idx)
+
+    a_dtype = a.dtype
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf, out_shape_buf
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+    cdef int out_ndim
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+    if out_ndim != a_ndim:
+        raise ValueError(f"NPU {name} requires broadcastable to self shape")
+    cdef int i
+    for i in range(out_ndim):
+        if out_shape_buf[i] != a_shape_buf[i]:
+            raise ValueError(f"NPU {name} requires broadcastable to self shape")
+
+    runtime = _get_runtime_fast(dev_idx)
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr
+    cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
+    cdef uintptr_t stream_raw = int(stream.stream)
+
+    if name == "bitwise_and_":
+        getws_ptr = _bitwise_and_getws_ptr
+        exec_ptr = _bitwise_and_exec_ptr
+    elif name == "bitwise_or_":
+        getws_ptr = _bitwise_or_getws_ptr
+        exec_ptr = _bitwise_or_exec_ptr
+    else:
+        getws_ptr = _bitwise_xor_getws_ptr
+        exec_ptr = _bitwise_xor_exec_ptr
+
+    ws_size, executor = _ffi_ref.binary_two_inputs_op(
+        getws_ptr, exec_ptr,
+        py_a_shape, a.stride,
+        py_b_shape, b.stride,
+        py_a_shape, a.stride,
+        dtype_code, dtype_code, dtype_code,
+        2,
+        int(a_ptr), int(b_ptr), int(a_ptr),
+        stream_raw)
+
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_ref.execute(
+                exec_ptr, int(workspace_ptr), ws_size,
+                executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"{pretty} execute failed: {ret}")
         finally:
             runtime.defer_raw_free(workspace_ptr)
 
