@@ -21,6 +21,7 @@ from .comparison import (
     eq, ne, le, lt, gt, ge,
     logical_and, logical_or, logical_not, logical_xor,
     bitwise_not, bitwise_and, bitwise_or, bitwise_xor,
+    bitwise_and_, bitwise_or_, bitwise_xor_,
     equal, allclose, isclose,
 )
 

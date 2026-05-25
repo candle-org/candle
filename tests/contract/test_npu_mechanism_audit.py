@@ -1732,9 +1732,12 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "atanh_",
         "bincount",
         "bitwise_and",
+        "bitwise_and_",
         "bitwise_not",
         "bitwise_or",
+        "bitwise_or_",
         "bitwise_xor",
+        "bitwise_xor_",
         "bucketize",
         "cartesian_prod",
         "ceil_",
@@ -1816,7 +1819,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 438
+    assert len(forward_ops) == 441
     assert len(autograd_ops & forward_ops) == 329
 
 
@@ -2864,3 +2867,33 @@ def test_npu_operator_intake_tranche3k_registers_inplace_relu6_hardtanh():
         assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
         assert f'register_schema(\n        "{op_name}",' in schemas_src or \
             f'register_schema("{op_name}",' in schemas_src
+
+
+def test_npu_operator_intake_tranche3l_registers_inplace_bitwise_ops():
+    """Operator intake tranche 3l extends the in-place binary surface with
+    `bitwise_and_`, `bitwise_or_`, and `bitwise_xor_`. Each reuses the existing
+    `aclnnBitwiseAndTensor` / `aclnnBitwiseOrTensor` / `aclnnBitwiseXorTensor`
+    bindings via new `fast_bitwise_<op>_inplace` Cython helpers that alias the
+    output ptr to the `a` ptr through `_ffi_ref.binary_two_inputs_op` —
+    fully NPU-resident. Schemas already exist in `_dispatch/schemas.py`.
+    Both ops live in `ops/comparison.py` and use the module-level alias
+    pattern (`bitwise_and_ = _fast_bitwise_and_inplace_impl`).
+    """
+    comparison_src = _source("src/candle/_backends/npu/ops/comparison.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    pyx_src = _source("src/candle/_C/_npu_ops.pyx")
+    schemas_src = _source("src/candle/_dispatch/schemas.py")
+
+    for op_name, fast_name in (
+        ("bitwise_and_", "_fast_bitwise_and_inplace_impl"),
+        ("bitwise_or_", "_fast_bitwise_or_inplace_impl"),
+        ("bitwise_xor_", "_fast_bitwise_xor_inplace_impl"),
+    ):
+        assert f"{op_name} = {fast_name}" in comparison_src
+        assert f'registry.register("{op_name}", "npu", {op_name}' in backend_init_src
+        assert f'register_schema("{op_name}",' in schemas_src
+
+    assert "def fast_bitwise_and_inplace(a, b):" in pyx_src
+    assert "def fast_bitwise_or_inplace(a, b):" in pyx_src
+    assert "def fast_bitwise_xor_inplace(a, b):" in pyx_src
+    assert "_ensure_ffi_bitwise()" in pyx_src

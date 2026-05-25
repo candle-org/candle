@@ -17,6 +17,9 @@ try:
         fast_bitwise_and as _fast_bitwise_and_impl,
         fast_bitwise_or as _fast_bitwise_or_impl,
         fast_bitwise_xor as _fast_bitwise_xor_impl,
+        fast_bitwise_and_inplace as _fast_bitwise_and_inplace_impl,
+        fast_bitwise_or_inplace as _fast_bitwise_or_inplace_impl,
+        fast_bitwise_xor_inplace as _fast_bitwise_xor_inplace_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_LOGICAL_NOT = True
     _HAS_FAST_BITWISE_NOT = True
@@ -33,6 +36,9 @@ try:
     _HAS_FAST_BITWISE_AND = True
     _HAS_FAST_BITWISE_OR = True
     _HAS_FAST_BITWISE_XOR = True
+    _HAS_FAST_BITWISE_AND_INPLACE = True
+    _HAS_FAST_BITWISE_OR_INPLACE = True
+    _HAS_FAST_BITWISE_XOR_INPLACE = True
 except ImportError:
     _fast_logical_not_impl = None  # type: ignore[assignment]
     _fast_bitwise_not_impl = None  # type: ignore[assignment]
@@ -49,6 +55,9 @@ except ImportError:
     _fast_bitwise_and_impl = None  # type: ignore[assignment]
     _fast_bitwise_or_impl = None  # type: ignore[assignment]
     _fast_bitwise_xor_impl = None  # type: ignore[assignment]
+    _fast_bitwise_and_inplace_impl = None  # type: ignore[assignment]
+    _fast_bitwise_or_inplace_impl = None  # type: ignore[assignment]
+    _fast_bitwise_xor_inplace_impl = None  # type: ignore[assignment]
     _HAS_FAST_LOGICAL_NOT = False
     _HAS_FAST_BITWISE_NOT = False
     _HAS_FAST_ISCLOSE = False
@@ -64,6 +73,9 @@ except ImportError:
     _HAS_FAST_BITWISE_AND = False
     _HAS_FAST_BITWISE_OR = False
     _HAS_FAST_BITWISE_XOR = False
+    _HAS_FAST_BITWISE_AND_INPLACE = False
+    _HAS_FAST_BITWISE_OR_INPLACE = False
+    _HAS_FAST_BITWISE_XOR_INPLACE = False
 
 from ._helpers import (
     _unwrap_storage, _wrap_tensor,
@@ -172,6 +184,11 @@ def bitwise_xor(a, b):
     if _HAS_FAST_BITWISE_XOR:
         return _fast_bitwise_xor_impl(a, b)
     raise RuntimeError("Cython NPU bitwise_xor implementation is unavailable")
+
+
+bitwise_and_ = _fast_bitwise_and_inplace_impl
+bitwise_or_ = _fast_bitwise_or_inplace_impl
+bitwise_xor_ = _fast_bitwise_xor_inplace_impl
 
 
 def equal(a, b):
