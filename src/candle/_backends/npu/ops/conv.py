@@ -924,6 +924,33 @@ def upsample_bilinear2d(input, output_size, align_corners, scales_h, scales_w):
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
+def upsample_trilinear3d_op(a, output_size, align_corners=False, scales_d=None, scales_h=None, scales_w=None):
+    """UpsampleTrilinear3d forward via aclnnUpsampleTrilinear3d.
+
+    Expects 5D input (N, C, D, H, W) and ``output_size`` of length 3 (oD, oH, oW).
+    """
+    runtime = npu_runtime.get_runtime((a.device.index or 0))
+    stream = npu_state.current_stream((a.device.index or 0))
+    s = _unwrap_storage(a)
+
+    N, C = a.shape[0], a.shape[1]
+    oD, oH, oW = (int(output_size[0]), int(output_size[1]), int(output_size[2]))
+    out_shape = (N, C, oD, oH, oW)
+    out_stride = npu_runtime._contiguous_stride(out_shape)
+    out_nbytes = _numel(out_shape) * _dtype_itemsize(a.dtype)
+    out_ptr = npu_runtime._alloc_device(max(out_nbytes, 4), runtime=runtime)
+    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), a.dtype, device=a.device)
+
+    aclnn.upsample_trilinear3d(
+        s.data_ptr(), out_ptr,
+        a.shape, a.stride, a.dtype,
+        [oD, oH, oW], align_corners, scales_d, scales_h, scales_w,
+        out_shape, out_stride,
+        runtime, stream=stream.stream,
+    )
+    return _wrap_tensor(out_storage, out_shape, out_stride)
+
+
 def upsample_bicubic2d_op(a, output_size, align_corners=False, scales_h=None, scales_w=None):
     runtime = npu_runtime.get_runtime((a.device.index or 0))
     stream = npu_state.current_stream((a.device.index or 0))

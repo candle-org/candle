@@ -363,6 +363,7 @@ from .ops import (
     adaptive_avg_pool3d_op,
     upsample_bicubic2d_op,
     upsample_linear1d_op,
+    upsample_trilinear3d_op,
     _adam_step_op,
     # Phase 2: activation composites
     selu_op,
@@ -872,6 +873,7 @@ registry.register("linalg_vector_norm", "npu", linalg_vector_norm_op)
 registry.register("adaptive_avg_pool3d", "npu", adaptive_avg_pool3d_op)
 registry.register("upsample_bicubic2d", "npu", upsample_bicubic2d_op)
 registry.register("upsample_linear1d", "npu", upsample_linear1d_op)
+registry.register("upsample_trilinear3d", "npu", upsample_trilinear3d_op)
 registry.register("_adam_step", "npu", _adam_step_op)
 registry.register("_adamw_step", "npu", _adam_step_op)
 

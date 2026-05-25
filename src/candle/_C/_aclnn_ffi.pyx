@@ -10013,3 +10013,82 @@ def two_tensor_three_int_arrays_op(
         if third_buf != NULL:
             free(third_buf)
 
+
+def tensor_int_array_bool_three_doubles_op(
+        uintptr_t getws_ptr, uintptr_t exec_ptr,
+        self_shape, self_stride,
+        out_shape, out_stride,
+        dims_tuple, bint flag,
+        double scalar_a, double scalar_b, double scalar_c,
+        int32_t self_dtype_code, int32_t out_dtype_code, int32_t fmt,
+        uintptr_t self_ptr, uintptr_t out_ptr,
+        uintptr_t stream):
+    cdef int self_ndim = len(self_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int dims_ndim = len(dims_tuple)
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int64_t[MAX_NDIM] r_shape, r_stride
+    cdef int64_t[MAX_NDIM] dims_buf
+    cdef int i
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(out_ndim):
+        r_shape[i] = out_shape[i]
+        r_stride[i] = out_stride[i]
+    for i in range(dims_ndim):
+        dims_buf[i] = dims_tuple[i]
+    cdef void* self_t = NULL
+    cdef void* out_t = NULL
+    cdef void* dims_handle = NULL
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef int32_t ret
+    with nogil:
+        self_t = _fast_create_tensor(s_shape, s_stride, <uint64_t>self_ndim, self_dtype_code, fmt, <void*>self_ptr)
+        out_t = _fast_create_tensor(r_shape, r_stride, <uint64_t>out_ndim, out_dtype_code, fmt, <void*>out_ptr)
+        if dims_ndim > 0:
+            dims_handle = _fn_create_int_array(dims_buf, <uint64_t>dims_ndim)
+    if self_t == NULL or out_t == NULL or (dims_ndim > 0 and dims_handle == NULL):
+        if self_t != NULL:
+            _fast_destroy_tensor(self_t)
+        if out_t != NULL:
+            _fast_destroy_tensor(out_t)
+        if dims_handle != NULL:
+            _fn_destroy_int_array(dims_handle)
+        raise RuntimeError("ACLNN descriptor creation failed")
+    try:
+        with nogil:
+            ret = (<int32_t (*)(void*, void*, bint, double, double, double, void*, uint64_t*, void**) noexcept nogil>getws_ptr)(
+                self_t, dims_handle, flag, scalar_a, scalar_b, scalar_c, out_t, &ws_size, &executor)
+        if ret != 0:
+            raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('i', <uintptr_t>dims_handle)] if dims_handle != NULL else [])
+            + ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        dims_handle = NULL
+        self_t = NULL
+        out_t = NULL
+        if ws_size == 0:
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
+        return (ws_size, <uintptr_t>executor)
+    finally:
+        with nogil:
+            if dims_handle != NULL:
+                _fn_destroy_int_array(dims_handle)
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
+
