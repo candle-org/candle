@@ -349,6 +349,7 @@ from .ops import (
     digamma_,
     special_erfinv,
     special_gammaln,
+    lgamma_,
     special_sinc,
     linalg_inv,
     linalg_vector_norm_op,
@@ -593,6 +594,7 @@ registry.register("rsqrt_", "npu", rsqrt_, meta=meta_infer.infer_unary)
 registry.register("square_", "npu", square_, meta=meta_infer.infer_unary)
 registry.register("sign_", "npu", sign_, meta=meta_infer.infer_unary)
 registry.register("digamma_", "npu", digamma_, meta=meta_infer.infer_unary)
+registry.register("lgamma_", "npu", lgamma_, meta=meta_infer.infer_unary)
 registry.register("sub_", "npu", sub_, meta=meta_infer.infer_binary)
 registry.register("sub", "npu", sub, meta=meta_infer.infer_binary)
 registry.register("div", "npu", div, meta=meta_infer.infer_binary)
