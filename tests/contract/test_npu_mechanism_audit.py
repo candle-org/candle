@@ -1829,8 +1829,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 451
-    assert len(autograd_ops & forward_ops) == 329
+    assert len(forward_ops) == 452
+    assert len(autograd_ops & forward_ops) == 330
 
 
 def test_npu_activation_module_consolidates_fast_helper_try_blocks():
@@ -3092,3 +3092,37 @@ def test_npu_operator_intake_tranche3r_registers_inplace_bitwise_not():
     assert 'register_schema("bitwise_not_",' in schemas_src
     assert "def fast_bitwise_not_inplace(a):" in pyx_src
     assert "_ensure_ffi_bitwise_not()" in pyx_src
+
+
+def test_npu_operator_intake_tranche3s_registers_unique_consecutive():
+    """Operator intake tranche 3s adds NPU forward registration for
+    `unique_consecutive`. Unlike prior tranches that piggyback on existing
+    ACLNN bindings, this one wires up new `aclnnUniqueConsecutive*` ctypes
+    bindings plus a new `unary_two_bools_int_three_outputs_op` FFI helper
+    in `_aclnn_ffi.pyx` — matching the existing `unique` pattern but with
+    an extra `dim` parameter (int64) and an extra `counts` output tensor.
+
+    `unique_consecutive` is classified `LIKELY_NONDIFFERENTIABLE_NOT_IMPLEMENTED`
+    in `test_autograd_audit_inventory.py`, so it lands in the missing-autograd
+    bucket after forward registration.
+    """
+    aclnn_src = _source("src/candle/_backends/npu/aclnn.py")
+    reduce_src = _source("src/candle/_backends/npu/ops/reduce.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+    ffi_pyx_src = _source("src/candle/_C/_aclnn_ffi.pyx")
+
+    assert "aclnnUniqueConsecutiveGetWorkspaceSize" in aclnn_src
+    assert "aclnnUniqueConsecutive" in aclnn_src
+    assert "def unique_consecutive_symbols_ok()" in aclnn_src
+    assert "def unique_consecutive(" in aclnn_src
+    assert 'resolve_op("UniqueConsecutive")' in aclnn_src
+
+    assert "def unique_consecutive(" in reduce_src
+    assert "aclnn.unique_consecutive_symbols_ok()" in reduce_src
+    assert "aclnn.unique_consecutive(" in reduce_src
+
+    assert "unique_consecutive," in ops_init_src
+    assert 'registry.register("unique_consecutive", "npu", unique_consecutive)' in backend_init_src
+
+    assert "def unary_two_bools_int_three_outputs_op(" in ffi_pyx_src

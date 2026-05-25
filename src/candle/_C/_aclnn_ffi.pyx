@@ -9656,3 +9656,101 @@ def rms_norm_op(
             _fast_destroy_tensor(gamma_t)
             _fast_destroy_tensor(y_t)
             _fast_destroy_tensor(rstd_t)
+
+
+def unary_two_bools_int_three_outputs_op(
+        uintptr_t getws_ptr, uintptr_t exec_ptr,
+        self_shape, self_stride,
+        out_shape, out_stride,
+        inverse_shape, inverse_stride,
+        counts_shape, counts_stride,
+        bint flag_a, bint flag_b,
+        int64_t dim_val,
+        int32_t self_dtype_code, int32_t out_dtype_code,
+        int32_t inverse_dtype_code, int32_t counts_dtype_code,
+        int32_t fmt,
+        uintptr_t self_ptr, uintptr_t out_ptr,
+        uintptr_t inverse_ptr, uintptr_t counts_ptr,
+        uintptr_t stream):
+    cdef int self_ndim = len(self_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int inverse_ndim = len(inverse_shape)
+    cdef int counts_ndim = len(counts_shape)
+    cdef int64_t[MAX_NDIM] self_shape_buf, self_stride_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+    cdef int64_t[MAX_NDIM] inverse_shape_buf, inverse_stride_buf
+    cdef int64_t[MAX_NDIM] counts_shape_buf, counts_stride_buf
+    cdef int i
+    for i in range(self_ndim):
+        self_shape_buf[i] = self_shape[i]
+        self_stride_buf[i] = self_stride[i]
+    for i in range(out_ndim):
+        out_shape_buf[i] = out_shape[i]
+        out_stride_buf[i] = out_stride[i]
+    for i in range(inverse_ndim):
+        inverse_shape_buf[i] = inverse_shape[i]
+        inverse_stride_buf[i] = inverse_stride[i]
+    for i in range(counts_ndim):
+        counts_shape_buf[i] = counts_shape[i]
+        counts_stride_buf[i] = counts_stride[i]
+    cdef void* self_t = NULL
+    cdef void* out_t = NULL
+    cdef void* inverse_t = NULL
+    cdef void* counts_t = NULL
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef int32_t ret
+    with nogil:
+        self_t = _fast_create_tensor(self_shape_buf, self_stride_buf, <uint64_t>self_ndim, self_dtype_code, fmt, <void*>self_ptr)
+        out_t = _fast_create_tensor(out_shape_buf, out_stride_buf, <uint64_t>out_ndim, out_dtype_code, fmt, <void*>out_ptr)
+        inverse_t = _fast_create_tensor(inverse_shape_buf, inverse_stride_buf, <uint64_t>inverse_ndim, inverse_dtype_code, fmt, <void*>inverse_ptr)
+        counts_t = _fast_create_tensor(counts_shape_buf, counts_stride_buf, <uint64_t>counts_ndim, counts_dtype_code, fmt, <void*>counts_ptr)
+    if self_t == NULL or out_t == NULL or inverse_t == NULL or counts_t == NULL:
+        if self_t != NULL:
+            _fast_destroy_tensor(self_t)
+        if out_t != NULL:
+            _fast_destroy_tensor(out_t)
+        if inverse_t != NULL:
+            _fast_destroy_tensor(inverse_t)
+        if counts_t != NULL:
+            _fast_destroy_tensor(counts_t)
+        raise RuntimeError("aclCreateTensor returned null")
+    try:
+        with nogil:
+            ret = (<int32_t (*)(void*, bint, bint, int64_t, void*, void*, void*, uint64_t*, void**) noexcept nogil>getws_ptr)(
+                self_t, flag_a, flag_b, dim_val, out_t, inverse_t, counts_t, &ws_size, &executor)
+        if ret != 0:
+            raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else [])
+            + ([('t', <uintptr_t>inverse_t)] if inverse_t != NULL else [])
+            + ([('t', <uintptr_t>counts_t)] if counts_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
+        inverse_t = NULL
+        counts_t = NULL
+        if ws_size == 0:
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
+        return (ws_size, <uintptr_t>executor)
+    finally:
+        with nogil:
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
+            if inverse_t != NULL:
+                _fast_destroy_tensor(inverse_t)
+            if counts_t != NULL:
+                _fast_destroy_tensor(counts_t)
+

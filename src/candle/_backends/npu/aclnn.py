@@ -2003,6 +2003,19 @@ class AclnnBindings:
             ctypes.c_int32,
             [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
         )
+        # UniqueConsecutive: aclnnUniqueConsecutiveGetWorkspaceSize(self, returnInverse, returnCounts, dim, valueOut, inverseOut, countsOut, workspaceSize, executor)
+        self.aclnn_unique_consecutive_get_workspace = _optional_symbol(
+            libs,
+            "aclnnUniqueConsecutiveGetWorkspaceSize",
+            ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_bool, ctypes.c_bool, ctypes.c_int64, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_void_p)],
+        )
+        self.aclnn_unique_consecutive = _optional_symbol(
+            libs,
+            "aclnnUniqueConsecutive",
+            ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
+        )
         # Randperm: aclnnRandpermGetWorkspaceSize(n, seed, offset, out, workspaceSize, executor)
         self.aclnn_randperm_get_workspace = _optional_symbol(
             libs,
@@ -7767,6 +7780,14 @@ def unique_symbols_ok():
         return False
 
 
+def unique_consecutive_symbols_ok():
+    try:
+        bindings = get_bindings()
+        return all([bindings.aclnn_unique_consecutive_get_workspace, bindings.aclnn_unique_consecutive])
+    except Exception:
+        return False
+
+
 def randperm_symbols_ok():
     try:
         bindings = get_bindings()
@@ -12099,6 +12120,71 @@ def unique(self_ptr, out_ptr, inverse_indices_ptr,
             ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
             if ret != 0:
                 raise RuntimeError(f"aclnnUnique failed: {ret}")
+        _maybe_sync(runtime)
+    finally:
+        _defer_executor(ctypes.c_void_p(executor))
+        if workspace is not None:
+            runtime.defer_raw_free(workspace)
+
+
+# UniqueConsecutive
+def unique_consecutive(self_ptr, out_ptr, inverse_indices_ptr, counts_ptr,
+                       shape, stride, dtype,
+                       out_shape, out_stride,
+                       inverse_shape, inverse_stride,
+                       counts_shape, counts_stride,
+                       return_inverse, return_counts, dim,
+                       runtime, stream=None):
+    global acl
+    if acl is None:
+        acl = ensure_acl()
+    bindings = get_bindings()
+    if bindings.aclnn_unique_consecutive_get_workspace is None or bindings.aclnn_unique_consecutive is None:
+        raise RuntimeError("aclnnUniqueConsecutive symbols not available")
+
+    stream_ptr = int(runtime.stream if stream is None else stream)
+    self_dtype_code = _dtype_to_acl(dtype)
+    inverse_dtype_code = _dtype_to_acl("int64")
+    counts_dtype_code = _dtype_to_acl("int64")
+
+    _require_native_npu_ffi("unique_consecutive")
+    executor = 0
+    workspace = None
+    try:
+        getws_ptr, exec_ptr = _ffi.resolve_op("UniqueConsecutive")
+        ws_size, executor = _ffi.unary_two_bools_int_three_outputs_op(
+            getws_ptr,
+            exec_ptr,
+            shape,
+            stride,
+            out_shape,
+            out_stride,
+            inverse_shape,
+            inverse_stride,
+            counts_shape,
+            counts_stride,
+            bool(return_inverse),
+            bool(return_counts),
+            int(dim),
+            self_dtype_code,
+            self_dtype_code,
+            inverse_dtype_code,
+            counts_dtype_code,
+            _ACL_FORMAT_ND,
+            int(self_ptr),
+            int(out_ptr),
+            int(inverse_indices_ptr),
+            int(counts_ptr),
+            stream_ptr,
+        )
+        if ws_size:
+            workspace_ptr, ret = acl.rt.malloc(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            workspace = workspace_ptr
+            ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
+            if ret != 0:
+                raise RuntimeError(f"aclnnUniqueConsecutive failed: {ret}")
         _maybe_sync(runtime)
     finally:
         _defer_executor(ctypes.c_void_p(executor))
