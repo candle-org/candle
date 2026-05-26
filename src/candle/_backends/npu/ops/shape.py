@@ -2920,8 +2920,10 @@ def _npu_strided_linear_indices(shape, stride, offset, device):
 def _npu_copy_view_to_contiguous(view):
     """Copy a possibly non-contiguous NPU view to a new contiguous tensor.
 
-    Uses memcpy_d2d for contiguous views (fast path) and index_select with
-    computed linear indices for non-contiguous views.
+    Uses memcpy_d2d for contiguous views (fast path), aclnnInplaceCopy for
+    broadcast/stride-0 views (single-kernel path), and falls back to
+    index_select with computed linear indices for general non-contiguous cases
+    that aclnnInplaceCopy does not accept (e.g., slice with step > 1).
     """
     out_shape = tuple(view.shape)
 
@@ -2936,21 +2938,68 @@ def _npu_copy_view_to_contiguous(view):
         out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, view.dtype, device=view.device)
         return _wrap_tensor(out_storage, out_shape, out_stride)
 
-    # Non-contiguous: flatten storage, compute linear indices, gather, reshape
+    # Broadcast/stride-0 view fast path: aclnnInplaceCopy supports a strided
+    # source as long as it does not require gather semantics. Detect the
+    # broadcast pattern (some strides are 0, the rest are contiguous on a
+    # contiguous subview).
+    if _is_broadcast_view(view.shape, view.stride):
+        runtime = npu_runtime.get_runtime((view.device.index or 0))
+        out_stride = npu_runtime._contiguous_stride(out_shape)
+        out_numel = max(_numel(out_shape), 1)
+        out_ptr = npu_runtime._alloc_device(out_numel * _dtype_itemsize(view.dtype), runtime=runtime)
+        src_ptr = _npu_data_ptr(view)
+        stream = npu_state.current_stream((view.device.index or 0))
+        aclnn.inplace_copy(
+            out_ptr,
+            src_ptr,
+            out_shape,
+            out_stride,
+            view.dtype,
+            view.shape,
+            view.stride,
+            view.dtype,
+            runtime,
+            stream=stream.stream,
+        )
+        out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, view.dtype, device=view.device)
+        return _wrap_tensor(out_storage, out_shape, out_stride)
+
+    # General non-contiguous: flatten storage, compute linear indices, gather, reshape
     from ...._dispatch import dispatch
     dev = view.device.type
-    # Get flat storage as 1-D tensor
     storage = view.storage()
     flat_storage = dispatch("reshape", dev,
         _wrap_tensor(storage, (storage.size(),), (1,)),
         (-1,),
     )
-    # Compute linear indices from shape/stride/offset
     indices = _npu_strided_linear_indices(view.shape, view.stride, view.offset, view.device)
-    # Gather elements
     gathered = index_select(flat_storage, 0, indices)
-    # Reshape to target shape
     return dispatch("reshape", dev, gathered, out_shape)
+
+
+def _is_broadcast_view(shape, stride):
+    """Detect broadcast/stride-0 views that aclnnInplaceCopy can handle.
+
+    Returns True when every non-zero stride matches the natural contiguous
+    stride for the non-broadcast dims.
+    """
+    if not shape:
+        return False
+    natural_stride = []
+    acc = 1
+    for d in reversed(shape):
+        natural_stride.append(acc)
+        if d != 1:
+            acc *= d
+    natural_stride.reverse()
+    for sz, st, ns in zip(shape, stride, natural_stride):
+        if st == 0:
+            continue
+        if sz == 1:
+            continue
+        if st != ns:
+            return False
+    return True
 
 
 def as_strided_copy_npu(a, size, stride, storage_offset=None):
