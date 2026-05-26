@@ -2,17 +2,18 @@
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 
-from .cases import OP_CASES, SCENARIOS, DTYPES
+from .cases import OP_CASES, SCENARIOS, DTYPES, MODES
 from .report import generate_report, print_terminal, write_markdown
 
 # Conda environments for each framework
 CONDA_PREFIX = os.environ.get("CONDA_PREFIX_BASE", "/opt/miniconda3")
 CONDA_ENVS = {
-    "candle": "candle",
-    "torch": "mindie",
+    "candle": os.environ.get("CANDLE_CONDA_ENV", "candle"),
+    "torch": os.environ.get("TORCH_NPU_CONDA_ENV", "mindie"),
 }
 
 
@@ -31,6 +32,8 @@ def _run_worker(framework, args):
         worker_args.extend(["--scenario", args.scenario])
     if args.dtype:
         worker_args.extend(["--dtype", args.dtype])
+    if args.mode:
+        worker_args.extend(["--mode", args.mode])
 
     # Source CANN env + conda env in a shell so workers get correct LD_LIBRARY_PATH
     cann_env = os.environ.get(
@@ -39,7 +42,7 @@ def _run_worker(framework, args):
     conda_sh = os.environ.get(
         "CONDA_SH", "/opt/miniconda3/etc/profile.d/conda.sh"
     )
-    worker_args_str = " ".join(worker_args)
+    worker_args_str = " ".join(shlex.quote(arg) for arg in worker_args)
     shell_cmd = (
         f"source {cann_env} 2>/dev/null; "
         f"source {conda_sh} && "
@@ -82,6 +85,8 @@ def main():
                         help="Only run one scenario")
     parser.add_argument("--dtype", default=None,
                         help="Comma-separated dtype keys: fp16,bf16,fp32")
+    parser.add_argument("--mode", default="fwd", choices=["fwd", "bwd", "both"],
+                        help="Run forward cases, backward cases, or both")
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--iters", type=int, default=50)
     parser.add_argument("--output", default=None,
@@ -89,10 +94,15 @@ def main():
     args = parser.parse_args()
 
     # Determine what we're running
+    if args.mode == "both":
+        mode_keys = list(MODES.keys())
+    else:
+        mode_keys = [args.mode]
+
     if args.ops:
         op_names = args.ops.split(",")
     else:
-        op_names = [c["name"] for c in OP_CASES]
+        op_names = [c["name"] for c in OP_CASES if c.get("mode", "fwd") in mode_keys]
 
     if args.scenario:
         scen_keys = [args.scenario]
@@ -114,7 +124,7 @@ def main():
 
     # Generate report
     report = generate_report(candle_results, torch_results,
-                             op_names, dtype_keys, scen_keys)
+                             op_names, dtype_keys, scen_keys, mode_keys)
     print_terminal(report)
 
     if args.output:
