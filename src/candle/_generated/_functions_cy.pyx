@@ -160,6 +160,12 @@ def _gelu_backward_helper(grad, self_, approximate, keyset):
     return _gelu_grad(grad, self_, keyset)
 
 
+def _maybe_multiply_helper(grad, scalar, keyset):
+    if scalar == 1:
+        return grad
+    return _redispatch("mul", keyset, grad, scalar)
+
+
 def _unsqueeze_to_backward_helper(grad, dim, input_sizes, keyset):
     del dim
     return _redispatch("reshape", keyset, grad, input_sizes)
@@ -1526,7 +1532,7 @@ class AddTensorBackward0(_Node):
         alpha = self._alpha
         with _grad_context(keyset):
             grad_self = _sum_to_backward_helper(grad, self_.shape, keyset)
-            grad_other = _cy_not_implemented("AddTensorBackward0: other")
+            grad_other = _sum_to_backward_helper(_maybe_multiply_helper(grad, alpha, keyset), other.shape, keyset)
         return (grad_self, grad_other,)
 
 class AddScalarBackward0(_Node):
@@ -1587,7 +1593,7 @@ class AddbmmBackward0(_Node):
         beta = self._beta
         alpha = self._alpha
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("AddbmmBackward0: self")
+            grad_self = _maybe_multiply_helper(grad, beta, keyset)
             grad_batch1 = _cy_not_implemented("AddbmmBackward0: batch1")
             grad_batch2 = _cy_not_implemented("AddbmmBackward0: batch2")
         return (grad_self, grad_batch1, grad_batch2,)
@@ -1703,7 +1709,7 @@ class AddmmBackward0(_Node):
         beta = self._beta
         alpha = self._alpha
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("AddmmBackward0: self")
+            grad_self = _sum_to_backward_helper(_maybe_multiply_helper(grad, beta, keyset), self_.shape, keyset)
             grad_mat1 = _cy_not_implemented("AddmmBackward0: mat1")
             grad_mat2 = _cy_not_implemented("AddmmBackward0: mat2")
         return (grad_self, grad_mat1, grad_mat2,)
@@ -1738,7 +1744,7 @@ class SparseAddmmBackward0(_Node):
         beta = self._beta
         alpha = self._alpha
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("SparseAddmmBackward0: self")
+            grad_self = _maybe_multiply_helper(grad, beta, keyset)
             grad_mat1 = _cy_not_implemented("SparseAddmmBackward0: mat1")
             grad_mat2 = _cy_not_implemented("SparseAddmmBackward0: mat2")
         return (grad_self, grad_mat1, grad_mat2,)
@@ -1773,7 +1779,7 @@ class AddmvBackward0(_Node):
         beta = self._beta
         alpha = self._alpha
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("AddmvBackward0: self")
+            grad_self = _maybe_multiply_helper(grad, beta, keyset)
             grad_mat = _cy_not_implemented("AddmvBackward0: mat")
             grad_vec = _cy_not_implemented("AddmvBackward0: vec")
         return (grad_self, grad_mat, grad_vec,)
@@ -1808,7 +1814,7 @@ class AddrBackward0(_Node):
         beta = self._beta
         alpha = self._alpha
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("AddrBackward0: self")
+            grad_self = _maybe_multiply_helper(grad, beta, keyset)
             grad_vec1 = _cy_not_implemented("AddrBackward0: vec1")
             grad_vec2 = _cy_not_implemented("AddrBackward0: vec2")
         return (grad_self, grad_vec1, grad_vec2,)
@@ -2264,7 +2270,7 @@ class BaddbmmBackward0(_Node):
         beta = self._beta
         alpha = self._alpha
         with _grad_context(keyset):
-            grad_self = _cy_not_implemented("BaddbmmBackward0: self")
+            grad_self = _maybe_multiply_helper(grad, beta, keyset)
             grad_batch1 = _cy_not_implemented("BaddbmmBackward0: batch1")
             grad_batch2 = _cy_not_implemented("BaddbmmBackward0: batch2")
         return (grad_self, grad_batch1, grad_batch2,)

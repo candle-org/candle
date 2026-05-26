@@ -160,6 +160,12 @@ def _gelu_backward_helper(grad, self_, approximate, keyset):
     return _gelu_grad(grad, self_, keyset)
 
 
+def _maybe_multiply_helper(grad, scalar, keyset):
+    if scalar == 1:
+        return grad
+    return redispatch("mul", keyset, grad, scalar)
+
+
 def _unsqueeze_to_backward_helper(grad, dim, input_sizes, keyset):
     del dim
     return redispatch("reshape", keyset, grad, input_sizes)
@@ -1576,7 +1582,7 @@ class AddTensorBackward0(Node):
         alpha = self._alpha
         with _grad_context(keyset):
             grad_self = _sum_to_backward_helper(grad, self_.shape, keyset)
-            grad_other = _sum_to_backward_helper(redispatch("mul", keyset, grad, alpha), other.shape, keyset) if hasattr(other, "shape") else None
+            grad_other = _sum_to_backward_helper(_maybe_multiply_helper(grad, alpha, keyset), other.shape, keyset) if hasattr(other, "shape") else None
         return (grad_self, grad_other,)
 
 class AddScalarBackward0(Node):

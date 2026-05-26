@@ -130,6 +130,12 @@ def test_transpile_brace_shape_list_with_method_calls():
     assert '{ batch1, 0)' not in result
 
 
+def test_transpile_maybe_multiply_to_local_helper():
+    formula = 'maybe_multiply(grad, alpha.conj())'
+    expected = '_maybe_multiply_helper(grad, alpha, keyset)'
+    assert transpile(formula) == expected
+
+
 def test_transpile_scalar_type_method_to_dtype_attr():
     formula = 'self.scalar_type()'
     expected = 'self.dtype'
