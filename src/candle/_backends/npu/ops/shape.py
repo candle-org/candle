@@ -2921,9 +2921,10 @@ def _npu_copy_view_to_contiguous(view):
     """Copy a possibly non-contiguous NPU view to a new contiguous tensor.
 
     Uses memcpy_d2d for contiguous views (fast path), aclnnInplaceCopy for
-    broadcast/stride-0 views (single-kernel path), and falls back to
-    index_select with computed linear indices for general non-contiguous cases
-    that aclnnInplaceCopy does not accept (e.g., slice with step > 1).
+    views that are a permutation of a contiguous layout (transpose, permute,
+    broadcast, flip, contiguous slice), and falls back to index_select with
+    computed linear indices for views with gaps or overlaps that
+    aclnnInplaceCopy rejects (e.g., slice with step > 1).
     """
     out_shape = tuple(view.shape)
 
@@ -2938,11 +2939,11 @@ def _npu_copy_view_to_contiguous(view):
         out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, view.dtype, device=view.device)
         return _wrap_tensor(out_storage, out_shape, out_stride)
 
-    # Broadcast/stride-0 view fast path: aclnnInplaceCopy supports a strided
-    # source as long as it does not require gather semantics. Detect the
-    # broadcast pattern (some strides are 0, the rest are contiguous on a
-    # contiguous subview).
-    if _is_broadcast_view(view.shape, view.stride):
+    # aclnnInplaceCopy fast path: handles permutations of contiguous layouts
+    # (transpose, permute, broadcast, flip, contiguous slice). Slice-with-step
+    # and overlapping strided patterns are not accepted; those fall through
+    # to the index_select path.
+    if _is_aclnn_copy_safe_view(view.shape, view.stride):
         runtime = npu_runtime.get_runtime((view.device.index or 0))
         out_stride = npu_runtime._contiguous_stride(out_shape)
         out_numel = max(_numel(out_shape), 1)
@@ -2977,28 +2978,30 @@ def _npu_copy_view_to_contiguous(view):
     return dispatch("reshape", dev, gathered, out_shape)
 
 
-def _is_broadcast_view(shape, stride):
-    """Detect broadcast/stride-0 views that aclnnInplaceCopy can handle.
+def _is_aclnn_copy_safe_view(shape, stride):
+    """Detect views that aclnnInplaceCopy can materialize.
 
-    Returns True when every non-zero stride matches the natural contiguous
-    stride for the non-broadcast dims.
+    aclnnInplaceCopy accepts permutations of contiguous layouts, including
+    broadcast (stride 0), transpose, permute, flip (negative stride), and
+    contiguous slices. It rejects sources with gaps (slice with step > 1) or
+    overlaps (e.g. diagonal as_strided), which return GetWorkspaceSize 561103.
+
+    The acceptance test: after dropping size-1 and stride-0 dims, the
+    remaining dims sorted by descending |stride| must form a natural
+    contiguous layout (innermost |stride|==1, each |stride| equals product
+    of the more-inner sizes).
     """
     if not shape:
         return False
-    natural_stride = []
-    acc = 1
-    for d in reversed(shape):
-        natural_stride.append(acc)
-        if d != 1:
-            acc *= d
-    natural_stride.reverse()
-    for sz, st, ns in zip(shape, stride, natural_stride):
-        if st == 0:
-            continue
-        if sz == 1:
-            continue
-        if st != ns:
+    pairs = [(sz, abs(st)) for sz, st in zip(shape, stride) if sz > 1 and st != 0]
+    if not pairs:
+        return True
+    pairs.sort(key=lambda p: -p[1])
+    expected = 1
+    for sz, st in reversed(pairs):
+        if st != expected:
             return False
+        expected *= sz
     return True
 
 
