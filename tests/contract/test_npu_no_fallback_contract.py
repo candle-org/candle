@@ -8,11 +8,13 @@ from pathlib import Path
 
 import pytest
 
+import candle._dispatch as candle_dispatch
 from candle._backends.npu import aclnn
 from candle._backends.npu import creation as npu_creation
 from candle._backends.npu import runtime as npu_runtime
 from candle._backends.npu import allocator as npu_allocator
 from candle._backends.npu.ops import _helpers
+from candle._backends.npu.ops import linalg as npu_linalg
 from candle._backends.npu.ops import norm as npu_norm
 
 
@@ -4845,6 +4847,43 @@ def test_remaining_batch_adaptive_max_pool2d_uses_native_ffi(monkeypatch):
 
     assert ("resolve_op", "AdaptiveMaxPool2d") in calls
     assert ("tensor_int_array_two_outputs_op", "getws:AdaptiveMaxPool2d", "exec:AdaptiveMaxPool2d") in calls
+
+
+def test_einsum_npu_wrapper_uses_composite_without_soc_fallback(monkeypatch):
+    calls = []
+
+    class _FakeDevice:
+        type = "npu"
+
+    class _FakeTensor:
+        device = _FakeDevice()
+
+        def __init__(self, shape):
+            self.shape = shape
+
+    def fake_dispatch(op_name, device_type, *args, **kwargs):
+        calls.append((op_name, device_type, args, kwargs))
+        return "composite-output"
+
+    monkeypatch.setattr(
+        npu_linalg,
+        "_use_soc_fallback",
+        lambda name: pytest.fail("einsum should not consult SoC fallback"),
+    )
+    monkeypatch.setattr(candle_dispatch, "dispatch", fake_dispatch)
+
+    a = _FakeTensor((2, 3))
+    b = _FakeTensor((3, 4))
+    out = npu_linalg.einsum_("ij,jk->ik", [a, b])
+
+    assert out == "composite-output"
+    assert calls == [("matmul", "npu", (a, b), {})]
+
+    calls.clear()
+    out = npu_linalg.einsum_("ij->ji", [a])
+
+    assert out == "composite-output"
+    assert calls == [("permute", "npu", (a, [1, 0]), {})]
 
 
 def test_remaining_batch_einsum_uses_native_ffi(monkeypatch):
