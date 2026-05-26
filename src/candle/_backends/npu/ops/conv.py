@@ -1509,6 +1509,49 @@ def max_unpool2d(input, indices, kernel_size, stride, padding, output_size=None)
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
+def max_unpool1d(input, indices, kernel_size, stride, padding, output_size=None):
+    """MaxUnpool1d forward via max_unpool2d composite.
+
+    Routes through max_unpool2d by adding a height-1 spatial dim: (N,C,L) →
+    (N,C,1,L). Matches torch semantics; computes ``L_out = (L_in-1)*s - 2*p + k``
+    when ``output_size`` is None.
+    """
+    if input.shape != indices.shape:
+        raise ValueError("input and indices must have the same shape")
+    if len(input.shape) != 3:
+        raise ValueError(f"Expected 3D input, got {len(input.shape)}D")
+
+    from ...._dispatch.dispatcher import dispatch
+    from ...common import view as view_backend
+
+    N, C, L_in = input.shape
+    kL = int(kernel_size[0]) if isinstance(kernel_size, (list, tuple)) else int(kernel_size)
+    sL = int(stride[0]) if isinstance(stride, (list, tuple)) else int(stride)
+    pL = int(padding[0]) if isinstance(padding, (list, tuple)) else int(padding)
+
+    if output_size is not None:
+        if isinstance(output_size, (list, tuple)):
+            if len(output_size) == 3:
+                L_out = int(output_size[2])
+            elif len(output_size) == 1:
+                L_out = int(output_size[0])
+            else:
+                raise ValueError("output_size must have length 1 or 3 for max_unpool1d")
+        else:
+            L_out = int(output_size)
+    else:
+        L_out = (L_in - 1) * sL - 2 * pL + kL
+
+    input_4d = view_backend.reshape(input, (N, C, 1, L_in))
+    indices_4d = view_backend.reshape(indices, (N, C, 1, L_in))
+
+    out_4d = dispatch(
+        "max_unpool2d", "npu",
+        input_4d, indices_4d, [1, kL], [1, sL], [0, pL], [1, L_out],
+    )
+    return view_backend.reshape(out_4d, (N, C, L_out))
+
+
 def max_unpool3d(input, indices, kernel_size, stride, padding, output_size=None):
     """MaxUnpool3d forward via aclnnMaxUnpool3d.
 

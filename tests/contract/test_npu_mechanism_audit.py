@@ -1828,8 +1828,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 456
-    assert len(autograd_ops & forward_ops) == 334
+    assert len(forward_ops) == 457
+    assert len(autograd_ops & forward_ops) == 335
 
 
 def test_npu_activation_module_consolidates_fast_helper_try_blocks():
@@ -3246,3 +3246,26 @@ def test_npu_operator_intake_tranche3w_registers_upsample_trilinear3d():
     assert 'registry.register("upsample_trilinear3d", "npu", upsample_trilinear3d_op)' in backend_init_src
 
     assert "def tensor_int_array_bool_three_doubles_op(" in ffi_pyx_src
+
+
+def test_npu_operator_intake_tranche3x_registers_max_unpool1d():
+    """Operator intake tranche 3x adds NPU forward registration for
+    `max_unpool1d` as a composite over the existing NPU `max_unpool2d` kernel:
+    the 3D input ``(N, C, L)`` is reshaped to ``(N, C, 1, L)``, dispatched into
+    `max_unpool2d`, and reshaped back to ``(N, C, L_out)``. The composite path
+    matches the 1D-via-2D pattern already used by `upsample_nearest1d_op` and
+    keeps all computation on-device.
+
+    `max_unpool1d` has handwritten autograd via `_autograd_max_unpool1d`
+    registered under `AutogradNPU`, so NPU forward registration lands it in the
+    `handwritten_only` bucket of the autograd coverage snapshot.
+    """
+    conv_src = _source("src/candle/_backends/npu/ops/conv.py")
+    backend_init_src = _source("src/candle/_backends/npu/__init__.py")
+    ops_init_src = _source("src/candle/_backends/npu/ops/__init__.py")
+
+    assert "def max_unpool1d(" in conv_src
+    assert "max_unpool2d" in conv_src
+
+    assert "max_unpool1d," in ops_init_src
+    assert 'registry.register("max_unpool1d", "npu", max_unpool1d)' in backend_init_src

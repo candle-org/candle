@@ -263,6 +263,7 @@ from .ops import (
     adaptive_avg_pool2d,
     adaptive_max_pool2d,
     adaptive_max_pool3d_op,
+    max_unpool1d,
     max_unpool2d,
     max_unpool3d,
     # P1 ops
@@ -795,6 +796,7 @@ registry.register("avg_pool2d", "npu", avg_pool2d)
 registry.register("adaptive_avg_pool2d", "npu", adaptive_avg_pool2d)
 registry.register("adaptive_max_pool2d", "npu", adaptive_max_pool2d)
 registry.register("adaptive_max_pool3d", "npu", adaptive_max_pool3d_op)
+registry.register("max_unpool1d", "npu", max_unpool1d)
 registry.register("max_unpool2d", "npu", max_unpool2d)
 registry.register("max_unpool3d", "npu", max_unpool3d)
 
