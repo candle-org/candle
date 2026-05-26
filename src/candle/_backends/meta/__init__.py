@@ -48,6 +48,7 @@ from .ops import (
     _meta_addcmul_meta,
     _meta_addcdiv_meta,
     _meta_view_meta,
+    _meta_expand_meta,
     _meta_contiguous_meta,
     _meta_equal_meta,
     _meta_cummax_meta,
@@ -200,6 +201,8 @@ registry.register("std", "meta", _meta_sum_meta)
 registry.register("var_mean", "meta", _meta_sum_meta)
 registry.register("reshape", "meta", view_backend.reshape, meta=_meta_view_meta)
 registry.register("view", "meta", view_backend.view, meta=_meta_view_meta)
+registry.register("expand", "meta", _meta_expand_meta)
+registry.register("broadcast_to", "meta", _meta_expand_meta)
 registry.register("view_as_real", "meta", view_backend.view_as_real, meta=infer_view_as_real)
 registry.register("view_as_complex", "meta", view_backend.view_as_complex, meta=infer_view_as_complex)
 registry.register("transpose", "meta", view_backend.transpose, meta=_meta_transpose_meta)

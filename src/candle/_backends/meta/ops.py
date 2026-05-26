@@ -473,6 +473,27 @@ def _meta_view_meta(a, shape):
     return _meta_tensor(tuple(shape), a.dtype, a.device)
 
 
+def _meta_expand_meta(a, sizes):
+    sizes = tuple(sizes)
+    ndiff = len(sizes) - a.dim()
+    if ndiff < 0:
+        raise RuntimeError("expand: number of sizes must be >= tensor dim")
+    src_shape = (1,) * ndiff + a.shape
+    out_shape = []
+    for i, sz in enumerate(sizes):
+        if sz == -1:
+            out_shape.append(src_shape[i])
+        elif src_shape[i] == 1:
+            out_shape.append(sz)
+        elif src_shape[i] == sz:
+            out_shape.append(sz)
+        else:
+            raise RuntimeError(
+                f"expand: size {sz} not compatible with dim size {src_shape[i]}"
+            )
+    return _meta_tensor(tuple(out_shape), a.dtype, a.device)
+
+
 def _meta_transpose_meta(a, dim0, dim1):
     shape = list(a.shape)
     shape[dim0], shape[dim1] = shape[dim1], shape[dim0]
@@ -642,5 +663,6 @@ __all__ = [
     "_meta_clamp_max_meta",
     "_meta_hardtanh_meta",
     "_meta_view_meta",
+    "_meta_expand_meta",
     "_meta_contiguous_meta",
 ]
