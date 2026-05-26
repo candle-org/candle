@@ -4,7 +4,7 @@ import json
 import sys
 
 from .runner import benchmark_op, summarize
-from .cases import OP_CASES, SCENARIOS, DTYPES
+from .cases import OP_CASES, SCENARIOS, DTYPES, MODES
 
 
 def _get_framework(framework):
@@ -36,6 +36,7 @@ def main():
     parser.add_argument("--ops", default=None, help="Comma-separated op names")
     parser.add_argument("--scenario", default=None, choices=["infer", "train"])
     parser.add_argument("--dtype", default=None, help="Comma-separated: fp16,bf16,fp32")
+    parser.add_argument("--mode", default="fwd", choices=["fwd", "bwd", "both"])
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--iters", type=int, default=50)
     args = parser.parse_args()
@@ -44,6 +45,11 @@ def main():
 
     # Filter ops
     cases = OP_CASES
+    if args.mode and args.mode != "both":
+        cases = [c for c in cases if c.get("mode", "fwd") == args.mode]
+    elif args.mode == "both":
+        mode_names = set(MODES.keys())
+        cases = [c for c in cases if c.get("mode", "fwd") in mode_names]
     if args.ops:
         op_names = set(args.ops.split(","))
         cases = [c for c in cases if c["name"] in op_names]
@@ -68,11 +74,18 @@ def main():
                 op_name = case["name"]
                 try:
                     fn = case["build"](torch_mod, F, device, dtype, batch, seq)
-                    samples = benchmark_op(fn, warmup=args.warmup,
-                                           iters=args.iters, sync=sync)
+                    samples = benchmark_op(
+                        fn,
+                        warmup=args.warmup,
+                        iters=args.iters,
+                        sync=sync,
+                        setup=getattr(fn, "setup", None),
+                        cleanup=getattr(fn, "cleanup", None),
+                    )
                     mean, median, p95 = summarize(samples)
                     results.append({
                         "op": op_name,
+                        "mode": case.get("mode", "fwd"),
                         "dtype": dtype_key,
                         "scenario": scen_key,
                         "mean_ms": round(mean, 4),
@@ -83,6 +96,7 @@ def main():
                 except Exception as e:
                     results.append({
                         "op": op_name,
+                        "mode": case.get("mode", "fwd"),
                         "dtype": dtype_key,
                         "scenario": scen_key,
                         "mean_ms": 0.0,
