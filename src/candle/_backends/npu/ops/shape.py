@@ -1308,6 +1308,8 @@ def flatten_op(a, start_dim=0, end_dim=-1):
 
 
 def contiguous(a):
+    if not a.is_contiguous():
+        return _npu_copy_view_to_contiguous(a)
     runtime = npu_runtime.get_runtime((a.device.index or 0))
 
     a_storage = _unwrap_storage(a)

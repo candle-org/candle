@@ -10932,9 +10932,8 @@ class SumBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         dtype = self._dtype
         with _grad_context(keyset):
-            grad_self = redispatch("add", keyset,
-                redispatch("zeros", keyset, self_.shape, dtype=grad.dtype, device=grad.device),
-                grad)
+            grad_self = redispatch("contiguous", keyset,
+                redispatch("expand", keyset, grad, self_.shape))
         return (grad_self,)
 
 class SumDimIntListBackward0(Node):
