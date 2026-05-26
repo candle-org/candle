@@ -56,6 +56,7 @@ All entries were verified by running `tests/npu/310b/` locally on the target har
 | `fmin` / `fmax` | `aten::fmin.out` / `aten::fmax.out` unsupported on torch_npu NPU backend | torch_npu falls back to CPU and returns result on original NPU device/dtype | host `np.fmin` / `np.fmax` fallback, then reconstruct tensor on original NPU device/dtype | CANN 8.5.0 / 910B |
 | native elementwise sequence stability (`maximum` / `max`, `where`, `logaddexp`, related unary neighbors) | native torch_npu / ACLNN path | repeated executions on 910B corrupt later results; reproduced side-by-side in Candle and real torch_npu on the same host, so this is not a Candle-only route mismatch | keep Candle on the same native route as torch_npu; do not add Candle-only fallback, and avoid asserting stronger sequence-stability guarantees than upstream on 910B | CANN 8.5.0 / 910B |
 | `matmul` (batched non-contiguous input) | `aclnnMatmul` | `GetWorkspaceSize failed: 561103` when any ≥3-D operand is non-row-major (e.g. after `.transpose(0, 1)`) | Python wrapper contiguifies ≥3-D non-contiguous operands on-device before the native call; matches torch_npu behaviour | CANN 8.5.0 / 910B |
+| `softmax` backward | `aclnnSoftmaxBackward` | segmentation fault when used from NPU autograd backward | composite: `softmax(x) * (grad - (grad * softmax(x)).sum(dim, keepdim=True))` on NPU | CANN 8.5.0 / 910B |
 
 ## 910A
 

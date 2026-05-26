@@ -7479,7 +7479,6 @@ def _npu_group_norm_backward(grad, _a, saved_a, keyset, args, kwargs):
 # Register NPU-specific autograd kernels (overrides AutogradNPU dispatch key)
 for _npu_name, _npu_factory in (
     # Batch 1 — High-impact training ops
-    ("softmax", lambda: _autograd_unary_args("softmax", _npu_softmax_backward)),
     ("log_softmax", lambda: _autograd_unary_args("log_softmax", _npu_log_softmax_backward)),
     ("gelu", lambda: _autograd_unary("gelu", _npu_gelu_backward)),
     ("silu", lambda: _autograd_unary("silu", _npu_silu_backward)),
@@ -7768,8 +7767,31 @@ def _npu_grid_sample_backward_impl(grad, input, grid, saved_input, saved_grid, k
         results.append(grad_grid)
     return tuple(results) if results else (grad_input, grad_grid)
 
+def _npu_autograd_softmax(name="softmax"):
+    def wrapper(a, *args, **kwargs):
+        active_keyset = current_dispatch_keyset()
+        raw_keyset = _strip_autograd_keys(active_keyset)
+        out = redispatch(name, raw_keyset, a, *args, **kwargs)
+        if GradMode.enabled and getattr(a, "requires_grad", False):
+            node_holder = {}
+
+            def _backward(grad):
+                saved_a = node_holder["node"].saved_tensors()[0]
+                backward_keyset = _backward_dispatch_keyset(raw_keyset, active_keyset)
+                return _softmax_backward(grad, a, saved_a, backward_keyset, args, kwargs)
+
+            node = Node(_backward, (a,), name=f"{name.capitalize()}Backward0")
+            annotate_node_creation(node)
+            node_holder["node"] = weakref.proxy(node)
+            node.save_for_backward(a)
+            out.grad_fn = node
+            out.requires_grad = True
+        return out
+
+    return wrapper
+
+
 def _npu_autograd_grid_sample(name="grid_sample"):
-    """NPU-specific grid_sample autograd wrapper."""
     def wrapper(input, grid, *args, **kwargs):
         active_keyset = current_dispatch_keyset()
         raw_keyset = _strip_autograd_keys(active_keyset)
@@ -7843,6 +7865,8 @@ for _npu_name, _npu_factory in (
     ("upsample_bilinear2d", lambda: _autograd_pool("upsample_bilinear2d", _npu_upsample_bilinear2d_backward)),
     ("upsample_linear1d", lambda: _autograd_pool("upsample_linear1d", _npu_upsample_linear1d_backward)),
     ("upsample_bicubic2d", lambda: _autograd_pool("upsample_bicubic2d", _npu_upsample_bicubic2d_backward)),
+    # TODO: re-enable native softmax backward when aclnnSoftmaxBackward stops segfaulting on 910B/CANN 8.5.0.
+    ("softmax", lambda: _npu_autograd_softmax("softmax")),
     # Grid sample
     ("grid_sample", lambda: _npu_autograd_grid_sample("grid_sample")),
     # Dropout
