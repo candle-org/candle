@@ -56,6 +56,15 @@ def matmul(a, b, out=None):
         a = _cast_tensor_dtype(a, float16_dtype)
         b = _cast_tensor_dtype(b, float16_dtype)
 
+    # aclnnMatmul rejects batched inputs with non-row-major strides
+    # (GetWorkspaceSize 561103). Match torch_npu by materialising a contiguous
+    # copy on-device before dispatching. 2-D operands tolerate transposed
+    # strides natively, so only contiguify when at least 3-D.
+    if a.dim() >= 3 and not a.is_contiguous():
+        a = contiguous(a)
+    if b.dim() >= 3 and not b.is_contiguous():
+        b = contiguous(b)
+
     itemsize = _dtype_itemsize(a.dtype)
     a_storage = _unwrap_storage(a)
     b_storage = _unwrap_storage(b)

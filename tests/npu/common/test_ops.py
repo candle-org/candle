@@ -54,6 +54,25 @@ def test_npu_matmul_batched_broadcast():
     assert out.shape == (2, 4, 2, 5)
     assert np.allclose(out.to("cpu").numpy(), np.matmul(a.to("cpu").numpy(), b.to("cpu").numpy()))
 
+
+def test_npu_matmul_noncontig_batched_input():
+    """aclnnMatmul rejects batched non-row-major inputs with workspace error 561103.
+
+    Repro: ``a.transpose(0, 1)`` produces a contiguous-flag=False (3-D) tensor; the
+    raw aclnnMatmul call returns ``GetWorkspaceSize failed: 561103``. The Python
+    wrapper must contiguify on-device before dispatch.
+    """
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    base = torch.randn(4, 16, 64, device="npu", dtype=torch.float16)
+    a = base.transpose(0, 1)
+    assert not a.is_contiguous()
+    b = torch.randn(64, 64, device="npu", dtype=torch.float16)
+    out = torch.matmul(a, b)
+    expected = np.matmul(a.contiguous().to("cpu").numpy(), b.to("cpu").numpy())
+    assert out.shape == (16, 4, 64)
+    assert np.allclose(out.to("cpu").numpy(), expected, atol=1e-2, rtol=1e-2)
+
 @pytest.mark.parametrize(
     "op_name, numpy_fn",
     [
