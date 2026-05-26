@@ -13,6 +13,7 @@ from candle._backends.npu import creation as npu_creation
 from candle._backends.npu import runtime as npu_runtime
 from candle._backends.npu import allocator as npu_allocator
 from candle._backends.npu.ops import _helpers
+from candle._backends.npu.ops import norm as npu_norm
 
 
 @pytest.fixture(autouse=True)
@@ -4983,6 +4984,102 @@ def test_remaining_batch_group_norm_uses_native_ffi(monkeypatch):
 
     assert ("resolve_op", "GroupNorm") in calls
     assert ("group_norm_op", "getws:GroupNorm", "exec:GroupNorm") in calls
+
+
+def test_group_norm_npu_wrapper_uses_native_aclnn(monkeypatch):
+    calls = []
+
+    class _FakeStorage:
+        def __init__(self, ptr):
+            self._ptr = ptr
+
+        def data_ptr(self):
+            return self._ptr
+
+    class _FakeDevice:
+        index = 0
+
+    class _FakeTensor:
+        shape = (2, 4, 3, 3)
+        stride = (36, 9, 3, 1)
+        dtype = "float16"
+        device = _FakeDevice()
+
+        def __init__(self, ptr=11):
+            self._storage = _FakeStorage(ptr)
+
+        def dim(self):
+            return len(self.shape)
+
+    class _FakeStream:
+        stream = 456
+
+    runtime = _FakeRuntime()
+    input_tensor = _FakeTensor(11)
+    weight = _FakeTensor(22)
+    weight.shape = (4,)
+    weight.stride = (1,)
+    bias = _FakeTensor(33)
+    bias.shape = (4,)
+    bias.stride = (1,)
+
+    monkeypatch.setattr(npu_norm, "_use_soc_fallback", lambda name: False)
+    monkeypatch.setattr(npu_norm.aclnn, "group_norm_symbols_ok", lambda: True)
+    monkeypatch.setattr(npu_norm.npu_runtime, "get_runtime", lambda device_index: runtime)
+    monkeypatch.setattr(npu_norm.npu_state, "current_stream", lambda device_index: _FakeStream())
+    monkeypatch.setattr(npu_norm.npu_runtime, "_alloc_device", lambda size, runtime=None: 44)
+    monkeypatch.setattr(npu_norm, "_unwrap_storage", lambda tensor: tensor._storage)
+    monkeypatch.setattr(npu_norm, "npu_typed_storage_from_ptr", lambda ptr, numel, dtype, device: _FakeStorage(ptr))
+    monkeypatch.setattr(npu_norm, "_wrap_tensor", lambda storage, shape, stride: (storage.data_ptr(), shape, stride))
+
+    def fake_group_norm(*args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(npu_norm.aclnn, "group_norm", fake_group_norm)
+
+    out = npu_norm.group_norm(input_tensor, 2, weight=weight, bias=bias, eps=1e-5)
+
+    assert calls
+    args, kwargs = calls[0]
+    assert args[:4] == (11, 22, 33, 44)
+    assert args[4:14] == (
+        (2, 4, 3, 3), (36, 9, 3, 1),
+        (4,), (1,),
+        (4,), (1,),
+        (2, 4, 3, 3), (36, 9, 3, 1),
+        2, 1e-5,
+    )
+    assert args[14] == "float16"
+    assert args[15] is runtime
+    assert kwargs == {"stream": 456}
+    assert out == (44, (2, 4, 3, 3), (36, 9, 3, 1))
+
+
+def test_group_norm_npu_wrapper_uses_soc_fallback_gate(monkeypatch):
+    calls = []
+
+    class _FakeTensor:
+        shape = (2, 4, 3, 3)
+
+        def dim(self):
+            return len(self.shape)
+
+    def fake_fallback(input_tensor, num_groups, weight=None, bias=None, eps=1e-5):
+        calls.append((input_tensor, num_groups, weight, bias, eps))
+        return "fallback-output"
+
+    input_tensor = _FakeTensor()
+    weight = object()
+    bias = object()
+
+    monkeypatch.setattr(npu_norm, "_use_soc_fallback", lambda name: name == "group_norm")
+    monkeypatch.setattr(npu_norm, "_group_norm_layer_norm_fallback", fake_fallback)
+    monkeypatch.setattr(npu_norm.aclnn, "group_norm_symbols_ok", lambda: pytest.fail("native path should not run"))
+
+    out = npu_norm.group_norm(input_tensor, 2, weight=weight, bias=bias, eps=1e-4)
+
+    assert out == "fallback-output"
+    assert calls == [(input_tensor, 2, weight, bias, 1e-4)]
 
 
 def test_remaining_batch_convolution_uses_native_ffi(monkeypatch):

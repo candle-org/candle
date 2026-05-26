@@ -223,18 +223,9 @@ def _batch_norm_310b_fallback(input, running_mean, running_var, weight=None, bia
     return out
 
 
-def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
-    """Compute group normalization using aclnnLayerNorm (composite implementation).
-
-    This avoids the aclnnGroupNorm state contamination bug in CANN 8.3.RC2.
-    Algorithm:
-    1. Reshape input from (N, C, H, W) to (N*num_groups, C//num_groups * H * W)
-    2. Apply layer_norm over the last dimension (normalizes each group independently)
-    3. Reshape back to (N, C, H, W)
-    4. Apply affine transform: result * weight + bias
-    """
+def _group_norm_layer_norm_fallback(input, num_groups, weight=None, bias=None, eps=1e-5):
     if not aclnn.layer_norm_symbols_ok():
-        raise RuntimeError("aclnnLayerNorm not available (required for group_norm)")
+        raise RuntimeError("aclnnLayerNorm not available (required for group_norm fallback)")
 
     N = input.shape[0]
     C = input.shape[1]
@@ -267,6 +258,53 @@ def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
         result = add(result, bias_reshaped)
 
     return result
+
+
+def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
+    """Compute group normalization using aclnnGroupNorm."""
+    if input.dim() < 2:
+        raise ValueError("group_norm expects input with at least 2 dims")
+
+    C = int(input.shape[1])
+    if C % num_groups != 0:
+        raise ValueError(f"num_channels ({C}) must be divisible by num_groups ({num_groups})")
+
+    if _use_soc_fallback("group_norm"):
+        return _group_norm_layer_norm_fallback(input, num_groups, weight=weight, bias=bias, eps=eps)
+
+    if not aclnn.group_norm_symbols_ok():
+        raise RuntimeError("aclnnGroupNorm not available")
+
+    runtime = npu_runtime.get_runtime((input.device.index or 0))
+    stream = npu_state.current_stream((input.device.index or 0))
+
+    out_shape = input.shape
+    out_stride = npu_runtime._contiguous_stride(out_shape)
+    out_numel = _numel(out_shape)
+    itemsize = _dtype_itemsize(input.dtype)
+    out_ptr = npu_runtime._alloc_device(max(out_numel, 1) * itemsize, runtime=runtime)
+
+    weight_ptr = _unwrap_storage(weight).data_ptr() if weight is not None else None
+    bias_ptr = _unwrap_storage(bias).data_ptr() if bias is not None else None
+
+    aclnn.group_norm(
+        _unwrap_storage(input).data_ptr(),
+        weight_ptr,
+        bias_ptr,
+        out_ptr,
+        input.shape, input.stride,
+        weight.shape if weight is not None else (),
+        weight.stride if weight is not None else (),
+        bias.shape if bias is not None else (),
+        bias.stride if bias is not None else (),
+        out_shape, out_stride,
+        int(num_groups), eps,
+        input.dtype,
+        runtime, stream=stream.stream,
+    )
+
+    out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), input.dtype, device=input.device)
+    return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
 def instance_norm(input, weight=None, bias=None, running_mean=None, running_var=None,
