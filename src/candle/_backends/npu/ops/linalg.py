@@ -65,6 +65,29 @@ def matmul(a, b, out=None):
     if b.dim() >= 3 and not b.is_contiguous():
         b = contiguous(b)
 
+    # aclnnBatchMatMul has substantial per-call host overhead (~1 ms on
+    # 4-D inputs vs ~0.4 ms on 2-D inputs). When the leading batch dims
+    # can be flattened safely we route through the lower-overhead path
+    # and reshape the result back. Two cases qualify:
+    #   (A) (*, M, K) @ (K, N): collapse left to 2-D.
+    #   (B) (b1,...,bn, M, K) @ (b1,...,bn, K, N), ndim >= 4, contiguous
+    #       and matching leading dims (no broadcast): collapse to 3-D BMM.
+    user_out_shape = _matmul_out_shape(tuple(a.shape), tuple(b.shape))
+    if a.dim() >= 3 and b.dim() == 2 and a.is_contiguous():
+        a = a.reshape(-1, a.shape[-1])
+    elif (
+        a.dim() >= 4
+        and b.dim() == a.dim()
+        and a.is_contiguous()
+        and b.is_contiguous()
+        and tuple(a.shape[:-2]) == tuple(b.shape[:-2])
+    ):
+        bdim = 1
+        for s in a.shape[:-2]:
+            bdim *= int(s)
+        a = a.reshape(bdim, a.shape[-2], a.shape[-1])
+        b = b.reshape(bdim, b.shape[-2], b.shape[-1])
+
     itemsize = _dtype_itemsize(a.dtype)
     a_storage = _unwrap_storage(a)
     b_storage = _unwrap_storage(b)
@@ -150,10 +173,10 @@ def matmul(a, b, out=None):
 
     storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape_comp), a.dtype, device=a.device)
     result = _wrap_tensor(storage, out_shape_comp, out_stride)
-    if out_shape_comp != out_shape:
+    if out_shape_comp != user_out_shape:
         from ...common import view as view_backend
 
-        result = view_backend.reshape(result, out_shape)
+        result = view_backend.reshape(result, user_out_shape)
     # Cast result back to original dtype if we promoted for 310B float32 workaround.
     if _use_soc_fallback("matmul") and orig_dtype != a.dtype:
         result = _cast_tensor_dtype(result, orig_dtype)
