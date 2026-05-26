@@ -34,12 +34,12 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
             if dev.type == "npu":
                 from ..npu import runtime as npu_runtime
                 runtime = npu_runtime.get_runtime(dev.index or 0)
-                runtime.synchronize()
-                arr = npu_runtime._copy_npu_to_cpu(
-                    a.storage().data_ptr(), a.storage().nbytes(), a.shape, a.dtype, runtime=runtime
-                )
-                ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=runtime)
-                storage = npu_typed_storage_from_ptr(ptr, arr.size, a.dtype, device=dev)
+                src_storage = a.storage()
+                nbytes = src_storage.nbytes()
+                count = src_storage.size()
+                dst_ptr = npu_runtime._alloc_device(nbytes, runtime=runtime)
+                npu_runtime.memcpy_d2d(dst_ptr, nbytes, src_storage.data_ptr(), runtime=runtime)
+                storage = npu_typed_storage_from_ptr(dst_ptr, count, a.dtype, device=dev)
                 return _wrap_like(a, storage)
 
             if dev.type == "mps":
@@ -126,18 +126,13 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
         from ..npu import runtime as npu_runtime
 
         src_runtime = npu_runtime.get_runtime(a.device.index or 0)
-        src_runtime.synchronize()
-        src_storage = a.storage()
-        arr = npu_runtime._copy_npu_to_cpu(
-            src_storage.data_ptr(),
-            src_storage.nbytes(),
-            (src_storage.size(),),
-            a.dtype,
-            runtime=src_runtime,
-        )
         dst_runtime = npu_runtime.get_runtime(dev.index or 0)
-        ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=dst_runtime)
-        storage = npu_typed_storage_from_ptr(ptr, arr.size, a.dtype, device=dev)
+        src_storage = a.storage()
+        nbytes = src_storage.nbytes()
+        count = src_storage.size()
+        dst_ptr = npu_runtime._alloc_device(nbytes, runtime=dst_runtime)
+        npu_runtime.memcpy_d2d(dst_ptr, nbytes, src_storage.data_ptr(), runtime=src_runtime)
+        storage = npu_typed_storage_from_ptr(dst_ptr, count, a.dtype, device=dev)
         return _wrap_like(a, storage)
 
     if a.device.type == "npu" and dev.type == "cpu":
