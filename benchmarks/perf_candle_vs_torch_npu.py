@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 
+
 def build_mlp(torch, device, dtype):
     nn = torch.nn
     f = torch.nn.functional
@@ -108,7 +109,7 @@ def _import_framework(framework):
         return torch
     if framework == "torch_npu":
         import torch  # pylint: disable=import-outside-toplevel
-        import torch_npu  # noqa: F401  pylint: disable=import-outside-toplevel,unused-import
+        import torch_npu  # noqa: F401  pylint: disable=import-outside-toplevel,unused-import,import-error
         return torch
     raise ValueError(f"unknown framework: {framework}")
 
@@ -122,7 +123,61 @@ def _resolve_dtype(torch, name):
     return getattr(torch, name)
 
 
-def run_worker(framework, case, iters, warmup, dtype_name):
+def _clear_grads(model, inputs):
+    for p in model.parameters():
+        if p.grad is not None:
+            p.grad = None
+    for x in inputs:
+        if getattr(x, "grad", None) is not None:
+            x.grad = None
+
+
+def _profile_top_rows(prof, row_limit):
+    rows = list(prof.key_averages())
+    rows.sort(key=lambda row: (row.cpu_time_total, row.self_cpu_time_total, row.key), reverse=True)
+    out = []
+    for row in rows[: max(0, int(row_limit))]:
+        out.append(
+            {
+                "name": row.key,
+                "device": row.device_type,
+                "count": row.count,
+                "self_us": row.self_cpu_time_total,
+                "total_us": row.cpu_time_total,
+                "avg_us": row.cpu_time,
+            }
+        )
+    return out
+
+
+def _profile_candle_step(torch, model, inputs, case, profile_dir, profile_topk):
+    from candle import profiler  # pylint: disable=import-outside-toplevel
+
+    with profiler.profile(activities=[profiler.ProfilerActivity.CPU, profiler.ProfilerActivity.NPU]) as prof:
+        with profiler.record_function(f"{case}.forward"):
+            out = model(*inputs)
+            loss = out.sum()
+            _sync(torch)
+        with profiler.record_function(f"{case}.backward"):
+            loss.backward()
+            _sync(torch)
+
+    trace_path = None
+    if profile_dir:
+        os.makedirs(profile_dir, exist_ok=True)
+        trace_path = os.path.join(profile_dir, f"{case}-candle-trace.json")
+        prof.export_chrome_trace(trace_path)
+
+    table = prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=max(0, int(profile_topk)))
+    return {
+        "trace_path": trace_path,
+        "table": table,
+        "top": _profile_top_rows(prof, profile_topk),
+    }
+
+
+def run_worker(framework, case, iters, warmup, dtype_name, profile_candle=False,
+               profile_dir=None, profile_topk=20):
     torch = _import_framework(framework)
     dtype = _resolve_dtype(torch, dtype_name)
 
@@ -137,13 +192,14 @@ def run_worker(framework, case, iters, warmup, dtype_name):
         out = model(*inputs)
         loss = out.sum()
         loss.backward()
-        for p in model.parameters():
-            if p.grad is not None:
-                p.grad = None
-        for x in inputs:
-            if getattr(x, "grad", None) is not None:
-                x.grad = None
+        _clear_grads(model, inputs)
     _sync(torch)
+
+    profile = None
+    if framework == "candle" and profile_candle:
+        profile = _profile_candle_step(torch, model, inputs, case, profile_dir, profile_topk)
+        _clear_grads(model, inputs)
+        _sync(torch)
 
     fwd_samples = []
     bwd_samples = []
@@ -160,15 +216,9 @@ def run_worker(framework, case, iters, warmup, dtype_name):
 
         fwd_samples.append((t1 - t0) * 1000.0)
         bwd_samples.append((t2 - t1) * 1000.0)
+        _clear_grads(model, inputs)
 
-        for p in model.parameters():
-            if p.grad is not None:
-                p.grad = None
-        for x in inputs:
-            if getattr(x, "grad", None) is not None:
-                x.grad = None
-
-    return {
+    result = {
         "framework": framework,
         "case": case,
         "iters": iters,
@@ -177,9 +227,13 @@ def run_worker(framework, case, iters, warmup, dtype_name):
         "fwd_ms_min": min(fwd_samples),
         "bwd_ms_min": min(bwd_samples),
     }
+    if profile is not None:
+        result["profile"] = profile
+    return result
 
 
-def _spawn_worker(framework, case, iters, warmup, dtype_name, python_exe=None):
+def _spawn_worker(framework, case, iters, warmup, dtype_name, python_exe=None,
+                  profile_candle=False, profile_dir=None, profile_topk=20):
     cmd = [
         python_exe or sys.executable,
         os.path.abspath(__file__),
@@ -189,7 +243,13 @@ def _spawn_worker(framework, case, iters, warmup, dtype_name, python_exe=None):
         "--iters", str(iters),
         "--warmup", str(warmup),
         "--dtype", dtype_name,
+        "--profile-topk", str(profile_topk),
     ]
+    if framework == "candle" and profile_candle:
+        cmd.append("--profile-candle")
+    if profile_dir is not None:
+        cmd.extend(("--profile-dir", profile_dir))
+
     env = os.environ.copy()
     src_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
     old_path = env.get("PYTHONPATH")
@@ -225,19 +285,66 @@ def _fmt(x):
     return f"{x:7.2f}"
 
 
-def _print_table(results, frameworks):
+def _index_results(results):
     by_case = {}
     for r in results:
         by_case.setdefault(r["case"], {})[r["framework"]] = r
+    return by_case
+
+
+def _annotate_ratios(results):
+    by_case = _index_results(results)
+    for by_fw in by_case.values():
+        candle = by_fw.get("candle")
+        torch_ref = by_fw.get("torch_npu")
+        if not candle or not torch_ref:
+            continue
+        if "error" in candle or "error" in torch_ref:
+            continue
+        torch_fwd = torch_ref.get("fwd_ms_median")
+        torch_bwd = torch_ref.get("bwd_ms_median")
+        if torch_fwd:
+            candle["fwd_ratio"] = candle["fwd_ms_median"] / torch_fwd
+        if torch_bwd:
+            candle["bwd_ratio"] = candle["bwd_ms_median"] / torch_bwd
+
+
+def _ratio_failures(results, cases, max_fwd_ratio, max_bwd_ratio):
+    failures = []
+    by_case = _index_results(results)
+    for case in cases:
+        by_fw = by_case.get(case, {})
+        candle = by_fw.get("candle")
+        torch_ref = by_fw.get("torch_npu")
+        if candle is None or torch_ref is None:
+            failures.append(f"{case}: missing candle or torch_npu result for ratio gate")
+            continue
+        if "error" in candle:
+            failures.append(f"{case}/candle: {candle['error']}")
+            continue
+        if "error" in torch_ref:
+            failures.append(f"{case}/torch_npu: {torch_ref['error']}")
+            continue
+        fwd_ratio = candle.get("fwd_ratio")
+        bwd_ratio = candle.get("bwd_ratio")
+        if fwd_ratio is None or bwd_ratio is None:
+            failures.append(f"{case}: unable to compute candle/torch_npu ratio")
+            continue
+        if fwd_ratio > max_fwd_ratio:
+            failures.append(f"{case}: fwd ratio {fwd_ratio:.2f}x > {max_fwd_ratio:.2f}x")
+        if bwd_ratio > max_bwd_ratio:
+            failures.append(f"{case}: bwd ratio {bwd_ratio:.2f}x > {max_bwd_ratio:.2f}x")
+    return failures
+
+
+def _print_table(results, frameworks):
+    by_case = _index_results(results)
 
     header = ["algo", "fwd ms", "bwd ms", "ratio"]
     print(" | ".join(f"{h:>18}" for h in header))
     print("-+-".join("-" * 18 for _ in header))
 
     for case, by_fw in by_case.items():
-        torch_ref = by_fw.get("torch_npu")
-        torch_fwd = torch_ref.get("fwd_ms_median") if torch_ref and "error" not in torch_ref else None
-        torch_bwd = torch_ref.get("bwd_ms_median") if torch_ref and "error" not in torch_ref else None
         for fw in frameworks:
             r = by_fw.get(fw)
             algo = f"{case}/{fw}"
@@ -248,8 +355,8 @@ def _print_table(results, frameworks):
                 bwd = r["bwd_ms_median"]
                 if fw == "torch_npu":
                     ratio = "1.00x"
-                elif torch_fwd and torch_bwd:
-                    ratio = f"f {fwd / torch_fwd:.2f}x / b {bwd / torch_bwd:.2f}x"
+                elif "fwd_ratio" in r and "bwd_ratio" in r:
+                    ratio = f"f {r['fwd_ratio']:.2f}x / b {r['bwd_ratio']:.2f}x"
                 else:
                     ratio = "-"
                 row = [algo, _fmt(fwd), _fmt(bwd), ratio]
@@ -262,6 +369,28 @@ def _print_table(results, frameworks):
             if tail:
                 for line in tail:
                     print(f"  | {line}")
+
+
+def _print_profile_tables(results):
+    for result in results:
+        profile = result.get("profile")
+        if not profile:
+            continue
+        print(f"\n# Candle profiler: {result['case']}")
+        trace_path = profile.get("trace_path")
+        if trace_path:
+            print(f"# Trace: {trace_path}")
+        print(profile["table"])
+
+
+def _write_json_output(path, payload):
+    text = json.dumps(payload, indent=2, sort_keys=True)
+    if path == "-":
+        print(text)
+        return
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.write("\n")
 
 
 def main():
@@ -278,10 +407,40 @@ def main():
                         help="Python executable for candle workers; defaults to current Python")
     parser.add_argument("--torch-npu-python", default=None,
                         help="Python executable for torch_npu workers; defaults to current Python")
+    parser.add_argument("--fail-on-ratio", action="store_true",
+                        help="exit nonzero when candle is slower than the configured torch_npu ratio")
+    parser.add_argument("--max-fwd-ratio", type=float, default=1.0,
+                        help="maximum allowed candle/torch_npu forward ratio for --fail-on-ratio")
+    parser.add_argument("--max-bwd-ratio", type=float, default=1.0,
+                        help="maximum allowed candle/torch_npu backward ratio for --fail-on-ratio")
+    parser.add_argument("--json-output", default=None,
+                        help="write final results payload to this path, or '-' for stdout")
+    parser.add_argument("--profile-candle", action="store_true",
+                        help="run one extra profiled Candle iteration after warmup")
+    parser.add_argument("--profile-dir", default=None,
+                        help="directory for Candle profiler Chrome trace JSON files")
+    parser.add_argument("--profile-topk", type=int, default=20,
+                        help="number of Candle profiler rows to keep and print")
+    parser.add_argument("--print-candle-profile-table", action="store_true",
+                        help="print Candle profiler key_averages tables for profiled workers")
     args = parser.parse_args()
 
+    if args.max_fwd_ratio <= 0:
+        parser.error("--max-fwd-ratio must be > 0")
+    if args.max_bwd_ratio <= 0:
+        parser.error("--max-bwd-ratio must be > 0")
+
     if args.worker:
-        result = run_worker(args.framework, args.case, args.iters, args.warmup, args.dtype)
+        result = run_worker(
+            args.framework,
+            args.case,
+            args.iters,
+            args.warmup,
+            args.dtype,
+            profile_candle=args.profile_candle,
+            profile_dir=args.profile_dir,
+            profile_topk=args.profile_topk,
+        )
         print(json.dumps(result))
         return
 
@@ -307,11 +466,47 @@ def main():
         for fw in frameworks:
             print(f"  [{fw} / {case}] running...", flush=True)
             results.append(_spawn_worker(
-                fw, case, args.iters, args.warmup, args.dtype, python_for.get(fw)
+                fw,
+                case,
+                args.iters,
+                args.warmup,
+                args.dtype,
+                python_for.get(fw),
+                profile_candle=args.profile_candle,
+                profile_dir=args.profile_dir,
+                profile_topk=args.profile_topk,
             ))
+
+    _annotate_ratios(results)
+    failures = []
+    if args.fail_on_ratio:
+        failures = _ratio_failures(results, cases, args.max_fwd_ratio, args.max_bwd_ratio)
 
     print()
     _print_table(results, frameworks)
+    if args.print_candle_profile_table:
+        _print_profile_tables(results)
+
+    if failures:
+        print("\n# Ratio gate failures")
+        for failure in failures:
+            print(f"- {failure}")
+
+    payload = {
+        "iters": args.iters,
+        "warmup": args.warmup,
+        "dtype": args.dtype,
+        "cases": cases,
+        "frameworks": frameworks,
+        "max_fwd_ratio": args.max_fwd_ratio,
+        "max_bwd_ratio": args.max_bwd_ratio,
+        "failures": failures,
+        "results": results,
+    }
+    if args.json_output:
+        _write_json_output(args.json_output, payload)
+    if failures:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
