@@ -221,6 +221,12 @@ def test_npu_matmul_out_preserves_user_output_tensor(monkeypatch):
             self.copy_calls.append(other)
             return self
 
+        def dim(self):
+            return len(self.shape)
+
+        def is_contiguous(self):
+            return True
+
     class FakeStorage:
         def data_ptr(self):
             return 1234
