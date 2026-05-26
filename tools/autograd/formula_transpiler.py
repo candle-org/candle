@@ -51,7 +51,7 @@ _SPECIAL_CALLS = {
     "zeros_like": lambda args: f"{args[0]}._zeros_like()",
     "ones_like": lambda args: f"{args[0]}._ones_like()",
     "handle_r_to_c": lambda args: args[1],
-    "maybe_multiply": lambda args: f'redispatch("mul", keyset, {args[0]}, {args[1]})',
+    "maybe_multiply": lambda args: f'_maybe_multiply_helper({args[0]}, {args[1]}, keyset)',
     "not_implemented": lambda args: f'_raise_not_implemented({args[0]})',
     "std::sqrt": lambda args: f'redispatch("sqrt", keyset, {args[0]})',
     "std::real": lambda args: args[0],
