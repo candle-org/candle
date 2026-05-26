@@ -1013,6 +1013,28 @@ def test_npu_softmax(dtype):
     assert np.allclose(row_sums, np.ones(2), atol=1e-3)
 
 
+def test_npu_softmax_backward_stays_on_npu():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    data = np.array([[1.0, 2.0, 3.0], [2.0, 0.0, -1.0]], dtype=np.float32)
+    upstream = np.array([[0.5, -1.0, 2.0], [1.5, -0.5, 0.25]], dtype=np.float32)
+    x = torch.tensor(data, device="npu", requires_grad=True)
+    grad_out = torch.tensor(upstream, device="npu")
+
+    from candle.nn import functional as F
+    out = F.softmax(x, dim=-1)
+    (out * grad_out).sum().backward()
+
+    e_x = np.exp(data - np.max(data, axis=-1, keepdims=True))
+    softmax = e_x / np.sum(e_x, axis=-1, keepdims=True)
+    expected = softmax * (upstream - np.sum(upstream * softmax, axis=-1, keepdims=True))
+
+    assert x.grad is not None
+    assert x.grad.device.type == "npu"
+    assert x.grad.shape == x.shape
+    assert np.allclose(x.grad.to("cpu").numpy(), expected, atol=1e-3, rtol=1e-3)
+
+
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
 def test_npu_log_softmax(dtype):
     if not torch.npu.is_available():
