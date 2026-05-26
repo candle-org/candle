@@ -448,6 +448,27 @@ cdef inline object _fast_kernel_for_entry_skip_autograd(object entry, unsigned i
     return None, None
 
 
+cdef inline bint _has_device_autograd_override(object entry, unsigned int m):
+    cdef dict kernels = entry.kernels
+    cdef object default_kernel = kernels.get(_DispatchKey.Autograd)
+    cdef object device_kernel = None
+
+    if m & _KEY_AutogradNPU:
+        device_kernel = kernels.get(_DispatchKey.AutogradNPU)
+    elif m & _KEY_AutogradCUDA:
+        device_kernel = kernels.get(_DispatchKey.AutogradCUDA)
+    elif m & _KEY_AutogradXPU:
+        device_kernel = kernels.get(_DispatchKey.AutogradXPU)
+    elif m & _KEY_PrivateUse3:
+        device_kernel = kernels.get(_DispatchKey.PrivateUse3)
+    elif m & _KEY_AutogradCPU:
+        device_kernel = kernels.get(_DispatchKey.AutogradCPU)
+    elif m & _KEY_AutogradMeta:
+        device_kernel = kernels.get(_DispatchKey.AutogradMeta)
+
+    return device_kernel is not None and device_kernel is not default_kernel
+
+
 # ---------------------------------------------------------------------------
 # Inline keyset construction — replaces _dispatch.pyx::_cy_from_tensors
 # ---------------------------------------------------------------------------
@@ -777,7 +798,7 @@ cdef object _dispatch_core(str name, object dispatch_device,
     if has_autograd:
         autograd_post_fn = getattr(entry, "autograd_post", None)
 
-    if has_autograd and autograd_post_fn is not None:
+    if has_autograd and autograd_post_fn is not None and not _has_device_autograd_override(entry, m):
         # Single-pass: find backend kernel directly, skip autograd wrapper
         backend_kernel, backend_key = _fast_kernel_for_entry_skip_autograd(entry, m)
         if backend_kernel is not None:
