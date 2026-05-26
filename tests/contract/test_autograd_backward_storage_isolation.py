@@ -44,3 +44,19 @@ def test_target_autograd_npu_kernels_are_registered_and_not_cpu_only_config():
         assert DispatchKey.AutogradNPU in entry.kernels, (
             f"missing AutogradNPU registration for {op}"
         )
+
+
+def test_autograd_post_ops_keep_npu_specific_autograd_overrides():
+    src = _autograd_backend_source()
+    dispatcher = (Path(candle.__file__).resolve().parent / "_C" / "_dispatcher_core.pyx").read_text(
+        encoding="utf-8"
+    )
+
+    assert "def _npu_autograd_conv" in src
+    assert "not _has_device_autograd_override(entry, m)" in dispatcher
+
+    for op in ("conv1d", "conv2d", "conv3d", "conv_transpose1d", "conv_transpose2d", "conv_transpose3d"):
+        entry = registry.get(f"aten::{op}")
+        assert entry.autograd_post is not None
+        assert DispatchKey.AutogradNPU in entry.kernels
+        assert entry.kernels[DispatchKey.AutogradNPU] is not entry.kernels[DispatchKey.Autograd]

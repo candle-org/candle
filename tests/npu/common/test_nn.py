@@ -97,6 +97,26 @@ class TestNormalizationNPU:
         )
 
 
+def test_residual_conv_bn_relu_backward_stays_on_npu():
+    conv1 = nn.Conv2d(32, 32, 3, padding=1, bias=False).to("npu")
+    bn1 = nn.BatchNorm2d(32).to("npu")
+    conv2 = nn.Conv2d(32, 32, 3, padding=1, bias=False).to("npu")
+    bn2 = nn.BatchNorm2d(32).to("npu")
+    x = torch.randn(8, 32, 16, 16, device="npu", requires_grad=True)
+
+    h = nn.functional.relu(bn1(conv1(x)))
+    h = bn2(conv2(h))
+    y = nn.functional.relu(h + x)
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.device.type == "npu"
+    assert conv1.weight.grad is not None
+    assert conv1.weight.grad.device.type == "npu"
+    assert conv2.weight.grad is not None
+    assert conv2.weight.grad.device.type == "npu"
+
+
 class TestModulesNPU:
     """Test nn.Module classes with NPU backend."""
 
