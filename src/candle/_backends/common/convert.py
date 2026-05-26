@@ -38,7 +38,10 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
                 nbytes = src_storage.nbytes()
                 count = src_storage.size()
                 dst_ptr = npu_runtime._alloc_device(nbytes, runtime=runtime)
-                npu_runtime.memcpy_d2d(dst_ptr, nbytes, src_storage.data_ptr(), runtime=runtime)
+                npu_runtime.memcpy_d2d(
+                    dst_ptr, nbytes, src_storage.data_ptr(),
+                    runtime=runtime, non_blocking=True,
+                )
                 storage = npu_typed_storage_from_ptr(dst_ptr, count, a.dtype, device=dev)
                 return _wrap_like(a, storage)
 
@@ -131,7 +134,10 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
         nbytes = src_storage.nbytes()
         count = src_storage.size()
         dst_ptr = npu_runtime._alloc_device(nbytes, runtime=dst_runtime)
-        npu_runtime.memcpy_d2d(dst_ptr, nbytes, src_storage.data_ptr(), runtime=src_runtime)
+        npu_runtime.memcpy_d2d(
+            dst_ptr, nbytes, src_storage.data_ptr(),
+            runtime=src_runtime, non_blocking=True,
+        )
         storage = npu_typed_storage_from_ptr(dst_ptr, count, a.dtype, device=dev)
         return _wrap_like(a, storage)
 
