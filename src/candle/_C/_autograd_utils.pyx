@@ -32,10 +32,24 @@ def _reduce_grad_dispatch(grad, shape):
     from candle.autograd.grad_mode import no_grad
 
     result = grad
+    cdef int rank_diff
     with no_grad():
-        while len(result.shape) > len(shape):
-            result = torch_sum(result, dim=0)
-        for i, (g_dim, s_dim) in enumerate(zip(result.shape, shape)):
-            if s_dim == 1 and g_dim != 1:
-                result = torch_sum(result, dim=i, keepdim=True)
+        # Squash leading broadcast dims (where grad has more dims than target)
+        # in a single multi-dim sum rather than looping one dim at a time.
+        # Cuts dispatch overhead when grad is rank > target rank by more than 1.
+        rank_diff = len(result.shape) - len(shape)
+        if rank_diff > 0:
+            if rank_diff == 1:
+                result = torch_sum(result, dim=0)
+            else:
+                result = torch_sum(result, dim=tuple(range(rank_diff)))
+        # Reduce broadcast-stretched dims (size 1 in target, larger in grad)
+        # in a single multi-dim sum with keepdim=True. Same motivation.
+        reduce_axes = [i for i, (g_dim, s_dim) in enumerate(zip(result.shape, shape))
+                       if s_dim == 1 and g_dim != 1]
+        if reduce_axes:
+            if len(reduce_axes) == 1:
+                result = torch_sum(result, dim=reduce_axes[0], keepdim=True)
+            else:
+                result = torch_sum(result, dim=tuple(reduce_axes), keepdim=True)
     return result
