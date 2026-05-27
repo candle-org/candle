@@ -58,6 +58,8 @@ cdef object _f32_to_bf16_fn = None
 cdef object _cast_tensor_dtype_npu_fn = None
 cdef object _pinned_cpu_typed_storage_from_numpy_fn = None
 cdef object _npu_available_fn = None
+cdef object _to_device_fn = None
+cdef object _is_profiler_enabled_fn = None
 
 
 cdef inline void _ensure_base():
@@ -159,6 +161,15 @@ cdef inline void _ensure_grad_mode_ref():
     if _is_grad_enabled_fn is None:
         from candle.autograd.grad_mode import is_grad_enabled
         _is_grad_enabled_fn = is_grad_enabled
+
+
+cdef inline void _ensure_clone_fast_refs():
+    global _to_device_fn, _is_profiler_enabled_fn
+    if _to_device_fn is None:
+        from candle._backends.common.convert import to_device
+        from candle.profiler.profiler import is_profiler_enabled
+        _to_device_fn = to_device
+        _is_profiler_enabled_fn = is_profiler_enabled
 
 
 cdef inline void _validate_as_strided_args(tuple size, tuple stride, Py_ssize_t storage_offset):
@@ -475,8 +486,22 @@ def tensor_clone(self, *, memory_format=None):
     cdef object fmt_name
     cdef object out
     cdef object _cl
+    cdef object dev
 
     _ensure_functional_refs()
+
+    # Fast path: NPU same-device clone with no memory_format, no autograd
+    # tracking required, no profiler — bypass dispatch entirely.
+    # When self.requires_grad is False, no autograd metadata needs to attach
+    # regardless of grad_mode, so we only need to gate on the profiler and
+    # layout (channels_last requires the existing relayout branch).
+    if memory_format is None and not self.requires_grad:
+        dev = self.device
+        if dev.type == "npu":
+            _ensure_clone_fast_refs()
+            if (not _is_profiler_enabled_fn()
+                    and not _is_channels_last_stride_tuple(self.shape, self.stride)):
+                return _to_device_fn(self, dev, copy=True)
 
     memory_format = _normalize_memory_format(memory_format)
     fmt_name = _memory_format_name(memory_format)
