@@ -18,7 +18,20 @@ def main():
     selected = [case_id.strip() for case_id in args.cases.split(",") if case_id.strip()]
     results = []
     for case_id in selected:
-        case = CASES[case_id]
+        try:
+            case = CASES[case_id]
+        except KeyError:
+            results.append({
+                "framework": args.framework,
+                "case_id": case_id,
+                "mode": args.mode,
+                "mean_ms": 0.0,
+                "median_ms": 0.0,
+                "p95_ms": 0.0,
+                "op_count": 0,
+                "status": f"error: unknown case: {case_id}",
+            })
+            continue
         try:
             results.append(run_case(
                 case,

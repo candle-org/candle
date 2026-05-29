@@ -15,6 +15,7 @@ def _repo_root():
 
 
 def _spawn_worker(framework, args):
+    repo_root = _repo_root()
     cmd = [
         args.python or sys.executable,
         "-m",
@@ -33,25 +34,30 @@ def _spawn_worker(framework, args):
         str(args.iters),
     ]
     env = os.environ.copy()
-    src_path = os.path.join(_repo_root(), "src")
+    src_path = os.path.join(repo_root, "src")
     existing = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = src_path if not existing else os.pathsep.join([src_path, existing])
-    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
+    paths = [repo_root, src_path]
+    if existing:
+        paths.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(paths)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False, cwd=repo_root)
     if proc.returncode != 0:
         if proc.stdout:
             print(proc.stdout, file=sys.stderr, end="" if proc.stdout.endswith("\n") else "\n")
         if proc.stderr:
             print(proc.stderr, file=sys.stderr, end="" if proc.stderr.endswith("\n") else "\n")
-        return []
+        raise RuntimeError(f"{framework} worker failed with exit code {proc.returncode}")
     try:
-        return json.loads(proc.stdout)
+        rows = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
-        print(f"failed to parse {framework} worker JSON: {exc}", file=sys.stderr)
         if proc.stdout:
             print(proc.stdout, file=sys.stderr, end="" if proc.stdout.endswith("\n") else "\n")
         if proc.stderr:
             print(proc.stderr, file=sys.stderr, end="" if proc.stderr.endswith("\n") else "\n")
-        return []
+        raise RuntimeError(f"failed to parse {framework} worker JSON: {exc}") from exc
+    if not rows:
+        raise RuntimeError(f"{framework} worker returned no rows")
+    return rows
 
 
 def annotate_pipeline_ratios(rows):
