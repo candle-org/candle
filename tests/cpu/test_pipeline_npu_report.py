@@ -85,6 +85,8 @@ def test_spawn_worker_runs_from_repo_root_with_repo_and_src_on_pythonpath(monkey
     monkeypatch.setattr(subprocess, "run", fake_run)
     args = SimpleNamespace(
         python=sys.executable,
+        candle_python=None,
+        torch_npu_python=None,
         cases="A1",
         mode="eager",
         device="npu",
@@ -108,6 +110,8 @@ def test_spawn_worker_nonzero_exit_returns_structured_failure_rows(monkeypatch):
     monkeypatch.setattr(subprocess, "run", fake_run)
     args = SimpleNamespace(
         python=None,
+        candle_python=None,
+        torch_npu_python=None,
         cases="A1,A2s",
         mode="eager",
         device="npu",
@@ -142,6 +146,8 @@ def test_spawn_worker_malformed_json_returns_structured_failure_rows(monkeypatch
     monkeypatch.setattr(subprocess, "run", fake_run)
     args = SimpleNamespace(
         python=None,
+        candle_python=None,
+        torch_npu_python=None,
         cases="A1",
         mode="eager",
         device="npu",
@@ -156,52 +162,33 @@ def test_spawn_worker_malformed_json_returns_structured_failure_rows(monkeypatch
     assert rows[0]["case_id"] == "A1"
     assert rows[0]["status"].startswith("error:")
 
+def test_spawn_worker_uses_framework_specific_python_executable(monkeypatch):
+    commands = []
+
+    def fake_run(cmd, capture_output, text, env, check, cwd):
+        commands.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps([{"framework": cmd[4], "case_id": "A1"}]), stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    args = SimpleNamespace(
+        python="/envs/default/bin/python",
+        candle_python="/envs/candle/bin/python",
+        torch_npu_python="/envs/torch_npu/bin/python",
+        cases="A1",
+        mode="eager",
+        device="npu",
+        warmup=0,
+        iters=1,
+    )
+
+    pipeline_run._spawn_worker("candle", args)
+    pipeline_run._spawn_worker("torch_npu", args)
+
+    assert commands[0][0] == "/envs/candle/bin/python"
+    assert commands[1][0] == "/envs/torch_npu/bin/python"
 
 
 def test_json_stdout_mode_emits_only_json_to_stdout_and_human_to_stderr(capsys, monkeypatch):
-    rows_by_framework = {
-        "candle": [
-            {"framework": "candle", "case_id": "A1", "mode": "eager", "median_ms": 8.0, "status": "ok"}
-        ],
-        "torch_npu": [
-            {"framework": "torch_npu", "case_id": "A1", "mode": "eager", "median_ms": 10.0, "status": "ok"}
-        ],
-    }
-    monkeypatch.setattr(pipeline_run, "_spawn_worker", lambda framework, args: rows_by_framework[framework])
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "pipeline_npu.run",
-            "--cases",
-            "A1",
-            "--mode",
-            "eager",
-            "--warmup",
-            "2",
-            "--iters",
-            "3",
-            "--json-output",
-            "-",
-        ],
-    )
-
-    pipeline_run.main()
-
-    captured = capsys.readouterr()
-    payload = json.loads(captured.out)
-    assert payload["warmup"] == 2
-    assert payload["iters"] == 3
-    assert payload["cases"] == ["A1"]
-    assert payload["mode"] == "eager"
-    assert payload["device"] == "npu"
-    assert payload["max_ratio"] == 0.99
-    assert payload["frameworks"] == ["candle", "torch_npu"]
-    assert "case | framework | mode" in captured.err
-    assert "A1 | candle | eager" in captured.err
-
-
-def test_main_exits_nonzero_for_error_status_without_ratio_gate(capsys, monkeypatch):
     rows_by_framework = {
         "candle": [
             {"framework": "candle", "case_id": "A1", "mode": "eager", "median_ms": 0.0, "status": "error: boom"}

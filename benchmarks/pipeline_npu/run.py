@@ -31,10 +31,20 @@ def _worker_failure_rows(framework, args, status):
     ]
 
 
+def _worker_python(framework, args):
+    candle_python = getattr(args, "candle_python", None)
+    torch_npu_python = getattr(args, "torch_npu_python", None)
+    if framework == "candle" and candle_python:
+        return candle_python
+    if framework == "torch_npu" and torch_npu_python:
+        return torch_npu_python
+    return args.python or sys.executable
+
+
 def _spawn_worker(framework, args):
     repo_root = _repo_root()
     cmd = [
-        args.python or sys.executable,
+        _worker_python(framework, args),
         "-m",
         "benchmarks.pipeline_npu.worker",
         "--framework",
@@ -141,6 +151,8 @@ def main():
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iters", type=int, default=20)
     parser.add_argument("--python")
+    parser.add_argument("--candle-python")
+    parser.add_argument("--torch-npu-python")
     parser.add_argument("--json-output")
     parser.add_argument("--fail-on-ratio", action="store_true")
     parser.add_argument("--max-ratio", type=float, default=0.99)
