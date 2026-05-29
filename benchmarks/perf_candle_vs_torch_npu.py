@@ -364,12 +364,13 @@ def _ratio_failures(results, cases, max_fwd_ratio, max_bwd_ratio, max_total_rati
     return failures
 
 
-def _print_table(results, frameworks):
+def _print_table(results, frameworks, stream=None):
+    stream = stream or sys.stdout
     by_case = _index_results(results)
 
     header = ["algo", "fwd ms", "bwd ms", "total ms", "ratio"]
-    print(" | ".join(f"{h:>18}" for h in header))
-    print("-+-".join("-" * 18 for _ in header))
+    print(" | ".join(f"{h:>18}" for h in header), file=stream)
+    print("-+-".join("-" * 18 for _ in header), file=stream)
 
     for case, by_fw in by_case.items():
         for fw in frameworks:
@@ -389,27 +390,28 @@ def _print_table(results, frameworks):
                 else:
                     ratio = "-"
                 row = [algo, _fmt(fwd), _fmt(bwd), _fmt(total), ratio]
-            print(" | ".join(f"{c:>18}" for c in row))
+            print(" | ".join(f"{c:>18}" for c in row), file=stream)
 
     for r in results:
         if "error" in r:
-            print(f"\n[{r['framework']} / {r['case']}] ERROR: {r['error']}")
+            print(f"\n[{r['framework']} / {r['case']}] ERROR: {r['error']}", file=stream)
             tail = r.get("tail")
             if tail:
                 for line in tail:
-                    print(f"  | {line}")
+                    print(f"  | {line}", file=stream)
 
 
-def _print_profile_tables(results):
+def _print_profile_tables(results, stream=None):
+    stream = stream or sys.stdout
     for result in results:
         profile = result.get("profile")
         if not profile:
             continue
-        print(f"\n# Candle profiler: {result['case']}")
+        print(f"\n# Candle profiler: {result['case']}", file=stream)
         trace_path = profile.get("trace_path")
         if trace_path:
-            print(f"# Trace: {trace_path}")
-        print(profile["table"])
+            print(f"# Trace: {trace_path}", file=stream)
+        print(profile["table"], file=stream)
 
 
 def _write_json_output(path, payload):
@@ -420,6 +422,14 @@ def _write_json_output(path, payload):
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
         handle.write("\n")
+
+
+def _worker_failures(results):
+    failures = []
+    for result in results:
+        if "error" in result:
+            failures.append(f"{result.get('case', '-')}/{result.get('framework', '-')}: {result['error']}")
+    return failures
 
 
 def main():
@@ -486,9 +496,10 @@ def main():
     if unknown:
         raise SystemExit(f"unknown cases: {unknown}; known: {list(CASES)}")
 
+    human_stream = sys.stderr if args.json_output == "-" else sys.stdout
     print(f"# Perf bench: candle vs torch_npu (iters={args.iters}, warmup={args.warmup}, "
-          f"dtype={args.dtype})")
-    print(f"# Cases: {cases}")
+          f"dtype={args.dtype})", file=human_stream)
+    print(f"# Cases: {cases}", file=human_stream)
 
     python_for = {
         "candle": args.candle_python,
@@ -497,7 +508,7 @@ def main():
     results = []
     for case in cases:
         for fw in frameworks:
-            print(f"  [{fw} / {case}] running...", flush=True)
+            print(f"  [{fw} / {case}] running...", flush=True, file=human_stream)
             results.append(_spawn_worker(
                 fw,
                 case,
@@ -511,25 +522,25 @@ def main():
             ))
 
     _annotate_ratios(results)
-    failures = []
+    failures = _worker_failures(results)
     if args.fail_on_ratio:
-        failures = _ratio_failures(
+        failures.extend(_ratio_failures(
             results,
             cases,
             args.max_fwd_ratio,
             args.max_bwd_ratio,
             args.max_total_ratio,
-        )
+        ))
 
-    print()
-    _print_table(results, frameworks)
+    print(file=human_stream)
+    _print_table(results, frameworks, stream=human_stream)
     if args.print_candle_profile_table:
-        _print_profile_tables(results)
+        _print_profile_tables(results, stream=human_stream)
 
     if failures:
-        print("\n# Ratio gate failures")
+        print("\n# Gate failures", file=human_stream)
         for failure in failures:
-            print(f"- {failure}")
+            print(f"- {failure}", file=human_stream)
 
     payload = {
         "iters": args.iters,

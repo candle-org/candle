@@ -1,3 +1,10 @@
+import json
+import subprocess
+import sys
+
+import pytest
+
+from benchmarks.op_benchmark_npu import run as op_run
 from benchmarks.op_benchmark_npu.report import generate_report, ratio_failures
 from benchmarks.op_benchmark_npu.run import _output_stream
 
@@ -127,8 +134,94 @@ def test_ratio_failures_does_not_mutate_input_rows():
     assert "median_ratio" not in candle[0]
     assert "median_ratio" not in torch_ref[0]
 
-
 def test_output_stream_routes_human_output_to_stderr_for_json_stdout():
     assert _output_stream("-") == "stderr"
     assert _output_stream(None) == "stdout"
     assert _output_stream("results.json") == "stdout"
+
+
+
+def _op_args():
+    class Args:
+        warmup = 1
+        iters = 1
+        ops = "add"
+        scenario = "infer"
+        dtype = "fp16"
+        mode = "fwd"
+
+    return Args()
+
+
+def test_run_worker_returns_structured_failure_for_nonzero_exit(monkeypatch):
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 9, stdout="partial stdout", stderr="worker exploded")
+
+    monkeypatch.setattr(op_run.subprocess, "run", fake_run)
+
+    rows = op_run._run_worker("candle", _op_args())
+
+    assert rows == [
+        {
+            "framework": "candle",
+            "status": "error: worker exit 9",
+            "stderr": "worker exploded",
+            "stdout": "partial stdout",
+        }
+    ]
+
+
+def test_run_worker_returns_structured_failure_for_malformed_json(monkeypatch):
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args[0], 0, stdout="not-json", stderr="worker warning")
+
+    monkeypatch.setattr(op_run.subprocess, "run", fake_run)
+
+    rows = op_run._run_worker("torch", _op_args())
+
+    assert rows[0]["framework"] == "torch_npu"
+    assert rows[0]["status"].startswith("error: malformed worker JSON:")
+    assert rows[0]["stderr"] == "worker warning"
+    assert rows[0]["stdout"] == "not-json"
+
+
+def test_main_exits_nonzero_for_worker_failure_without_ratio_gate(capsys, monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "op_benchmark_npu.run",
+            "--ops",
+            "add",
+            "--scenario",
+            "infer",
+            "--dtype",
+            "fp16",
+            "--mode",
+            "fwd",
+            "--json-output",
+            "-",
+        ],
+    )
+    monkeypatch.setattr(
+        op_run,
+        "_run_worker",
+        lambda framework, args: [
+            {
+                "framework": "candle" if framework == "candle" else "torch_npu",
+                "op": "add",
+                "mode": "fwd",
+                "dtype": "fp16",
+                "scenario": "infer",
+                "median_ms": 0.0,
+                "status": "error: worker exit 4" if framework == "candle" else "ok",
+            }
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        op_run.main()
+
+    assert exc_info.value.code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failures"] == ["add/fwd/fp16/infer/candle: error: worker exit 4"]

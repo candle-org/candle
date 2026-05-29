@@ -1,7 +1,29 @@
+import os
+
 import pytest
 
 import benchmarks.npu_perf_gate as npu_perf_gate
 from benchmarks.npu_perf_gate import build_commands
+
+
+
+
+def test_l2_command_uses_absolute_script_path():
+    commands = build_commands(
+        output_dir="results/npu_perf_gate/test",
+        warmup=1,
+        iters=2,
+        dtype="fp16",
+        cases="xfmr",
+        pipeline_cases="A1,B1s",
+    )
+    l2_cmd = commands[2]
+    script_arg = next(
+        (arg for arg in l2_cmd if arg.endswith("benchmarks/perf_candle_vs_torch_npu.py")),
+        None,
+    )
+    assert script_arg is not None, "L2 command must reference perf_candle_vs_torch_npu.py"
+    assert os.path.isabs(script_arg), f"L2 script path must be absolute, got: {script_arg}"
 
 
 def test_build_commands_writes_l0_l1_l2_artifacts_under_output_dir():
@@ -17,7 +39,7 @@ def test_build_commands_writes_l0_l1_l2_artifacts_under_output_dir():
     assert commands[0][-5:] == ["--max-ratio", "1.0", "--json-output", "results/npu_perf_gate/test/l0_ops.json", "--fail-on-ratio"]
     assert "benchmarks.op_benchmark_npu.run" in commands[0]
     assert "benchmarks.pipeline_npu.run" in commands[1]
-    assert "benchmarks/perf_candle_vs_torch_npu.py" in commands[2]
+    assert any(arg.endswith("benchmarks/perf_candle_vs_torch_npu.py") for arg in commands[2])
     assert "results/npu_perf_gate/test/l1_pipeline.json" in commands[1]
     assert "results/npu_perf_gate/test/l2_models.json" in commands[2]
 

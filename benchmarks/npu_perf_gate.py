@@ -4,6 +4,8 @@ import os
 import subprocess
 import sys
 
+_BENCHMARKS_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 def build_commands(*, output_dir, warmup, iters, dtype, cases, pipeline_cases):
     return [
@@ -31,7 +33,7 @@ def build_commands(*, output_dir, warmup, iters, dtype, cases, pipeline_cases):
         ],
         [
             sys.executable,
-            "benchmarks/perf_candle_vs_torch_npu.py",
+            os.path.join(_BENCHMARKS_DIR, "perf_candle_vs_torch_npu.py"),
             "--cases", cases,
             "--dtype", "float16" if dtype == "fp16" else dtype,
             "--warmup", str(warmup),

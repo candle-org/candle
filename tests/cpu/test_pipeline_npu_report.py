@@ -132,6 +132,81 @@ def test_spawn_worker_malformed_json_raises(monkeypatch):
         warmup=0,
         iters=1,
     )
-
     with pytest.raises(RuntimeError, match="failed to parse candle worker JSON"):
         pipeline_run._spawn_worker("candle", args)
+
+
+
+def test_json_stdout_mode_emits_only_json_to_stdout_and_human_to_stderr(capsys, monkeypatch):
+    rows_by_framework = {
+        "candle": [
+            {"framework": "candle", "case_id": "A1", "mode": "eager", "median_ms": 8.0, "status": "ok"}
+        ],
+        "torch_npu": [
+            {"framework": "torch_npu", "case_id": "A1", "mode": "eager", "median_ms": 10.0, "status": "ok"}
+        ],
+    }
+    monkeypatch.setattr(pipeline_run, "_spawn_worker", lambda framework, args: rows_by_framework[framework])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pipeline_npu.run",
+            "--cases",
+            "A1",
+            "--mode",
+            "eager",
+            "--warmup",
+            "2",
+            "--iters",
+            "3",
+            "--json-output",
+            "-",
+        ],
+    )
+
+    pipeline_run.main()
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["warmup"] == 2
+    assert payload["iters"] == 3
+    assert payload["cases"] == ["A1"]
+    assert payload["mode"] == "eager"
+    assert payload["device"] == "npu"
+    assert payload["max_ratio"] == 0.99
+    assert payload["frameworks"] == ["candle", "torch_npu"]
+    assert "case | framework | mode" in captured.err
+    assert "A1 | candle | eager" in captured.err
+
+
+def test_main_exits_nonzero_for_error_status_without_ratio_gate(capsys, monkeypatch):
+    rows_by_framework = {
+        "candle": [
+            {"framework": "candle", "case_id": "A1", "mode": "eager", "median_ms": 0.0, "status": "error: boom"}
+        ],
+        "torch_npu": [
+            {"framework": "torch_npu", "case_id": "A1", "mode": "eager", "median_ms": 10.0, "status": "ok"}
+        ],
+    }
+    monkeypatch.setattr(pipeline_run, "_spawn_worker", lambda framework, args: rows_by_framework[framework])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pipeline_npu.run",
+            "--cases",
+            "A1",
+            "--mode",
+            "eager",
+            "--json-output",
+            "-",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        pipeline_run.main()
+
+    assert exc_info.value.code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["failures"] == ["A1/eager/candle: error: boom"]

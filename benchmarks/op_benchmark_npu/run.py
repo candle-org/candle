@@ -64,7 +64,12 @@ def _run_worker(framework, args):
     if proc.returncode != 0:
         print(f"ERROR: {framework} worker exited with code {proc.returncode}",
               file=sys.stderr)
-        return []
+        return [{
+            "framework": "torch_npu" if framework == "torch" else framework,
+            "status": f"error: worker exit {proc.returncode}",
+            "stderr": proc.stderr,
+            "stdout": proc.stdout,
+        }]
 
     try:
         return json.loads(proc.stdout)
@@ -72,11 +77,29 @@ def _run_worker(framework, args):
         print(f"ERROR: failed to parse {framework} JSON output: {e}",
               file=sys.stderr)
         print(f"  stdout was: {proc.stdout[:500]}", file=sys.stderr)
-        return []
+        return [{
+            "framework": "torch_npu" if framework == "torch" else framework,
+            "status": f"error: malformed worker JSON: {e}",
+            "stderr": proc.stderr,
+            "stdout": proc.stdout,
+        }]
+
+def _status_failures(candle_results, torch_results):
+    """Return infrastructure/case failures from worker result rows."""
+    failures = []
+    for row in candle_results + torch_results:
+        status = row.get("status")
+        if status and status != "ok":
+            failures.append(
+                f"{row.get('op', '-')}/{row.get('mode', '-')}/{row.get('dtype', '-')}/"
+                f"{row.get('scenario', '-')}/{row.get('framework', '-')}: {status}"
+            )
+    return failures
 
 def _output_stream(json_output):
     """Return stream name for human-readable output."""
     return "stderr" if json_output == "-" else "stdout"
+
 
 
 def _print_human(text="", stream="stdout"):
@@ -139,10 +162,10 @@ def main():
         print("ERROR: both workers returned no results", file=sys.stderr)
         sys.exit(1)
 
-    failures = []
+    failures = _status_failures(candle_results, torch_results)
     human_stream = _output_stream(args.json_output)
     if args.fail_on_ratio:
-        failures = ratio_failures(
+        failures.extend(ratio_failures(
             candle_results,
             torch_results,
             op_names=op_names,
@@ -150,11 +173,11 @@ def main():
             scen_keys=scen_keys,
             mode_keys=mode_keys,
             max_ratio=args.max_ratio,
-        )
-        if failures:
-            _print_human("\n# Ratio gate failures", stream=human_stream)
-            for failure in failures:
-                _print_human(f"- {failure}", stream=human_stream)
+        ))
+    if failures:
+        _print_human("\n# Gate failures", stream=human_stream)
+        for failure in failures:
+            _print_human(f"- {failure}", stream=human_stream)
 
     # Generate report
     report = generate_report(candle_results, torch_results,

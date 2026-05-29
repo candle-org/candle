@@ -74,8 +74,9 @@ def pipeline_ratio_failures(rows, *, case_ids, mode, max_ratio):
     )
 
 
-def _print_table(rows):
-    print("case | framework | mode | median ms | ratio | status")
+def _print_table(rows, stream=None):
+    stream = stream or sys.stdout
+    print("case | framework | mode | median ms | ratio | status", file=stream)
     for row in sorted(rows, key=lambda item: (item.get("case_id", ""), item.get("framework", ""), item.get("mode", ""))):
         ratio = row.get("median_ratio")
         ratio_text = "-" if ratio is None else f"{ratio:.2f}x"
@@ -85,8 +86,30 @@ def _print_table(rows):
             f"{row.get('mode', '-')} | "
             f"{row.get('median_ms', 0.0):.4f} | "
             f"{ratio_text} | "
-            f"{row.get('status', '-') }"
+            f"{row.get('status', '-') }",
+            file=stream,
         )
+
+
+def _status_failures(rows):
+    failures = []
+    for row in rows:
+        if row.get("status") != "ok":
+            failures.append(
+                f"{row.get('case_id', '-')}/{row.get('mode', '-')}/{row.get('framework', '-')}: "
+                f"{row.get('status', '-') }"
+            )
+    return failures
+
+
+def _write_json_output(path, payload):
+    text = json.dumps(payload, indent=2, sort_keys=True)
+    if path == "-":
+        print(text)
+        return
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+        handle.write("\n")
 
 
 def _parse_case_ids(cases_arg):
@@ -119,20 +142,30 @@ def main():
     rows.extend(_spawn_worker("torch_npu", args))
     annotate_pipeline_ratios(rows)
 
-    failures = []
+    failures = _status_failures(rows)
     if args.fail_on_ratio:
-        failures = pipeline_ratio_failures(rows, case_ids=case_ids, mode=args.mode, max_ratio=args.max_ratio)
+        failures.extend(pipeline_ratio_failures(rows, case_ids=case_ids, mode=args.mode, max_ratio=args.max_ratio))
 
-    _print_table(rows)
+    human_stream = sys.stderr if args.json_output == "-" else sys.stdout
+    _print_table(rows, stream=human_stream)
     if failures:
-        print("failures:")
+        print("failures:", file=human_stream)
         for failure in failures:
-            print(f"- {failure}")
+            print(f"- {failure}", file=human_stream)
 
-    payload = {"rows": rows, "failures": failures}
+    payload = {
+        "warmup": args.warmup,
+        "iters": args.iters,
+        "cases": case_ids,
+        "mode": args.mode,
+        "device": args.device,
+        "max_ratio": args.max_ratio,
+        "frameworks": ["candle", "torch_npu"],
+        "rows": rows,
+        "failures": failures,
+    }
     if args.json_output:
-        with open(args.json_output, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
+        _write_json_output(args.json_output, payload)
 
     if failures:
         sys.exit(1)
