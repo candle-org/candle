@@ -1,14 +1,13 @@
 import importlib
 
-import candle
-import candle.nn.functional as candle_F
-
 from .cases import CASES
 from .utils import measure, summarize
 
 
 def _import_framework(framework):
     if framework == "candle":
+        candle = importlib.import_module("candle")  # pylint: disable=import-outside-toplevel
+        candle_F = importlib.import_module("candle.nn.functional")  # pylint: disable=import-outside-toplevel
         return candle, candle_F, "npu"
     if framework == "torch_npu":
         torch_mod = importlib.import_module("torch")
@@ -40,7 +39,7 @@ def run_case(case, *, framework="candle", device="cpu", mode="eager", warmup=5, 
             if framework != "candle":
                 forward()
                 return
-            with candle.pipeline(max_ops=64):
+            with torch_mod.pipeline(max_ops=64):
                 forward()
         else:
             forward()
@@ -50,7 +49,7 @@ def run_case(case, *, framework="candle", device="cpu", mode="eager", warmup=5, 
 
     op_count = 0
     if mode == "pipeline" and framework == "candle":
-        with candle.pipeline(max_ops=64) as pipe:
+        with torch_mod.pipeline(max_ops=64) as pipe:
             forward()
             pipe.flush()
             dump = pipe.debug_dump()
