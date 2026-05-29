@@ -198,4 +198,8 @@ compat/pytorch/_pytorch.local/
 compat/_pytorch/
 compat/_torch_npu/
 compat/reference/reports/
+
+# Benchmark artifacts
+/results/npu_perf_gate/
+
 *.c
