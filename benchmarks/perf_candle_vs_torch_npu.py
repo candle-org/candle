@@ -294,6 +294,9 @@ def _spawn_worker(framework, case, iters, warmup, dtype_name, python_exe=None,
                 continue
     if last_json is None:
         return {"framework": framework, "case": case, "error": "no json from worker"}
+    if isinstance(last_json, dict):
+        last_json.setdefault("framework", framework)
+        last_json.setdefault("case", case)
     return last_json
 
 
