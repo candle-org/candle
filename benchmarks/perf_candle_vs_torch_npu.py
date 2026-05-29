@@ -9,10 +9,15 @@ latency comparison rather than numerical equivalence.
 import argparse
 import json
 import os
-import statistics
 import subprocess
 import sys
 import time
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from benchmarks.npu_perf_gates import summarize_samples
 
 
 def build_mlp(torch, device, dtype):
@@ -203,6 +208,7 @@ def run_worker(framework, case, iters, warmup, dtype_name, profile_candle=False,
 
     fwd_samples = []
     bwd_samples = []
+    total_samples = []
     for _ in range(iters):
         _sync(torch)
         t0 = time.perf_counter()
@@ -216,16 +222,28 @@ def run_worker(framework, case, iters, warmup, dtype_name, profile_candle=False,
 
         fwd_samples.append((t1 - t0) * 1000.0)
         bwd_samples.append((t2 - t1) * 1000.0)
+        total_samples.append((t2 - t0) * 1000.0)
         _clear_grads(model, inputs)
 
+    fwd_summary = summarize_samples(fwd_samples)
+    bwd_summary = summarize_samples(bwd_samples)
+    total_summary = summarize_samples(total_samples)
     result = {
         "framework": framework,
         "case": case,
         "iters": iters,
-        "fwd_ms_median": statistics.median(fwd_samples),
-        "bwd_ms_median": statistics.median(bwd_samples),
-        "fwd_ms_min": min(fwd_samples),
-        "bwd_ms_min": min(bwd_samples),
+        "fwd_ms_median": fwd_summary["median_ms"],
+        "bwd_ms_median": bwd_summary["median_ms"],
+        "total_ms_median": total_summary["median_ms"],
+        "fwd_ms_min": fwd_summary["min_ms"],
+        "bwd_ms_min": bwd_summary["min_ms"],
+        "total_ms_min": total_summary["min_ms"],
+        "fwd_ms_p10": fwd_summary["p10_ms"],
+        "bwd_ms_p10": bwd_summary["p10_ms"],
+        "total_ms_p10": total_summary["p10_ms"],
+        "fwd_ms_p90": fwd_summary["p90_ms"],
+        "bwd_ms_p90": bwd_summary["p90_ms"],
+        "total_ms_p90": total_summary["p90_ms"],
     }
     if profile is not None:
         result["profile"] = profile
@@ -276,6 +294,9 @@ def _spawn_worker(framework, case, iters, warmup, dtype_name, python_exe=None,
                 continue
     if last_json is None:
         return {"framework": framework, "case": case, "error": "no json from worker"}
+    if isinstance(last_json, dict):
+        last_json.setdefault("framework", framework)
+        last_json.setdefault("case", case)
     return last_json
 
 
@@ -303,13 +324,16 @@ def _annotate_ratios(results):
             continue
         torch_fwd = torch_ref.get("fwd_ms_median")
         torch_bwd = torch_ref.get("bwd_ms_median")
+        torch_total = torch_ref.get("total_ms_median")
         if torch_fwd:
             candle["fwd_ratio"] = candle["fwd_ms_median"] / torch_fwd
         if torch_bwd:
             candle["bwd_ratio"] = candle["bwd_ms_median"] / torch_bwd
+        if torch_total:
+            candle["total_ratio"] = candle["total_ms_median"] / torch_total
 
 
-def _ratio_failures(results, cases, max_fwd_ratio, max_bwd_ratio):
+def _ratio_failures(results, cases, max_fwd_ratio, max_bwd_ratio, max_total_ratio):
     failures = []
     by_case = _index_results(results)
     for case in cases:
@@ -327,60 +351,67 @@ def _ratio_failures(results, cases, max_fwd_ratio, max_bwd_ratio):
             continue
         fwd_ratio = candle.get("fwd_ratio")
         bwd_ratio = candle.get("bwd_ratio")
-        if fwd_ratio is None or bwd_ratio is None:
+        total_ratio = candle.get("total_ratio")
+        if fwd_ratio is None or bwd_ratio is None or total_ratio is None:
             failures.append(f"{case}: unable to compute candle/torch_npu ratio")
             continue
         if fwd_ratio > max_fwd_ratio:
             failures.append(f"{case}: fwd ratio {fwd_ratio:.2f}x > {max_fwd_ratio:.2f}x")
         if bwd_ratio > max_bwd_ratio:
             failures.append(f"{case}: bwd ratio {bwd_ratio:.2f}x > {max_bwd_ratio:.2f}x")
+        if total_ratio > max_total_ratio:
+            failures.append(f"{case}: total ratio {total_ratio:.2f}x > {max_total_ratio:.2f}x")
     return failures
 
 
-def _print_table(results, frameworks):
+def _print_table(results, frameworks, stream=None):
+    stream = stream or sys.stdout
     by_case = _index_results(results)
 
-    header = ["algo", "fwd ms", "bwd ms", "ratio"]
-    print(" | ".join(f"{h:>18}" for h in header))
-    print("-+-".join("-" * 18 for _ in header))
+    header = ["algo", "fwd ms", "bwd ms", "total ms", "ratio"]
+    print(" | ".join(f"{h:>18}" for h in header), file=stream)
+    print("-+-".join("-" * 18 for _ in header), file=stream)
 
     for case, by_fw in by_case.items():
         for fw in frameworks:
             r = by_fw.get(fw)
             algo = f"{case}/{fw}"
             if r is None or "error" in r:
-                row = [algo, "err", "err", "-"]
+                row = [algo, "err", "err", "err", "-"]
             else:
                 fwd = r["fwd_ms_median"]
                 bwd = r["bwd_ms_median"]
+                total = r.get("total_ms_median")
                 if fw == "torch_npu":
                     ratio = "1.00x"
                 elif "fwd_ratio" in r and "bwd_ratio" in r:
-                    ratio = f"f {r['fwd_ratio']:.2f}x / b {r['bwd_ratio']:.2f}x"
+                    total_part = f" / t {r['total_ratio']:.2f}x" if "total_ratio" in r else ""
+                    ratio = f"f {r['fwd_ratio']:.2f}x / b {r['bwd_ratio']:.2f}x{total_part}"
                 else:
                     ratio = "-"
-                row = [algo, _fmt(fwd), _fmt(bwd), ratio]
-            print(" | ".join(f"{c:>18}" for c in row))
+                row = [algo, _fmt(fwd), _fmt(bwd), _fmt(total), ratio]
+            print(" | ".join(f"{c:>18}" for c in row), file=stream)
 
     for r in results:
         if "error" in r:
-            print(f"\n[{r['framework']} / {r['case']}] ERROR: {r['error']}")
+            print(f"\n[{r['framework']} / {r['case']}] ERROR: {r['error']}", file=stream)
             tail = r.get("tail")
             if tail:
                 for line in tail:
-                    print(f"  | {line}")
+                    print(f"  | {line}", file=stream)
 
 
-def _print_profile_tables(results):
+def _print_profile_tables(results, stream=None):
+    stream = stream or sys.stdout
     for result in results:
         profile = result.get("profile")
         if not profile:
             continue
-        print(f"\n# Candle profiler: {result['case']}")
+        print(f"\n# Candle profiler: {result['case']}", file=stream)
         trace_path = profile.get("trace_path")
         if trace_path:
-            print(f"# Trace: {trace_path}")
-        print(profile["table"])
+            print(f"# Trace: {trace_path}", file=stream)
+        print(profile["table"], file=stream)
 
 
 def _write_json_output(path, payload):
@@ -391,6 +422,14 @@ def _write_json_output(path, payload):
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(text)
         handle.write("\n")
+
+
+def _worker_failures(results):
+    failures = []
+    for result in results:
+        if "error" in result:
+            failures.append(f"{result.get('case', '-')}/{result.get('framework', '-')}: {result['error']}")
+    return failures
 
 
 def main():
@@ -413,6 +452,8 @@ def main():
                         help="maximum allowed candle/torch_npu forward ratio for --fail-on-ratio")
     parser.add_argument("--max-bwd-ratio", type=float, default=1.0,
                         help="maximum allowed candle/torch_npu backward ratio for --fail-on-ratio")
+    parser.add_argument("--max-total-ratio", type=float, default=0.99,
+                        help="maximum allowed candle/torch_npu total ratio for --fail-on-ratio")
     parser.add_argument("--json-output", default=None,
                         help="write final results payload to this path, or '-' for stdout")
     parser.add_argument("--profile-candle", action="store_true",
@@ -429,6 +470,8 @@ def main():
         parser.error("--max-fwd-ratio must be > 0")
     if args.max_bwd_ratio <= 0:
         parser.error("--max-bwd-ratio must be > 0")
+    if args.max_total_ratio <= 0:
+        parser.error("--max-total-ratio must be > 0")
 
     if args.worker:
         result = run_worker(
@@ -453,9 +496,10 @@ def main():
     if unknown:
         raise SystemExit(f"unknown cases: {unknown}; known: {list(CASES)}")
 
+    human_stream = sys.stderr if args.json_output == "-" else sys.stdout
     print(f"# Perf bench: candle vs torch_npu (iters={args.iters}, warmup={args.warmup}, "
-          f"dtype={args.dtype})")
-    print(f"# Cases: {cases}")
+          f"dtype={args.dtype})", file=human_stream)
+    print(f"# Cases: {cases}", file=human_stream)
 
     python_for = {
         "candle": args.candle_python,
@@ -464,7 +508,7 @@ def main():
     results = []
     for case in cases:
         for fw in frameworks:
-            print(f"  [{fw} / {case}] running...", flush=True)
+            print(f"  [{fw} / {case}] running...", flush=True, file=human_stream)
             results.append(_spawn_worker(
                 fw,
                 case,
@@ -478,19 +522,25 @@ def main():
             ))
 
     _annotate_ratios(results)
-    failures = []
+    failures = _worker_failures(results)
     if args.fail_on_ratio:
-        failures = _ratio_failures(results, cases, args.max_fwd_ratio, args.max_bwd_ratio)
+        failures.extend(_ratio_failures(
+            results,
+            cases,
+            args.max_fwd_ratio,
+            args.max_bwd_ratio,
+            args.max_total_ratio,
+        ))
 
-    print()
-    _print_table(results, frameworks)
+    print(file=human_stream)
+    _print_table(results, frameworks, stream=human_stream)
     if args.print_candle_profile_table:
-        _print_profile_tables(results)
+        _print_profile_tables(results, stream=human_stream)
 
     if failures:
-        print("\n# Ratio gate failures")
+        print("\n# Gate failures", file=human_stream)
         for failure in failures:
-            print(f"- {failure}")
+            print(f"- {failure}", file=human_stream)
 
     payload = {
         "iters": args.iters,
@@ -500,6 +550,7 @@ def main():
         "frameworks": frameworks,
         "max_fwd_ratio": args.max_fwd_ratio,
         "max_bwd_ratio": args.max_bwd_ratio,
+        "max_total_ratio": args.max_total_ratio,
         "failures": failures,
         "results": results,
     }

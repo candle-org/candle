@@ -1,27 +1,45 @@
-import candle
+import importlib
 
 from .cases import CASES
 from .utils import measure, summarize
 
 
-def _resolve_dtype(dtype_name):
-    return getattr(candle, dtype_name)
+def _import_framework(framework):
+    if framework == "candle":
+        candle = importlib.import_module("candle")  # pylint: disable=import-outside-toplevel
+        candle_F = importlib.import_module("candle.nn.functional")  # pylint: disable=import-outside-toplevel
+        return candle, candle_F, "npu"
+    if framework == "torch_npu":
+        torch_mod = importlib.import_module("torch")
+        importlib.import_module("torch_npu")
+        return torch_mod, importlib.import_module("torch.nn.functional"), "npu"
+    raise ValueError(f"unknown framework: {framework}")
 
 
-def _sync_for(device):
-    if device == "npu" and hasattr(candle, "npu") and candle.npu.is_available():
-        return candle.npu.synchronize
+def _resolve_dtype(torch_mod, dtype_name):
+    return getattr(torch_mod, dtype_name)
+
+
+def _sync_for(torch_mod, device):
+    if device == "npu" and hasattr(torch_mod, "npu") and torch_mod.npu.is_available():
+        return torch_mod.npu.synchronize
     return None
 
 
-def run_case(case, *, device="cpu", pipeline=False, warmup=5, iters=20):
-    dtype = _resolve_dtype(case["dtype"])
-    forward = case["builder"](device, dtype)
-    sync = _sync_for(device)
+def run_case(case, *, framework="candle", device="cpu", mode="eager", warmup=5, iters=20):
+    torch_mod, F, default_device = _import_framework(framework)
+    if device is None:
+        device = default_device
+    dtype = _resolve_dtype(torch_mod, case["dtype"])
+    forward = case["builder"](torch_mod, F, device, dtype)
+    sync = _sync_for(torch_mod, device)
 
     def _run_once():
-        if pipeline:
-            with candle.pipeline(max_ops=64):
+        if mode == "pipeline":
+            if framework != "candle":
+                forward()
+                return
+            with torch_mod.pipeline(max_ops=64):
                 forward()
         else:
             forward()
@@ -30,15 +48,17 @@ def run_case(case, *, device="cpu", pipeline=False, warmup=5, iters=20):
     mean, median, p95 = summarize(samples)
 
     op_count = 0
-    if pipeline:
-        with candle.pipeline(max_ops=64) as pipe:
+    if mode == "pipeline" and framework == "candle":
+        with torch_mod.pipeline(max_ops=64) as pipe:
             forward()
             pipe.flush()
             dump = pipe.debug_dump()
             op_count = len(dump.get("entries", []))
 
     return {
+        "framework": framework,
         "case_id": case["case_id"],
+        "mode": mode,
         "batch": case["batch"],
         "seq": case["seq"],
         "hidden": case["hidden"],
@@ -48,13 +68,14 @@ def run_case(case, *, device="cpu", pipeline=False, warmup=5, iters=20):
         "median_ms": float(median),
         "p95_ms": float(p95),
         "op_count": int(op_count),
+        "status": "ok",
     }
 
 
 def run():
     results = {}
     for name, case in CASES.items():
-        results[name] = run_case(case, device="cpu", pipeline=False, warmup=1, iters=1)
+        results[name] = run_case(case, framework="candle", device="cpu", mode="eager", warmup=1, iters=1)
     return results
 
 

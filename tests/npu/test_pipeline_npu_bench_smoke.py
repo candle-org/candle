@@ -1,15 +1,18 @@
-import candle as torch
-
-from benchmarks.pipeline_npu.bench import run_case, CASES
+from benchmarks.pipeline_npu.bench import CASES, run_case
 
 
 def test_pipeline_bench_smoke_cpu():
     case = CASES["A1"]
-    result = run_case(case, device="cpu", pipeline=False, warmup=1, iters=1)
+    result = run_case(case, framework="candle", device="cpu", mode="eager", warmup=1, iters=1)
+    assert result["framework"] == "candle"
     assert result["case_id"] == "A1"
+    assert result["mode"] == "eager"
+    assert result["status"] == "ok"
     assert "mean_ms" in result
+    assert "median_ms" in result
     assert "p95_ms" in result
     assert isinstance(result["mean_ms"], float)
+    assert isinstance(result["median_ms"], float)
     assert isinstance(result["p95_ms"], float)
 
 

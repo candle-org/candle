@@ -1,11 +1,7 @@
-import candle
-import candle.nn.functional as F
-
-
-def _case_a1(device, dtype):
-    x = candle.randn((1, 128, 1024), device=device, dtype=dtype)
-    w1 = candle.randn((1024, 1024), device=device, dtype=dtype)
-    w2 = candle.randn((1024, 1024), device=device, dtype=dtype)
+def _case_a1(torch_mod, F, device, dtype):
+    x = torch_mod.randn((1, 128, 1024), device=device, dtype=dtype)
+    w1 = torch_mod.randn((1024, 1024), device=device, dtype=dtype)
+    w2 = torch_mod.randn((1024, 1024), device=device, dtype=dtype)
 
     def forward():
         y = (x @ w1).relu()
@@ -15,13 +11,13 @@ def _case_a1(device, dtype):
     return forward
 
 
-def _case_a2(device, dtype):
+def _case_a2(torch_mod, F, device, dtype):
     b, s, h, heads = 1, 512, 1024, 16
-    x = candle.randn((b, s, h), device=device, dtype=dtype)
-    wq = candle.randn((h, h), device=device, dtype=dtype)
-    wk = candle.randn((h, h), device=device, dtype=dtype)
-    wv = candle.randn((h, h), device=device, dtype=dtype)
-    wo = candle.randn((h, h), device=device, dtype=dtype)
+    x = torch_mod.randn((b, s, h), device=device, dtype=dtype)
+    wq = torch_mod.randn((h, h), device=device, dtype=dtype)
+    wk = torch_mod.randn((h, h), device=device, dtype=dtype)
+    wv = torch_mod.randn((h, h), device=device, dtype=dtype)
+    wo = torch_mod.randn((h, h), device=device, dtype=dtype)
     head_dim = h // heads
 
     def forward():
@@ -31,22 +27,22 @@ def _case_a2(device, dtype):
         q = q.reshape((b, s, heads, head_dim)).transpose(1, 2)
         k = k.reshape((b, s, heads, head_dim)).transpose(1, 2)
         v = v.reshape((b, s, heads, head_dim)).transpose(1, 2)
-        attn = candle.matmul(q.contiguous(), k.contiguous().transpose(-2, -1))
+        attn = torch_mod.matmul(q.contiguous(), k.contiguous().transpose(-2, -1))
         attn = F.softmax(attn, dim=-1)
-        out = candle.matmul(attn.contiguous(), v.contiguous())
+        out = torch_mod.matmul(attn.contiguous(), v.contiguous())
         out = out.transpose(1, 2).reshape((b, s, h))
         return out @ wo
 
     return forward
 
 
-def _case_a2s(device, dtype):
+def _case_a2s(torch_mod, F, device, dtype):
     b, s, h, heads = 2, 256, 512, 8
-    x = candle.randn((b, s, h), device=device, dtype=dtype)
-    wq = candle.randn((h, h), device=device, dtype=dtype)
-    wk = candle.randn((h, h), device=device, dtype=dtype)
-    wv = candle.randn((h, h), device=device, dtype=dtype)
-    wo = candle.randn((h, h), device=device, dtype=dtype)
+    x = torch_mod.randn((b, s, h), device=device, dtype=dtype)
+    wq = torch_mod.randn((h, h), device=device, dtype=dtype)
+    wk = torch_mod.randn((h, h), device=device, dtype=dtype)
+    wv = torch_mod.randn((h, h), device=device, dtype=dtype)
+    wo = torch_mod.randn((h, h), device=device, dtype=dtype)
     head_dim = h // heads
 
     def forward():
@@ -56,20 +52,20 @@ def _case_a2s(device, dtype):
         q = q.reshape((b, s, heads, head_dim)).transpose(1, 2)
         k = k.reshape((b, s, heads, head_dim)).transpose(1, 2)
         v = v.reshape((b, s, heads, head_dim)).transpose(1, 2)
-        attn = candle.matmul(q.contiguous(), k.contiguous().transpose(-2, -1))
+        attn = torch_mod.matmul(q.contiguous(), k.contiguous().transpose(-2, -1))
         attn = F.softmax(attn, dim=-1)
-        out = candle.matmul(attn.contiguous(), v.contiguous())
+        out = torch_mod.matmul(attn.contiguous(), v.contiguous())
         out = out.transpose(1, 2).reshape((b, s, h))
         return out @ wo
 
     return forward
 
 
-def _case_a3(device, dtype):
+def _case_a3(torch_mod, F, device, dtype):
     b, s, h = 8, 128, 2048
-    x = candle.randn((b, s, h), device=device, dtype=dtype)
-    w1 = candle.randn((h, 4 * h), device=device, dtype=dtype)
-    w2 = candle.randn((4 * h, h), device=device, dtype=dtype)
+    x = torch_mod.randn((b, s, h), device=device, dtype=dtype)
+    w1 = torch_mod.randn((h, 4 * h), device=device, dtype=dtype)
+    w2 = torch_mod.randn((4 * h, h), device=device, dtype=dtype)
 
     def forward():
         y = F.silu(x @ w1)
@@ -78,14 +74,14 @@ def _case_a3(device, dtype):
     return forward
 
 
-def _block(device, dtype, *, b, s, h, heads):
-    x = candle.randn((b, s, h), device=device, dtype=dtype)
-    wq = candle.randn((h, h), device=device, dtype=dtype)
-    wk = candle.randn((h, h), device=device, dtype=dtype)
-    wv = candle.randn((h, h), device=device, dtype=dtype)
-    wo = candle.randn((h, h), device=device, dtype=dtype)
-    w1 = candle.randn((h, 4 * h), device=device, dtype=dtype)
-    w2 = candle.randn((4 * h, h), device=device, dtype=dtype)
+def _block(torch_mod, F, device, dtype, *, b, s, h, heads):
+    x = torch_mod.randn((b, s, h), device=device, dtype=dtype)
+    wq = torch_mod.randn((h, h), device=device, dtype=dtype)
+    wk = torch_mod.randn((h, h), device=device, dtype=dtype)
+    wv = torch_mod.randn((h, h), device=device, dtype=dtype)
+    wo = torch_mod.randn((h, h), device=device, dtype=dtype)
+    w1 = torch_mod.randn((h, 4 * h), device=device, dtype=dtype)
+    w2 = torch_mod.randn((4 * h, h), device=device, dtype=dtype)
     head_dim = h // heads
 
     def forward():
@@ -96,9 +92,9 @@ def _block(device, dtype, *, b, s, h, heads):
         q = q.reshape((b, s, heads, head_dim)).transpose(1, 2)
         k = k.reshape((b, s, heads, head_dim)).transpose(1, 2)
         v = v.reshape((b, s, heads, head_dim)).transpose(1, 2)
-        attn = candle.matmul(q.contiguous(), k.contiguous().transpose(-2, -1))
+        attn = torch_mod.matmul(q.contiguous(), k.contiguous().transpose(-2, -1))
         attn = F.softmax(attn, dim=-1)
-        out = candle.matmul(attn.contiguous(), v.contiguous())
+        out = torch_mod.matmul(attn.contiguous(), v.contiguous())
         out = out.transpose(1, 2).reshape((b, s, h))
         x1 = x + (out @ wo)
         z = F.layer_norm(x1, (h,))
@@ -108,37 +104,24 @@ def _block(device, dtype, *, b, s, h, heads):
     return forward
 
 
-def _case_b1(device, dtype):
-    return _block(device, dtype, b=1, s=512, h=2048, heads=16)
+def _case_b1(torch_mod, F, device, dtype):
+    return _block(torch_mod, F, device, dtype, b=1, s=512, h=2048, heads=16)
 
 
-def _case_b1s(device, dtype):
-    return _block(device, dtype, b=2, s=256, h=512, heads=8)
+def _case_b1s(torch_mod, F, device, dtype):
+    return _block(torch_mod, F, device, dtype, b=2, s=256, h=512, heads=8)
 
 
-def _case_b2(device, dtype):
-    return _block(device, dtype, b=4, s=128, h=1024, heads=8)
+def _case_b2(torch_mod, F, device, dtype):
+    return _block(torch_mod, F, device, dtype, b=4, s=128, h=1024, heads=8)
 
 
-def _case_b3(device, dtype):
-    return _block(device, dtype, b=1, s=2048, h=1024, heads=16)
+def _case_b3(torch_mod, F, device, dtype):
+    return _block(torch_mod, F, device, dtype, b=1, s=2048, h=1024, heads=16)
 
 
-def _case_c1(device, dtype):
-    block = _block(device, dtype, b=1, s=512, h=1024, heads=16)
-
-    def forward():
-        out = block()
-        out = block()
-        out = block()
-        out = block()
-        return out
-
-    return forward
-
-
-def _case_c2(device, dtype):
-    block = _block(device, dtype, b=2, s=256, h=1024, heads=16)
+def _case_c1(torch_mod, F, device, dtype):
+    block = _block(torch_mod, F, device, dtype, b=1, s=512, h=1024, heads=16)
 
     def forward():
         out = block()
@@ -150,8 +133,21 @@ def _case_c2(device, dtype):
     return forward
 
 
-def _case_d1(device, dtype):
-    block = _block(device, dtype, b=2, s=256, h=512, heads=8)
+def _case_c2(torch_mod, F, device, dtype):
+    block = _block(torch_mod, F, device, dtype, b=2, s=256, h=1024, heads=16)
+
+    def forward():
+        out = block()
+        out = block()
+        out = block()
+        out = block()
+        return out
+
+    return forward
+
+
+def _case_d1(torch_mod, F, device, dtype):
+    block = _block(torch_mod, F, device, dtype, b=2, s=256, h=512, heads=8)
 
     def forward():
         out = block()
@@ -167,11 +163,11 @@ def _case_d1(device, dtype):
     return forward
 
 
-def _case_d2(device, dtype):
+def _case_d2(torch_mod, F, device, dtype):
     b, s, h = 8, 128, 256
-    x = candle.randn((b, s, h), device=device, dtype=dtype)
-    bias = candle.randn((h,), device=device, dtype=dtype)
-    scale = candle.randn((h,), device=device, dtype=dtype)
+    x = torch_mod.randn((b, s, h), device=device, dtype=dtype)
+    bias = torch_mod.randn((h,), device=device, dtype=dtype)
+    scale = torch_mod.randn((h,), device=device, dtype=dtype)
 
     def forward():
         y = x

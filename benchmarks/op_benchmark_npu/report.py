@@ -2,7 +2,27 @@
 import os
 from datetime import datetime
 
+from benchmarks.npu_perf_gates import annotate_ratio_rows, collect_ratio_failures
+
 from .cases import SCENARIOS, DTYPES, MODES
+
+
+_KEY_FIELDS = ("op", "mode", "dtype", "scenario")
+
+
+def _row_key(row):
+    return tuple(row[field] for field in _KEY_FIELDS)
+
+
+def _build_maps(candle_results, torch_results):
+    return ({_row_key(row): row for row in candle_results},
+            {_row_key(row): row for row in torch_results})
+
+
+def _format_p10_p90(row):
+    if row is None or row.get("status") != "ok":
+        return "N/A"
+    return f"{row.get('p10_ms', 0.0):.4f}/{row.get('p90_ms', 0.0):.4f}"
 
 
 def _build_section(mode_key, dtype_key, scen_key, candle_map, torch_map, op_names):
@@ -12,14 +32,15 @@ def _build_section(mode_key, dtype_key, scen_key, candle_map, torch_map, op_name
     header = f"### {mode_label} — {dtype_label} — {scen_label}"
 
     lines = [header, ""]
-    lines.append("| Op | candle (ms) | torch_npu (ms) | ratio | impact |")
-    lines.append("|---|---|---|---|---|")
+    lines.append("| Op | candle median | torch_npu median | ratio | candle p10/p90 | torch_npu p10/p90 | impact |")
+    lines.append("|---|---|---|---|---|---|---|")
 
     ratios = []
     rows = []
     for op in op_names:
-        c = candle_map.get((op, mode_key, dtype_key, scen_key))
-        t = torch_map.get((op, mode_key, dtype_key, scen_key))
+        key = (op, mode_key, dtype_key, scen_key)
+        c = candle_map.get(key)
+        t = torch_map.get(key)
 
         c_med = c["median_ms"] if c and c["status"] == "ok" else None
         t_med = t["median_ms"] if t and t["status"] == "ok" else None
@@ -27,13 +48,15 @@ def _build_section(mode_key, dtype_key, scen_key, candle_map, torch_map, op_name
         c_str = f"{c_med:.4f}" if c_med is not None else ("ERR" if c else "—")
         t_str = f"{t_med:.4f}" if t_med is not None else ("ERR" if t else "—")
 
-        ratio = None
+        ratio = c.get("median_ratio") if c else None
         impact = None
-        if c_med is not None and t_med is not None and t_med > 0:
-            ratio = c_med / t_med
+        if c_med is not None and t_med is not None:
             impact = c_med - t_med
-            ratios.append((op, ratio))
-            r_str = f"{ratio:.2f}x"
+            if ratio is not None:
+                ratios.append((op, ratio))
+                r_str = f"{ratio:.2f}x"
+            else:
+                r_str = "N/A"
             impact_str = f"{impact:.4f}"
         else:
             r_str = "N/A"
@@ -44,8 +67,11 @@ def _build_section(mode_key, dtype_key, scen_key, candle_map, torch_map, op_name
         if t and t["status"] != "ok":
             t_str = t["status"][:30]
 
-        rows.append((ratio if ratio is not None else -1.0, impact if impact is not None else -1.0,
-                     f"| {op} | {c_str} | {t_str} | {r_str} | {impact_str} |"))
+        rows.append((ratio if ratio is not None else -1.0,
+                     impact if impact is not None else -1.0,
+                     f"| {op} | {c_str} | {t_str} | {r_str} | "
+                     f"{_format_p10_p90(c)} | {_format_p10_p90(t)} | "
+                     f"{impact_str} |"))
 
     rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
     lines.extend(row for _, _, row in rows)
@@ -53,12 +79,37 @@ def _build_section(mode_key, dtype_key, scen_key, candle_map, torch_map, op_name
     return lines, ratios
 
 
+def ratio_failures(candle_results, torch_results, op_names, dtype_keys, scen_keys, mode_keys,
+                   max_ratio):
+    """Return single-op median ratio gate failures for expected benchmark rows."""
+    rows = [dict(row) for row in candle_results] + [dict(row) for row in torch_results]
+    annotate_ratio_rows(rows, key_fields=_KEY_FIELDS, metric="median_ms")
+    expected_keys = [
+        (op, mode_key, dtype_key, scen_key)
+        for mode_key in mode_keys
+        for dtype_key in dtype_keys
+        for scen_key in scen_keys
+        for op in op_names
+    ]
+    return collect_ratio_failures(
+        rows,
+        key_fields=_KEY_FIELDS,
+        expected_keys=expected_keys,
+        max_ratio=max_ratio,
+        ratio_field="median_ratio",
+    )
+
+
 def generate_report(candle_results, torch_results, op_names, dtype_keys, scen_keys, mode_keys=None):
     """Generate full report. Returns markdown string."""
     if mode_keys is None:
         mode_keys = ["fwd"]
-    candle_map = {(r["op"], r.get("mode", "fwd"), r["dtype"], r["scenario"]): r for r in candle_results}
-    torch_map = {(r["op"], r.get("mode", "fwd"), r["dtype"], r["scenario"]): r for r in torch_results}
+    rows = [dict(row) for row in candle_results] + [dict(row) for row in torch_results]
+    annotate_ratio_rows(rows, key_fields=_KEY_FIELDS, metric="median_ms")
+    candle_map, torch_map = _build_maps(
+        rows[:len(candle_results)],
+        rows[len(candle_results):],
+    )
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [

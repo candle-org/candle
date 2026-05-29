@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 from .cases import OP_CASES, SCENARIOS, DTYPES, MODES
-from .report import generate_report, print_terminal, write_markdown
+from .report import generate_report, print_terminal, ratio_failures, write_markdown
 
 # Conda environments for each framework
 CONDA_PREFIX = os.environ.get("CONDA_PREFIX_BASE", "/opt/miniconda3")
@@ -15,6 +15,68 @@ CONDA_ENVS = {
     "candle": os.environ.get("CANDLE_CONDA_ENV", "candle"),
     "torch": os.environ.get("TORCH_NPU_CONDA_ENV", "mindie"),
 }
+
+
+def _selected_modes(args):
+    """Return selected benchmark mode keys for worker args."""
+    if args.mode == "both":
+        return list(MODES.keys())
+    return [args.mode]
+
+
+def _selected_op_names(args):
+    """Return selected op names for worker args."""
+    mode_keys = _selected_modes(args)
+    if args.ops:
+        return [op.strip() for op in args.ops.split(",") if op.strip()]
+    return [case["name"] for case in OP_CASES if case.get("mode", "fwd") in mode_keys]
+
+
+def _selected_scenarios(args):
+    """Return selected benchmark scenario keys for worker args."""
+    if args.scenario:
+        return [args.scenario]
+    return list(SCENARIOS.keys())
+
+
+def _selected_dtypes(args):
+    """Return selected benchmark dtype keys for worker args."""
+    if args.dtype:
+        return [dtype.strip() for dtype in args.dtype.split(",") if dtype.strip()]
+    return list(DTYPES.keys())
+
+
+def _worker_failure_rows(framework, args, status, stderr="", stdout=""):
+    """Return structured rows for every expected case when a worker fails."""
+    framework_name = "torch_npu" if framework == "torch" else framework
+    op_names = set(_selected_op_names(args))
+    selected_cases = [
+        case for case in OP_CASES
+        if case["name"] in op_names and case.get("mode", "fwd") in _selected_modes(args)
+    ]
+    rows = []
+    for dtype_key in _selected_dtypes(args):
+        for scen_key in _selected_scenarios(args):
+            for case in selected_cases:
+                rows.append({
+                    "framework": framework_name,
+                    "op": case["name"],
+                    "mode": case.get("mode", "fwd"),
+                    "dtype": dtype_key,
+                    "scenario": scen_key,
+                    "sample_count": 0,
+                    "mean_ms": 0.0,
+                    "median_ms": 0.0,
+                    "min_ms": 0.0,
+                    "max_ms": 0.0,
+                    "p10_ms": 0.0,
+                    "p90_ms": 0.0,
+                    "p95_ms": 0.0,
+                    "status": status,
+                    "stderr": stderr,
+                    "stdout": stdout,
+                })
+    return rows
 
 
 def _run_worker(framework, args):
@@ -64,7 +126,13 @@ def _run_worker(framework, args):
     if proc.returncode != 0:
         print(f"ERROR: {framework} worker exited with code {proc.returncode}",
               file=sys.stderr)
-        return []
+        return _worker_failure_rows(
+            framework,
+            args,
+            f"error: worker exit {proc.returncode}",
+            stderr=proc.stderr,
+            stdout=proc.stdout,
+        )
 
     try:
         return json.loads(proc.stdout)
@@ -72,7 +140,35 @@ def _run_worker(framework, args):
         print(f"ERROR: failed to parse {framework} JSON output: {e}",
               file=sys.stderr)
         print(f"  stdout was: {proc.stdout[:500]}", file=sys.stderr)
-        return []
+        return _worker_failure_rows(
+            framework,
+            args,
+            f"error: malformed worker JSON: {e}",
+            stderr=proc.stderr,
+            stdout=proc.stdout,
+        )
+
+def _status_failures(candle_results, torch_results):
+    """Return infrastructure/case failures from worker result rows."""
+    failures = []
+    for row in candle_results + torch_results:
+        status = row.get("status")
+        if status and status != "ok":
+            failures.append(
+                f"{row.get('op', '-')}/{row.get('mode', '-')}/{row.get('dtype', '-')}/"
+                f"{row.get('scenario', '-')}/{row.get('framework', '-')}: {status}"
+            )
+    return failures
+
+def _output_stream(json_output):
+    """Return stream name for human-readable output."""
+    return "stderr" if json_output == "-" else "stdout"
+
+
+
+def _print_human(text="", stream="stdout"):
+    """Print human-readable output to the selected stream."""
+    print(text, file=sys.stderr if stream == "stderr" else sys.stdout)
 
 
 def main():
@@ -91,28 +187,21 @@ def main():
     parser.add_argument("--iters", type=int, default=50)
     parser.add_argument("--output", default=None,
                         help="Directory to write markdown report")
+    parser.add_argument("--json-output", default=None,
+                        help="Path to write JSON results, or '-' for stdout")
+    parser.add_argument("--fail-on-ratio", action="store_true",
+                        help="Exit nonzero when candle median ratio exceeds --max-ratio")
+    parser.add_argument("--max-ratio", type=float, default=1.0,
+                        help="Maximum allowed candle/torch_npu median ratio")
     args = parser.parse_args()
+    if args.max_ratio <= 0:
+        parser.error("--max-ratio must be > 0")
 
     # Determine what we're running
-    if args.mode == "both":
-        mode_keys = list(MODES.keys())
-    else:
-        mode_keys = [args.mode]
-
-    if args.ops:
-        op_names = args.ops.split(",")
-    else:
-        op_names = [c["name"] for c in OP_CASES if c.get("mode", "fwd") in mode_keys]
-
-    if args.scenario:
-        scen_keys = [args.scenario]
-    else:
-        scen_keys = list(SCENARIOS.keys())
-
-    if args.dtype:
-        dtype_keys = args.dtype.split(",")
-    else:
-        dtype_keys = list(DTYPES.keys())
+    mode_keys = _selected_modes(args)
+    op_names = _selected_op_names(args)
+    scen_keys = _selected_scenarios(args)
+    dtype_keys = _selected_dtypes(args)
 
     # Run both workers
     candle_results = _run_worker("candle", args)
@@ -122,14 +211,60 @@ def main():
         print("ERROR: both workers returned no results", file=sys.stderr)
         sys.exit(1)
 
+    failures = _status_failures(candle_results, torch_results)
+    human_stream = _output_stream(args.json_output)
+    if args.fail_on_ratio:
+        failures.extend(ratio_failures(
+            candle_results,
+            torch_results,
+            op_names=op_names,
+            dtype_keys=dtype_keys,
+            scen_keys=scen_keys,
+            mode_keys=mode_keys,
+            max_ratio=args.max_ratio,
+        ))
+    if failures:
+        _print_human("\n# Gate failures", stream=human_stream)
+        for failure in failures:
+            _print_human(f"- {failure}", stream=human_stream)
+
     # Generate report
     report = generate_report(candle_results, torch_results,
                              op_names, dtype_keys, scen_keys, mode_keys)
-    print_terminal(report)
+    if args.json_output != "-":
+        print_terminal(report)
+    else:
+        _print_human(report, stream=human_stream)
 
     if args.output:
         path = write_markdown(report, args.output)
         print(f"\nReport saved to: {path}", file=sys.stderr)
+
+    if args.json_output:
+        payload = {
+            "warmup": args.warmup,
+            "iters": args.iters,
+            "op_names": op_names,
+            "dtype_keys": dtype_keys,
+            "scenario_keys": scen_keys,
+            "mode_keys": mode_keys,
+            "max_ratio": args.max_ratio,
+            "failures": failures,
+            "results": {
+                "candle": candle_results,
+                "torch_npu": torch_results,
+            },
+        }
+        json_text = json.dumps(payload, indent=2, sort_keys=True)
+        if args.json_output == "-":
+            print(json_text)
+        else:
+            with open(args.json_output, "w", encoding="utf-8") as handle:
+                handle.write(json_text)
+                handle.write("\n")
+
+    if failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 import time
 
+from benchmarks.npu_perf_gates import summarize_samples
+
 
 def benchmark_op(fn, warmup=10, iters=50, sync=None, setup=None, cleanup=None):
     """Run fn with warmup, then time iters iterations. Returns list of ms."""
@@ -30,11 +32,5 @@ def benchmark_op(fn, warmup=10, iters=50, sync=None, setup=None, cleanup=None):
 
 
 def summarize(samples):
-    """Return (mean_ms, median_ms, p95_ms) from a list of ms samples."""
-    if not samples:
-        return 0.0, 0.0, 0.0
-    values = sorted(samples)
-    mean = sum(values) / len(values)
-    median = values[len(values) // 2]
-    p95 = values[int(len(values) * 0.95) - 1] if len(values) >= 2 else values[-1]
-    return mean, median, p95
+    """Return shared distribution fields from a list of ms samples."""
+    return summarize_samples(samples)
