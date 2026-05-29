@@ -74,6 +74,15 @@ def _run_worker(framework, args):
         print(f"  stdout was: {proc.stdout[:500]}", file=sys.stderr)
         return []
 
+def _output_stream(json_output):
+    """Return stream name for human-readable output."""
+    return "stderr" if json_output == "-" else "stdout"
+
+
+def _print_human(text="", stream="stdout"):
+    """Print human-readable output to the selected stream."""
+    print(text, file=sys.stderr if stream == "stderr" else sys.stdout)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -131,6 +140,7 @@ def main():
         sys.exit(1)
 
     failures = []
+    human_stream = _output_stream(args.json_output)
     if args.fail_on_ratio:
         failures = ratio_failures(
             candle_results,
@@ -142,14 +152,17 @@ def main():
             max_ratio=args.max_ratio,
         )
         if failures:
-            print("\n# Ratio gate failures")
+            _print_human("\n# Ratio gate failures", stream=human_stream)
             for failure in failures:
-                print(f"- {failure}")
+                _print_human(f"- {failure}", stream=human_stream)
 
     # Generate report
     report = generate_report(candle_results, torch_results,
                              op_names, dtype_keys, scen_keys, mode_keys)
-    print_terminal(report)
+    if args.json_output != "-":
+        print_terminal(report)
+    else:
+        _print_human(report, stream=human_stream)
 
     if args.output:
         path = write_markdown(report, args.output)

@@ -82,7 +82,7 @@ def _build_section(mode_key, dtype_key, scen_key, candle_map, torch_map, op_name
 def ratio_failures(candle_results, torch_results, op_names, dtype_keys, scen_keys, mode_keys,
                    max_ratio):
     """Return single-op median ratio gate failures for expected benchmark rows."""
-    rows = list(candle_results) + list(torch_results)
+    rows = [dict(row) for row in candle_results] + [dict(row) for row in torch_results]
     annotate_ratio_rows(rows, key_fields=_KEY_FIELDS, metric="median_ms")
     expected_keys = [
         (op, mode_key, dtype_key, scen_key)
@@ -104,9 +104,12 @@ def generate_report(candle_results, torch_results, op_names, dtype_keys, scen_ke
     """Generate full report. Returns markdown string."""
     if mode_keys is None:
         mode_keys = ["fwd"]
-    rows = list(candle_results) + list(torch_results)
+    rows = [dict(row) for row in candle_results] + [dict(row) for row in torch_results]
     annotate_ratio_rows(rows, key_fields=_KEY_FIELDS, metric="median_ms")
-    candle_map, torch_map = _build_maps(candle_results, torch_results)
+    candle_map, torch_map = _build_maps(
+        rows[:len(candle_results)],
+        rows[len(candle_results):],
+    )
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     lines = [
