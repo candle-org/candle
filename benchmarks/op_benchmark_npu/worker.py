@@ -82,25 +82,30 @@ def main():
                         setup=getattr(fn, "setup", None),
                         cleanup=getattr(fn, "cleanup", None),
                     )
-                    mean, median, p95 = summarize(samples)
+                    summary = summarize(samples)
                     results.append({
+                        "framework": "torch_npu" if args.framework == "torch" else args.framework,
                         "op": op_name,
                         "mode": case.get("mode", "fwd"),
                         "dtype": dtype_key,
                         "scenario": scen_key,
-                        "mean_ms": round(mean, 4),
-                        "median_ms": round(median, 4),
-                        "p95_ms": round(p95, 4),
+                        **summary,
                         "status": "ok",
                     })
                 except Exception as e:
                     results.append({
+                        "framework": "torch_npu" if args.framework == "torch" else args.framework,
                         "op": op_name,
                         "mode": case.get("mode", "fwd"),
                         "dtype": dtype_key,
                         "scenario": scen_key,
+                        "sample_count": 0,
                         "mean_ms": 0.0,
                         "median_ms": 0.0,
+                        "min_ms": 0.0,
+                        "max_ms": 0.0,
+                        "p10_ms": 0.0,
+                        "p90_ms": 0.0,
                         "p95_ms": 0.0,
                         "status": f"error: {e}",
                     })

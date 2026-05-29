@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 from .cases import OP_CASES, SCENARIOS, DTYPES, MODES
-from .report import generate_report, print_terminal, write_markdown
+from .report import generate_report, print_terminal, ratio_failures, write_markdown
 
 # Conda environments for each framework
 CONDA_PREFIX = os.environ.get("CONDA_PREFIX_BASE", "/opt/miniconda3")
@@ -91,7 +91,15 @@ def main():
     parser.add_argument("--iters", type=int, default=50)
     parser.add_argument("--output", default=None,
                         help="Directory to write markdown report")
+    parser.add_argument("--json-output", default=None,
+                        help="Path to write JSON results, or '-' for stdout")
+    parser.add_argument("--fail-on-ratio", action="store_true",
+                        help="Exit nonzero when candle median ratio exceeds --max-ratio")
+    parser.add_argument("--max-ratio", type=float, default=1.0,
+                        help="Maximum allowed candle/torch_npu median ratio")
     args = parser.parse_args()
+    if args.max_ratio <= 0:
+        parser.error("--max-ratio must be > 0")
 
     # Determine what we're running
     if args.mode == "both":
@@ -122,6 +130,22 @@ def main():
         print("ERROR: both workers returned no results", file=sys.stderr)
         sys.exit(1)
 
+    failures = []
+    if args.fail_on_ratio:
+        failures = ratio_failures(
+            candle_results,
+            torch_results,
+            op_names=op_names,
+            dtype_keys=dtype_keys,
+            scen_keys=scen_keys,
+            mode_keys=mode_keys,
+            max_ratio=args.max_ratio,
+        )
+        if failures:
+            print("\n# Ratio gate failures")
+            for failure in failures:
+                print(f"- {failure}")
+
     # Generate report
     report = generate_report(candle_results, torch_results,
                              op_names, dtype_keys, scen_keys, mode_keys)
@@ -130,6 +154,32 @@ def main():
     if args.output:
         path = write_markdown(report, args.output)
         print(f"\nReport saved to: {path}", file=sys.stderr)
+
+    if args.json_output:
+        payload = {
+            "warmup": args.warmup,
+            "iters": args.iters,
+            "op_names": op_names,
+            "dtype_keys": dtype_keys,
+            "scenario_keys": scen_keys,
+            "mode_keys": mode_keys,
+            "max_ratio": args.max_ratio,
+            "failures": failures,
+            "results": {
+                "candle": candle_results,
+                "torch_npu": torch_results,
+            },
+        }
+        json_text = json.dumps(payload, indent=2, sort_keys=True)
+        if args.json_output == "-":
+            print(json_text)
+        else:
+            with open(args.json_output, "w", encoding="utf-8") as handle:
+                handle.write(json_text)
+                handle.write("\n")
+
+    if failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
