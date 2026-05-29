@@ -17,6 +17,68 @@ CONDA_ENVS = {
 }
 
 
+def _selected_modes(args):
+    """Return selected benchmark mode keys for worker args."""
+    if args.mode == "both":
+        return list(MODES.keys())
+    return [args.mode]
+
+
+def _selected_op_names(args):
+    """Return selected op names for worker args."""
+    mode_keys = _selected_modes(args)
+    if args.ops:
+        return [op.strip() for op in args.ops.split(",") if op.strip()]
+    return [case["name"] for case in OP_CASES if case.get("mode", "fwd") in mode_keys]
+
+
+def _selected_scenarios(args):
+    """Return selected benchmark scenario keys for worker args."""
+    if args.scenario:
+        return [args.scenario]
+    return list(SCENARIOS.keys())
+
+
+def _selected_dtypes(args):
+    """Return selected benchmark dtype keys for worker args."""
+    if args.dtype:
+        return [dtype.strip() for dtype in args.dtype.split(",") if dtype.strip()]
+    return list(DTYPES.keys())
+
+
+def _worker_failure_rows(framework, args, status, stderr="", stdout=""):
+    """Return structured rows for every expected case when a worker fails."""
+    framework_name = "torch_npu" if framework == "torch" else framework
+    op_names = set(_selected_op_names(args))
+    selected_cases = [
+        case for case in OP_CASES
+        if case["name"] in op_names and case.get("mode", "fwd") in _selected_modes(args)
+    ]
+    rows = []
+    for dtype_key in _selected_dtypes(args):
+        for scen_key in _selected_scenarios(args):
+            for case in selected_cases:
+                rows.append({
+                    "framework": framework_name,
+                    "op": case["name"],
+                    "mode": case.get("mode", "fwd"),
+                    "dtype": dtype_key,
+                    "scenario": scen_key,
+                    "sample_count": 0,
+                    "mean_ms": 0.0,
+                    "median_ms": 0.0,
+                    "min_ms": 0.0,
+                    "max_ms": 0.0,
+                    "p10_ms": 0.0,
+                    "p90_ms": 0.0,
+                    "p95_ms": 0.0,
+                    "status": status,
+                    "stderr": stderr,
+                    "stdout": stdout,
+                })
+    return rows
+
+
 def _run_worker(framework, args):
     """Spawn a subprocess worker in the appropriate conda env."""
     env_name = CONDA_ENVS[framework]
@@ -64,12 +126,13 @@ def _run_worker(framework, args):
     if proc.returncode != 0:
         print(f"ERROR: {framework} worker exited with code {proc.returncode}",
               file=sys.stderr)
-        return [{
-            "framework": "torch_npu" if framework == "torch" else framework,
-            "status": f"error: worker exit {proc.returncode}",
-            "stderr": proc.stderr,
-            "stdout": proc.stdout,
-        }]
+        return _worker_failure_rows(
+            framework,
+            args,
+            f"error: worker exit {proc.returncode}",
+            stderr=proc.stderr,
+            stdout=proc.stdout,
+        )
 
     try:
         return json.loads(proc.stdout)
@@ -77,12 +140,13 @@ def _run_worker(framework, args):
         print(f"ERROR: failed to parse {framework} JSON output: {e}",
               file=sys.stderr)
         print(f"  stdout was: {proc.stdout[:500]}", file=sys.stderr)
-        return [{
-            "framework": "torch_npu" if framework == "torch" else framework,
-            "status": f"error: malformed worker JSON: {e}",
-            "stderr": proc.stderr,
-            "stdout": proc.stdout,
-        }]
+        return _worker_failure_rows(
+            framework,
+            args,
+            f"error: malformed worker JSON: {e}",
+            stderr=proc.stderr,
+            stdout=proc.stdout,
+        )
 
 def _status_failures(candle_results, torch_results):
     """Return infrastructure/case failures from worker result rows."""
@@ -134,25 +198,10 @@ def main():
         parser.error("--max-ratio must be > 0")
 
     # Determine what we're running
-    if args.mode == "both":
-        mode_keys = list(MODES.keys())
-    else:
-        mode_keys = [args.mode]
-
-    if args.ops:
-        op_names = args.ops.split(",")
-    else:
-        op_names = [c["name"] for c in OP_CASES if c.get("mode", "fwd") in mode_keys]
-
-    if args.scenario:
-        scen_keys = [args.scenario]
-    else:
-        scen_keys = list(SCENARIOS.keys())
-
-    if args.dtype:
-        dtype_keys = args.dtype.split(",")
-    else:
-        dtype_keys = list(DTYPES.keys())
+    mode_keys = _selected_modes(args)
+    op_names = _selected_op_names(args)
+    scen_keys = _selected_scenarios(args)
+    dtype_keys = _selected_dtypes(args)
 
     # Run both workers
     candle_results = _run_worker("candle", args)

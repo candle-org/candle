@@ -101,39 +101,60 @@ def test_spawn_worker_runs_from_repo_root_with_repo_and_src_on_pythonpath(monkey
     assert pythonpath[0:2] == [repo_root, os.path.join(repo_root, "src")]
 
 
-def test_spawn_worker_nonzero_exit_raises(monkeypatch):
+def test_spawn_worker_nonzero_exit_returns_structured_failure_rows(monkeypatch):
     def fake_run(cmd, capture_output, text, env, check, cwd):
         return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="boom")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     args = SimpleNamespace(
-        python=sys.executable,
-        cases="A1",
+        python=None,
+        cases="A1,A2s",
         mode="eager",
         device="npu",
-        warmup=0,
+        warmup=1,
         iters=1,
     )
 
-    with pytest.raises(RuntimeError, match="candle worker failed"):
-        pipeline_run._spawn_worker("candle", args)
+    rows = pipeline_run._spawn_worker("candle", args)
+
+    assert len(rows) == 2
+    for row, case_id in zip(rows, ["A1", "A2s"]):
+        assert row["framework"] == "candle"
+        assert row["case_id"] == case_id
+        assert row["mode"] == "eager"
+        assert row["mean_ms"] == 0.0
+        assert row["median_ms"] == 0.0
+        assert row["p95_ms"] == 0.0
+        assert row["op_count"] == 0
+        assert "worker exit 2" in row["status"]
+
+    annotate_pipeline_ratios(rows)
+    assert pipeline_run._status_failures(rows) == [
+        "A1/eager/candle: error: worker exit 2",
+        "A2s/eager/candle: error: worker exit 2",
+    ]
 
 
-def test_spawn_worker_malformed_json_raises(monkeypatch):
+def test_spawn_worker_malformed_json_returns_structured_failure_rows(monkeypatch):
     def fake_run(cmd, capture_output, text, env, check, cwd):
         return subprocess.CompletedProcess(cmd, 0, stdout="not-json", stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     args = SimpleNamespace(
-        python=sys.executable,
+        python=None,
         cases="A1",
         mode="eager",
         device="npu",
         warmup=0,
         iters=1,
     )
-    with pytest.raises(RuntimeError, match="failed to parse candle worker JSON"):
-        pipeline_run._spawn_worker("candle", args)
+
+    rows = pipeline_run._spawn_worker("candle", args)
+
+    assert len(rows) == 1
+    assert rows[0]["framework"] == "candle"
+    assert rows[0]["case_id"] == "A1"
+    assert rows[0]["status"].startswith("error:")
 
 
 

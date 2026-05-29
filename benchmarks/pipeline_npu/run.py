@@ -14,6 +14,23 @@ def _repo_root():
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
+def _worker_failure_rows(framework, args, status):
+    """Return structured rows for every selected pipeline case on worker failure."""
+    return [
+        {
+            "framework": framework,
+            "case_id": case_id,
+            "mode": args.mode,
+            "mean_ms": 0.0,
+            "median_ms": 0.0,
+            "p95_ms": 0.0,
+            "op_count": 0,
+            "status": status,
+        }
+        for case_id in _parse_case_ids(args.cases)
+    ]
+
+
 def _spawn_worker(framework, args):
     repo_root = _repo_root()
     cmd = [
@@ -46,7 +63,7 @@ def _spawn_worker(framework, args):
             print(proc.stdout, file=sys.stderr, end="" if proc.stdout.endswith("\n") else "\n")
         if proc.stderr:
             print(proc.stderr, file=sys.stderr, end="" if proc.stderr.endswith("\n") else "\n")
-        raise RuntimeError(f"{framework} worker failed with exit code {proc.returncode}")
+        return _worker_failure_rows(framework, args, f"error: worker exit {proc.returncode}")
     try:
         rows = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
@@ -54,9 +71,9 @@ def _spawn_worker(framework, args):
             print(proc.stdout, file=sys.stderr, end="" if proc.stdout.endswith("\n") else "\n")
         if proc.stderr:
             print(proc.stderr, file=sys.stderr, end="" if proc.stderr.endswith("\n") else "\n")
-        raise RuntimeError(f"failed to parse {framework} worker JSON: {exc}") from exc
+        return _worker_failure_rows(framework, args, f"error: malformed worker JSON: {exc}")
     if not rows:
-        raise RuntimeError(f"{framework} worker returned no rows")
+        return _worker_failure_rows(framework, args, "error: worker returned no rows")
     return rows
 
 

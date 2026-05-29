@@ -155,20 +155,26 @@ def _op_args():
 
 def test_run_worker_returns_structured_failure_for_nonzero_exit(monkeypatch):
     def fake_run(*args, **kwargs):
-        return subprocess.CompletedProcess(args[0], 9, stdout="partial stdout", stderr="worker exploded")
+        return subprocess.CompletedProcess(args[0], 2, stdout="", stderr="boom")
 
     monkeypatch.setattr(op_run.subprocess, "run", fake_run)
 
     rows = op_run._run_worker("candle", _op_args())
 
-    assert rows == [
-        {
-            "framework": "candle",
-            "status": "error: worker exit 9",
-            "stderr": "worker exploded",
-            "stdout": "partial stdout",
-        }
-    ]
+    assert rows
+    for row in rows:
+        assert row["framework"] == "candle"
+        assert row["op"] == "add"
+        assert row["mode"] == "fwd"
+        assert row["dtype"] == "fp16"
+        assert row["scenario"] == "infer"
+        assert "worker exit 2" in row["status"]
+        assert row["mean_ms"] == 0.0
+        assert row["median_ms"] == 0.0
+        assert row["p10_ms"] == 0.0
+        assert row["p90_ms"] == 0.0
+
+    generate_report(rows, [], ["add"], ["fp16"], ["infer"], ["fwd"])
 
 
 def test_run_worker_returns_structured_failure_for_malformed_json(monkeypatch):
