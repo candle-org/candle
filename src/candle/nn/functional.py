@@ -433,15 +433,14 @@ def cross_entropy(input, target, weight=None, size_average=None, ignore_index=-1
         from .._functional import sum as _sum, neg, mean
         from .._dispatch import dispatch
         from .._creation import tensor as _tensor
-        from .._dtype import float32
         C = input.shape[1]
         nll = nll_loss(log_probs, target, weight=weight, ignore_index=ignore_index,
                        reduction=reduction)
         smooth_loss = neg(dispatch("sum", None, log_probs, dim=1))
         smooth_loss = dispatch("div", None, smooth_loss,
-                               _tensor(float(C), device=input.device))
+                               _tensor(float(C), dtype=input.dtype, device=input.device))
         valid = dispatch("ne", None, target, ignore_index)
-        valid_float = valid.to(dtype=float32)
+        valid_float = valid.to(dtype=input.dtype)
         smooth_loss = dispatch("mul", None, smooth_loss, valid_float)
         if reduction == 'mean':
             valid_count = dispatch("sum", None, valid_float)
@@ -451,8 +450,8 @@ def cross_entropy(input, target, weight=None, size_average=None, ignore_index=-1
         elif reduction == 'sum':
             smooth_loss = dispatch("sum", None, smooth_loss)
         ls = label_smoothing
-        ls_t = _tensor(ls, device=input.device)
-        one_minus_ls = _tensor(1.0 - ls, device=input.device)
+        ls_t = _tensor(ls, dtype=input.dtype, device=input.device)
+        one_minus_ls = _tensor(1.0 - ls, dtype=input.dtype, device=input.device)
         return dispatch("add", None,
                          dispatch("mul", None, one_minus_ls, nll),
                          dispatch("mul", None, ls_t, smooth_loss))
@@ -526,7 +525,7 @@ def nll_loss(input, target, weight=None, size_average=None, ignore_index=-100,
              reduce=None, reduction='mean'):
     from .._functional import mean
     from .._dispatch import dispatch
-    from .._dtype import int64 as int64_dtype, float32
+    from .._dtype import int64 as int64_dtype
     from .._creation import tensor as _tensor
     batch_size = input.shape[0]
     if target.dtype != int64_dtype:
@@ -542,7 +541,7 @@ def nll_loss(input, target, weight=None, size_average=None, ignore_index=-100,
                         1, target_2d)
         w = w_2d.view((batch_size,))
         losses = dispatch("mul", None, losses, w)
-    valid_float = valid.to(dtype=float32)
+    valid_float = valid.to(dtype=input.dtype)
     losses = dispatch("mul", None, losses, valid_float)
     if reduction == 'none':
         return losses
