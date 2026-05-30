@@ -149,8 +149,8 @@ def _build_rope(torch_mod, F, device, dtype, batch, seq):
     sin = torch_mod.randn((batch, HEADS, seq, HEAD_DIM), device=device, dtype=dtype)
     def _rotate_half(t):
         half = HEAD_DIM // 2
-        t1 = t[..., :half]
-        t2 = t[..., half:]
+        t1 = t[..., :half].contiguous()
+        t2 = t[..., half:].contiguous()
         return torch_mod.cat((-t2, t1), dim=-1)
     def fn():
         return x * cos + _rotate_half(x) * sin
