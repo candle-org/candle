@@ -108,6 +108,15 @@ def _build_rms_norm(torch_mod, F, device, dtype, batch, seq):
     return fn
 
 
+def _build_rms_norm_native(torch_mod, F, device, dtype, batch, seq):
+    x = torch_mod.randn((batch, seq, HIDDEN), device=device, dtype=dtype)
+    weight = torch_mod.ones(HIDDEN, device=device, dtype=dtype)
+    eps = 1e-6
+    def fn():
+        return F.rms_norm(x, (HIDDEN,), weight, eps)
+    return fn
+
+
 def _build_silu(torch_mod, F, device, dtype, batch, seq):
     x = torch_mod.randn((batch, seq, INTERMEDIATE), device=device, dtype=dtype)
     def fn():
@@ -336,7 +345,8 @@ OP_CASES = [
     {"name": "bmm_attn_scores", "mode": "fwd", "build": _build_bmm_attn_scores},
     {"name": "bmm_attn_output", "mode": "fwd", "build": _build_bmm_attn_output},
     {"name": "softmax", "mode": "fwd", "build": _build_softmax},
-    {"name": "rms_norm", "mode": "fwd", "build": _build_rms_norm},
+    {"name": "rms_norm_composite", "mode": "fwd", "build": _build_rms_norm},
+    {"name": "rms_norm_native", "mode": "fwd", "build": _build_rms_norm_native},
     {"name": "silu", "mode": "fwd", "build": _build_silu},
     {"name": "mul", "mode": "fwd", "build": _build_mul},
     {"name": "add", "mode": "fwd", "build": _build_add},
