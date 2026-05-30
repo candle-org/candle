@@ -9,6 +9,9 @@ import sys
 from .cases import OP_CASES, SCENARIOS, DTYPES, MODES
 from .report import generate_report, print_terminal, ratio_failures, write_markdown
 
+_OP_ALIASES = {"rms_norm": "rms_norm_native"}
+_VALID_OP_NAMES = {case["name"] for case in OP_CASES}
+
 # Conda environments for each framework
 CONDA_PREFIX = os.environ.get("CONDA_PREFIX_BASE", "/opt/miniconda3")
 CONDA_ENVS = {
@@ -25,10 +28,18 @@ def _selected_modes(args):
 
 
 def _selected_op_names(args):
-    """Return selected op names for worker args."""
+    """Return selected op names for worker args, applying aliases and validating."""
     mode_keys = _selected_modes(args)
     if args.ops:
-        return [op.strip() for op in args.ops.split(",") if op.strip()]
+        names = [op.strip() for op in args.ops.split(",") if op.strip()]
+        names = [_OP_ALIASES.get(n, n) for n in names]
+        unknown = [n for n in names if n not in _VALID_OP_NAMES]
+        if unknown:
+            raise ValueError(
+                f"Unknown op(s): {', '.join(unknown)}. "
+                f"Valid names: {', '.join(sorted(_VALID_OP_NAMES))}"
+            )
+        return names
     return [case["name"] for case in OP_CASES if case.get("mode", "fwd") in mode_keys]
 
 
@@ -89,7 +100,7 @@ def _run_worker(framework, args):
         "--iters", str(args.iters),
     ]
     if args.ops:
-        worker_args.extend(["--ops", args.ops])
+        worker_args.extend(["--ops", ",".join(_selected_op_names(args))])
     if args.scenario:
         worker_args.extend(["--scenario", args.scenario])
     if args.dtype:
@@ -199,7 +210,10 @@ def main():
 
     # Determine what we're running
     mode_keys = _selected_modes(args)
-    op_names = _selected_op_names(args)
+    try:
+        op_names = _selected_op_names(args)
+    except ValueError as exc:
+        parser.error(str(exc))
     scen_keys = _selected_scenarios(args)
     dtype_keys = _selected_dtypes(args)
 

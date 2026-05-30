@@ -2095,6 +2095,13 @@ def cat(tensors, dim=0):
     itemsize = _dtype_itemsize(first.dtype)
     out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
 
+    # aclnnCat returns 561103 for some strided views (e.g. RoPE half slices)
+    # and that failed workspace query can poison subsequent ACLNN calls in the
+    # same process. Materialize those inputs on-device before calling aclnnCat.
+    # TODO: re-enable direct native cat for these views when CANN fixes 561103.
+    if any(not t.is_contiguous() for t in tensors):
+        tensors = tuple(contiguous(t) if not t.is_contiguous() else t for t in tensors)
+
     # Prepare inputs for aclnn
     tensor_ptrs = [_unwrap_storage(t).data_ptr() for t in tensors]
     shapes = [t.shape for t in tensors]

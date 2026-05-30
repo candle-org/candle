@@ -2955,6 +2955,11 @@ def fast_abs_inplace(a):
     return a
 
 
+def _npu_contiguous_copy(a):
+    from candle._backends.npu.ops.shape import contiguous
+    return contiguous(a)
+
+
 def fast_neg(a):
     """Optimized out-of-place neg(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()
@@ -2967,7 +2972,7 @@ def fast_neg(a):
     stream = _get_stream_fast(dev_idx)
 
     out_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
-    out_stride = a.stride
+    out_stride = _npu_runtime._contiguous_stride(out_shape)
     cdef int64_t n = 1
     for dim in out_shape:
         n *= dim
@@ -2988,14 +2993,40 @@ def fast_neg(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
+    cdef object src_for_neg = a
+    cdef object src_shape = out_shape
+    cdef object src_stride = a.stride
+    cdef object workspace_ptr
+    cdef int ret
 
-    ws_size, executor = _ffi_ref.unary_op(
-        _neg_getws_ptr, _neg_exec_ptr,
-        a.shape, a.stride,
-        out_shape, out_stride,
-        dtype_code, dtype_code, 2,
-        a_ptr, o_ptr,
-        stream_raw)
+    try:
+        ws_size, executor = _ffi_ref.unary_op(
+            _neg_getws_ptr, _neg_exec_ptr,
+            src_shape, src_stride,
+            out_shape, out_stride,
+            dtype_code, dtype_code, 2,
+            a_ptr, o_ptr,
+            stream_raw)
+    except RuntimeError as exc:
+        if "GetWorkspaceSize failed: 561103" not in str(exc):
+            _get_allocator_fn_ref(dev_idx).free(out_ptr, stream=stream.stream)
+            raise
+        # TODO: re-enable native strided-view neg when CANN fixes aclnnNeg 561103.
+        src_for_neg = _npu_contiguous_copy(a)
+        if isinstance(src_for_neg, TensorImpl):
+            a_ptr = <uintptr_t>(<TensorImpl>src_for_neg)._storage._untyped._device_ptr
+            src_shape = (<TensorImpl>src_for_neg)._shape_tuple
+        else:
+            a_ptr = <uintptr_t>src_for_neg.storage().data_ptr()
+            src_shape = src_for_neg.shape
+        src_stride = src_for_neg.stride
+        ws_size, executor = _ffi_ref.unary_op(
+            _neg_getws_ptr, _neg_exec_ptr,
+            src_shape, src_stride,
+            out_shape, out_stride,
+            dtype_code, dtype_code, 2,
+            a_ptr, o_ptr,
+            stream_raw)
 
     if ws_size:
         workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)

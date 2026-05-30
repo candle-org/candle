@@ -231,3 +231,53 @@ def test_main_exits_nonzero_for_worker_failure_without_ratio_gate(capsys, monkey
     assert exc_info.value.code == 1
     payload = json.loads(capsys.readouterr().out)
     assert payload["failures"] == ["add/fwd/fp16/infer/candle: error: worker exit 4"]
+
+
+# --- op alias / validation tests ---
+
+def _make_args(ops):
+    class Args:
+        warmup = 1
+        iters = 1
+        scenario = "infer"
+        dtype = "fp16"
+        mode = "fwd"
+        def __init__(self, ops):
+            self.ops = ops
+    return Args(ops)
+
+
+def test_rms_norm_alias_resolves_to_native():
+    names = op_run._selected_op_names(_make_args("rms_norm"))
+    assert names == ["rms_norm_native"]
+
+
+def test_rms_norm_composite_accepted():
+    names = op_run._selected_op_names(_make_args("rms_norm_composite"))
+    assert names == ["rms_norm_composite"]
+
+
+def test_unknown_op_raises_value_error():
+    with pytest.raises(ValueError, match="Unknown op"):
+        op_run._selected_op_names(_make_args("nonexistent_op"))
+
+
+def test_run_worker_passes_normalized_ops_to_worker(monkeypatch):
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="[]", stderr="")
+
+    monkeypatch.setattr(op_run.subprocess, "run", fake_run)
+
+    op_run._run_worker("candle", _make_args("rms_norm"))
+
+    shell_cmd = captured["cmd"][-1]
+    assert "--ops rms_norm_native" in shell_cmd
+    assert "--ops rms_norm " not in f"{shell_cmd} "
+
+
+def test_unknown_op_error_lists_valid_names():
+    with pytest.raises(ValueError, match="rms_norm_native"):
+        op_run._selected_op_names(_make_args("bad_op"))
