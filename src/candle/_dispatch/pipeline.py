@@ -10,6 +10,21 @@ import numpy as np
 
 
 _TLS = threading.local()
+_FUNCTIONAL_OPS_PIPELINE_SETTER = None
+
+
+def _set_functional_ops_pipeline_active(active):
+    """Update optional Cython functional fast-path pipeline guard."""
+    global _FUNCTIONAL_OPS_PIPELINE_SETTER  # pylint: disable=global-statement
+    if _FUNCTIONAL_OPS_PIPELINE_SETTER is None:
+        try:
+            from candle._C._functional_ops import cy_set_pipeline_active  # pylint: disable=import-error,no-name-in-module
+        except ImportError:
+            _FUNCTIONAL_OPS_PIPELINE_SETTER = False
+            return
+        _FUNCTIONAL_OPS_PIPELINE_SETTER = cy_set_pipeline_active
+    if _FUNCTIONAL_OPS_PIPELINE_SETTER:
+        _FUNCTIONAL_OPS_PIPELINE_SETTER(active)
 
 
 def _get_last_window_ops():
@@ -430,6 +445,7 @@ def _get_current():
 
 def _set_current(pipe):
     _TLS.current = pipe
+    _set_functional_ops_pipeline_active(pipe is not None)
 
 
 @contextlib.contextmanager

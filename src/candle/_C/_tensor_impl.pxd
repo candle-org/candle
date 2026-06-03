@@ -35,6 +35,7 @@ cdef class TensorImpl:
     cdef public bint _retain_grad
     cdef public int _output_nr
     cdef public object _backward_hooks
+    cdef public object _accumulate_grad_node
     cdef public object _vc_proxy
 
     # -- allow dynamic attrs (__dict__) --
@@ -96,6 +97,19 @@ cpdef object cy_make_tensor_from_storage(
     object stride,
     int64_t offset=*,
     bint requires_grad=*,
+)
+
+cpdef object cy_make_tensor_from_storage_trusted(
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset,
+    object device,
+    int device_type,
+    int device_index,
+    object dtype,
+    int dtype_code,
+    int itemsize,
 )
 
 cpdef object cy_make_view_tensor(

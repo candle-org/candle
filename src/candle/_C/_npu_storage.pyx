@@ -9,14 +9,26 @@ from libc.stdint cimport int64_t
 
 cdef object _allocator_mod = None
 cdef object _runtime_mod = None
+cdef object _allocator_dev0 = None
 
 
 cdef inline object _get_alloc(int device_id):
-    global _allocator_mod
+    global _allocator_mod, _allocator_dev0
+    if device_id == 0 and _allocator_dev0 is not None:
+        return _allocator_dev0
     if _allocator_mod is None:
         from candle._backends.npu import allocator as _am
         _allocator_mod = _am
-    return _allocator_mod.get_allocator(device_id)
+    alloc = _allocator_mod.get_allocator(device_id)
+    if device_id == 0:
+        _allocator_dev0 = alloc
+    return alloc
+
+
+cpdef void invalidate_allocator_cache_dev0():
+    """Drop the cached device-0 allocator reference for tests/runtime reset."""
+    global _allocator_dev0
+    _allocator_dev0 = None
 
 
 cdef inline object _get_runtime(int device_id):
@@ -24,7 +36,7 @@ cdef inline object _get_runtime(int device_id):
     if _runtime_mod is None:
         from candle._backends.npu import runtime as _rt
         _runtime_mod = _rt
-    return _runtime_mod.get_runtime(device_id)
+    return _runtime_mod.get_runtime_fast(device_id)
 
 
 cdef class FastNPUStorage:
@@ -36,15 +48,11 @@ cdef class FastNPUStorage:
 
     Exposes the same interface as _NPUUntypedStorage for drop-in compatibility.
     """
-    cdef public int64_t _device_ptr
-    cdef public int64_t _nbytes
-    cdef public object device
-    cdef object _alloc
-
-    def __cinit__(self, int64_t ptr, int64_t nbytes, object device):
+    def __cinit__(self, int64_t ptr, int64_t nbytes, object device, bint large_fast_free=False):
         self._device_ptr = ptr
         self._nbytes = nbytes
         self.device = device
+        self._large_fast_free = large_fast_free
         try:
             self._alloc = _get_alloc(device.index or 0)
         except Exception:  # pylint: disable=broad-except
@@ -58,20 +66,24 @@ cdef class FastNPUStorage:
             self._alloc = None
 
     def __dealloc__(self):
-        """Synchronous Python object teardown, but asynchronous device free.
+        """Return device memory to the NPU caching allocator promptly.
 
-        We cannot safely return the device pointer directly to the allocator's
-        free-list here because the producing stream may still have in-flight
-        kernels touching the buffer. Instead, mirror the runtime.py behavior:
-        defer the free into runtime._deferred_frees and let synchronize() drain
-        it after the stream sync point.
+        The allocator tracks the stream that created the block and any extra
+        streams recorded through record_stream().  For the common same-stream
+        eager path it can recycle the block immediately; for cross-stream use it
+        inserts events before reuse.  Deferring every free until synchronize()
+        exhausts the cached pool during no-sync eager pipelines and forces raw
+        acl.rt.malloc calls on the hot path.
         """
         if self._device_ptr != 0 and self._alloc is not None:
             try:
-                runtime = _get_runtime(self.device.index or 0)
-                runtime.defer_free(self._device_ptr)
+                if self._large_fast_free:
+                    self._alloc.free_large_cached(self._device_ptr)
+                else:
+                    self._alloc.free(self._device_ptr)
             except Exception:  # pylint: disable=broad-except
-                # If runtime is unavailable at interpreter shutdown, leak rather than crash.
+                # If allocator/runtime state is unavailable during interpreter
+                # shutdown, leak rather than crash.
                 pass
             self._device_ptr = 0
 
@@ -147,10 +159,6 @@ cdef class FastTypedStorage:
     interface as far as NPU callers require: device, dtype, data_ptr(),
     untyped_storage(), size(), nbytes(), copy_(), _reinterpret(), resize_(), clone().
     """
-    cdef public FastNPUStorage _untyped
-    cdef public object _dtype
-    cdef public int64_t _size
-
     def __cinit__(self, FastNPUStorage untyped, object dtype, int64_t size):
         self._untyped = untyped
         self._dtype = dtype

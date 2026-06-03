@@ -1,6 +1,7 @@
 import atexit
 import ctypes
 import os
+import threading
 import numpy as np
 
 from .acl_loader import ensure_acl
@@ -8,6 +9,15 @@ from . import cann_discovery
 
 acl = None
 _aclrt_ffi_mod = None
+
+# Thread-local record of which (device_id, context) is currently active on this
+# thread. ACL's current device/context is thread-local state, so once a thread
+# has called aclrtSetDevice/aclrtSetContext for a device, repeating those calls
+# for the same device is pure host overhead. activate() consults this guard to
+# skip the redundant ctypes round-trips on the op hot path (torch_npu does the
+# same — it sets the device once per thread and never repeats it per op).
+_active_tls = threading.local()
+_PEER_ACCESS_ENABLED = set()
 
 
 def _get_aclrt_ffi():
@@ -105,11 +115,18 @@ class _Runtime:
             raise RuntimeError(f"acl.rt.create_stream failed: {ret}")
         self.device_id = device_id
         self.initialized = True
+        _active_tls.device_id = self.device_id
+        _active_tls.context = self.context
         _register_runtime_cleanup(self)
 
     def activate(self):
         if not self.initialized:
             self.init(self.device_id)
+            return
+        if (
+            getattr(_active_tls, "device_id", None) == self.device_id
+            and getattr(_active_tls, "context", None) == self.context
+        ):
             return
         ret = acl.rt.set_device(self.device_id)
         if ret != ACL_ERROR_CODE:
@@ -118,6 +135,8 @@ class _Runtime:
             ret = acl.rt.set_context(self.context)
             if ret != ACL_ERROR_CODE:
                 raise RuntimeError(f"acl.rt.set_context failed: {ret}")
+        _active_tls.device_id = self.device_id
+        _active_tls.context = self.context
 
 
     def create_stream(self, priority=0):
@@ -193,12 +212,17 @@ class _Runtime:
         from . import allocator as npu_allocator
         from . import aclnn as _aclnn
 
-        npu_allocator.get_allocator(self.device_id).synchronize()
+        alloc = npu_allocator.get_allocator(self.device_id)
+        alloc.synchronize()
         _aclnn.flush_deferred_executors()
         frees = self._deferred_frees
         self._deferred_frees = []
+        free_synced = getattr(alloc, "free_synchronized", None)
         for ptr in frees:
-            npu_allocator.get_allocator(self.device_id).free(ptr)
+            if free_synced is not None:
+                free_synced(ptr)
+            else:
+                alloc.free(ptr)
         raw_frees = self._deferred_raw_frees
         self._deferred_raw_frees = []
         for ptr in raw_frees:
@@ -220,6 +244,9 @@ class _Runtime:
         if self.context is not None:
             acl.rt.destroy_context(self.context)
         acl.rt.reset_device(self.device_id)
+        if getattr(_active_tls, "device_id", None) == self.device_id:
+            _active_tls.device_id = None
+            _active_tls.context = None
         acl.finalize()
         self.stream = None
         self.context = None
@@ -270,13 +297,15 @@ def get_runtime(device_id=0):
 def get_runtime_fast(device_id=0):
     """Fast variant for the op hot-path.
 
-    Skips activate() (set_device / set_context ctypes round-trips) when the
-    runtime is already initialized.  Falls back to get_runtime() on first use
-    or when the runtime is not yet in the cache.
+    Ensures the runtime is active on this thread while avoiding redundant
+    aclrtSetDevice/aclrtSetContext calls when the same device/context is already
+    active.  Falls back to get_runtime() on first use or when the runtime is not
+    yet in the cache.
     """
     runtime = _RUNTIMES.get(device_id)
     if runtime is None or not runtime.initialized:
         return get_runtime(device_id)
+    runtime.activate()
     return runtime
 
 
@@ -363,6 +392,33 @@ def soc_profile():
         _SOC_PROFILE = "unknown"
     return _SOC_PROFILE
 
+
+def enable_peer_access(device_id, peer_device_id):
+    """Enable direct access from device_id to peer_device_id when supported."""
+    device_id = int(device_id)
+    peer_device_id = int(peer_device_id)
+    if device_id == peer_device_id:
+        return
+    key = (device_id, peer_device_id)
+    if key in _PEER_ACCESS_ENABLED:
+        return
+    global acl
+    if acl is None:
+        acl = ensure_acl()
+    runtime = get_runtime(device_id)
+    runtime.activate()
+    if hasattr(acl.rt, "device_can_access_peer"):
+        can_access, ret = acl.rt.device_can_access_peer(device_id, peer_device_id)
+        if ret != ACL_ERROR_CODE:
+            raise RuntimeError(f"acl.rt.device_can_access_peer failed: {ret}")
+        if not can_access:
+            raise RuntimeError(f"NPU device {device_id} cannot access peer device {peer_device_id}")
+    if not hasattr(acl.rt, "device_enable_peer_access"):
+        raise RuntimeError("acl.rt.device_enable_peer_access not available")
+    ret = acl.rt.device_enable_peer_access(peer_device_id, 0)
+    if ret != ACL_ERROR_CODE:
+        raise RuntimeError(f"acl.rt.device_enable_peer_access failed: {ret}")
+    _PEER_ACCESS_ENABLED.add(key)
 
 
 def mem_get_info(device_id=0, attr=0):

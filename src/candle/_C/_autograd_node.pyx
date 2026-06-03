@@ -1,5 +1,8 @@
 # cython: language_level=3, boundscheck=False, wraparound=False
 import weakref
+from candle._C._tensor_impl cimport TensorImpl
+from candle._C._hooks_state import get_stack as _get_saved_hooks_stack
+
 _METADATA_BY_NODE = weakref.WeakKeyDictionary()
 
 _RELEASED_SAVED_TENSORS_ERROR = (
@@ -42,11 +45,15 @@ cdef class SavedTensor:
 
     def __init__(self, tensor):
         self._tensor_ref = tensor
-        self._saved_version = None if tensor is None else tensor._version_counter.value
+        if tensor is None:
+            self._saved_version = None
+        elif isinstance(tensor, TensorImpl):
+            self._saved_version = (<TensorImpl>tensor)._version_value
+        else:
+            self._saved_version = tensor._version_counter.value
         self._released = False
         self._hooks = None
-        from candle._C._hooks_state import get_stack
-        stack = get_stack()
+        stack = _get_saved_hooks_stack()
         self._global_hooks = stack[len(stack) - 1] if stack else None
         hooks = self._global_hooks
         if hooks is None:
@@ -76,9 +83,15 @@ cdef class SavedTensor:
             raise RuntimeError("SavedTensor hooks have already been set")
         if self._tensor_ref is None:
             raise RuntimeError("None is forbidden")
-        before_version = self._tensor_ref._version_counter.value
+        if isinstance(self._tensor_ref, TensorImpl):
+            before_version = (<TensorImpl>self._tensor_ref)._version_value
+        else:
+            before_version = self._tensor_ref._version_counter.value
         packed = pack(self._tensor_ref)
-        after_version = self._tensor_ref._version_counter.value
+        if isinstance(self._tensor_ref, TensorImpl):
+            after_version = (<TensorImpl>self._tensor_ref)._version_value
+        else:
+            after_version = self._tensor_ref._version_counter.value
         if before_version != after_version:
             raise RuntimeError("A saved tensor pack hook is modifying its input in place.")
         self._hooks = (pack, unpack)
@@ -98,13 +111,17 @@ cdef class SavedTensor:
             raise RuntimeError(_RELEASED_SAVED_TENSORS_ERROR)
         if self._tensor_ref is None:
             return None
-        if self._tensor_ref._version_counter.value != self._saved_version:
+        if isinstance(self._tensor_ref, TensorImpl):
+            current_version = (<TensorImpl>self._tensor_ref)._version_value
+        else:
+            current_version = self._tensor_ref._version_counter.value
+        if current_version != self._saved_version:
             shape = "x".join(str(d) for d in getattr(self._tensor_ref, "shape", ()))
             tensor_type = "torch.Tensor"
             op = "AsStridedBackward0"
             raise RuntimeError(
                 "one of the variables needed for gradient computation has been modified by an inplace operation: "
-                f"[{tensor_type} [{shape}]], which is output 0 of {op}, is at version {self._tensor_ref._version_counter.value}; "
+                f"[{tensor_type} [{shape}]], which is output 0 of {op}, is at version {current_version}; "
                 f"expected version {self._saved_version} instead. Hint: enable anomaly detection to find the operation that failed to compute its gradient, "
                 "with torch.autograd.set_detect_anomaly(True)."
             )
@@ -142,14 +159,6 @@ cdef class _NodeHookHandle:
 
 
 cdef class AccumulateGrad:
-    cdef public object tensor
-    cdef public dict _hooks
-    cdef public dict _prehooks
-    cdef public object _metadata
-    cdef public str _name
-    cdef dict __dict__
-    cdef object __weakref__
-
     def __init__(self, tensor):
         self.tensor = tensor
         self._hooks = {}
@@ -158,13 +167,21 @@ cdef class AccumulateGrad:
         self._name = "torch::autograd::AccumulateGrad"
 
     def register_hook(self, hook):
-        cdef _NodeHookHandle handle = _NodeHookHandle(self._hooks)
-        self._hooks[handle.id] = hook
+        cdef object hooks = self._hooks
+        if hooks is None:
+            hooks = {}
+            self._hooks = hooks
+        cdef _NodeHookHandle handle = _NodeHookHandle(hooks)
+        hooks[handle.id] = hook
         return handle
 
     def register_prehook(self, hook):
-        cdef _NodeHookHandle handle = _NodeHookHandle(self._prehooks)
-        self._prehooks[handle.id] = hook
+        cdef object prehooks = self._prehooks
+        if prehooks is None:
+            prehooks = {}
+            self._prehooks = prehooks
+        cdef _NodeHookHandle handle = _NodeHookHandle(prehooks)
+        prehooks[handle.id] = hook
         return handle
 
     def apply_prehooks(self, grad):
@@ -202,20 +219,6 @@ cdef class AccumulateGrad:
 
 
 cdef class Node:
-    cdef public object backward
-    cdef public tuple inputs
-    cdef public list _saved_tensors_list
-    cdef public dict _saved_fields
-    cdef public dict _hooks
-    cdef public dict _prehooks
-    cdef public tuple _next_functions_cache
-    cdef public object _metadata
-    cdef public str _name
-    cdef public object _anomaly_trace
-    cdef public object _anomaly_parent
-    cdef dict __dict__
-    cdef object __weakref__
-
     def __init__(self, backward=None, inputs=(), *, name=None):
         if backward is not None:
             self.backward = backward
@@ -283,16 +286,24 @@ cdef class Node:
                 saved.release()
 
     def register_hook(self, hook):
-        cdef _NodeHookHandle handle = _NodeHookHandle(self._hooks)
-        self._hooks[handle.id] = hook
+        cdef object hooks = self._hooks
+        if hooks is None:
+            hooks = {}
+            self._hooks = hooks
+        cdef _NodeHookHandle handle = _NodeHookHandle(hooks)
+        hooks[handle.id] = hook
         return handle
 
     def register_prehook(self, hook):
-        cdef _NodeHookHandle handle = _NodeHookHandle(self._prehooks)
-        self._prehooks[handle.id] = hook
+        cdef object prehooks = self._prehooks
+        if prehooks is None:
+            prehooks = {}
+            self._prehooks = prehooks
+        cdef _NodeHookHandle handle = _NodeHookHandle(prehooks)
+        prehooks[handle.id] = hook
         return handle
 
-    cdef tuple _freeze_next_functions(self):
+    cpdef tuple _freeze_next_functions(self):
         cdef list next_functions = []
         cdef object inp
         cdef object fn
@@ -315,7 +326,11 @@ cdef class Node:
 
     @property
     def next_functions(self):
-        return self._next_functions_cache
+        cdef tuple cached = self._next_functions_cache
+        if cached is None:
+            cached = self._freeze_next_functions()
+            self._next_functions_cache = cached
+        return cached
 
     def __getattr__(self, name):
         cdef object saved_tensors

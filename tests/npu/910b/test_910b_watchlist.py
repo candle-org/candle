@@ -190,18 +190,17 @@ def test_910b_im2col_index_validation_any_regression():
 
 
 # ---------------------------------------------------------------------------
-# Native 910B sequence instability reproduced in torch_npu
+# Native 910B sequence stability regression guard
 # ---------------------------------------------------------------------------
 
 @pytest.mark.skipif(not NPU_AVAILABLE, reason="NPU not available")
-def test_910b_native_elementwise_sequence_matches_torch_npu_instability_boundary():
-    """Keep Candle aligned with torch_npu's native 910B behavior boundary.
+def test_910b_native_elementwise_sequence_remains_stable():
+    """Guard native 910B maximum/where/logaddexp sequence stability.
 
-    Repeated native execution of maximum/where/logaddexp on 910B eventually
-    corrupts later results in both Candle and real torch_npu on the same host.
-    This is documented as a known upstream/native issue, not a Candle-specific
-    route mismatch.  The common correctness suite should keep single-call
-    semantic checks only; this watchlist test guards the documented boundary.
+    Older CANN/torch_npu combinations corrupted later results after repeated
+    native execution of this sequence.  Current CANN 9.0.0 torch_npu stays
+    stable for the same 48-iteration boundary, so Candle should not carry a
+    weaker requirement or require the historical upstream failure to reproduce.
     """
     base = np.array([-2.0, -0.5, 0.5, 2.0], dtype=np.float32)
     rev = base[::-1].copy()
@@ -216,22 +215,21 @@ def test_910b_native_elementwise_sequence_matches_torch_npu_instability_boundary
         got_where = torch.where(c, x, y).to("cpu").numpy().astype(np.float32)
         got_logaddexp = torch.logaddexp(x, y).to("cpu").numpy().astype(np.float32)
 
-        return (
-            np.allclose(got_max, np.maximum(base, rev).astype(np.float32), atol=1e-3, rtol=1e-3)
-            and np.allclose(got_where, np.where(cond, base, rev).astype(np.float32), atol=1e-3, rtol=1e-3)
-            and np.allclose(got_logaddexp, np.logaddexp(base, rev).astype(np.float32), atol=1e-3, rtol=1e-3)
-        )
+        assert np.allclose(got_max, np.maximum(base, rev).astype(np.float32), atol=1e-3, rtol=1e-3)
+        assert np.allclose(got_where, np.where(cond, base, rev).astype(np.float32), atol=1e-3, rtol=1e-3)
+        assert np.allclose(got_logaddexp, np.logaddexp(base, rev).astype(np.float32), atol=1e-3, rtol=1e-3)
 
-    # Single-call semantics must still be correct.
-    assert _check_once()
-
-    # Repeated execution is known to drift on native 910B paths in both Candle
-    # and torch_npu. Keep this as a watchlist marker, not a hard correctness
-    # requirement for passing all repetitions.
-    seen_failure = False
+    _check_once()
     for _ in range(48):
-        if not _check_once():
-            seen_failure = True
-            break
+        _check_once()
 
-    assert seen_failure is True
+    # The historical native sequence must not poison later on-device small-op
+    # composites. linspace on 910B is built from cumsum + mul + add, so this
+    # catches stale cached-executor address binding in the mul leg.
+    lin = torch.linspace(0.0, 1.0, 5, device="npu")
+    np.testing.assert_allclose(
+        lin.to("cpu").numpy(),
+        np.linspace(0.0, 1.0, 5, dtype=np.float32),
+        atol=1e-6,
+        rtol=1e-6,
+    )

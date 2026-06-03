@@ -3,6 +3,22 @@ import functools
 import warnings
 from typing import Optional
 
+_NPU_FUNCTIONAL_AUTOCAST_SETTER = None
+
+
+def _set_npu_functional_autocast_active(active):
+    """Update optional Cython functional fast-path autocast guard."""
+    global _NPU_FUNCTIONAL_AUTOCAST_SETTER  # pylint: disable=global-statement
+    if _NPU_FUNCTIONAL_AUTOCAST_SETTER is None:
+        try:
+            from candle._C._functional_ops import cy_set_npu_autocast_active  # pylint: disable=import-error,no-name-in-module
+        except ImportError:
+            _NPU_FUNCTIONAL_AUTOCAST_SETTER = False
+            return
+        _NPU_FUNCTIONAL_AUTOCAST_SETTER = cy_set_npu_autocast_active
+    if _NPU_FUNCTIONAL_AUTOCAST_SETTER:
+        _NPU_FUNCTIONAL_AUTOCAST_SETTER(active)
+
 from .state import (
     autocast_decrement_nesting,
     autocast_increment_nesting,
@@ -122,6 +138,8 @@ class autocast:
         self.prev_cache_enabled = is_autocast_cache_enabled()
 
         set_autocast_enabled(self.device, self._enabled)
+        if self.device == "npu":
+            _set_npu_functional_autocast_active(self._enabled)
         set_autocast_dtype(self.device, self.fast_dtype)
         set_autocast_cache_enabled(self._cache_enabled)
         autocast_increment_nesting(self.device)
@@ -131,6 +149,8 @@ class autocast:
         if autocast_decrement_nesting(self.device) == 0:
             clear_autocast_cache()
         set_autocast_enabled(self.device, self.prev)
+        if self.device == "npu":
+            _set_npu_functional_autocast_active(self.prev)
         set_autocast_dtype(self.device, self.prev_fastdtype)
         set_autocast_cache_enabled(self.prev_cache_enabled)
         return False

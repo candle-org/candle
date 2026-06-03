@@ -21,7 +21,6 @@ def _make_view(base, shape, stride, offset, op, source=None, *, creation_kind=No
             creation_kind = "view"
     view = Tensor(base.storage(), shape, stride, offset, requires_grad=base.requires_grad)
     view._base = base
-    view._version_counter = base._version_counter
     view._view_meta = {
         "op": op,
         "shape": tuple(shape),

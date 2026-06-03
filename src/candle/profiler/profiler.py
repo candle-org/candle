@@ -13,7 +13,22 @@ from .common import ProfilerActivity, ProfilerAction
 
 
 _ACTIVE_SESSION = None
+_NPU_FUNCTIONAL_PROFILER_SETTER = None
 _ACTIVE_LOCK = threading.Lock()
+
+
+def _set_npu_functional_profiler_active(active):
+    """Update optional Cython functional fast-path profiler guard."""
+    global _NPU_FUNCTIONAL_PROFILER_SETTER  # pylint: disable=global-statement
+    if _NPU_FUNCTIONAL_PROFILER_SETTER is None:
+        try:
+            from candle._C._functional_ops import cy_set_npu_profiler_active  # pylint: disable=import-error,no-name-in-module
+        except ImportError:
+            _NPU_FUNCTIONAL_PROFILER_SETTER = False
+            return
+        _NPU_FUNCTIONAL_PROFILER_SETTER = cy_set_npu_profiler_active
+    if _NPU_FUNCTIONAL_PROFILER_SETTER:
+        _NPU_FUNCTIONAL_PROFILER_SETTER(active)
 _SCOPE_STATE = threading.local()
 _CORRELATION_LOCK = threading.Lock()
 _CORRELATION_ID = 0
@@ -980,6 +995,7 @@ class profile:
             if _ACTIVE_SESSION is not None and _ACTIVE_SESSION is not self._session:
                 raise RuntimeError("another profiler session is already active")
             _ACTIVE_SESSION = self._session
+            _set_npu_functional_profiler_active(True)
 
         self._started = True
         self._stopped = False
@@ -1002,6 +1018,7 @@ class profile:
         with _ACTIVE_LOCK:
             if _ACTIVE_SESSION is self._session:
                 _ACTIVE_SESSION = None
+                _set_npu_functional_profiler_active(False)
 
         self._maybe_stop_cpu_memory_tracer()
         self._stopped = True

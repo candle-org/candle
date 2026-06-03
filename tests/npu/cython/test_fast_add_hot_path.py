@@ -1,6 +1,112 @@
 import ctypes
 
 
+def test_small_op_fast_paths_skip_python_defer_executor(npu_device, monkeypatch):
+    """add/mul/silu should append raw executor handles without Python normalization."""
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.randn(4, 4, device=npu_device)
+    torch.npu.synchronize()
+
+    # Warm up so first-use imports/cache population happen before the patch.
+    # _ensure_ffi_binary() caches a reference to aclnn._defer_executor on first
+    # call; warming up here ensures the real function (not the stub below) is the
+    # one cached, so the patch cannot leak into the Cython global and poison
+    # later tests.
+    _ = torch.add(a, b)
+    _ = torch.mul(a, b)
+    _ = torch.nn.functional.silu(a)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+
+    def fail_defer_executor(*args, **kwargs):
+        calls["count"] += 1
+        raise AssertionError("small-op fast path should append executor handles directly")
+
+    monkeypatch.setattr(aclnn_mod, "_defer_executor", fail_defer_executor)
+
+    _ = torch.add(a, b)
+    _ = torch.mul(a, b)
+    _ = torch.nn.functional.silu(a)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+
+
+
+def test_top_level_npu_mul_skips_python_dispatch(npu_device, monkeypatch):
+    """torch.mul should route NPU tensor pairs through the Cython hot wrapper."""
+    import candle as torch
+    import candle._functional as functional_mod
+
+    a = torch.randn(4, 4, device=npu_device)
+    b = torch.randn(4, 4, device=npu_device)
+    torch.npu.synchronize()
+
+    def fail_dispatch(*args, **kwargs):
+        raise AssertionError("NPU tensor mul should bypass Python dispatch")
+
+    monkeypatch.setattr(functional_mod, "dispatch", fail_dispatch)
+
+    out = torch.mul(a, b)
+    torch.npu.synchronize()
+
+    assert out.device.type == "npu"
+
+
+def test_nn_silu_npu_skips_python_dispatch(npu_device, monkeypatch):
+    """F.silu should route NPU inference tensors directly to the fast kernel."""
+    import candle as torch
+    import candle._dispatch as dispatch_mod
+    import candle.nn.functional as F
+
+    x = torch.randn(4, 4, device=npu_device)
+    torch.npu.synchronize()
+
+    def fail_dispatch(*args, **kwargs):
+        raise AssertionError("NPU silu inference fast path should bypass dispatch")
+
+    monkeypatch.setattr(dispatch_mod, "dispatch", fail_dispatch)
+
+    out = F.silu(x)
+    torch.npu.synchronize()
+
+    assert out.device.type == "npu"
+
+
+def test_nn_silu_npu_autocast_uses_dispatch(npu_device, monkeypatch):
+    """F.silu should preserve autocast handling by falling back to dispatch."""
+    import candle as torch
+    import candle._dispatch as dispatch_mod
+    import candle.nn.functional as F
+
+    x = torch.randn(4, 4, device=npu_device)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_dispatch = dispatch_mod.dispatch
+
+    def wrapped_dispatch(*args, **kwargs):
+        calls["count"] += 1
+        return original_dispatch(*args, **kwargs)
+
+    def fail_fast(*args, **kwargs):
+        raise AssertionError("NPU silu fast path should not run under autocast")
+
+    monkeypatch.setattr(dispatch_mod, "dispatch", wrapped_dispatch)
+    monkeypatch.setattr(F, "_npu_silu_fast", fail_fast)
+
+    with torch.amp.autocast("npu"):
+        out = F.silu(x)
+    torch.npu.synchronize()
+
+    assert calls["count"] >= 1
+    assert out.device.type == "npu"
+
+
 def test_fast_add_skips_storage_method_calls(npu_device, monkeypatch):
     """fast_add should read device pointers directly, not via Tensor.storage()."""
     import candle as torch
@@ -53,14 +159,11 @@ def test_fast_add_skips_ctypes_void_p_wrapper(npu_device, monkeypatch):
     assert calls["count"] == 0
 
 
-def test_fast_add_reuses_cached_executor_for_same_signature(npu_device, monkeypatch):
-    """fast_add may either hit the PTA executor cache or stay on the non-PTA path."""
-    import pytest
+def test_fast_add_same_signature_uses_cython_executor_path(npu_device, monkeypatch):
+    """fast_add should bypass the Python FFI wrapper for stable signatures."""
+    import numpy as np
     import candle as torch
     import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
-
-    if not ffi_mod.is_pta_cache_available():
-        pytest.skip("PTA executor cache not available on this CANN build")
 
     a = torch.randn(7, 5, 3, device=npu_device)
     b = torch.randn(7, 5, 3, device=npu_device)
@@ -75,13 +178,221 @@ def test_fast_add_reuses_cached_executor_for_same_signature(npu_device, monkeypa
 
     monkeypatch.setattr(ffi_mod, "binary_op_with_alpha", wrapped_binary_op_with_alpha)
 
-    _ = torch.add(a, b)
+    out1 = torch.add(a, b)
+    out2 = torch.add(a, b)
     torch.npu.synchronize()
-    assert calls["count"] == 1
 
-    _ = torch.add(a, b)
+    assert calls["count"] == 0
+    expected = a.cpu().numpy() + b.cpu().numpy()
+    assert np.allclose(out1.cpu().numpy(), expected, rtol=1e-4, atol=1e-4)
+    assert np.allclose(out2.cpu().numpy(), expected, rtol=1e-4, atol=1e-4)
+
+
+def test_fast_add_chain_reuses_cached_executor_across_distinct_outputs(npu_device, monkeypatch):
+    """A chain of same-signature adds must reuse the PTA cached executor even when
+    each op writes to a freshly allocated output pointer.
+
+    This is the pipelined-model regime: outputs differ every op, but the
+    (shape, stride, dtype) signature is constant.  torch_npu rebinds tensor
+    addresses onto the cached executor (AddTensorAddrToCachedList), so after the
+    cache is warm NO op should fall back to the full GetWorkspaceSize path.
+    """
+    import numpy as np
+    import pytest
+    import candle as torch
+    import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+
+    if not ffi_mod.is_pta_cache_available():
+        pytest.skip("PTA executor cache not available on this CANN build")
+
+    a = torch.randn(1, 128, 64, device=npu_device, dtype=torch.float16)
+    b = torch.randn(1, 128, 64, device=npu_device, dtype=torch.float16)
     torch.npu.synchronize()
-    assert calls["count"] in (1, 2)
+
+    # Warm up: populate the PTA cache for this signature.
+    warm = [torch.add(a, b) for _ in range(5)]
+    torch.npu.synchronize()
+    del warm
+
+    calls = {"count": 0}
+    original_binary_op_with_alpha = ffi_mod.binary_op_with_alpha
+
+    def wrapped_binary_op_with_alpha(*args, **kwargs):
+        calls["count"] += 1
+        return original_binary_op_with_alpha(*args, **kwargs)
+
+    monkeypatch.setattr(ffi_mod, "binary_op_with_alpha", wrapped_binary_op_with_alpha)
+
+    # Same inputs, distinct output pointer each op (outputs kept alive).
+    outs = [torch.add(a, b) for _ in range(10)]
+    torch.npu.synchronize()
+
+    # Every op should hit the cached executor; none should rebuild via GetWorkspaceSize.
+    assert calls["count"] == 0
+
+    # Rebinding must still produce correct results.
+    expected = a.cpu().float().numpy() + b.cpu().float().numpy()
+    got = outs[-1].cpu().float().numpy()
+    assert np.allclose(got, expected, rtol=1e-2, atol=1e-2)
+
+
+def test_fast_mul_same_signature_uses_cython_executor_path(npu_device, monkeypatch):
+    """fast_mul should bypass the Python FFI wrapper for stable signatures."""
+    import numpy as np
+    import candle as torch
+    import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+
+    a = torch.randn(7, 5, 3, device=npu_device)
+    b = torch.randn(7, 5, 3, device=npu_device)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_binary_op_no_alpha = ffi_mod.binary_op_no_alpha
+
+    def wrapped_binary_op_no_alpha(*args, **kwargs):
+        calls["count"] += 1
+        return original_binary_op_no_alpha(*args, **kwargs)
+
+    monkeypatch.setattr(ffi_mod, "binary_op_no_alpha", wrapped_binary_op_no_alpha)
+
+    out1 = torch.mul(a, b)
+    out2 = torch.mul(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    expected = a.cpu().numpy() * b.cpu().numpy()
+    assert np.allclose(out1.cpu().numpy(), expected, rtol=1e-4, atol=1e-4)
+    assert np.allclose(out2.cpu().numpy(), expected, rtol=1e-4, atol=1e-4)
+
+
+def test_fast_mul_chain_reuses_cached_executor_across_distinct_outputs(npu_device, monkeypatch):
+    """Same-shape Mul may reuse PTA cached executors across fresh outputs."""
+    import numpy as np
+    import pytest
+    import candle as torch
+    import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+
+    if not ffi_mod.is_pta_cache_available():
+        pytest.skip("PTA executor cache not available on this CANN build")
+
+    a = torch.randn(1, 128, 64, device=npu_device, dtype=torch.float16)
+    b = torch.randn(1, 128, 64, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    warm = [torch.mul(a, b) for _ in range(5)]
+    torch.npu.synchronize()
+    del warm
+
+    calls = {"count": 0}
+    original_binary_op_no_alpha = ffi_mod.binary_op_no_alpha
+
+    def wrapped_binary_op_no_alpha(*args, **kwargs):
+        calls["count"] += 1
+        return original_binary_op_no_alpha(*args, **kwargs)
+
+    monkeypatch.setattr(ffi_mod, "binary_op_no_alpha", wrapped_binary_op_no_alpha)
+
+    outs = [torch.mul(a, b) for _ in range(10)]
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    expected = a.cpu().float().numpy() * b.cpu().float().numpy()
+    got = outs[-1].cpu().float().numpy()
+    assert np.allclose(got, expected, rtol=1e-2, atol=1e-2)
+
+
+def test_fast_mul_broadcast_chain_remains_correct_across_distinct_outputs(npu_device, monkeypatch):
+    """Broadcast Mul should remain correct while bypassing the Python FFI wrapper."""
+    import numpy as np
+    import candle as torch
+    import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+
+    a = torch.randn(1, 128, 64, device=npu_device, dtype=torch.float16)
+    b = torch.randn(1, 1, 64, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_binary_op_no_alpha = ffi_mod.binary_op_no_alpha
+
+    def wrapped_binary_op_no_alpha(*args, **kwargs):
+        calls["count"] += 1
+        return original_binary_op_no_alpha(*args, **kwargs)
+
+    monkeypatch.setattr(ffi_mod, "binary_op_no_alpha", wrapped_binary_op_no_alpha)
+
+    outs = [torch.mul(a, b) for _ in range(10)]
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    expected = a.cpu().float().numpy() * b.cpu().float().numpy()
+    got = outs[-1].cpu().float().numpy()
+    assert np.allclose(got, expected, rtol=1e-2, atol=1e-2)
+
+
+def test_fast_silu_chain_reuses_cached_executor_across_distinct_outputs(npu_device, monkeypatch):
+    """Same-signature silu chains should reuse PTA cached executors across fresh outputs."""
+    import numpy as np
+    import pytest
+    import candle as torch
+    import candle.nn.functional as F
+    import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+
+    if not ffi_mod.is_pta_cache_available():
+        pytest.skip("PTA executor cache not available on this CANN build")
+
+    x = torch.randn(1, 128, 64, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    warm = [F.silu(x) for _ in range(5)]
+    torch.npu.synchronize()
+    del warm
+
+    calls = {"count": 0}
+    original_unary_op = ffi_mod.unary_op
+
+    def wrapped_unary_op(*args, **kwargs):
+        calls["count"] += 1
+        return original_unary_op(*args, **kwargs)
+
+    monkeypatch.setattr(ffi_mod, "unary_op", wrapped_unary_op)
+
+    outs = [F.silu(x) for _ in range(10)]
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    x_np = x.cpu().float().numpy()
+    expected = x_np / (1.0 + np.exp(-x_np))
+    got = outs[-1].cpu().float().numpy()
+    assert np.allclose(got, expected, rtol=2e-2, atol=2e-2)
+
+
+def test_fast_silu_same_signature_uses_cython_executor_path(npu_device, monkeypatch):
+    """fast_silu should bypass the Python FFI wrapper for stable signatures."""
+    import numpy as np
+    import candle as torch
+    import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+
+    x = torch.randn(7, 5, 3, device=npu_device)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_unary_op = ffi_mod.unary_op
+
+    def wrapped_unary_op(*args, **kwargs):
+        calls["count"] += 1
+        return original_unary_op(*args, **kwargs)
+
+    monkeypatch.setattr(ffi_mod, "unary_op", wrapped_unary_op)
+
+    out1 = torch.nn.functional.silu(x)
+    out2 = torch.nn.functional.silu(x)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    x_np = x.cpu().float().numpy()
+    expected = x_np / (1.0 + np.exp(-x_np))
+    assert np.allclose(out1.cpu().float().numpy(), expected, rtol=2e-2, atol=2e-2)
+    assert np.allclose(out2.cpu().float().numpy(), expected, rtol=2e-2, atol=2e-2)
 
 
 def test_fast_mul_skips_python_aclnn_wrapper(npu_device, monkeypatch):
@@ -115,13 +426,11 @@ def test_fast_mul_skips_python_aclnn_wrapper(npu_device, monkeypatch):
     )
 
     # Assertion (b): numerical correctness
-    import torch as ref_torch
-    a_cpu = ref_torch.tensor(a.cpu().numpy())
-    b_cpu = ref_torch.tensor(b.cpu().numpy())
-    expected = a_cpu * b_cpu
-    actual = ref_torch.tensor(result.cpu().numpy())
-    assert ref_torch.allclose(actual, expected, rtol=1e-4, atol=1e-4), (
-        f"fast_mul result mismatch: max_diff={(actual - expected).abs().max()}"
+    import numpy as np
+    expected = a.cpu().numpy() * b.cpu().numpy()
+    actual = result.cpu().numpy()
+    assert np.allclose(actual, expected, rtol=1e-4, atol=1e-4), (
+        f"fast_mul result mismatch: max_diff={np.abs(actual - expected).max()}"
     )
 
 
@@ -1670,6 +1979,7 @@ def test_isnan_skips_python_aclnn_wrappers(npu_device, monkeypatch):
 
 def test_reciprocal__skips_python_aclnn_wrapper(npu_device, monkeypatch):
     """Tensor.reciprocal_ should bypass candle._backends.npu.aclnn.reciprocal."""
+    import numpy as np
     import candle as torch
     import candle._backends.npu.aclnn as aclnn_mod
 
@@ -1693,13 +2003,14 @@ def test_reciprocal__skips_python_aclnn_wrapper(npu_device, monkeypatch):
 
     assert calls["count"] == 0
     expected = torch.full((4, 4), 2.0, device=npu_device)
-    assert torch.allclose(a, expected)
+    assert np.allclose(a.cpu().numpy(), expected.cpu().numpy())
     assert torch.equal(out, a)
 
 
 
 def test_reciprocal_skips_python_aclnn_wrapper(npu_device, monkeypatch):
     """torch.reciprocal should bypass candle._backends.npu.aclnn.reciprocal."""
+    import numpy as np
     import candle as torch
     import candle._backends.npu.aclnn as aclnn_mod
 
@@ -1723,7 +2034,7 @@ def test_reciprocal_skips_python_aclnn_wrapper(npu_device, monkeypatch):
 
     assert calls["count"] == 0
     expected = torch.full((4, 4), 0.5, device=npu_device)
-    assert torch.allclose(out, expected)
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy())
 
 
 

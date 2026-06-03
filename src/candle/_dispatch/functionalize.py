@@ -6,6 +6,21 @@ from .registry import registry
 
 
 _TLS = threading.local()
+_FUNCTIONAL_OPS_SETTER = None
+
+
+def _set_functional_ops_active(active):
+    """Update optional Cython functional fast-path functionalization guard."""
+    global _FUNCTIONAL_OPS_SETTER  # pylint: disable=global-statement
+    if _FUNCTIONAL_OPS_SETTER is None:
+        try:
+            from candle._C._functional_ops import cy_set_functionalize_active  # pylint: disable=import-error,no-name-in-module
+        except ImportError:
+            _FUNCTIONAL_OPS_SETTER = False
+            return
+        _FUNCTIONAL_OPS_SETTER = cy_set_functionalize_active
+    if _FUNCTIONAL_OPS_SETTER:
+        _FUNCTIONAL_OPS_SETTER(active)
 
 
 def _get_enabled():
@@ -13,7 +28,9 @@ def _get_enabled():
 
 
 def _set_enabled(val):
-    _TLS.enabled = bool(val)
+    active = bool(val)
+    _TLS.enabled = active
+    _set_functional_ops_active(active)
 
 
 @contextlib.contextmanager

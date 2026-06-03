@@ -426,6 +426,12 @@ def signbit(a):
 
 
 def square(a):
+    # CANN 9.0.0 / 910B: native aclnnSquareGetWorkspaceSize returns 161002.
+    # Keep _fast_square_impl available for future re-enable, but use an on-device
+    # composite as the default public route for now.
+    # TODO: re-enable native aclnnSquare when CANN fixes 161002 on 910B.
+    if _HAS_FAST_MUL:
+        return mul(a, a)
     if _HAS_FAST_SQUARE:
         return _fast_square_impl(a)
     raise RuntimeError("Cython NPU square implementation is unavailable")

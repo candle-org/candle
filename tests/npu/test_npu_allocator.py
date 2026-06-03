@@ -7,10 +7,23 @@ def _reset_allocator_state():
     import candle._backends.npu.allocator as npu_allocator
 
     saved = dict(npu_allocator._ALLOCATORS)
+    try:
+        from candle._C import _npu_ops, _npu_storage
+    except ImportError:
+        _npu_ops = None
+        _npu_storage = None
+    if _npu_ops is not None:
+        _npu_ops.invalidate_allocator_cache_dev0()
+    if _npu_storage is not None:
+        _npu_storage.invalidate_allocator_cache_dev0()
     npu_allocator._ALLOCATORS.clear()
     yield
     npu_allocator._ALLOCATORS.clear()
     npu_allocator._ALLOCATORS.update(saved)
+    if _npu_ops is not None:
+        _npu_ops.invalidate_allocator_cache_dev0()
+    if _npu_storage is not None:
+        _npu_storage.invalidate_allocator_cache_dev0()
 
 
 
@@ -170,6 +183,74 @@ def test_allocator_splits_cached_block(monkeypatch):
     assert stats["inactive_split_bytes.all.current"] == 1536
 
 
+def test_empty_cache_frees_only_complete_python_segments_after_split(monkeypatch):
+    from candle._backends.npu import allocator
+
+    alloc = allocator.NpuAllocator(device_id=0)
+    base_ptr = 2000
+    freed = []
+
+    monkeypatch.setattr(alloc, "_raw_malloc", lambda size: (base_ptr, size))
+
+    def raw_free(ptr):
+        if ptr != base_ptr:
+            raise RuntimeError(f"attempted to free interior split pointer {ptr}")
+        freed.append(ptr)
+
+    monkeypatch.setattr(alloc, "_raw_free", raw_free)
+    monkeypatch.setattr(alloc, "_record_event", lambda stream: object())
+    monkeypatch.setattr(alloc, "_event_complete", lambda event: True)
+    monkeypatch.setattr(alloc, "_sync_device", lambda: None)
+
+    ptr = alloc.malloc(2048, stream="s0")
+    alloc.free(ptr, stream="s0")
+    alloc.synchronize()
+
+    ptr2 = alloc.malloc(512, stream="s1")
+    alloc.free(ptr2, stream="s1")
+    alloc.synchronize()
+    alloc.empty_cache()
+
+    stats = alloc.memory_stats()
+    assert freed == [base_ptr]
+    assert stats["reserved_bytes.all.current"] == 0
+    assert stats["segment.all.current"] == 0
+
+
+def test_empty_cache_frees_only_complete_fast_segments_after_split(monkeypatch):
+    from candle._C._allocator import FastNpuAllocator
+
+    alloc = FastNpuAllocator(0)
+    base_ptr = 4096
+    freed = []
+
+    monkeypatch.setattr(alloc, "_raw_malloc", lambda size: (base_ptr, size))
+
+    def raw_free(ptr):
+        if ptr != base_ptr:
+            raise RuntimeError(f"attempted to free interior split pointer {ptr}")
+        freed.append(ptr)
+
+    monkeypatch.setattr(alloc, "_raw_free", raw_free)
+    monkeypatch.setattr(alloc, "_record_event", lambda stream: object())
+    monkeypatch.setattr(alloc, "_event_complete", lambda event: True)
+    monkeypatch.setattr(alloc, "_sync_device", lambda: None)
+
+    ptr = alloc.malloc(2048, stream="s0")
+    alloc.free(ptr, stream="s0")
+    alloc.synchronize()
+
+    ptr2 = alloc.malloc(512, stream="s1")
+    alloc.free(ptr2, stream="s1")
+    alloc.synchronize()
+    alloc.empty_cache()
+
+    stats = alloc.memory_stats()
+    assert freed == [base_ptr]
+    assert stats["reserved_bytes.all.current"] == 0
+    assert stats["segment.all.current"] == 0
+
+
 def test_npu_memory_stats_api(monkeypatch):
     class DummyAlloc:
         def memory_stats(self):
@@ -315,3 +396,99 @@ def test_oom_retry_increments_stats(monkeypatch):
     assert ptr == 999
     assert alloc._stats["num_ooms"] == 1
     assert alloc._stats["num_alloc_retries"] == 1
+
+
+def test_fast_allocator_empty_cache_resolves_desc_cache_once(monkeypatch):
+    """empty_cache() must not re-resolve the desc-cache singleton per block.
+
+    TensorDescCache is a module-level singleton that never rebinds. Cached blocks
+    keep descriptors valid while memory stays reserved, so descriptor eviction is
+    deferred until empty_cache() actually releases memory to ACL. The allocator
+    must resolve the descriptor cache at most once and clear it once for the
+    empty_cache pass.
+    """
+    from candle._C import _aclnn_ffi
+    from candle._C._allocator import FastNpuAllocator
+
+    real_cache = _aclnn_ffi.get_tensor_desc_cache()
+    resolved = {"count": 0}
+    cleared = {"count": 0}
+
+    class _CountingCache:
+        def clear(self):
+            cleared["count"] += 1
+            real_cache.clear()
+
+    def _counting_get():
+        resolved["count"] += 1
+        return _CountingCache()
+
+    # Patch BEFORE constructing the allocator so an init-time or first-call
+    # resolution is observed either way.
+    monkeypatch.setattr(_aclnn_ffi, "get_tensor_desc_cache", _counting_get)
+
+    alloc = FastNpuAllocator(0)
+    monkeypatch.setattr(alloc, "_raw_malloc", lambda size: (4096, size))
+    monkeypatch.setattr(alloc, "_raw_free", lambda ptr: None)
+    monkeypatch.setattr(alloc, "_sync_device", lambda: None)
+
+    for _ in range(5):
+        ptr = alloc.malloc(512)
+        alloc.free(ptr)
+
+    alloc.empty_cache()
+
+    assert cleared["count"] == 1
+    # Performance contract: the singleton was resolved at most once.
+    assert resolved["count"] <= 1, (
+        f"desc cache resolved {resolved['count']} times across empty_cache; "
+        "expected <= 1 (cached handle)"
+    )
+
+
+def test_npu_temporary_matmul_storage_returns_to_allocator():
+    """Dropping an NPU temporary must release its active allocator block.
+
+    Real eager model blocks create matmul outputs that are immediately consumed
+    by view/reshape and elementwise ops. If those temporaries keep their storage
+    active after the Python Tensor is dropped, reserved NPU memory grows every
+    iteration instead of reusing cached blocks, causing latency spikes and OOM.
+    """
+    import gc
+
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    from candle._backends.npu import allocator
+
+    alloc = allocator.get_allocator(0)
+    x = torch.randn((1, 4, 8), device="npu", dtype=torch.float16)
+    w = torch.randn((8, 16), device="npu", dtype=torch.float16)
+    torch.npu.synchronize()
+    gc.collect()
+
+    before_active = len(alloc._active)
+    before_allocs = alloc.memory_stats()["num_device_alloc"]
+
+    y = torch.matmul(x, w)
+    torch.npu.synchronize()
+    ptr = y.data_ptr()
+    assert ptr in alloc._active
+    assert not y._is_view()
+
+    del y
+    gc.collect()
+    torch.npu.synchronize()
+    gc.collect()
+
+    assert len(alloc._active) == before_active
+
+    z = torch.matmul(x, w)
+    torch.npu.synchronize()
+    try:
+        after_allocs = alloc.memory_stats()["num_device_alloc"]
+        assert z.data_ptr() == ptr
+        assert after_allocs == before_allocs + 1
+    finally:
+        del z
+        gc.collect()

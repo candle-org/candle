@@ -172,11 +172,10 @@ def matmul(a, b, out=None):
             )
 
     storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape_comp), a.dtype, device=a.device)
-    result = _wrap_tensor(storage, out_shape_comp, out_stride)
     if out_shape_comp != user_out_shape:
-        from ...common import view as view_backend
-
-        result = view_backend.reshape(result, user_out_shape)
+        result = _wrap_tensor(storage, user_out_shape, npu_runtime._contiguous_stride(user_out_shape))
+    else:
+        result = _wrap_tensor(storage, out_shape_comp, out_stride)
     # Cast result back to original dtype if we promoted for 310B float32 workaround.
     if _use_soc_fallback("matmul") and orig_dtype != a.dtype:
         result = _cast_tensor_dtype(result, orig_dtype)

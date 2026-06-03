@@ -7,6 +7,7 @@ from ._device import device as Device
 
 _MEMORY_FRACTION = None
 _NPU_INITIALIZED = False
+_GRAPH_CAPTURE_DEPTH = 0
 
 _default_generators = {}  # device_index -> Generator
 _cy_npu_sync = None  # lazy hard-import cache; absence is an error at use-time
@@ -116,24 +117,24 @@ def synchronize(device=None):
         from ._C._npu_ops import cy_npu_synchronize as _sync  # pylint: disable=import-error,no-name-in-module
         _cy_npu_sync = _sync
 
-    from ._backends.npu import runtime as npu_runtime
-    from ._backends.npu import ops_soc
+    if _GRAPH_CAPTURE_DEPTH > 0:
+        from ._backends.npu import runtime as npu_runtime
+        from ._backends.npu import ops_soc
+        version = npu_runtime.cann_discovery.get_cann_version() or (0,)
 
-    version = npu_runtime.cann_discovery.get_cann_version() or (0,)
-
-    # Capture state is defined for the current stream only, so guard the no-arg
-    # synchronize path and avoid probing aclgraph state on unsupported chips or old CANN.
-    if (
-        device is None
-        and is_initialized()
-        and tuple(version) >= (8, 5)
-        and ops_soc.aclgraph_supported()
-        and is_current_stream_capturing()
-    ):
-        runtime = npu_runtime.get_runtime(npu_state.current_device())
-        _set_initialized()
-        runtime.synchronize()
-        return
+        # Capture state is defined for the current stream only, so guard the no-arg
+        # synchronize path and avoid probing aclgraph state on unsupported chips or old CANN.
+        if (
+            device is None
+            and is_initialized()
+            and tuple(version) >= (8, 5)
+            and ops_soc.aclgraph_supported()
+            and is_current_stream_capturing()
+        ):
+            runtime = npu_runtime.get_runtime(npu_state.current_device())
+            _set_initialized()
+            runtime.synchronize()
+            return
 
     # Fast path with explicit, torch-like selector handling.
     if device is None:
@@ -158,6 +159,7 @@ def synchronize(device=None):
 
     # Strings / unusual selectors still go through full normalization semantics.
     dev = _normalize_npu_device(device)
+    from ._backends.npu import runtime as npu_runtime
     runtime = npu_runtime.get_runtime(dev.index or 0)
     _set_initialized()
     runtime.synchronize()
@@ -540,6 +542,7 @@ class NPUGraph:
         self._impl = _NPUGraphImpl()
 
     def capture_begin(self, pool=None, capture_error_mode="global"):
+        global _GRAPH_CAPTURE_DEPTH  # pylint: disable=global-statement
         del pool
         _ensure_initialized()
         if capture_error_mode not in _ERROR_MODE_MAP:
@@ -549,9 +552,15 @@ class NPUGraph:
         mode = _ERROR_MODE_MAP[capture_error_mode]
         s = current_stream()
         self._impl.capture_begin(s._handle, mode)
+        _GRAPH_CAPTURE_DEPTH += 1
 
     def capture_end(self):
-        self._impl.capture_end()
+        global _GRAPH_CAPTURE_DEPTH  # pylint: disable=global-statement
+        try:
+            self._impl.capture_end()
+        finally:
+            if _GRAPH_CAPTURE_DEPTH > 0:
+                _GRAPH_CAPTURE_DEPTH -= 1
 
     def replay(self):
         self._impl.replay_async(self._impl.capture_stream)
@@ -598,6 +607,9 @@ class graph:
         try:
             if exc_type is not None:
                 self._graph._impl.abort()
+                global _GRAPH_CAPTURE_DEPTH  # pylint: disable=global-statement
+                if _GRAPH_CAPTURE_DEPTH > 0:
+                    _GRAPH_CAPTURE_DEPTH -= 1
             else:
                 self._graph.capture_end()
         finally:

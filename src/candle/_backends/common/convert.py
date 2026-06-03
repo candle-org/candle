@@ -127,17 +127,24 @@ def to_device(a, dev, dtype=None, non_blocking=False, copy=False, memory_format=
 
     if a.device.type == "npu" and dev.type == "npu":
         from ..npu import runtime as npu_runtime
+        from ..npu import state as npu_state
 
-        src_runtime = npu_runtime.get_runtime(a.device.index or 0)
-        dst_runtime = npu_runtime.get_runtime(dev.index or 0)
+        src_device = a.device.index or 0
+        dst_device = dev.index or 0
+        npu_runtime.enable_peer_access(src_device, dst_device)
+        npu_runtime.enable_peer_access(dst_device, src_device)
+        src_runtime = npu_runtime.get_runtime(src_device)
+        dst_runtime = npu_runtime.get_runtime(dst_device)
+        src_stream = npu_state.current_stream(src_device)
         src_storage = a.storage()
         nbytes = src_storage.nbytes()
         count = src_storage.size()
         dst_ptr = npu_runtime._alloc_device(nbytes, runtime=dst_runtime)
         npu_runtime.memcpy_d2d(
             dst_ptr, nbytes, src_storage.data_ptr(),
-            runtime=src_runtime, non_blocking=True,
+            runtime=src_runtime, stream=src_stream, non_blocking=True,
         )
+        src_runtime.synchronize_stream(src_stream.stream)
         storage = npu_typed_storage_from_ptr(dst_ptr, count, a.dtype, device=dev)
         return _wrap_like(a, storage)
 

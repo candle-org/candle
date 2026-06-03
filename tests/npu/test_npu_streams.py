@@ -246,32 +246,22 @@ def test_npu_op_uses_current_stream(monkeypatch):
         def storage(self):
             return self._storage
 
-    def fake_alloc(size, runtime=None):
-        return 456
+    # The current NPU add path is the Cython fast path installed in
+    # candle._backends.npu.ops.math. Patch that execution boundary directly;
+    # the package-level ops module no longer exposes npu_runtime/_wrap_tensor.
+    import candle._backends.npu.ops.math as _math_mod
+    if not getattr(_math_mod, "_HAS_FAST_ADD", False):
+        pytest.skip("Cython NPU fast_add unavailable")
 
-    def fake_wrap(storage, shape, stride):
+    import candle._backends.npu.state as npu_state
+
+    def fake_fast_add(a, b):  # pylint: disable=unused-argument
+        dev_idx = a.device.index or 0
+        stream_obj = npu_state.current_stream_fast(dev_idx)
+        seen["stream"] = stream_obj.stream
         return None
 
-    def fake_storage_from_ptr(ptr, size, dtype, device=None):
-        return DummyStorage(ptr, device)
-
-    monkeypatch.setattr(npu_ops.npu_runtime, "_alloc_device", fake_alloc)
-    monkeypatch.setattr(npu_ops, "_wrap_tensor", fake_wrap)
-    monkeypatch.setattr(npu_ops, "npu_typed_storage_from_ptr", fake_storage_from_ptr)
-
-    # fast_add bypasses aclnn.add; patch the module-level reference in math.py
-    import candle._backends.npu.ops.math as _math_mod
-    if getattr(_math_mod, "_HAS_FAST_ADD", False):
-        import candle._backends.npu.state as npu_state
-
-        def fake_fast_add(a, b):  # pylint: disable=unused-argument
-            # Record the stream that would have been used
-            dev_idx = a.device.index or 0
-            stream_obj = npu_state.current_stream_fast(dev_idx)
-            seen["stream"] = stream_obj.stream
-            return None
-
-        monkeypatch.setattr(_math_mod, "_fast_add_impl", fake_fast_add)
+    monkeypatch.setattr(_math_mod, "_fast_add_impl", fake_fast_add)
 
     s = torch.npu.Stream()
     with torch.npu.stream(s):

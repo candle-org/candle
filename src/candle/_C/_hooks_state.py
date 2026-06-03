@@ -9,6 +9,12 @@ import threading
 _STATE = threading.local()
 
 
+def has_saved_hooks():
+    """Return True if saved-tensor hooks are currently active on this thread."""
+    stack = getattr(_STATE, 'hooks', None)
+    return bool(stack)
+
+
 def get_stack():
     """Return (creating if needed) the per-thread hooks stack list."""
     stack = getattr(_STATE, 'hooks', None)

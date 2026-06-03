@@ -168,20 +168,12 @@ _precompute_bump_indices()
 # ---------------------------------------------------------------------------
 
 cdef class FastBlock:
-    cdef public int64_t ptr
-    cdef public int64_t size
-    cdef public int64_t requested
-    cdef public str pool
-    cdef public object stream
-    cdef public object event
-    cdef public set stream_uses
-    cdef public int event_count
-
     def __init__(self, int64_t ptr, int64_t size, int64_t requested,
                  str pool, object stream):
         self.ptr = ptr
         self.size = size
         self.requested = requested
+        self.seg_base = ptr
         self.pool = pool
         self.stream = stream
         self.event = None
@@ -198,17 +190,6 @@ cdef inline int64_t _round_size(int64_t size) nogil:
 
 
 cdef class FastNpuAllocator:
-    cdef public int device_id
-    cdef int64_t _stats_arr[STAT_COUNT + 6]  # +6 for max_split_size and padding
-    cdef public dict _active
-    cdef public dict _cached
-    cdef public list _pending_events
-    cdef public list _event_pool
-    cdef public bint _event_pool_ready
-    cdef public object max_split_size
-    cdef public object gc_threshold
-    cdef dict __dict__  # allow monkey-patching (needed by tests)
-
     def __init__(self, int device_id):
         from candle._backends.npu.allocator import _load_alloc_conf, _parse_max_split_size_mb
         conf = _load_alloc_conf()
@@ -217,12 +198,30 @@ cdef class FastNpuAllocator:
         self.device_id = device_id
         self._active = {}
         self._cached = {"small_pool": [], "large_pool": []}
+        self._segments = {}
         self._pending_events = []
         self._event_pool = []
         self._event_pool_ready = False
+        self._desc_cache = None
         cdef int i
         for i in range(STAT_COUNT + 6):
             self._stats_arr[i] = 0
+
+    cdef inline object _get_desc_cache(self):
+        """Resolve the TensorDescCache singleton once and reuse the handle.
+
+        The descriptor cache is a module-level singleton that never rebinds,
+        so re-importing it on every free() was ~1.6us of pure host overhead
+        per op (paid by every op that releases an input storage). Resolve it
+        lazily on first use and cache the handle thereafter.
+        """
+        if self._desc_cache is None:
+            try:
+                from candle._C._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
+                self._desc_cache = get_tensor_desc_cache()
+            except Exception:  # pylint: disable=broad-except
+                return None
+        return self._desc_cache
 
     cdef inline void _bump_fast(self, str prefix, str pool,
                                  int64_t current, int64_t allocated,
@@ -277,9 +276,12 @@ cdef class FastNpuAllocator:
 
     cdef FastBlock _find_cached(self, int64_t size, str pool):
         cdef list blocks = self._cached[pool]
-        cdef int idx
+        cdef Py_ssize_t idx
         cdef FastBlock block
-        for idx in range(len(blocks)):
+        # Prefer the most recently freed compatible block.  This keeps eager
+        # one-op loops reusing the same output pointer after synchronize(),
+        # which in turn lets pointer-guarded PTA executors hit reliably.
+        for idx in range(len(blocks) - 1, -1, -1):
             block = <FastBlock>blocks[idx]
             if block.size >= size:
                 blocks.pop(idx)
@@ -296,6 +298,7 @@ cdef class FastNpuAllocator:
         cdef int64_t remaining = block.size - size
         block.size = size
         remainder = FastBlock(block.ptr + size, remaining, 0, block.pool, None)
+        remainder.seg_base = block.seg_base
         return block, remainder
 
     def _drain_pending(self):
@@ -424,6 +427,8 @@ cdef class FastNpuAllocator:
             except RuntimeError:
                 ptr = self._oom_retry(allocated)
             block = FastBlock(ptr, allocated, requested, pool, stream)
+            block.seg_base = ptr
+            self._segments[ptr] = allocated
             self._track_alloc(requested, allocated, pool)
         else:
             cached_size = block.size
@@ -440,15 +445,40 @@ cdef class FastNpuAllocator:
         self._active[block.ptr] = block
         return block.ptr
 
+    cpdef int64_t malloc_large_cached(self, int64_t size, object stream=None):
+        """Hot large-pool allocation for exact NPU eager wrappers.
+
+        The small-op fast paths allocate fixed large contiguous outputs. This skips
+        pending-event drain/GC/splitting checks on cached hits while preserving the
+        full malloc path for misses, OOM, small blocks, or non-default cases.
+        """
+        cdef int64_t requested = size
+        cdef int64_t allocated = _round_size(requested)
+        cdef list blocks
+        cdef FastBlock block
+        cdef Py_ssize_t idx
+        if allocated < SMALL_POOL_THRESHOLD:
+            return self.malloc(requested, stream)
+        blocks = self._cached["large_pool"]
+        for idx in range(len(blocks) - 1, -1, -1):
+            block = <FastBlock>blocks[idx]
+            if block.size >= allocated:
+                blocks.pop(idx)
+                self._bump_fast("inactive_split_bytes", "large_pool", -block.size, 0, block.size)
+                self._bump_fast("inactive_split", "large_pool", -1, 0, 1)
+                self._track_reuse(requested, block.size, "large_pool")
+                block.requested = requested
+                block.stream = stream
+                self._active[block.ptr] = block
+                return block.ptr
+        return self.malloc(requested, stream)
+
     cpdef void free(self, int64_t ptr, object stream=None):
-        # Peek at block size before popping, for cache invalidation
-        cdef object block_peek = self._active.get(ptr)
-        if block_peek is not None:
-            try:
-                from candle._C._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
-                get_tensor_desc_cache().invalidate_range(ptr, block_peek.size)
-            except (ImportError, Exception):
-                pass
+        # Return the block to the caching allocator without invalidating tensor
+        # descriptors.  Cached blocks remain reserved device allocations, so ACL
+        # tensor descriptors keyed by (ptr, shape, stride, dtype) remain valid and
+        # can be reused when the same block metadata recurs.  Invalidate only when
+        # memory is returned to the driver in empty_cache().
         block = self._active.pop(ptr, None)
         if block is None:
             return
@@ -462,6 +492,40 @@ cdef class FastNpuAllocator:
             self._bump_fast("inactive_split", block.pool, 1, 1, 0)
             return
         self._insert_events(block)
+
+    cpdef void free_large_cached(self, int64_t ptr, object stream=None):
+        """Hot free for exact NPU eager outputs with no stream uses."""
+        cdef FastBlock block = <FastBlock>self._active.pop(ptr, None)
+        if block is None:
+            return
+        if block.stream_uses:
+            if stream is None:
+                stream = block.stream
+            self._track_free(block)
+            self._insert_events(block)
+            return
+        self._track_free(block)
+        self._cached[block.pool].append(block)
+        self._bump_fast("inactive_split_bytes", block.pool, block.size, block.size, 0)
+        self._bump_fast("inactive_split", block.pool, 1, 1, 0)
+
+    cpdef void free_synchronized(self, int64_t ptr):
+        """Return an active block to the cache after device synchronization.
+
+        The caller has already synchronized the device, so stream events are no
+        longer needed for safety. Descriptor-cache invalidation is deferred until
+        the block is actually released to the driver in empty_cache().
+        """
+        block = self._active.pop(ptr, None)
+        if block is None:
+            return
+        block.stream_uses = set()
+        block.event_count = 0
+        self._track_free(block)
+        self._cached[block.pool].append(block)
+        self._bump_fast("inactive_split_bytes", block.pool,
+                        block.size, block.size, 0)
+        self._bump_fast("inactive_split", block.pool, 1, 1, 0)
 
     def _insert_events(self, block):
         streams = block.stream_uses
@@ -498,7 +562,7 @@ cdef class FastNpuAllocator:
         if frees:
             runtime._deferred_frees = []
             for ptr in frees:
-                self.free(ptr, None)
+                self.free_synchronized(ptr)
 
         raw_frees = runtime._deferred_raw_frees
         if raw_frees:
@@ -525,14 +589,58 @@ cdef class FastNpuAllocator:
             block.stream_uses.add(stream)
 
     def empty_cache(self):
+        cdef object desc_cache = self._get_desc_cache()
+        cdef dict cached_by_segment = {}
+        cdef dict pool_by_segment = {}
+        cdef list releasable = []
+        cdef list survivors
+        cdef list blocks
+        cdef object pool_name
+        cdef FastBlock block
+        cdef int64_t cached_size
+        cdef int64_t seg_size
+        cdef int64_t seg_base
+        cdef bint should_release
+        # Driver frees require that no queued work can still reference cached
+        # blocks.  The allocator may move blocks into _cached immediately on the
+        # same stream so eager pipelines can reuse them, so synchronize before
+        # actually returning cached memory to ACL.
+        self._sync_device()
+        self._stats_arr[IDX_NUM_SYNC_ALL_STREAMS] += 1
+        if desc_cache is not None:
+            try:
+                desc_cache.clear()
+            except Exception:  # pylint: disable=broad-except
+                pass
         for pool_name, blocks in self._cached.items():
             for block in blocks:
-                self._raw_free(block.ptr)
-                self._bump_fast("reserved_bytes", block.pool, -block.size, 0, block.size)
-                self._bump_fast("segment", block.pool, -1, 0, 1)
-                self._bump_fast("inactive_split_bytes", block.pool, -block.size, 0, block.size)
-                self._bump_fast("inactive_split", block.pool, -1, 0, 1)
-            blocks.clear()
+                cached_by_segment[block.seg_base] = cached_by_segment.get(block.seg_base, 0) + block.size
+                pool_by_segment.setdefault(block.seg_base, block.pool)
+        for seg_base, cached_size in cached_by_segment.items():
+            seg_size = self._segments.get(seg_base, 0)
+            if seg_size <= 0:
+                # Blocks injected by tests or created before segment tracking have
+                # no recorded segment size.  They were not split by this allocator
+                # instance, so preserve the historical whole-block release behavior.
+                seg_size = cached_size
+            if cached_size == seg_size:
+                releasable.append(seg_base)
+        releasable_set = set(releasable)
+        for pool_name, blocks in self._cached.items():
+            survivors = []
+            for block in blocks:
+                should_release = block.seg_base in releasable_set
+                if should_release:
+                    self._bump_fast("reserved_bytes", block.pool, -block.size, 0, block.size)
+                    self._bump_fast("inactive_split_bytes", block.pool, -block.size, 0, block.size)
+                    self._bump_fast("inactive_split", block.pool, -1, 0, 1)
+                else:
+                    survivors.append(block)
+            blocks[:] = survivors
+        for seg_base in releasable:
+            self._raw_free(seg_base)
+            self._bump_fast("segment", pool_by_segment[seg_base], -1, 0, 1)
+            self._segments.pop(seg_base, None)
 
     def reset_peak_memory_stats(self):
         cdef int i

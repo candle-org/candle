@@ -357,9 +357,28 @@ cdef class _GraphTask:
             if tensor.grad_fn is None or getattr(tensor, "_retain_grad", False):
                 if tensor.grad is None:
                     if tensor.grad_fn is None:
-                        stored_grad = grad.clone()
-                        stored_grad.requires_grad = False
-                        tensor.grad = stored_grad
+                        if (
+                            not self.create_graph
+                            and getattr(grad, "_candle_npu_owned_backward_grad", False)
+                            and not getattr(tensor, "_backward_hooks", None)
+                            and (
+                                acc_node is None
+                                or (
+                                    not getattr(acc_node, "_hooks", None)
+                                    and not getattr(acc_node, "_prehooks", None)
+                                )
+                            )
+                        ):
+                            try:
+                                delattr(grad, "_candle_npu_owned_backward_grad")
+                            except Exception:
+                                pass
+                            grad.requires_grad = False
+                            tensor.grad = grad
+                        else:
+                            stored_grad = grad.clone()
+                            stored_grad.requires_grad = False
+                            tensor.grad = stored_grad
                     else:
                         tensor.grad = grad
                 else:
@@ -410,6 +429,7 @@ cdef class _GraphTask:
         cdef object next_fn
         cdef object _output_nr
         cdef bint should_visit
+        cdef bint defer_duplicate_leaf_clone
 
         while self.ready:
             node = self.ready.popleft()
@@ -455,7 +475,31 @@ cdef class _GraphTask:
                 if g is None:
                     continue
                 if grad_counts is not None and grad_counts.get(id(g), 0) > 1:
-                    g = g.clone()
+                    # A node that returns the SAME grad object for multiple inputs
+                    # (e.g. AddBackward → (grad, grad)) needs each consumer to own
+                    # its grad so downstream in-place accumulation can't corrupt a
+                    # sibling. But a plain leaf (no grad_fn, no retain_grad) is
+                    # about to store ``grad.clone()`` into ``.grad`` itself and
+                    # never mutates the shared object, so the eager clone here is
+                    # redundant work — defer it to the leaf store. This halves the
+                    # device copies for add/mul-style backward on NPU/CUDA.
+                    defer_duplicate_leaf_clone = (
+                        (next_fn is None or next_fn not in self.dependencies)
+                        and isinstance(t, Tensor)
+                        and t.grad_fn is None
+                        and not getattr(t, "_retain_grad", False)
+                        and not getattr(t, "_backward_hooks", None)
+                        and (
+                            getattr(t, "_accumulate_grad_node", None) is None
+                            or (
+                                not getattr(getattr(t, "_accumulate_grad_node", None), "_hooks", None)
+                                and not getattr(getattr(t, "_accumulate_grad_node", None), "_prehooks", None)
+                            )
+                        )
+                        and (self.inputs is None or id(t) in self.input_ids)
+                    )
+                    if not defer_duplicate_leaf_clone:
+                        g = g.clone()
                 should_visit = (
                     self.inputs is None or next_fn is not None or id(t) in self.input_ids
                 )

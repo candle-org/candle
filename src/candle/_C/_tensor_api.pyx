@@ -8,6 +8,10 @@ while preserving the existing Python fallback behavior in ``candle._tensor``.
 
 import numpy as np
 
+from libc.stdint cimport uintptr_t, uint64_t
+from candle._C._tensor_impl cimport TensorImpl
+from candle._C._aclrt_ffi cimport memcpy_d2d as _cy_memcpy_d2d
+
 
 def _bf16_to_f32_local(arr):
     u32 = arr.astype(np.uint32) << 16
@@ -60,6 +64,10 @@ cdef object _pinned_cpu_typed_storage_from_numpy_fn = None
 cdef object _npu_available_fn = None
 cdef object _to_device_fn = None
 cdef object _is_profiler_enabled_fn = None
+cdef object _npu_get_runtime_fast_fn = None
+cdef object _npu_current_stream_fast_fn = None
+cdef object _npu_get_allocator_fn = None
+cdef object _npu_typed_storage_from_ptr_fn = None
 
 
 cdef inline void _ensure_base():
@@ -165,11 +173,22 @@ cdef inline void _ensure_grad_mode_ref():
 
 cdef inline void _ensure_clone_fast_refs():
     global _to_device_fn, _is_profiler_enabled_fn
+    global _npu_get_runtime_fast_fn, _npu_current_stream_fast_fn
+    global _npu_get_allocator_fn, _npu_typed_storage_from_ptr_fn
     if _to_device_fn is None:
         from candle._backends.common.convert import to_device
         from candle.profiler.profiler import is_profiler_enabled
         _to_device_fn = to_device
         _is_profiler_enabled_fn = is_profiler_enabled
+    if _npu_get_runtime_fast_fn is None:
+        from candle._backends.npu.runtime import get_runtime_fast
+        from candle._backends.npu.state import current_stream_fast
+        from candle._backends.npu.allocator import get_allocator
+        from candle._C import npu_typed_storage_from_ptr
+        _npu_get_runtime_fast_fn = get_runtime_fast
+        _npu_current_stream_fast_fn = current_stream_fast
+        _npu_get_allocator_fn = get_allocator
+        _npu_typed_storage_from_ptr_fn = npu_typed_storage_from_ptr
 
 
 cdef inline void _validate_as_strided_args(tuple size, tuple stride, Py_ssize_t storage_offset):
@@ -487,21 +506,43 @@ def tensor_clone(self, *, memory_format=None):
     cdef object out
     cdef object _cl
     cdef object dev
+    cdef TensorImpl src_impl
+    cdef object runtime
+    cdef object stream
+    cdef object storage
+    cdef uintptr_t src_ptr
+    cdef uintptr_t dst_ptr
+    cdef uint64_t nbytes
 
     _ensure_functional_refs()
+    _ensure_base()
 
-    # Fast path: NPU same-device clone with no memory_format, no autograd
-    # tracking required, no profiler — bypass dispatch entirely.
-    # When self.requires_grad is False, no autograd metadata needs to attach
-    # regardless of grad_mode, so we only need to gate on the profiler and
-    # layout (channels_last requires the existing relayout branch).
-    if memory_format is None and not self.requires_grad:
-        dev = self.device
-        if dev.type == "npu":
+    # Fast path: same-device NPU clone with no memory_format/profiler relayout.
+    # This covers autograd leaf-grad accumulation too: clone must preserve the
+    # source requires_grad flag, but it does not need to attach a grad_fn.
+    if memory_format is None and type(self) is _BaseTensor:
+        src_impl = <TensorImpl>self
+        if src_impl._device_type == 1:
             _ensure_clone_fast_refs()
             if (not _is_profiler_enabled_fn()
-                    and not _is_channels_last_stride_tuple(self.shape, self.stride)):
-                return _to_device_fn(self, dev, copy=True)
+                    and not _is_channels_last_stride_tuple(src_impl._shape_tuple, src_impl._stride_tuple)):
+                runtime = _npu_get_runtime_fast_fn(src_impl._device_index)
+                stream = _npu_current_stream_fast_fn(src_impl._device_index)
+                nbytes = <uint64_t>(src_impl._c_numel * src_impl._itemsize)
+                dst_ptr = <uintptr_t>_npu_get_allocator_fn(src_impl._device_index).malloc(
+                    nbytes, stream=stream.stream)
+                src_ptr = <uintptr_t>src_impl._storage._untyped._device_ptr
+                _cy_memcpy_d2d(dst_ptr, nbytes, src_ptr, <uintptr_t>int(stream.stream), True)
+                storage = _npu_typed_storage_from_ptr_fn(
+                    dst_ptr, src_impl._c_numel, src_impl._dtype_obj, device=src_impl._device_obj)
+                _ensure_tensor_factory_ref()
+                return _cy_make_tensor_from_storage_fn(
+                    storage,
+                    src_impl._shape_tuple,
+                    src_impl._stride_tuple,
+                    src_impl._c_offset,
+                    src_impl.requires_grad,
+                )
 
     memory_format = _normalize_memory_format(memory_format)
     fmt_name = _memory_format_name(memory_format)

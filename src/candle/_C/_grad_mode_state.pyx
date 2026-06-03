@@ -6,8 +6,12 @@ import threading
 _STATE = threading.local()
 
 
-def get_enabled():
+cpdef bint get_enabled_fast():
     return getattr(_STATE, "enabled", True)
+
+
+def get_enabled():
+    return get_enabled_fast()
 
 
 def set_enabled(value):

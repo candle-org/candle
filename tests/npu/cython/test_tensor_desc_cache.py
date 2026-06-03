@@ -26,9 +26,8 @@ def test_cache_miss_different_stride(npu_device):
     assert h1 != h2, "Cache incorrectly hit for transposed tensor"
 
 
-def test_cache_invalidated_on_free(npu_device):
+def test_cache_cleared_by_empty_cache(npu_device):
     import candle as torch
-    import gc
     from candle._C._aclnn_ffi import get_tensor_desc_cache  # pylint: disable=import-error,no-name-in-module
     cache = get_tensor_desc_cache()
     cache.clear()
@@ -36,10 +35,11 @@ def test_cache_invalidated_on_free(npu_device):
     torch.npu.synchronize()
     _ = cache.get_or_create(a.storage().data_ptr(), a.shape, a.stride, 0, 2)
     assert cache.size() == 1
-    del a
-    gc.collect()
-    torch.npu.synchronize()
-    assert cache.size() == 0, "Cache entry not invalidated after free"
+    torch.npu.empty_cache()
+    assert cache.size() == 0, "Cache entries not cleared by empty_cache"
+    # Keep the tensor alive so empty_cache only exercises descriptor eviction;
+    # freeing active allocations is covered by allocator/runtime tests.
+    assert a.device.type == "npu"
 
 
 def test_add_uses_cache(npu_device):

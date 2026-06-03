@@ -275,7 +275,7 @@ def _py_matmul_wrapper(*args, **kwargs):
 add = _add_impl
 transpose = _transpose_impl
 reshape = _reshape_impl
-mul = _py_mul
+mul = _mul_impl
 matmul = _matmul_impl
 
 

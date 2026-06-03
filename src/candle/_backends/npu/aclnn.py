@@ -4363,7 +4363,7 @@ def _destroy_deferred_executor(executor):
 
 
 def _cleanup_aclnn():
-    global _ACLNN_FINALIZED, _DEFERRED_EXECUTORS
+    global _ACLNN_FINALIZED
     if _ACLNN_FINALIZED:
         return
     for executor in _DEFERRED_EXECUTORS:
@@ -4371,8 +4371,9 @@ def _cleanup_aclnn():
             _destroy_deferred_executor(executor)
         except Exception:
             pass
-    _DEFERRED_EXECUTORS = []
+    _DEFERRED_EXECUTORS.clear()
     _ACLNN_FINALIZED = True
+
 
 
 def _defer_executor(executor, cleanup=None):
@@ -4395,11 +4396,10 @@ def flush_deferred_executors():
     the executor list grows unboundedly and eventually causes
     aclnnMatmulGetWorkspaceSize (and other ops) to fail with 561103.
     """
-    global _DEFERRED_EXECUTORS  # pylint: disable=global-statement
     if not _DEFERRED_EXECUTORS:
         return
-    executors = _DEFERRED_EXECUTORS
-    _DEFERRED_EXECUTORS = []
+    executors = list(_DEFERRED_EXECUTORS)
+    _DEFERRED_EXECUTORS.clear()
     for executor in executors:
         try:
             _destroy_deferred_executor(executor)
