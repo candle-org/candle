@@ -80,7 +80,7 @@ cdef class TensorImpl:
         cdef int i
         for i in range(n):
             self._c_stride[i] = <int64_t>stride[i]
-        self._stride_tuple = _StrideTuple(stride)
+        self._stride_tuple = stride
 
     cdef inline void _set_device_from_obj(self, object dev):
         """Cache device object and extract type_code/index, compute dispatch keys."""
@@ -618,6 +618,17 @@ cdef class TensorImpl:
 # Module-level tensor factory functions
 # -------------------------------------------------------------------
 
+cdef object _Tensor_cls = None
+
+
+cdef inline object _get_tensor_cls():
+    global _Tensor_cls
+    if _Tensor_cls is None:
+        from candle._tensor import Tensor
+        _Tensor_cls = Tensor
+    return _Tensor_cls
+
+
 cpdef void cy_init_tensor_fields(
     TensorImpl t,
     object storage,
@@ -649,6 +660,7 @@ cpdef void cy_init_tensor_fields(
     t._pending = pending
     t._retain_grad = retain_grad
     t._backward_hooks = backward_hooks
+    t._accumulate_grad_node = None
     t._version_value = version_value
     t._vc_proxy = vc_proxy
     t._output_nr = 0
@@ -669,8 +681,7 @@ cpdef object cy_make_tensor_from_storage(
     int64_t offset=0,
     bint requires_grad=False,
 ):
-    from candle._tensor import Tensor
-
+    cdef object Tensor = _get_tensor_cls()
     cdef TensorImpl t = Tensor.__new__(Tensor)
     cy_init_tensor_fields(
         t,
@@ -692,6 +703,49 @@ cpdef object cy_make_tensor_from_storage(
     return t
 
 
+cpdef object cy_make_tensor_from_storage_trusted(
+    object storage,
+    tuple shape,
+    object stride,
+    int64_t offset,
+    object device,
+    int device_type,
+    int device_index,
+    object dtype,
+    int dtype_code,
+    int itemsize,
+):
+    """Create a Tensor when runtime truth is already known by the caller."""
+    cdef object Tensor = _get_tensor_cls()
+    cdef TensorImpl t = Tensor.__new__(Tensor)
+    t._storage = storage
+    t._set_shape(shape)
+    t._set_stride(stride)
+    t._c_offset = offset
+    t.requires_grad = False
+    t.grad = None
+    t.grad_fn = None
+    t._base = None
+    t._view_meta = None
+    t._view_func = None
+    t._rev_view_func = None
+    t._pending = False
+    t._retain_grad = False
+    t._backward_hooks = None
+    t._accumulate_grad_node = None
+    t._version_value = 0
+    t._vc_proxy = None
+    t._output_nr = 0
+    t._device_obj = device
+    t._device_type = device_type
+    t._device_index = device_index
+    t._dtype_obj = dtype
+    t._dtype_code = dtype_code
+    t._itemsize = itemsize
+    t._recompute_dispatch_keys()
+    return t
+
+
 cpdef object cy_make_view_tensor(
     object base,
     object storage,
@@ -699,8 +753,7 @@ cpdef object cy_make_view_tensor(
     object stride,
     int64_t offset=0,
 ):
-    from candle._tensor import Tensor
-
+    cdef object Tensor = _get_tensor_cls()
     cdef TensorImpl b = <TensorImpl>base
     cdef object root = b._base if b._base is not None else base
     cdef TensorImpl t = Tensor.__new__(Tensor)

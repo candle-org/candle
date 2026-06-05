@@ -26,6 +26,21 @@ def _allclose(t, expected, atol=1e-5):
         assert abs(x - y) <= atol, f"index {i}: {x} vs {y} (atol={atol})"
 
 
+def test_numpy_bfloat16_decodes_storage_bits_cpu():
+    x = torch.tensor([1.0, 2.0], dtype=torch.float32).to(torch.bfloat16)
+
+    assert x.numpy().tolist() == [1.0, 2.0]
+
+
+def test_ones_like_bfloat16_stores_numeric_values_cpu():
+    x = torch.tensor([1.0, 2.0], dtype=torch.float32).to(torch.bfloat16)
+
+    ones = x._ones_like()
+
+    assert ones.dtype == torch.bfloat16
+    assert ones.to(torch.float32).tolist() == [1.0, 1.0]
+
+
 # ===========================================================================
 # 1. __add__
 # ===========================================================================

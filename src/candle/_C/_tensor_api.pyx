@@ -8,14 +8,23 @@ while preserving the existing Python fallback behavior in ``candle._tensor``.
 
 import numpy as np
 
+from libc.stdint cimport uintptr_t, uint64_t
+from candle._C._tensor_impl cimport TensorImpl
+from candle._C._aclrt_ffi cimport memcpy_d2d as _cy_memcpy_d2d
+from candle._C._autograd_node cimport Node as _CyAutogradNode
+from candle._C._grad_mode_state cimport get_enabled_fast as _grad_enabled_fast
+from candle._C._npu_ops cimport fast_sum as _cy_fast_npu_sum
+
 
 def _bf16_to_f32_local(arr):
-    u32 = arr.astype(np.uint32) << 16
+    u32 = (arr.astype(np.uint32) << np.uint32(16)).astype(np.uint32, copy=False)
+    if u32.ndim == 0:
+        return u32.reshape(1).view(np.float32).reshape(())
     return u32.view(np.float32)
 
 
 def _f32_to_bf16_local(arr):
-    u32 = arr.view(np.uint32)
+    u32 = arr.astype(np.float32, copy=False).view(np.uint32)
     rounding_bias = (u32 >> 16) & 1
     u32 = u32 + 0x7FFF + rounding_bias
     return (u32 >> 16).astype(np.uint16)
@@ -60,6 +69,12 @@ cdef object _pinned_cpu_typed_storage_from_numpy_fn = None
 cdef object _npu_available_fn = None
 cdef object _to_device_fn = None
 cdef object _is_profiler_enabled_fn = None
+cdef object _npu_get_runtime_fast_fn = None
+cdef object _npu_current_stream_fast_fn = None
+cdef object _npu_get_allocator_fn = None
+cdef object _npu_typed_storage_from_ptr_fn = None
+cdef object _is_functionalize_fn = None
+cdef object _is_autocast_enabled_fn = None
 
 
 cdef inline void _ensure_base():
@@ -67,6 +82,26 @@ cdef inline void _ensure_base():
     if _BaseTensor is None:
         from candle._tensor import Tensor
         _BaseTensor = Tensor
+
+
+cdef inline bint _class_overrides_torch_function(object cls):
+    cdef object base
+    _ensure_base()
+    for base in cls.__mro__:
+        if base is _BaseTensor:
+            return False
+        if "__torch_function__" in getattr(base, "__dict__", {}):
+            return True
+    return True
+
+
+cdef inline bint _is_tensor_without_torch_function_override(object val):
+    _ensure_base()
+    if not isinstance(val, _BaseTensor):
+        return False
+    if type(val) is _BaseTensor:
+        return True
+    return not _class_overrides_torch_function(type(val))
 
 
 cdef inline void _ensure_device_ref():
@@ -165,11 +200,38 @@ cdef inline void _ensure_grad_mode_ref():
 
 cdef inline void _ensure_clone_fast_refs():
     global _to_device_fn, _is_profiler_enabled_fn
+    global _npu_get_runtime_fast_fn, _npu_current_stream_fast_fn
+    global _npu_get_allocator_fn, _npu_typed_storage_from_ptr_fn
     if _to_device_fn is None:
         from candle._backends.common.convert import to_device
         from candle.profiler.profiler import is_profiler_enabled
         _to_device_fn = to_device
         _is_profiler_enabled_fn = is_profiler_enabled
+    if _npu_get_runtime_fast_fn is None:
+        from candle._backends.npu.runtime import get_runtime_fast
+        from candle._backends.npu.state import current_stream_fast
+        from candle._backends.npu.allocator import get_allocator
+        from candle._C import npu_typed_storage_from_ptr
+        _npu_get_runtime_fast_fn = get_runtime_fast
+        _npu_current_stream_fast_fn = current_stream_fast
+        _npu_get_allocator_fn = get_allocator
+        _npu_typed_storage_from_ptr_fn = npu_typed_storage_from_ptr
+
+
+cdef inline void _ensure_npu_sum_guard_refs():
+    global _is_profiler_enabled_fn, _current_pipeline_fn, _is_functionalize_fn, _is_autocast_enabled_fn
+    if _is_profiler_enabled_fn is None:
+        from candle.profiler.profiler import is_profiler_enabled
+        _is_profiler_enabled_fn = is_profiler_enabled
+    if _current_pipeline_fn is None:
+        from candle._dispatch.pipeline import current_pipeline
+        _current_pipeline_fn = current_pipeline
+    if _is_functionalize_fn is None:
+        from candle._dispatch.functionalize import is_functionalize_enabled
+        _is_functionalize_fn = is_functionalize_enabled
+    if _is_autocast_enabled_fn is None:
+        from candle.amp.state import is_autocast_enabled
+        _is_autocast_enabled_fn = is_autocast_enabled
 
 
 cdef inline void _validate_as_strided_args(tuple size, tuple stride, Py_ssize_t storage_offset):
@@ -487,21 +549,43 @@ def tensor_clone(self, *, memory_format=None):
     cdef object out
     cdef object _cl
     cdef object dev
+    cdef TensorImpl src_impl
+    cdef object runtime
+    cdef object stream
+    cdef object storage
+    cdef uintptr_t src_ptr
+    cdef uintptr_t dst_ptr
+    cdef uint64_t nbytes
 
     _ensure_functional_refs()
+    _ensure_base()
 
-    # Fast path: NPU same-device clone with no memory_format, no autograd
-    # tracking required, no profiler — bypass dispatch entirely.
-    # When self.requires_grad is False, no autograd metadata needs to attach
-    # regardless of grad_mode, so we only need to gate on the profiler and
-    # layout (channels_last requires the existing relayout branch).
-    if memory_format is None and not self.requires_grad:
-        dev = self.device
-        if dev.type == "npu":
+    # Fast path: same-device NPU clone with no memory_format/profiler relayout.
+    # This covers autograd leaf-grad accumulation too: clone must preserve the
+    # source requires_grad flag, but it does not need to attach a grad_fn.
+    if memory_format is None and type(self) is _BaseTensor:
+        src_impl = <TensorImpl>self
+        if src_impl._device_type == 1:
             _ensure_clone_fast_refs()
             if (not _is_profiler_enabled_fn()
-                    and not _is_channels_last_stride_tuple(self.shape, self.stride)):
-                return _to_device_fn(self, dev, copy=True)
+                    and not _is_channels_last_stride_tuple(src_impl._shape_tuple, src_impl._stride_tuple)):
+                runtime = _npu_get_runtime_fast_fn(src_impl._device_index)
+                stream = _npu_current_stream_fast_fn(src_impl._device_index)
+                nbytes = <uint64_t>(src_impl._c_numel * src_impl._itemsize)
+                dst_ptr = <uintptr_t>_npu_get_allocator_fn(src_impl._device_index).malloc(
+                    nbytes, stream=stream.stream)
+                src_ptr = <uintptr_t>src_impl._storage._untyped._device_ptr
+                _cy_memcpy_d2d(dst_ptr, nbytes, src_ptr, <uintptr_t>int(stream.stream), True)
+                storage = _npu_typed_storage_from_ptr_fn(
+                    dst_ptr, src_impl._c_numel, src_impl._dtype_obj, device=src_impl._device_obj)
+                _ensure_tensor_factory_ref()
+                return _cy_make_tensor_from_storage_fn(
+                    storage,
+                    src_impl._shape_tuple,
+                    src_impl._stride_tuple,
+                    src_impl._c_offset,
+                    src_impl.requires_grad,
+                )
 
     memory_format = _normalize_memory_format(memory_format)
     fmt_name = _memory_format_name(memory_format)
@@ -609,13 +693,10 @@ def tensor_to(self, *args, **kwargs):
         if target_device.type not in ("cpu", "meta"):
             raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
 
-    if dtype is not None and dtype != self.dtype:
-        result = result._to_dtype(dtype)
-
-    if device is not None:
+    if (dtype is not None and dtype != self.dtype) or device is not None:
         result = _to_dispatch_fn(
             result,
-            device,
+            target_device,
             dtype=dtype,
             non_blocking=non_blocking,
             copy=copy,
@@ -710,6 +791,62 @@ def tensor_flatten(self, start_dim=0, end_dim=-1):
     return v
 
 
+cdef inline object _mark_npu_owned_backward_grad(object grad):
+    if grad is not None:
+        try:
+            grad._candle_npu_owned_backward_grad = True
+        except Exception:
+            pass
+    return grad
+
+
+cdef class _NpuTransposeIntBackward(_CyAutogradNode):
+    cdef public object _self
+    cdef public object _dim0
+    cdef public object _dim1
+
+    cdef void _init_fast(self, object self_, object dim0, object dim1):
+        self.inputs = (self_,)
+        self._saved_tensors_list = []
+        self._saved_fields = {}
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "TransposeIntBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = None
+        self._self = self_
+        self._dim0 = dim0
+        self._dim1 = dim1
+
+    def __init__(self, self_, dim0, dim1):
+        self._init_fast(self_, dim0, dim1)
+
+    def backward(self, grad):
+        cdef object result
+        try:
+            from candle._C._autograd_engine import is_create_graph_enabled
+            if is_create_graph_enabled():
+                _ensure_dispatch_ref()
+                return (_dispatch_fn("transpose", grad.device.type, grad, self._dim0, self._dim1),)
+        except ImportError:
+            pass
+        result = grad.cy_transpose(self._dim0, self._dim1)
+        if getattr(grad, "_candle_npu_owned_backward_grad", False):
+            result = _mark_npu_owned_backward_grad(result)
+        return (result,)
+
+
+cdef inline object _attach_transpose_int_grad(object result, object self_, object dim0, object dim1):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuTransposeIntBackward grad_fn = _NpuTransposeIntBackward.__new__(_NpuTransposeIntBackward)
+    grad_fn._init_fast(self_, dim0, dim1)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
 def tensor_reshape(self, *shape):
     if not shape:
         raise TypeError("reshape() missing shape arguments")
@@ -726,6 +863,10 @@ def tensor_transpose(self, dim0, dim1):
     cdef object v
 
     if self.requires_grad:
+        if _is_tensor_without_torch_function_override(self) and (<TensorImpl>self)._device_type == 1:
+            v = self.cy_transpose(dim0, dim1)
+            v = _annotate_transpose_view(self, v)
+            return _attach_transpose_int_grad(v, self, dim0, dim1)
         from candle._dispatch import dispatch
         return dispatch("transpose", self.device.type, self, dim0, dim1)
     v = self.cy_transpose(dim0, dim1)
@@ -1544,12 +1685,17 @@ def tensor_numpy_view(self):
 
 
 def tensor_numpy(self):
+    cdef object arr
     _flush_pending(self)
     if self.device.type == "meta":
         raise RuntimeError("meta tensor has no data")
     if self.device.type != "cpu":
         raise RuntimeError("numpy() is only available for CPU tensors")
-    return self._numpy_view()
+    arr = self._numpy_view()
+    _ensure_conversion_refs()
+    if self.dtype == _bfloat16_dtype:
+        return _bf16_to_f32_fn(arr)
+    return arr
 
 
 def tensor_pin_memory(self):
@@ -1605,13 +1751,16 @@ def tensor_ones_like(self):
     if self.device.type == "meta":
         storage = _meta_typed_storage_from_shape_fn(self.shape, self.dtype, device=self.device)
         return _cy_make_tensor_from_storage_fn(storage, self.shape, self.stride, 0, False)
-    arr = np.ones(self.shape, dtype=_to_numpy_dtype_fn(self.dtype))
-    storage = _typed_storage_from_numpy_fn(arr, self.dtype, device=self.device if self.device.type == "cpu" else None)
-    stride = tuple(np.array(arr.strides) // arr.itemsize)
-    tensor = _cy_make_tensor_from_storage_fn(storage, arr.shape, stride, 0, False)
     if self.device.type != "cpu":
-        return tensor.to(self.device)
-    return tensor
+        from candle._creation import ones
+        return ones(self.shape, dtype=self.dtype, device=self.device)
+    if self.dtype == _bfloat16_dtype:
+        arr = _f32_to_bf16_fn(np.ones(self.shape, dtype=np.float32))
+    else:
+        arr = np.ones(self.shape, dtype=_to_numpy_dtype_fn(self.dtype))
+    storage = _typed_storage_from_numpy_fn(arr, self.dtype, device=self.device)
+    stride = tuple(np.array(arr.strides) // arr.itemsize)
+    return _cy_make_tensor_from_storage_fn(storage, arr.shape, stride, 0, False)
 
 
 def tensor_new_ones(self, size, *, dtype=None, device=None, requires_grad=False, memory_format=None):
@@ -2654,6 +2803,53 @@ def tensor_xor(self, other):
 
 # ── reduction ops ─────────────────────────────────────────────────────────────
 
+
+cdef class _NpuSumBackward(_CyAutogradNode):
+    cdef public object _self
+    cdef public object _self_shape
+    cdef public object _dtype
+
+    cdef void _init_fast(self, object self_):
+        self.inputs = (self_,)
+        self._saved_tensors_list = []
+        self._saved_fields = {}
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "SumBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = None
+        self._self = self_
+        self._self_shape = (<TensorImpl>self_)._shape_tuple
+        self._dtype = None
+
+    def __init__(self, self_):
+        self._init_fast(self_)
+
+    def backward(self, grad):
+        cdef object target_shape
+        cdef object grad_shape
+        cdef object out_stride
+        cdef object result
+        if not getattr(self._self, "requires_grad", False):
+            return (None,)
+        target_shape = self._self_shape
+        grad_shape = tuple(grad.shape)
+        if grad_shape == target_shape:
+            return (grad,)
+        try:
+            from candle._C._autograd_engine import is_create_graph_enabled
+            if is_create_graph_enabled():
+                _ensure_dispatch_ref()
+                return (_dispatch_fn("expand", grad.device.type, grad, target_shape),)
+        except ImportError:
+            pass
+        out_stride = tuple(0 for _ in target_shape)
+        result = grad.cy_as_strided(target_shape, out_stride, grad.offset)
+        return (result,)
+
+
 def tensor_all_method(self, dim=None, keepdim=False):
     _ensure_dispatch_ref()
     return _dispatch_fn("all", self.device.type, self, dim=dim, keepdim=keepdim)
@@ -2664,7 +2860,63 @@ def tensor_any_method(self, dim=None, keepdim=False):
     return _dispatch_fn("any", self.device.type, self, dim=dim, keepdim=keepdim)
 
 
+cdef inline bint _can_use_npu_sum_fast_path(object self, object dtype):
+    _ensure_base()
+    if dtype is not None:
+        return False
+    if type(self) is not _BaseTensor:
+        return False
+    if (<TensorImpl>self)._device_type != 1:
+        return False
+    _ensure_npu_sum_guard_refs()
+    if _is_profiler_enabled_fn():
+        return False
+    if _current_pipeline_fn() is not None:
+        return False
+    if _is_functionalize_fn():
+        return False
+    if _is_autocast_enabled_fn("npu"):
+        return False
+    return True
+
+
+cdef inline object _attach_npu_sum_grad(object result, object self_, object dim, bint keepdim):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef object grad_fn
+    cdef _NpuSumBackward sum_grad_fn
+    if dim is None:
+        sum_grad_fn = _NpuSumBackward.__new__(_NpuSumBackward)
+        sum_grad_fn._init_fast(self_)
+        grad_fn = sum_grad_fn
+    else:
+        from candle._dispatch.dispatcher import current_dispatch_keyset
+        from candle._backends.autograd import _strip_autograd_keys
+        from candle.autograd.anomaly_mode import annotate_node_creation
+        from candle._generated import functions as _F
+        active_keyset = current_dispatch_keyset()
+        raw_keyset = _strip_autograd_keys(active_keyset)
+        grad_fn = _F.SumDimIntListBackward0((self_,), raw_keyset=raw_keyset, active_keyset=active_keyset)
+        annotate_node_creation(grad_fn)
+        grad_fn._save(self_=self_)
+        grad_fn._dim = dim
+        grad_fn._keepdim = keepdim
+        grad_fn._dtype = None
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
 def tensor_sum_method(self, dim=None, keepdim=False, *, dtype=None):
+    cdef object result
+    if _can_use_npu_sum_fast_path(self, dtype):
+        try:
+            result = _cy_fast_npu_sum(self, dim, keepdim)
+        except ValueError:
+            result = None
+        if result is not None:
+            if _grad_enabled_fast() and (<TensorImpl>self).requires_grad:
+                return _attach_npu_sum_grad(result, self, dim, keepdim)
+            return result
     _ensure_dispatch_ref()
     if dtype is not None:
         return _dispatch_fn("sum", self.device.type, self, dim=dim, keepdim=keepdim, dtype=dtype)

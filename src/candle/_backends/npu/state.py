@@ -105,3 +105,9 @@ def current_stream_fast(device_id=0):
 def set_current_stream(stream):
     state = _state()
     state.current_streams[stream.device.index or 0] = stream
+    try:
+        from candle._C import _npu_ops  # pylint: disable=import-error,no-name-in-module
+        if (stream.device.index or 0) == 0:
+            _npu_ops.invalidate_stream_cache_dev0()
+    except Exception:  # pylint: disable=broad-except
+        pass

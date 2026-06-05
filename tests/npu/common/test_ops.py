@@ -397,10 +397,10 @@ def test_npu_elementwise_batch2(dtype):
     assert np.allclose(torch.addcmul(x, x, y).to("cpu").numpy(), (base + base * base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
     assert np.allclose(torch.addcdiv(x, x, y).to("cpu").numpy(), (base + base / base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
 
-    # NOTE: repeated 910B native sequence instability for maximum/where/logaddexp is
-    # reproduced in real torch_npu on the same host. Keep single-call semantic checks
-    # here, but avoid turning this common correctness test into a stronger stability
-    # guarantee than upstream currently provides on 910B.
+    # CANN 8.5.0 had a repeated 910B native sequence instability around
+    # maximum/where/logaddexp, but CANN 9.0.0 torch_npu is stable across the
+    # same boundary. Keep these common checks as single-call semantic guards;
+    # the 910B watchlist covers repeated stability.
     assert np.allclose(torch.logaddexp(x, y).to("cpu").numpy(), np.logaddexp(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
     assert np.allclose(torch.logaddexp2(x, y).to("cpu").numpy(), np.logaddexp2(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
     assert np.allclose(torch.hypot(x, y).to("cpu").numpy(), np.hypot(base, base[::-1]).astype(np.float32), atol=1e-3, rtol=1e-3)
@@ -525,6 +525,32 @@ def test_npu_cross_device_copy():
     assert dst.to("cpu").numpy().tolist() == [1.0, 1.0]
 
 
+def test_npu_cross_device_copy_synchronizes_source_stream(monkeypatch):
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    if torch._C._npu_device_count() < 2:
+        pytest.skip("Need 2 NPUs")
+
+    from candle._backends.npu import runtime as npu_runtime
+
+    src_runtime = npu_runtime.get_runtime(0)
+    original_synchronize_stream = src_runtime.synchronize_stream
+    calls = []
+
+    def wrapped_synchronize_stream(stream):
+        calls.append(stream)
+        return original_synchronize_stream(stream)
+
+    monkeypatch.setattr(src_runtime, "synchronize_stream", wrapped_synchronize_stream)
+
+    src = torch.ones((2,), device="npu:0")
+    dst = src.to("npu:1")
+
+    assert dst.device.index == 1
+    assert calls, "cross-device copy must order destination users after the source-stream D2D copy"
+    assert dst.to("cpu").numpy().tolist() == [1.0, 1.0]
+
+
 def test_npu_ones():
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
@@ -562,6 +588,10 @@ def test_npu_range():
 def test_npu_linspace():
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
+    # Regression: a prior square-style mul(a, a) cached executor must not be
+    # reused by the 910B linspace small-op composite's non-aliased mul(idx, step).
+    probe = torch.arange(0.0, 5.0, device="npu")
+    torch.mul(probe, probe)
     out = torch.linspace(0.0, 1.0, 5, device="npu")
     assert out.device.type == "npu"
     np.testing.assert_allclose(out.to("cpu").numpy(), np.linspace(0.0, 1.0, 5), atol=1e-6, rtol=1e-6)
@@ -811,11 +841,11 @@ def test_npu_vstack_rowstack_columnstack_dstack_vsplit_dsplit():
     np.testing.assert_allclose(torch.column_stack([a, b]).to("cpu").numpy(), np.column_stack([a.to("cpu").numpy(), b.to("cpu").numpy()]))
     np.testing.assert_allclose(torch.dstack([a, b]).to("cpu").numpy(), np.dstack([a.to("cpu").numpy(), b.to("cpu").numpy()]))
 
-    x = torch.tensor([1.0, 2.0, 3.0, 4.0], device="npu")
+    x = torch.tensor([[1.0, 2.0], [3.0, 4.0]], device="npu")
     out_vsplit = torch.vsplit(x, 2)
     assert len(out_vsplit) == 2
-    np.testing.assert_allclose(out_vsplit[0].to("cpu").numpy(), np.array([1.0, 2.0]))
-    np.testing.assert_allclose(out_vsplit[1].to("cpu").numpy(), np.array([3.0, 4.0]))
+    np.testing.assert_allclose(out_vsplit[0].to("cpu").numpy(), np.array([[1.0, 2.0]]))
+    np.testing.assert_allclose(out_vsplit[1].to("cpu").numpy(), np.array([[3.0, 4.0]]))
 
     z = torch.tensor([[[1.0, 2.0], [3.0, 4.0]]], device="npu")
     out_dsplit = torch.dsplit(z, 2)
@@ -1069,6 +1099,23 @@ def test_npu_gelu(dtype):
     assert np.allclose(out.to("cpu").numpy().astype(np.float32), expected, atol=1e-3, rtol=1e-3)
 
 
+def test_npu_silu_noncontiguous_input_returns_contiguous_output():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    base = torch.arange(0.0, 6.0, device="npu", dtype=torch.float32)
+    x = base[1::2]
+    assert x.stride == (2,)
+
+    out = F.silu(x)
+
+    assert out.device.type == "npu"
+    assert out.shape == (3,)
+    assert out.stride == (1,)
+    x_np = np.array([1.0, 3.0, 5.0], dtype=np.float32)
+    expected = x_np / (1.0 + np.exp(-x_np))
+    assert np.allclose(out.to("cpu").numpy().astype(np.float32), expected, atol=1e-3, rtol=1e-3)
+
+
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
 def test_npu_embedding(dtype):
     if not torch.npu.is_available():
@@ -1122,6 +1169,25 @@ def test_npu_allclose_matches_torch_npu_false_case_after_unary_sequence():
 
     x = torch.tensor(base, device="npu", dtype=torch.float16)
     y = torch.tensor(base[::-1], device="npu", dtype=torch.float16)
+
+    assert torch.allclose(x, y) is False
+
+
+def test_npu_allclose_soc_fallback_avoids_all_reduction(monkeypatch):
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    from candle._backends.npu import ops as npu_ops
+    from candle._backends.npu.ops import comparison as comparison_mod
+
+    def fail_all(*args, **kwargs):
+        raise AssertionError("allclose fallback must avoid the unstable all_ reduction path")
+
+    monkeypatch.setattr(npu_ops, "all_", fail_all)
+    monkeypatch.setattr(comparison_mod, "_use_soc_fallback", lambda name: name == "allclose")
+
+    x = torch.tensor([1.0, 2.0], device="npu")
+    y = torch.tensor([1.0, 3.0], device="npu")
 
     assert torch.allclose(x, y) is False
 

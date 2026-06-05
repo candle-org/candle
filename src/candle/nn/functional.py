@@ -1,12 +1,88 @@
 """Functional interface for nn operations."""
 
+_NPU_SILU_FAST = None
+_BASE_TENSOR = None
+_IS_PROFILER_ENABLED = None
+_IS_FUNCTIONALIZE_ENABLED = None
+_IS_AUTOCAST_ENABLED = None
+_CURRENT_PIPELINE = None
 
-def linear(input, weight, bias=None):
+
+def _is_base_tensor(input):
+    global _BASE_TENSOR  # pylint: disable=global-statement
+    if _BASE_TENSOR is None:
+        from .._tensor import Tensor
+        _BASE_TENSOR = Tensor
+    return type(input) is _BASE_TENSOR
+
+
+def _load_fast_path_guards():
+    global _IS_PROFILER_ENABLED, _IS_FUNCTIONALIZE_ENABLED, _IS_AUTOCAST_ENABLED, _CURRENT_PIPELINE  # pylint: disable=global-statement
+    if _IS_PROFILER_ENABLED is not None:
+        return
+    from ..profiler.profiler import is_profiler_enabled
+    from .._dispatch.functionalize import is_functionalize_enabled
+    from .._dispatch.pipeline import current_pipeline
+    from ..amp.state import is_autocast_enabled
+    _IS_PROFILER_ENABLED = is_profiler_enabled
+    _IS_FUNCTIONALIZE_ENABLED = is_functionalize_enabled
+    _IS_AUTOCAST_ENABLED = is_autocast_enabled
+    _CURRENT_PIPELINE = current_pipeline
+
+
+def _can_use_npu_silu_fast_path(input, inplace):
+    if inplace or not _is_base_tensor(input):
+        return False
+    dev = getattr(input, "device", None)
+    if dev is None or dev.type != "npu":
+        return False
+    if getattr(input, "requires_grad", False):
+        return False
+    _load_fast_path_guards()
+    if _IS_PROFILER_ENABLED():
+        return False
+    if _IS_FUNCTIONALIZE_ENABLED():
+        return False
+    if _IS_AUTOCAST_ENABLED("npu"):
+        return False
+    if _CURRENT_PIPELINE() is not None:
+        return False
+    return True
+
+
+def _npu_silu_fast(input):
+    global _NPU_SILU_FAST  # pylint: disable=global-statement
+    if _NPU_SILU_FAST is None:
+        from .._C._npu_ops import fast_silu as _impl  # pylint: disable=import-error,no-name-in-module
+        _NPU_SILU_FAST = _impl
+    return _NPU_SILU_FAST(input)
+
+
+def _py_linear(input, weight, bias=None):
     from .._dispatch import dispatch
-    output = dispatch("matmul", input.device.type, input, weight.t() if hasattr(weight, 't') else weight)
+    weight_t = weight.t() if hasattr(weight, 't') else weight
+    if (
+        bias is not None
+        and len(input.shape) == 2
+        and len(weight_t.shape) == 2
+        and len(bias.shape) == 1
+        and input.shape[1] == weight_t.shape[0]
+        and bias.shape[0] == weight_t.shape[1]
+    ):
+        from .._functional import addmm
+        return addmm(bias, input, weight_t)
+    output = dispatch("matmul", input.device.type, input, weight_t)
     if bias is not None:
         output = dispatch("add", input.device.type, output, bias)
     return output
+
+
+try:
+    from .._C._functional_ops import linear as _cy_linear  # pylint: disable=import-error,no-name-in-module
+    linear = _cy_linear
+except ImportError:
+    linear = _py_linear
+
 
 
 def relu(input, inplace=False):
@@ -44,17 +120,21 @@ def log_softmax(input, dim=None, _stacklevel=3, dtype=None):
     return dispatch("log_softmax", input.device.type, input, dim)
 
 
-def gelu(input, approximate='none'):
+def _py_gelu(input, approximate='none'):
+    if not isinstance(approximate, str):
+        raise TypeError(
+            f"gelu(): argument 'approximate' must be str, not {type(approximate).__name__}"
+        )
     if approximate == 'tanh':
         import math
         from .._dispatch import dispatch
         from .._creation import tensor as _tensor
         # 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
-        coeff = _tensor(math.sqrt(2.0 / math.pi), device=input.device)
-        k = _tensor(0.044715, device=input.device)
-        half = _tensor(0.5, device=input.device)
-        one = _tensor(1.0, device=input.device)
-        three = _tensor(3.0, device=input.device)
+        coeff = _tensor(math.sqrt(2.0 / math.pi), dtype=input.dtype, device=input.device)
+        k = _tensor(0.044715, dtype=input.dtype, device=input.device)
+        half = _tensor(0.5, dtype=input.dtype, device=input.device)
+        one = _tensor(1.0, dtype=input.dtype, device=input.device)
+        three = _tensor(3.0, dtype=input.dtype, device=input.device)
         x_cubed = dispatch("pow", input.device.type, input, three)
         kx3 = dispatch("mul", input.device.type, k, x_cubed)
         shifted = dispatch("add", input.device.type, input, kx3)
@@ -63,13 +143,31 @@ def gelu(input, approximate='none'):
         one_plus_tanh = dispatch("add", input.device.type, one, tanh_inner)
         input_scaled = dispatch("mul", input.device.type, input, one_plus_tanh)
         return dispatch("mul", input.device.type, half, input_scaled)
+    if approximate != 'none':
+        raise RuntimeError("approximate argument must be either none or tanh.")
     from .._dispatch import dispatch
     return dispatch("gelu", input.device.type, input)
 
 
-def silu(input, inplace=False):
+try:
+    from .._C._functional_ops import gelu as _cy_gelu  # pylint: disable=import-error,no-name-in-module
+    gelu = _cy_gelu
+except ImportError:
+    gelu = _py_gelu
+
+
+def _py_silu(input, inplace=False):
+    if _can_use_npu_silu_fast_path(input, inplace):
+        return _npu_silu_fast(input)
     from .._dispatch import dispatch
     return dispatch("silu", input.device.type, input)
+
+
+try:
+    from .._C._functional_ops import silu as _cy_silu  # pylint: disable=import-error,no-name-in-module
+    silu = _cy_silu
+except ImportError:
+    silu = _py_silu
 
 
 def leaky_relu(input, negative_slope=0.01, inplace=False):

@@ -1,0 +1,18 @@
+from candle._C._tensor_impl cimport TensorImpl
+
+cpdef object fast_add(object a, object b)
+cpdef object fast_add_exact(TensorImpl a, TensorImpl b)
+cpdef object fast_mul(object a, object b)
+cpdef object fast_mul_exact(TensorImpl a, TensorImpl b)
+cpdef object fast_matmul(object a, object b)
+cpdef object fast_matmul_exact(TensorImpl a, TensorImpl b)
+cpdef object fast_sum(object a, object dim=*, bint keepdim=*)
+cpdef object fast_mm_mat1_backward(object grad, object mat2, object alpha=*)
+cpdef object fast_mm_mat2_backward(object grad, object mat1, object alpha=*)
+cpdef object fast_addmm(object bias, object mat1, object mat2, object beta=*, object alpha=*)
+cpdef object fast_gelu(object a)
+cpdef object fast_gelu_exact(TensorImpl a)
+cpdef object fast_silu(object a)
+cpdef object fast_silu_exact(TensorImpl a)
+cpdef object fast_gelu_backward(object grad, object saved_input)
+cpdef object fast_silu_backward(object grad, object saved_input)

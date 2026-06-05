@@ -563,14 +563,17 @@ def cy_npu_storage_from_ptr(int64_t device_ptr, int64_t size,
 # ---------------------------------------------------------------------------
 
 cdef object _StrideTuple_cls = None
+cdef object _cy_make_tensor_from_storage_fn = None
 
 
 cdef inline void _ensure_tensor_cls():
-    global _StrideTuple_cls
+    global _StrideTuple_cls, _cy_make_tensor_from_storage_fn
     if _StrideTuple_cls is not None:
         return
     from candle._C import _StrideTuple
+    from candle._C._tensor_impl import cy_make_tensor_from_storage
     _StrideTuple_cls = _StrideTuple
+    _cy_make_tensor_from_storage_fn = cy_make_tensor_from_storage
 
 
 def cy_make_npu_tensor(int64_t device_ptr, int64_t n_elements,
@@ -586,8 +589,6 @@ def cy_make_npu_tensor(int64_t device_ptr, int64_t n_elements,
     Routes through cy_make_tensor_from_storage so all tensor births share a
     single initialisation path.
     """
-    from candle._C._tensor_impl import cy_make_tensor_from_storage
-
     _ensure_fast_storage()
     _ensure_tensor_cls()
 
@@ -599,7 +600,7 @@ def cy_make_npu_tensor(int64_t device_ptr, int64_t n_elements,
     typed = _FastTypedStorage_cls(untyped, dtype, n_elements)
 
     # 2. Delegate all field initialisation to the unified factory
-    return cy_make_tensor_from_storage(
+    return _cy_make_tensor_from_storage_fn(
         typed,
         shape,
         _StrideTuple_cls(stride),

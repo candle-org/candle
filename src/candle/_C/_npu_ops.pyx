@@ -8,10 +8,35 @@ The heavy operations (device malloc, aclnn kernel, output wrapping) remain
 in Python — this module only accelerates the metadata computation.
 """
 
+from cpython.list cimport PyList_Append
 from libc.stdint cimport int64_t, int32_t, uint64_t
 from libc.stdint cimport uintptr_t
-from candle._C._tensor_impl cimport TensorImpl
+from candle._C._tensor_impl cimport (
+    TensorImpl,
+    cy_make_tensor_from_storage,
+    cy_make_tensor_from_storage_trusted,
+)
 from candle._C._storage_impl cimport StorageImpl
+from candle._C._npu_storage cimport FastNPUStorage, FastTypedStorage
+from candle._C._allocator cimport FastNpuAllocator
+from candle._C._aclnn_ffi cimport (
+    binary_op_no_alpha as _ffi_binary_op_no_alpha,
+    binary_op_with_alpha as _ffi_binary_op_with_alpha,
+    binary_two_inputs_with_int8_op as _ffi_binary_two_inputs_with_int8_op,
+    four_tensor_two_scalars_one_int8_op as _ffi_four_tensor_two_scalars_one_int8_op,
+    reduce_sum_op as _ffi_reduce_sum_op,
+    execute as _ffi_execute,
+    pta_begin_add_cache_lookup as _ffi_pta_begin_add_cache_lookup,
+    pta_begin_add_cache_lookup_raw as _ffi_pta_begin_add_cache_lookup_raw,
+    pta_begin_addmm_cache_lookup_raw as _ffi_pta_begin_addmm_cache_lookup_raw,
+    pta_begin_reduce_sum_cache_lookup_raw as _ffi_pta_begin_reduce_sum_cache_lookup_raw,
+    pta_begin_binary_cache_lookup as _ffi_pta_begin_binary_cache_lookup,
+    pta_begin_binary_cache_lookup_raw as _ffi_pta_begin_binary_cache_lookup_raw,
+    pta_begin_unary_cache_lookup as _ffi_pta_begin_unary_cache_lookup,
+    pta_begin_unary_cache_lookup_raw as _ffi_pta_begin_unary_cache_lookup_raw,
+    pta_end_cache_lookup as _ffi_pta_end_cache_lookup,
+    unary_op as _ffi_unary_op,
+)
 import importlib
 
 DEF MAX_NDIM = 16
@@ -126,6 +151,59 @@ cdef inline int _dtype_to_acl_code(object dtype):
         return 0  # fallback to float32
 
 
+cdef inline int _tensor_dtype_to_acl_code(TensorImpl t) noexcept:
+    """Map TensorImpl's cached dtype code to ACL's dtype enum."""
+    if t._dtype_code == 0:      # float32
+        return 0
+    if t._dtype_code == 1:      # float16
+        return 1
+    if t._dtype_code == 2:      # float64
+        return 11
+    if t._dtype_code == 3:      # bfloat16
+        return 27
+    if t._dtype_code == 4:      # int32
+        return 3
+    if t._dtype_code == 5:      # int64
+        return 9
+    if t._dtype_code == 6:      # int16
+        return 6
+    if t._dtype_code == 7:      # int8
+        return 2
+    if t._dtype_code == 8:      # uint8
+        return 4
+    if t._dtype_code == 9:      # bool
+        return 12
+    return 0
+
+
+cdef inline int _dtype_to_tensor_code(object dtype):
+    """Map dtype object to TensorImpl's cached dtype code."""
+    cdef str name = getattr(dtype, 'name', None)
+    if name is None:
+        name = str(dtype)
+    if name == 'float32':
+        return 0
+    if name == 'float16':
+        return 1
+    if name == 'float64':
+        return 2
+    if name == 'bfloat16':
+        return 3
+    if name == 'int32':
+        return 4
+    if name == 'int64':
+        return 5
+    if name == 'int16':
+        return 6
+    if name == 'int8':
+        return 7
+    if name == 'uint8':
+        return 8
+    if name == 'bool':
+        return 9
+    return -1
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -137,9 +215,36 @@ cdef inline void _fill_shape(object py_tuple, int64_t* buf, int ndim):
         buf[i] = <int64_t>py_tuple[i]
 
 
+cdef inline bint _tensor_has_strict_contiguous_stride(TensorImpl t) noexcept:
+    """True when t's cached stride is the canonical contiguous stride."""
+    cdef int i
+    cdef int j
+    cdef int64_t acc = 1
+    for j in range(t._ndim):
+        i = t._ndim - 1 - j
+        if t._c_stride[i] != acc:
+            return False
+        acc = acc * t._c_shape[i]
+    return True
+
+
 cdef inline tuple _to_tuple(const int64_t* arr, int n):
     """Convert C int64 array to Python tuple."""
     return tuple([arr[i] for i in range(n)])
+
+
+cdef inline tuple _contiguous_stride_tuple(object shape):
+    """Compute contiguous strides for a Python shape tuple/list."""
+    cdef Py_ssize_t ndim = len(shape)
+    cdef list strides = [1] * ndim
+    cdef int64_t acc = 1
+    cdef Py_ssize_t j
+    cdef Py_ssize_t i
+    for j in range(ndim):
+        i = ndim - 1 - j
+        strides[i] = acc
+        acc *= <int64_t>shape[i]
+    return tuple(strides)
 
 
 cdef inline int _validate_npu_binary(object a, object b, str name,
@@ -196,20 +301,26 @@ cdef inline object _device_obj_fast(object t):
 # fast_binary_op — drop-in replacement for _binary_op in _helpers.py
 # ---------------------------------------------------------------------------
 
-# Cached module references (loaded once)
+# Cached module references/classes (loaded once)
 cdef object _npu_runtime = None
 cdef object _npu_state = None
 cdef object _cy_make_npu_tensor = None
+cdef object _FastNPUStorage_cls = None
+cdef object _FastTypedStorage_cls = None
+cdef object _StrideTuple_cls = None
 
 cdef object _get_runtime_fast = None
 cdef object _get_stream_fast = None
 cdef object _aclrt_sync_stream_fn = None   # _aclrt_ffi.synchronize_stream
 cdef object _flush_executors_fn = None     # aclnn.flush_deferred_executors
 cdef object _get_allocator_fn_ref = None   # allocator.get_allocator (for sync path)
+cdef object _stream_raw_obj_dev0 = None    # cached Python int raw stream for device 0
+cdef uintptr_t _stream_raw_dev0 = 0
+cdef bint _stream_cache_dev0_valid = False
 
 # Per-device allocator cache: avoids get_allocator() dict lookup on hot path.
 # Index 0 covers the overwhelmingly common single-device case.
-cdef object _fast_allocator_dev0 = None    # FastNpuAllocator for device 0
+cdef FastNpuAllocator _fast_allocator_dev0 = None    # FastNpuAllocator for device 0
 
 cdef inline void _ensure_allocator_dev0():
     """Populate _fast_allocator_dev0 on first call (device 0 only)."""
@@ -217,10 +328,51 @@ cdef inline void _ensure_allocator_dev0():
     if _fast_allocator_dev0 is not None:
         return
     _ensure_npu_imports()
-    _fast_allocator_dev0 = _get_allocator_fn_ref(0)
+    _fast_allocator_dev0 = <FastNpuAllocator>_get_allocator_fn_ref(0)
+
+
+cdef inline object _get_stream_obj_cached_dev0():
+    global _stream_raw_obj_dev0, _stream_raw_dev0, _stream_cache_dev0_valid
+    cdef object stream
+    if _stream_cache_dev0_valid:
+        return _stream_raw_obj_dev0
+    _ensure_npu_imports()
+    stream = _get_stream_fast(0)
+    _stream_raw_obj_dev0 = stream.stream
+    _stream_raw_dev0 = <uintptr_t>int(_stream_raw_obj_dev0)
+    _stream_cache_dev0_valid = True
+    return _stream_raw_obj_dev0
+
+
+cdef inline object _get_stream_obj_fast(int dev_idx):
+    if dev_idx == 0:
+        return _get_stream_obj_cached_dev0()
+    return _get_stream_fast(dev_idx).stream
+
+
+cdef inline uintptr_t _get_stream_raw_fast(int dev_idx):
+    if dev_idx == 0:
+        _get_stream_obj_cached_dev0()
+        return _stream_raw_dev0
+    return <uintptr_t>int(_get_stream_fast(dev_idx).stream)
+
+
+cpdef void invalidate_stream_cache_dev0():
+    global _stream_raw_obj_dev0, _stream_raw_dev0, _stream_cache_dev0_valid
+    _stream_raw_obj_dev0 = None
+    _stream_raw_dev0 = 0
+    _stream_cache_dev0_valid = False
+
+
+cpdef void invalidate_allocator_cache_dev0():
+    """Drop the cached device-0 allocator reference for tests/runtime reset."""
+    global _fast_allocator_dev0
+    _fast_allocator_dev0 = None
+
 
 cdef inline void _ensure_npu_imports():
     global _npu_runtime, _npu_state, _cy_make_npu_tensor
+    global _FastNPUStorage_cls, _FastTypedStorage_cls, _StrideTuple_cls
     global _get_runtime_fast, _get_stream_fast
     global _aclrt_sync_stream_fn, _flush_executors_fn, _get_allocator_fn_ref
     if _npu_runtime is not None:
@@ -228,17 +380,75 @@ cdef inline void _ensure_npu_imports():
     from candle._backends.npu import runtime as rt
     from candle._backends.npu import state as st
     from candle._backends.npu import allocator as _alloc_mod
+    from candle._C import _StrideTuple
     from candle._C._storage import cy_make_npu_tensor as _cymt  # pylint: disable=import-error,no-name-in-module
+    from candle._C._npu_storage import FastNPUStorage, FastTypedStorage  # pylint: disable=import-error,no-name-in-module
     from candle._C._aclrt_ffi import synchronize_stream as _ssf  # pylint: disable=import-error,no-name-in-module
     from candle._backends.npu.aclnn import flush_deferred_executors as _fef
     _npu_runtime = rt
     _npu_state = st
     _cy_make_npu_tensor = _cymt
+    _FastNPUStorage_cls = FastNPUStorage
+    _FastTypedStorage_cls = FastTypedStorage
+    _StrideTuple_cls = _StrideTuple
     _get_runtime_fast = rt.get_runtime_fast
     _get_stream_fast = st.current_stream_fast
     _aclrt_sync_stream_fn = _ssf
     _flush_executors_fn = _fef
     _get_allocator_fn_ref = _alloc_mod.get_allocator
+
+
+cdef inline object _make_npu_tensor_fast(int64_t device_ptr, int64_t n_elements,
+                                         object dtype, object device,
+                                         tuple shape, object stride,
+                                         int itemsize):
+    """Inline NPU Tensor wrapper for eager kernels.
+
+    This mirrors candle._C._storage.cy_make_npu_tensor but uses the runtime truth
+    already known by the NPU kernel wrapper, avoiding storage->device/dtype
+    round-trips inside TensorImpl initialization.
+    """
+    cdef int64_t nbytes = n_elements * itemsize
+    cdef FastNPUStorage untyped = FastNPUStorage(device_ptr, nbytes, device)
+    cdef FastTypedStorage typed = FastTypedStorage(untyped, dtype, n_elements)
+    cdef object idx = getattr(device, "index", None)
+    cdef int device_index = <int>(idx if idx is not None else -1)
+    return cy_make_tensor_from_storage_trusted(
+        typed,
+        shape,
+        stride,
+        0,
+        device,
+        1,
+        device_index,
+        dtype,
+        _dtype_to_tensor_code(dtype),
+        itemsize,
+    )
+
+
+
+cdef inline object _make_npu_tensor_fast_large(int64_t device_ptr, int64_t n_elements,
+                                               object dtype, object device,
+                                               tuple shape, object stride,
+                                               int itemsize, int device_index,
+                                               int tensor_dtype_code):
+    """Inline NPU Tensor wrapper whose storage can use large-pool fast free."""
+    cdef int64_t nbytes = n_elements * itemsize
+    cdef FastNPUStorage untyped = FastNPUStorage(device_ptr, nbytes, device, True)
+    cdef FastTypedStorage typed = FastTypedStorage(untyped, dtype, n_elements)
+    return cy_make_tensor_from_storage_trusted(
+        typed,
+        shape,
+        stride,
+        0,
+        device,
+        1,
+        device_index,
+        dtype,
+        tensor_dtype_code,
+        itemsize,
+    )
 
 
 def fast_binary_op(a, b, fn, str name):
@@ -641,6 +851,12 @@ cdef object _sub_getws_ptr = None        # cached Sub getws pointer
 cdef object _sub_exec_ptr = None         # cached Sub exec pointer
 cdef object _div_getws_ptr = None        # cached Div getws pointer
 cdef object _div_exec_ptr = None         # cached Div exec pointer
+cdef object _matmul_getws_ptr = None     # cached Matmul getws pointer
+cdef object _matmul_exec_ptr = None      # cached Matmul exec pointer
+cdef object _addmm_getws_ptr = None      # cached Addmm getws pointer
+cdef object _addmm_exec_ptr = None       # cached Addmm exec pointer
+cdef object _reduce_sum_getws_ptr = None  # cached ReduceSum getws pointer
+cdef object _reduce_sum_exec_ptr = None   # cached ReduceSum exec pointer
 cdef object _bitwise_and_getws_ptr = None  # cached BitwiseAndTensor getws pointer
 cdef object _bitwise_and_exec_ptr = None   # cached BitwiseAndTensor exec pointer
 cdef object _bitwise_or_getws_ptr = None   # cached BitwiseOrTensor getws pointer
@@ -650,18 +866,40 @@ cdef object _bitwise_xor_exec_ptr = None   # cached BitwiseXorTensor exec pointe
 cdef object _pow_getws_ptr = None          # cached PowTensorTensor getws pointer
 cdef object _pow_exec_ptr = None           # cached PowTensorTensor exec pointer
 cdef object _defer_executor_fn = None    # aclnn._defer_executor
+cdef object _deferred_executors_ref = None  # aclnn._DEFERRED_EXECUTORS
 cdef object _acl_rt_malloc_fn = None     # acl.rt.malloc
 cdef object _acl_rt_free_fn = None       # acl.rt.free (for workspace)
 cdef dict _alpha_one_handles = {}        # dtype_code -> alpha=1 scalar handle (int)
 cdef dict _alpha_one_bytes_cache = {}    # dtype_code -> (bytes, alpha_dtype_code) for PTA hash
 cdef object _pta_cache_begin_fn = None   # _aclnn_ffi.pta_begin_add_cache_lookup
+cdef object _pta_binary_begin_fn = None  # _aclnn_ffi.pta_begin_binary_cache_lookup
+cdef object _pta_unary_begin_fn = None   # _aclnn_ffi.pta_begin_unary_cache_lookup
 cdef object _pta_cache_end_fn = None     # _aclnn_ffi.pta_end_cache_lookup
-# Disabled by default: the PTA cached-executor path can reuse stale bound tensor
-# addresses across NPU add calls, which corrupts later view-based adds
-# (e.g. a prior x+x can make a later view+ones behave like view+view).
-# Keep the integration wired but guarded so it can be re-enabled once the
-# cached executor path safely rebinds descriptors/addresses.
-cdef bint _use_add_pta_cache = False
+# PTA cached-executor path follows torch_npu's hit_cache_v2 flow.  CANN usually
+# rebinds current tensor addresses during lookup via AddTensorAddrToCachedList;
+# however, Mul has shown stale binding when a cache entry created with aliased
+# inputs (e.g. square via mul(a, a)) is later reused for non-aliased inputs of
+# the same metadata signature.  The binary PTA hash includes an input-alias
+# discriminator so ordinary same-shape tensor Mul still reuses cached executors
+# while square-style and non-aliased Mul entries stay separate.
+cdef bint _use_add_pta_cache = True
+cdef bint _use_mul_pta_cache = True
+cdef bint _use_matmul_pta_cache = True
+cdef bint _use_addmm_pta_cache = True
+cdef bint _use_reduce_sum_pta_cache = True
+cdef bint _use_silu_pta_cache = True
+cdef bint _use_gelu_pta_cache = True
+cdef bint _use_silu_backward_pta_cache = True
+cdef bint _use_gelu_backward_pta_cache = True
+cdef dict _mul_pta_pointer_keys = {}
+cdef dict _silu_backward_pta_pointer_keys = {}
+
+
+cdef inline void _defer_executor_handle(uintptr_t executor) except *:
+    if executor == 0:
+        return
+    if PyList_Append(_deferred_executors_ref, executor) != 0:
+        raise MemoryError("failed to defer ACLNN executor handle")
 
 
 cdef inline void _ensure_ffi_binary() except *:
@@ -669,23 +907,32 @@ cdef inline void _ensure_ffi_binary() except *:
     global _mul_getws_ptr, _mul_exec_ptr
     global _sub_getws_ptr, _sub_exec_ptr
     global _div_getws_ptr, _div_exec_ptr
-    global _defer_executor_fn, _acl_rt_malloc_fn, _acl_rt_free_fn
-    global _pta_cache_begin_fn, _pta_cache_end_fn
+    global _matmul_getws_ptr, _matmul_exec_ptr
+    global _defer_executor_fn, _deferred_executors_ref
+    global _acl_rt_malloc_fn, _acl_rt_free_fn
+    global _pta_cache_begin_fn, _pta_binary_begin_fn, _pta_unary_begin_fn, _pta_cache_end_fn
     if _ffi_ref is not None:
         return
     from candle._C import _aclnn_ffi as _f  # pylint: disable=import-error,no-name-in-module
-    from candle._backends.npu.aclnn import _defer_executor as _def_ex, ensure_acl as _eacl
+    from candle._backends.npu import aclnn as _aclnn_mod
     _ffi_ref = _f
     _add_getws_ptr, _add_exec_ptr = _f.resolve_op("Add")
     _mul_getws_ptr, _mul_exec_ptr = _f.resolve_op("Mul")
     _sub_getws_ptr, _sub_exec_ptr = _f.resolve_op("Sub")
     _div_getws_ptr, _div_exec_ptr = _f.resolve_op("Div")
-    _defer_executor_fn = _def_ex
-    _acl = _eacl()
+    _matmul_getws_ptr, _matmul_exec_ptr = _f.resolve_op("Matmul")
+    _defer_executor_fn = _aclnn_mod._defer_executor
+    _deferred_executors_ref = _aclnn_mod._DEFERRED_EXECUTORS
+    # Direct-append fast path bypasses _defer_executor's Python normalization, so
+    # register the atexit drain that _defer_executor would otherwise install.
+    _aclnn_mod._register_cleanup()
+    _acl = _aclnn_mod.ensure_acl()
     _acl_rt_malloc_fn = _acl.rt.malloc
     _acl_rt_free_fn = _acl.rt.free
     if _f.is_pta_cache_available():
         _pta_cache_begin_fn = _f.pta_begin_add_cache_lookup
+        _pta_binary_begin_fn = _f.pta_begin_binary_cache_lookup
+        _pta_unary_begin_fn = _f.pta_begin_unary_cache_lookup
         _pta_cache_end_fn = _f.pta_end_cache_lookup
 
 
@@ -836,7 +1083,7 @@ def fast_bitwise_right_shift(a, b):
     return fast_binary_op(a, b, None, "bitwise_right_shift")
 
 
-def fast_add(a, b):
+cpdef object fast_add(object a, object b):
     """Optimized add(a, b, alpha=1) that calls _ffi.binary_op_with_alpha directly.
 
     Skips aclnn.add wrapper overhead:
@@ -853,16 +1100,22 @@ def fast_add(a, b):
     # 1. Validate device/dtype — C field access when TensorImpl
     cdef int dev_idx
     _validate_npu_binary(a, b, "add", &dev_idx)
-    a_dev = _device_obj_fast(a)
-    a_dtype = a.dtype
+    if isinstance(a, TensorImpl):
+        a_dev = (<TensorImpl>a)._device_obj
+        a_dtype = (<TensorImpl>a)._dtype_obj
+    else:
+        a_dev = a.device
+        a_dtype = a.dtype
 
     # 2. Get runtime + stream
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
 
-    # 3. Extract shapes into C arrays
+    # 3. Extract shapes/strides into C arrays
     py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
     py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    py_a_stride = (<TensorImpl>a)._stride_tuple if isinstance(a, TensorImpl) else a.stride
+    py_b_stride = (<TensorImpl>b)._stride_tuple if isinstance(b, TensorImpl) else b.stride
     cdef int a_ndim = len(py_a_shape)
     cdef int b_ndim = len(py_b_shape)
 
@@ -893,7 +1146,7 @@ def fast_add(a, b):
     cdef int64_t alloc_size_fa = n * isize
     if dev_idx == 0:
         _ensure_allocator_dev0()
-        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fa, stream=stream.stream)
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fa, stream.stream)
     else:
         out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fa, stream=stream.stream)
 
@@ -913,9 +1166,9 @@ def fast_add(a, b):
     # 9. Try PTA executor cache (torch_npu-aligned hit_cache_v2 path)
     if _use_add_pta_cache and _pta_cache_begin_fn is not None:
         alpha_bytes_pair = _get_alpha_one_bytes(dtype_code)
-        state = _pta_cache_begin_fn(
-            py_a_shape, a.stride,
-            py_b_shape, b.stride,
+        state = _ffi_pta_begin_add_cache_lookup(
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
             out_shape, out_stride,
             dtype_code,
             a_ptr, b_ptr, o_ptr,
@@ -927,12 +1180,17 @@ def fast_add(a, b):
             executor = state[2]
             if executor:
                 try:
+                    # CANN's PTA hit_cache_v2 path rebinds the current tensor
+                    # addresses through AddTensorAddrToCachedList while building
+                    # the lookup key.  Therefore an executor hit is valid for the
+                    # current input/output pointers even when they differ from the
+                    # pointers that originally populated the cache.
                     if ws_size:
                         workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
                         if ret != 0:
                             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
                         try:
-                            ret = _ffi_ref.execute(
+                            ret = _ffi_execute(
                                 _add_exec_ptr, int(workspace_ptr), ws_size,
                                 executor, stream_raw)
                             if ret != 0:
@@ -940,22 +1198,25 @@ def fast_add(a, b):
                         finally:
                             runtime.defer_raw_free(workspace_ptr)
                     else:
-                        ret = _ffi_ref.execute(_add_exec_ptr, 0, 0, executor, stream_raw)
+                        ret = _ffi_execute(_add_exec_ptr, 0, 0, executor, stream_raw)
                         if ret != 0:
                             raise RuntimeError(f"aclnnAdd execute failed: {ret}")
-                    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+                    return _make_npu_tensor_fast(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize)
                 finally:
                     if pta_active:
-                        _pta_cache_end_fn()
+                        _ffi_pta_end_cache_lookup()
                         pta_active = False
+            # else: PTA miss — fall through with pta_active still set so the
+            # GetWorkspaceSize path below runs inside the open PTA context and
+            # the miss-path finally closes it.
 
     try:
         # 10. Cache miss: full GetWorkspaceSize + Execute path
         alpha_handle = _get_alpha_one(dtype_code)
-        ws_size, executor = _ffi_ref.binary_op_with_alpha(
+        ws_size, executor = _ffi_binary_op_with_alpha(
             _add_getws_ptr, _add_exec_ptr,
-            py_a_shape, a.stride,
-            py_b_shape, b.stride,
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
             out_shape, out_stride,
             dtype_code, 2,  # ACL_FORMAT_ND = 2
             a_ptr, b_ptr, o_ptr,
@@ -968,7 +1229,7 @@ def fast_add(a, b):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _add_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -976,23 +1237,184 @@ def fast_add(a, b):
             finally:
                 runtime.defer_raw_free(workspace_ptr)
 
-        # 12. Defer executor cleanup — pass raw int handle directly
-        #     (skips ctypes.c_void_p wrapping; _defer_executor extracts int via
-        #     _executor_handle which handles both c_void_p and plain int)
-        _defer_executor_fn(executor)
+        # 12. Defer executor cleanup by raw handle; fast paths already register
+        #     descriptor cleanup in _aclnn_ffi, so the Python wrapper adds only
+        #     type normalization overhead here.
+        _defer_executor_handle(executor)
     finally:
         if pta_active:
-            _pta_cache_end_fn()
+            _ffi_pta_end_cache_lookup()
 
     # 13. Wrap output — construct Tensor entirely in Cython (same as fast_binary_op)
-    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+    return _make_npu_tensor_fast(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize)
+
+
+cpdef object fast_add_exact(TensorImpl a, TensorImpl b):
+    """Add for already-validated exact base NPU tensors.
+
+    Called only from the public eager wrapper after it has checked the exact
+    Candle Tensor type and NPU/global-dispatch guards.  Keep the dtype check here
+    because the public exact guard does not prove it.
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx = a._device_index
+    cdef object a_dev = a._device_obj
+    cdef object a_dtype = a._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object py_a_shape = a._shape_tuple
+    cdef object py_b_shape = b._shape_tuple
+    cdef object py_a_stride = a._stride_tuple
+    cdef object py_b_stride = b._stride_tuple
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+    cdef int out_ndim
+    cdef int64_t n
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+    cdef int isize
+    cdef int64_t alloc_size_fa
+    cdef int dtype_code
+    cdef uintptr_t a_ptr, b_ptr, o_ptr
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef uintptr_t alpha_handle
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object out_shape
+    cdef object out_stride
+    cdef object out_ptr
+    cdef bint same_contiguous_layout
+    cdef object alpha_bytes_pair
+    cdef object ws_size
+    cdef object executor
+    cdef object workspace_ptr
+    cdef object ret
+
+    if a._device_index != b._device_index:
+        raise ValueError("NPU add requires tensors on the same device")
+    if a._dtype_code != b._dtype_code:
+        raise ValueError("NPU add requires matching dtypes")
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    same_contiguous_layout = (
+        a._ndim == b._ndim
+        and a._c_numel == b._c_numel
+        and a._shape_tuple == b._shape_tuple
+        and _tensor_has_strict_contiguous_stride(a)
+        and _tensor_has_strict_contiguous_stride(b)
+    )
+    if same_contiguous_layout:
+        out_ndim = a_ndim
+        n = a._c_numel
+        out_shape = py_a_shape
+        out_stride = py_a_stride
+    else:
+        _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+        _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+        with nogil:
+            out_ndim = c_broadcast_shape(
+                a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+            c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+            n = c_numel(out_shape_buf, out_ndim)
+        out_shape = _to_tuple(out_shape_buf, out_ndim)
+        out_stride = _to_tuple(out_stride_buf, out_ndim)
+    isize = a._itemsize
+    alloc_size_fa = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size_fa, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fa, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    a_ptr = a._storage._untyped._device_ptr
+    b_ptr = b._storage._untyped._device_ptr
+    o_ptr = out_ptr
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if _use_add_pta_cache and _pta_cache_begin_fn is not None:
+        alpha_bytes_pair = _get_alpha_one_bytes(dtype_code)
+        pta_lookup = _ffi_pta_begin_add_cache_lookup_raw(
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
+            out_shape, out_stride,
+            dtype_code,
+            a_ptr, b_ptr, o_ptr,
+            alpha_bytes_pair[0], alpha_bytes_pair[1],
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _add_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnAdd execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_add_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnAdd execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        alpha_handle = _get_alpha_one(dtype_code)
+        ws_size, executor = _ffi_binary_op_with_alpha(
+            _add_getws_ptr, _add_exec_ptr,
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
+            out_shape, out_stride,
+            dtype_code, 2,
+            a_ptr, b_ptr, o_ptr,
+            alpha_handle,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _add_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnAdd execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+        _defer_executor_handle(executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
 
 
 # ---------------------------------------------------------------------------
 # fast_mul — hardwired mul(a, b) that skips aclnn.py wrapper
 # ---------------------------------------------------------------------------
 
-def fast_mul(a, b):
+cpdef object fast_mul(object a, object b):
     """Optimized mul(a, b) that calls _ffi.binary_op_no_alpha directly.
 
     Skips aclnn.mul wrapper overhead:
@@ -1008,16 +1430,22 @@ def fast_mul(a, b):
     # 1. Validate device/dtype — C field access when TensorImpl
     cdef int dev_idx
     _validate_npu_binary(a, b, "mul", &dev_idx)
-    a_dev = _device_obj_fast(a)
-    a_dtype = a.dtype
+    if isinstance(a, TensorImpl):
+        a_dev = (<TensorImpl>a)._device_obj
+        a_dtype = (<TensorImpl>a)._dtype_obj
+    else:
+        a_dev = a.device
+        a_dtype = a.dtype
 
     # 2. Get runtime + stream
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
 
-    # 3. Extract shapes into C arrays
+    # 3. Extract shapes/strides into C arrays
     py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
     py_b_shape = (<TensorImpl>b)._shape_tuple if isinstance(b, TensorImpl) else b.shape
+    py_a_stride = (<TensorImpl>a)._stride_tuple if isinstance(a, TensorImpl) else a.stride
+    py_b_stride = (<TensorImpl>b)._stride_tuple if isinstance(b, TensorImpl) else b.stride
     cdef int a_ndim = len(py_a_shape)
     cdef int b_ndim = len(py_b_shape)
 
@@ -1048,7 +1476,7 @@ def fast_mul(a, b):
     cdef int64_t alloc_size_fm = n * isize
     if dev_idx == 0:
         _ensure_allocator_dev0()
-        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fm, stream=stream.stream)
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fm, stream.stream)
     else:
         out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fm, stream=stream.stream)
 
@@ -1062,36 +1490,1010 @@ def fast_mul(a, b):
     o_ptr = out_ptr
 
     cdef uintptr_t stream_raw = int(stream.stream)
+    cdef bint pta_active = False
+    cdef bint pta_cache_miss = False
+    cdef bint pta_pointer_guard = False
+    cdef object pta_key = None
+    cdef object pointer_key = None
+    cdef bint inputs_alias = a_ptr == b_ptr
+    if py_a_shape != py_b_shape or py_a_stride != py_b_stride or inputs_alias:
+        pta_pointer_guard = True
 
-    # 9. Full GetWorkspaceSize + Execute path (no PTA cache for mul)
-    ws_size, executor = _ffi_ref.binary_op_no_alpha(
-        _mul_getws_ptr, _mul_exec_ptr,
-        py_a_shape, a.stride,
-        py_b_shape, b.stride,
-        out_shape, out_stride,
-        dtype_code, 2,  # ACL_FORMAT_ND = 2
-        a_ptr, b_ptr, o_ptr,
-        stream_raw)
+    # 9. Try PTA executor cache (torch_npu-aligned hit_cache_v2 path)
+    if _use_mul_pta_cache and _pta_binary_begin_fn is not None:
+        state = _ffi_pta_begin_binary_cache_lookup(
+            b"aclnnMul",
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
+            out_shape, out_stride,
+            dtype_code,
+            a_ptr, b_ptr, o_ptr,
+            stream_raw)
+        if state is not None:
+            pta_active = bool(state[0])
+            ws_size = state[1]
+            executor = state[2]
+            pta_key = (py_a_shape, py_a_stride, py_b_shape, py_b_stride,
+                       out_shape, out_stride, dtype_code)
+            pointer_key = (a_ptr, b_ptr, o_ptr)
+            if executor:
+                if (not pta_pointer_guard) or _mul_pta_pointer_keys.get(pta_key) == pointer_key:
+                    try:
+                        # Same-shape non-aliased tensor Mul follows torch_npu's
+                        # hit_cache_v2 path and relies on the alias-aware PTA hash
+                        # plus AddTensorAddrToCachedList rebinding current addresses.
+                        # Broadcast and aliased-input Mul keep a pointer guard because
+                        # this CANN build can reuse stale bound tensor addresses after
+                        # prior native traffic.
+                        if ws_size:
+                            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+                            if ret != 0:
+                                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                            try:
+                                ret = _ffi_execute(
+                                    _mul_exec_ptr, int(workspace_ptr), ws_size,
+                                    executor, stream_raw)
+                                if ret != 0:
+                                    raise RuntimeError(f"aclnnMul execute failed: {ret}")
+                            finally:
+                                runtime.defer_raw_free(workspace_ptr)
+                        else:
+                            ret = _ffi_execute(_mul_exec_ptr, 0, 0, executor, stream_raw)
+                            if ret != 0:
+                                raise RuntimeError(f"aclnnMul execute failed: {ret}")
+                        return _make_npu_tensor_fast(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize)
+                    finally:
+                        if pta_active:
+                            _ffi_pta_end_cache_lookup()
+                            pta_active = False
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+            else:
+                pta_cache_miss = pta_active
 
-    # 10. Handle workspace (rare: ws_size > 0 means execute not yet called)
-    if ws_size:
-        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
-        if ret != 0:
-            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
-        try:
-            ret = _ffi_ref.execute(
-                _mul_exec_ptr, int(workspace_ptr), ws_size,
-                executor, stream_raw)
+    try:
+        # 10. Cache miss: full GetWorkspaceSize + Execute path
+        ws_size, executor = _ffi_binary_op_no_alpha(
+            _mul_getws_ptr, _mul_exec_ptr,
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
+            out_shape, out_stride,
+            dtype_code, 2,  # ACL_FORMAT_ND = 2
+            a_ptr, b_ptr, o_ptr,
+            stream_raw)
+
+        # 11. Handle workspace (rare: ws_size > 0 means execute not yet called)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
             if ret != 0:
-                raise RuntimeError(f"aclnnMul execute failed: {ret}")
-        finally:
-            runtime.defer_raw_free(workspace_ptr)
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _mul_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnMul execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
 
-    # 11. Defer executor cleanup
-    _defer_executor_fn(executor)
+        if pta_pointer_guard and pta_cache_miss and pta_key is not None:
+            _mul_pta_pointer_keys[pta_key] = pointer_key
 
-    # 12. Wrap output
-    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+        # 12. Defer executor cleanup by raw handle; descriptor cleanup is registered
+        #     in _aclnn_ffi for this executor.
+        _defer_executor_handle(executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    # 13. Wrap output
+    return _make_npu_tensor_fast(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize)
+
+
+cpdef object fast_mul_exact(TensorImpl a, TensorImpl b):
+    """Mul for already-validated exact base NPU tensors."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx = a._device_index
+    cdef object a_dev = a._device_obj
+    cdef object a_dtype = a._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object py_a_shape = a._shape_tuple
+    cdef object py_b_shape = b._shape_tuple
+    cdef object py_a_stride = a._stride_tuple
+    cdef object py_b_stride = b._stride_tuple
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+    cdef int out_ndim
+    cdef int64_t n
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+    cdef int isize
+    cdef int64_t alloc_size_fm
+    cdef int dtype_code
+    cdef uintptr_t a_ptr, b_ptr, o_ptr
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef bint pta_cache_miss = False
+    cdef bint pta_pointer_guard = False
+    cdef bint inputs_alias
+    cdef object pta_key = None
+    cdef object pointer_key = None
+    cdef object out_shape
+    cdef object out_stride
+    cdef object out_ptr
+    cdef bint same_contiguous_layout
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor
+    cdef object workspace_ptr
+    cdef object ret
+
+    if a._device_index != b._device_index:
+        raise ValueError("NPU mul requires tensors on the same device")
+    if a._dtype_code != b._dtype_code:
+        raise ValueError("NPU mul requires matching dtypes")
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    same_contiguous_layout = (
+        a._ndim == b._ndim
+        and a._c_numel == b._c_numel
+        and a._shape_tuple == b._shape_tuple
+        and _tensor_has_strict_contiguous_stride(a)
+        and _tensor_has_strict_contiguous_stride(b)
+    )
+    if same_contiguous_layout:
+        out_ndim = a_ndim
+        n = a._c_numel
+        out_shape = py_a_shape
+        out_stride = py_a_stride
+    else:
+        _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+        _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+        with nogil:
+            out_ndim = c_broadcast_shape(
+                a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+            c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+            n = c_numel(out_shape_buf, out_ndim)
+        out_shape = _to_tuple(out_shape_buf, out_ndim)
+        out_stride = _to_tuple(out_stride_buf, out_ndim)
+    isize = a._itemsize
+    alloc_size_fm = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size_fm, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fm, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    a_ptr = a._storage._untyped._device_ptr
+    b_ptr = b._storage._untyped._device_ptr
+    o_ptr = out_ptr
+    stream_raw = _get_stream_raw_fast(dev_idx)
+    inputs_alias = a_ptr == b_ptr
+    if inputs_alias or not same_contiguous_layout:
+        pta_pointer_guard = True
+
+    if _use_mul_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_binary_cache_lookup_raw(
+            b"aclnnMul",
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
+            out_shape, out_stride,
+            dtype_code,
+            a_ptr, b_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup:
+            pta_key = (py_a_shape, py_a_stride, py_b_shape, py_b_stride,
+                       out_shape, out_stride, dtype_code)
+            pointer_key = (a_ptr, b_ptr, o_ptr)
+            if executor_raw != 0:
+                if (not pta_pointer_guard) or _mul_pta_pointer_keys.get(pta_key) == pointer_key:
+                    try:
+                        if ws_size_raw:
+                            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                            if ret != 0:
+                                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                            try:
+                                ret_i = _ffi_execute(
+                                    _mul_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                                    executor_raw, stream_raw)
+                                if ret_i != 0:
+                                    raise RuntimeError(f"aclnnMul execute failed: {ret_i}")
+                            finally:
+                                if runtime is None:
+                                    runtime = _get_runtime_fast(dev_idx)
+                                runtime.defer_raw_free(workspace_ptr)
+                        else:
+                            ret_i = _ffi_execute(_mul_exec_ptr, 0, 0, executor_raw, stream_raw)
+                            if ret_i != 0:
+                                raise RuntimeError(f"aclnnMul execute failed: {ret_i}")
+                        return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+                    finally:
+                        if pta_active:
+                            _ffi_pta_end_cache_lookup()
+                            pta_active = False
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+            else:
+                pta_cache_miss = pta_active
+
+    try:
+        ws_size, executor = _ffi_binary_op_no_alpha(
+            _mul_getws_ptr, _mul_exec_ptr,
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
+            out_shape, out_stride,
+            dtype_code, 2,
+            a_ptr, b_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _mul_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnMul execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+
+        if pta_pointer_guard and pta_cache_miss and pta_key is not None:
+            _mul_pta_pointer_keys[pta_key] = pointer_key
+        _defer_executor_handle(executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_matmul_exact(TensorImpl a, TensorImpl b):
+    """2D Matmul for already-validated exact base NPU tensors."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx = a._device_index
+    cdef object a_dev = a._device_obj
+    cdef object a_dtype = a._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef int64_t m
+    cdef int64_t k
+    cdef int64_t k_b
+    cdef int64_t n
+    cdef int64_t numel
+    cdef int64_t alloc_size
+    cdef int isize
+    cdef int dtype_code
+    cdef object out_shape
+    cdef object out_stride
+    cdef object out_ptr
+    cdef uintptr_t a_ptr
+    cdef uintptr_t b_ptr
+    cdef uintptr_t o_ptr
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+
+    if a._dtype_code != b._dtype_code:
+        raise ValueError("NPU matmul requires matching dtypes")
+    if a._device_index != b._device_index:
+        raise ValueError("NPU matmul requires tensors on the same device")
+    if a._ndim != 2 or b._ndim != 2:
+        raise ValueError("fast_matmul_exact currently supports 2D tensors")
+
+    m = a._c_shape[0]
+    k = a._c_shape[1]
+    k_b = b._c_shape[0]
+    n = b._c_shape[1]
+    if k != k_b:
+        raise ValueError(f"matmul shape mismatch: ({m}, {k}) @ ({k_b}, {n})")
+
+    isize = a._itemsize
+    numel = m * n
+    alloc_size = numel * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    out_shape = (m, n)
+    out_stride = (n, 1)
+    a_ptr = <uintptr_t>a._storage._untyped._device_ptr + <uintptr_t>(a._c_offset * isize)
+    b_ptr = <uintptr_t>b._storage._untyped._device_ptr + <uintptr_t>(b._c_offset * isize)
+    o_ptr = <uintptr_t>int(out_ptr)
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if _use_matmul_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_binary_cache_lookup_raw(
+            b"aclnnMatmul",
+            a._shape_tuple, a._stride_tuple,
+            b._shape_tuple, b._stride_tuple,
+            out_shape, out_stride,
+            dtype_code,
+            a_ptr, b_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _matmul_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_matmul_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_binary_two_inputs_with_int8_op(
+            _matmul_getws_ptr, _matmul_exec_ptr,
+            a._shape_tuple, a._stride_tuple,
+            b._shape_tuple, b._stride_tuple,
+            out_shape, out_stride,
+            1,
+            dtype_code, dtype_code, dtype_code, 2,
+            a_ptr, b_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _matmul_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnMatmul execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+    finally:
+        if executor:
+            _defer_executor_handle(<uintptr_t>int(executor))
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_matmul(object a, object b):
+    """Optimized 2D NPU matmul that bypasses the Python aclnn.matmul wrapper."""
+    if isinstance(a, TensorImpl) and isinstance(b, TensorImpl):
+        return fast_matmul_exact(<TensorImpl>a, <TensorImpl>b)
+    raise ValueError("fast_matmul expects base TensorImpl operands")
+
+
+cpdef object fast_sum(object a, object dim=None, bint keepdim=False):
+    """Optimized NPU ReduceSum that bypasses the Python aclnn.reduce_sum wrapper."""
+    _ensure_npu_imports()
+    _ensure_ffi_reduce_sum()
+
+    if not isinstance(a, TensorImpl):
+        raise ValueError("fast_sum expects a base TensorImpl operand")
+    cdef TensorImpl t = <TensorImpl>a
+    if t._device_type != 1:
+        raise ValueError("NPU sum expects an NPU tensor")
+
+    cdef int dev_idx = t._device_index
+    cdef object a_dev = t._device_obj
+    cdef object a_dtype = t._dtype_obj
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object shape = t._shape_tuple
+    cdef object stride = t._stride_tuple
+    cdef int ndim = t._ndim
+    cdef object dims
+    cdef list out_shape_list
+    cdef object out_shape
+    cdef object out_stride
+    cdef int d
+    cdef int d_norm
+    cdef int64_t n = 1
+    cdef int isize = t._itemsize
+    cdef int dtype_code = _tensor_dtype_to_acl_code(t)
+    cdef int64_t alloc_size
+    cdef object out_ptr
+    cdef uintptr_t a_ptr
+    cdef uintptr_t o_ptr
+    cdef uintptr_t stream_raw
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+    cdef object runtime = None
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+
+    if dim is None or (isinstance(dim, (list, tuple)) and len(dim) == 0):
+        dims = tuple(range(ndim))
+    elif isinstance(dim, int):
+        d = <int>dim
+        if d < -ndim or d >= ndim:
+            raise IndexError(f"Dimension out of range (expected to be in range of [{-ndim}, {ndim - 1}], but got {d})")
+        dims = ((d + ndim) if d < 0 else d,)
+    elif isinstance(dim, (list, tuple)):
+        norm_dims = []
+        for item in dim:
+            d = <int>item
+            if d < -ndim or d >= ndim:
+                raise IndexError(f"Dimension out of range (expected to be in range of [{-ndim}, {ndim - 1}], but got {d})")
+            norm_dims.append((d + ndim) if d < 0 else d)
+        dims = tuple(norm_dims)
+    else:
+        raise TypeError("sum dim must be int, tuple/list, or None")
+
+    out_shape_list = [shape[i] for i in range(ndim)]
+    for d_norm in sorted(dims):
+        out_shape_list[d_norm] = 1
+    if not keepdim:
+        out_shape_list = [s for i, s in enumerate(out_shape_list) if i not in dims]
+    out_shape = tuple(out_shape_list)
+    out_stride = _contiguous_stride_tuple(out_shape)
+    for size in out_shape:
+        n *= <int64_t>size
+    if len(out_shape) == 0:
+        n = 1
+
+    alloc_size = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    a_ptr = <uintptr_t>t._storage._untyped._device_ptr + <uintptr_t>(t._c_offset * isize)
+    o_ptr = <uintptr_t>int(out_ptr)
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if _use_reduce_sum_pta_cache and _pta_cache_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_reduce_sum_cache_lookup_raw(
+            shape, stride,
+            out_shape, out_stride,
+            dims, keepdim,
+            dtype_code,
+            a_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _reduce_sum_exec_ptr, int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnReduceSum execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_reduce_sum_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnReduceSum execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, t._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_reduce_sum_op(
+            _reduce_sum_getws_ptr, _reduce_sum_exec_ptr,
+            shape, stride,
+            out_shape, out_stride,
+            dims, keepdim,
+            dtype_code, 2,
+            a_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _reduce_sum_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnReduceSum execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_handle(<uintptr_t>int(executor))
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, t._dtype_code)
+
+
+cpdef object fast_mm_mat1_backward(object grad, object mat2, object alpha=1):
+    """Optimized addmm/mm mat1 gradient: grad @ mat2.T without transpose dispatch."""
+    if alpha != 1:
+        raise ValueError("fast_mm_mat1_backward only handles alpha=1")
+    if not (isinstance(grad, TensorImpl) and isinstance(mat2, TensorImpl)):
+        raise ValueError("fast_mm_mat1_backward expects base TensorImpl operands")
+    cdef TensorImpl g = <TensorImpl>grad
+    cdef TensorImpl b = <TensorImpl>mat2
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+    if g._device_type != 1 or b._device_type != 1:
+        raise ValueError("NPU mm_mat1_backward expects NPU tensors")
+    if g._device_index != b._device_index:
+        raise ValueError("NPU mm_mat1_backward requires tensors on the same device")
+    if g._dtype_code != b._dtype_code:
+        raise ValueError("NPU mm_mat1_backward requires matching dtypes")
+    if g._ndim != 2 or b._ndim != 2:
+        raise ValueError("fast_mm_mat1_backward expects 2D operands")
+
+    cdef int64_t m = g._c_shape[0]
+    cdef int64_t n = g._c_shape[1]
+    cdef int64_t k = b._c_shape[0]
+    cdef int64_t n_b = b._c_shape[1]
+    if n != n_b:
+        raise ValueError(f"mm_mat1_backward shape mismatch: grad ({m}, {n}) and mat2 ({k}, {n_b})")
+
+    cdef int dev_idx = g._device_index
+    cdef object a_dtype = g._dtype_obj
+    cdef object a_dev = g._device_obj
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef int isize = g._itemsize
+    cdef int64_t numel = m * k
+    cdef int64_t alloc_size = numel * isize
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    cdef object out_shape = (m, k)
+    cdef object out_stride = (k, 1)
+    cdef object b_t_shape = (n_b, k)
+    cdef object b_t_stride = (b._c_stride[1], b._c_stride[0])
+    cdef int dtype_code = _tensor_dtype_to_acl_code(g)
+    cdef uintptr_t g_ptr = <uintptr_t>g._storage._untyped._device_ptr + <uintptr_t>(g._c_offset * isize)
+    cdef uintptr_t b_ptr = <uintptr_t>b._storage._untyped._device_ptr + <uintptr_t>(b._c_offset * b._itemsize)
+    cdef uintptr_t o_ptr = <uintptr_t>int(out_ptr)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+    cdef object runtime = None
+
+    if _use_matmul_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_binary_cache_lookup_raw(
+            b"aclnnMatmul",
+            g._shape_tuple, g._stride_tuple,
+            b_t_shape, b_t_stride,
+            out_shape, out_stride,
+            dtype_code,
+            g_ptr, b_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(_matmul_exec_ptr, int(workspace_ptr), ws_size_raw, executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_matmul_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, g._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_binary_two_inputs_with_int8_op(
+            _matmul_getws_ptr, _matmul_exec_ptr,
+            g._shape_tuple, g._stride_tuple,
+            b_t_shape, b_t_stride,
+            out_shape, out_stride,
+            1,
+            dtype_code, dtype_code, dtype_code, 2,
+            g_ptr, b_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(_matmul_exec_ptr, int(workspace_ptr), ws_size, executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnMatmul execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+    finally:
+        if executor:
+            _defer_executor_handle(<uintptr_t>int(executor))
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+    return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, g._dtype_code)
+
+
+cpdef object fast_mm_mat2_backward(object grad, object mat1, object alpha=1):
+    """Optimized addmm/mm mat2 gradient: mat1.T @ grad without transpose dispatch."""
+    if alpha != 1:
+        raise ValueError("fast_mm_mat2_backward only handles alpha=1")
+    if not (isinstance(grad, TensorImpl) and isinstance(mat1, TensorImpl)):
+        raise ValueError("fast_mm_mat2_backward expects base TensorImpl operands")
+    cdef TensorImpl g = <TensorImpl>grad
+    cdef TensorImpl a = <TensorImpl>mat1
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+    if g._device_type != 1 or a._device_type != 1:
+        raise ValueError("NPU mm_mat2_backward expects NPU tensors")
+    if g._device_index != a._device_index:
+        raise ValueError("NPU mm_mat2_backward requires tensors on the same device")
+    if g._dtype_code != a._dtype_code:
+        raise ValueError("NPU mm_mat2_backward requires matching dtypes")
+    if g._ndim != 2 or a._ndim != 2:
+        raise ValueError("fast_mm_mat2_backward expects 2D operands")
+
+    cdef int64_t m = g._c_shape[0]
+    cdef int64_t n = g._c_shape[1]
+    cdef int64_t m_a = a._c_shape[0]
+    cdef int64_t k = a._c_shape[1]
+    if m != m_a:
+        raise ValueError(f"mm_mat2_backward shape mismatch: grad ({m}, {n}) and mat1 ({m_a}, {k})")
+
+    cdef int dev_idx = g._device_index
+    cdef object a_dtype = g._dtype_obj
+    cdef object a_dev = g._device_obj
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef int isize = g._itemsize
+    cdef int64_t numel = k * n
+    cdef int64_t alloc_size = numel * isize
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    cdef object a_t_shape = (k, m_a)
+    cdef object a_t_stride = (a._c_stride[1], a._c_stride[0])
+    cdef object out_shape = (k, n)
+    cdef object out_stride = (n, 1)
+    cdef int dtype_code = _tensor_dtype_to_acl_code(g)
+    cdef uintptr_t a_ptr = <uintptr_t>a._storage._untyped._device_ptr + <uintptr_t>(a._c_offset * a._itemsize)
+    cdef uintptr_t g_ptr = <uintptr_t>g._storage._untyped._device_ptr + <uintptr_t>(g._c_offset * isize)
+    cdef uintptr_t o_ptr = <uintptr_t>int(out_ptr)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+    cdef object runtime = None
+
+    if _use_matmul_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_binary_cache_lookup_raw(
+            b"aclnnMatmul",
+            a_t_shape, a_t_stride,
+            g._shape_tuple, g._stride_tuple,
+            out_shape, out_stride,
+            dtype_code,
+            a_ptr, g_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(_matmul_exec_ptr, int(workspace_ptr), ws_size_raw, executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_matmul_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, g._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_binary_two_inputs_with_int8_op(
+            _matmul_getws_ptr, _matmul_exec_ptr,
+            a_t_shape, a_t_stride,
+            g._shape_tuple, g._stride_tuple,
+            out_shape, out_stride,
+            1,
+            dtype_code, dtype_code, dtype_code, 2,
+            a_ptr, g_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(_matmul_exec_ptr, int(workspace_ptr), ws_size, executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnMatmul execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+    finally:
+        if executor:
+            _defer_executor_handle(<uintptr_t>int(executor))
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+    return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, g._dtype_code)
+
+
+cpdef object fast_addmm(object bias, object mat1, object mat2, object beta=1, object alpha=1):
+    """Optimized 2D NPU addmm that bypasses the Python aclnn.addmm wrapper."""
+    _ensure_npu_imports()
+    _ensure_ffi_addmm()
+
+    if not (isinstance(bias, TensorImpl) and isinstance(mat1, TensorImpl) and isinstance(mat2, TensorImpl)):
+        raise ValueError("fast_addmm expects base TensorImpl operands")
+    cdef TensorImpl self_t = <TensorImpl>bias
+    cdef TensorImpl a = <TensorImpl>mat1
+    cdef TensorImpl b = <TensorImpl>mat2
+    cdef int dev_idx = a._device_index
+    cdef object a_dtype = a._dtype_obj
+    cdef object a_dev = a._device_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef int64_t m
+    cdef int64_t k
+    cdef int64_t k_b
+    cdef int64_t n
+    cdef int64_t numel
+    cdef int64_t alloc_size
+    cdef int isize
+    cdef int dtype_code
+    cdef object out_shape
+    cdef object out_stride
+    cdef object out_ptr
+    cdef uintptr_t self_ptr
+    cdef uintptr_t a_ptr
+    cdef uintptr_t b_ptr
+    cdef uintptr_t o_ptr
+    cdef uintptr_t beta_scalar = 0
+    cdef uintptr_t alpha_scalar = 0
+    cdef bint beta_scalar_owned = False
+    cdef bint alpha_scalar_owned = False
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object beta_bytes_pair
+    cdef object alpha_bytes_pair
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+
+    if a._device_type != 1 or b._device_type != 1 or self_t._device_type != 1:
+        raise ValueError("NPU addmm expects NPU tensors")
+    if a._device_index != b._device_index or a._device_index != self_t._device_index:
+        raise ValueError("NPU addmm requires tensors on the same device")
+    if a._dtype_code != b._dtype_code or a._dtype_code != self_t._dtype_code:
+        raise ValueError("NPU addmm requires matching dtypes")
+    if a._ndim != 2 or b._ndim != 2:
+        raise ValueError("fast_addmm currently supports 2D mat operands")
+
+    m = a._c_shape[0]
+    k = a._c_shape[1]
+    k_b = b._c_shape[0]
+    n = b._c_shape[1]
+    if k != k_b:
+        raise ValueError(f"addmm shape mismatch: ({m}, {k}) @ ({k_b}, {n})")
+    if not (self_t._ndim == 1 and self_t._c_shape[0] == n):
+        raise ValueError("fast_addmm currently supports 1D bias matching output columns")
+
+    isize = a._itemsize
+    numel = m * n
+    alloc_size = numel * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    out_shape = (m, n)
+    out_stride = (n, 1)
+    self_ptr = <uintptr_t>self_t._storage._untyped._device_ptr + <uintptr_t>(self_t._c_offset * isize)
+    a_ptr = <uintptr_t>a._storage._untyped._device_ptr + <uintptr_t>(a._c_offset * isize)
+    b_ptr = <uintptr_t>b._storage._untyped._device_ptr + <uintptr_t>(b._c_offset * isize)
+    o_ptr = <uintptr_t>int(out_ptr)
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if beta == 1:
+        beta_scalar = _get_alpha_one(dtype_code)
+        beta_bytes_pair = _get_alpha_one_bytes(dtype_code)
+    else:
+        beta_bytes_pair = (_scalar_bytes_fn(beta, a_dtype), dtype_code)
+        beta_scalar = _create_scalar_fn(beta_bytes_pair[0], beta_bytes_pair[1])
+        beta_scalar_owned = True
+    if alpha == 1:
+        alpha_scalar = _get_alpha_one(dtype_code)
+        alpha_bytes_pair = _get_alpha_one_bytes(dtype_code)
+    else:
+        alpha_bytes_pair = (_scalar_bytes_fn(alpha, a_dtype), dtype_code)
+        alpha_scalar = _create_scalar_fn(alpha_bytes_pair[0], alpha_bytes_pair[1])
+        alpha_scalar_owned = True
+
+    if _use_addmm_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_addmm_cache_lookup_raw(
+            self_t._shape_tuple, self_t._stride_tuple,
+            a._shape_tuple, a._stride_tuple,
+            b._shape_tuple, b._stride_tuple,
+            out_shape, out_stride,
+            dtype_code, dtype_code, dtype_code, dtype_code,
+            self_ptr, a_ptr, b_ptr, o_ptr,
+            beta_bytes_pair[0], beta_bytes_pair[1],
+            alpha_bytes_pair[0], alpha_bytes_pair[1],
+            1,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _addmm_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnAddmm execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_addmm_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnAddmm execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+                if beta_scalar_owned and beta_scalar:
+                    _destroy_scalar_fn(int(beta_scalar))
+                if alpha_scalar_owned and alpha_scalar:
+                    _destroy_scalar_fn(int(alpha_scalar))
+
+    try:
+        ws_size, executor = _ffi_four_tensor_two_scalars_one_int8_op(
+            _addmm_getws_ptr, _addmm_exec_ptr,
+            self_t._shape_tuple, self_t._stride_tuple,
+            a._shape_tuple, a._stride_tuple,
+            b._shape_tuple, b._stride_tuple,
+            out_shape, out_stride,
+            1,
+            dtype_code, dtype_code, dtype_code, dtype_code, 2,
+            self_ptr, a_ptr, b_ptr, o_ptr,
+            beta_scalar, alpha_scalar,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _addmm_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnAddmm execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+        if executor:
+            _defer_executor_handle(<uintptr_t>int(executor))
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+        if beta_scalar_owned and beta_scalar:
+            _destroy_scalar_fn(int(beta_scalar))
+        if alpha_scalar_owned and alpha_scalar:
+            _destroy_scalar_fn(int(alpha_scalar))
+
+    return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
 
 
 # ---------------------------------------------------------------------------
@@ -1152,7 +2554,7 @@ def fast_sub(a, b):
     cdef uintptr_t o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.binary_op_with_alpha(
+    ws_size, executor = _ffi_binary_op_with_alpha(
         _sub_getws_ptr, _sub_exec_ptr,
         py_a_shape, a.stride,
         py_b_shape, b.stride,
@@ -1167,7 +2569,7 @@ def fast_sub(a, b):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sub_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -1237,7 +2639,7 @@ def fast_div(a, b):
     cdef uintptr_t o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.binary_op_no_alpha(
+    ws_size, executor = _ffi_binary_op_no_alpha(
         _div_getws_ptr, _div_exec_ptr,
         py_a_shape, a.stride,
         py_b_shape, b.stride,
@@ -1251,7 +2653,7 @@ def fast_div(a, b):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _div_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -1307,7 +2709,7 @@ def fast_add_inplace(a, b):
     cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.binary_op_with_alpha(
+    ws_size, executor = _ffi_binary_op_with_alpha(
         _add_getws_ptr, _add_exec_ptr,
         py_a_shape, a.stride,
         py_b_shape, b.stride,
@@ -1322,7 +2724,7 @@ def fast_add_inplace(a, b):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _add_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -1373,7 +2775,7 @@ def fast_sub_inplace(a, b):
     cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.binary_op_with_alpha(
+    ws_size, executor = _ffi_binary_op_with_alpha(
         _sub_getws_ptr, _sub_exec_ptr,
         py_a_shape, a.stride,
         py_b_shape, b.stride,
@@ -1388,7 +2790,7 @@ def fast_sub_inplace(a, b):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sub_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -1438,7 +2840,7 @@ def fast_mul_inplace(a, b):
     cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.binary_op_no_alpha(
+    ws_size, executor = _ffi_binary_op_no_alpha(
         _mul_getws_ptr, _mul_exec_ptr,
         py_a_shape, a.stride,
         py_b_shape, b.stride,
@@ -1452,7 +2854,7 @@ def fast_mul_inplace(a, b):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _mul_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -1502,7 +2904,7 @@ def fast_div_inplace(a, b):
     cdef uintptr_t b_ptr = b._storage._untyped._device_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.binary_op_no_alpha(
+    ws_size, executor = _ffi_binary_op_no_alpha(
         _div_getws_ptr, _div_exec_ptr,
         py_a_shape, a.stride,
         py_b_shape, b.stride,
@@ -1516,7 +2918,7 @@ def fast_div_inplace(a, b):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _div_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -1619,7 +3021,7 @@ cdef object _fast_bitwise_inplace_dispatch(object a, object b, str name,
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -1697,7 +3099,7 @@ def fast_pow_inplace(a, b):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _pow_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -1843,8 +3245,12 @@ cdef object _inplace_copy_getws_ptr = None  # cached InplaceCopy getws pointer
 cdef object _inplace_copy_exec_ptr = None   # cached InplaceCopy exec pointer
 cdef object _gelu_getws_ptr = None       # cached Gelu getws pointer
 cdef object _gelu_exec_ptr = None        # cached Gelu exec pointer
+cdef object _gelu_backward_getws_ptr = None  # cached GeluBackward getws pointer
+cdef object _gelu_backward_exec_ptr = None   # cached GeluBackward exec pointer
 cdef object _silu_getws_ptr = None       # cached Silu getws pointer
 cdef object _silu_exec_ptr = None        # cached Silu exec pointer
+cdef object _silu_backward_getws_ptr = None  # cached SiluBackward getws pointer
+cdef object _silu_backward_exec_ptr = None   # cached SiluBackward exec pointer
 cdef object _mish_getws_ptr = None       # cached Mish getws pointer
 cdef object _mish_exec_ptr = None        # cached Mish exec pointer
 cdef object _sinh_getws_ptr = None       # cached Sinh getws pointer
@@ -1894,6 +3300,25 @@ cdef inline void _ensure_ffi_scalar_helpers() except *:
     _scalar_bytes_fn = _sb
     _create_scalar_fn = _ffi_ref.create_scalar
     _destroy_scalar_fn = _ffi_ref.destroy_scalar
+
+
+cdef inline void _ensure_ffi_addmm() except *:
+    global _ffi_ref, _addmm_getws_ptr, _addmm_exec_ptr
+    if _addmm_getws_ptr is not None:
+        return
+    if _ffi_ref is None:
+        _ensure_ffi_binary()
+    _addmm_getws_ptr, _addmm_exec_ptr = _ffi_ref.resolve_op("Addmm")
+    _ensure_ffi_scalar_helpers()
+
+
+cdef inline void _ensure_ffi_reduce_sum() except *:
+    global _ffi_ref, _reduce_sum_getws_ptr, _reduce_sum_exec_ptr
+    if _reduce_sum_getws_ptr is not None:
+        return
+    if _ffi_ref is None:
+        _ensure_ffi_binary()
+    _reduce_sum_getws_ptr, _reduce_sum_exec_ptr = _ffi_ref.resolve_op("ReduceSum")
 
 
 cdef inline void _ensure_ffi_addcmul() except *:
@@ -2373,6 +3798,15 @@ cdef inline void _ensure_ffi_gelu() except *:
     _gelu_getws_ptr, _gelu_exec_ptr = _ffi_ref.resolve_op("Gelu")
 
 
+cdef inline void _ensure_ffi_gelu_backward() except *:
+    global _ffi_ref, _gelu_backward_getws_ptr, _gelu_backward_exec_ptr
+    if _gelu_backward_getws_ptr is not None:
+        return
+    if _ffi_ref is None:
+        _ensure_ffi_binary()
+    _gelu_backward_getws_ptr, _gelu_backward_exec_ptr = _ffi_ref.resolve_op("GeluBackward")
+
+
 cdef inline void _ensure_ffi_silu() except *:
     global _ffi_ref, _silu_getws_ptr, _silu_exec_ptr
     if _silu_getws_ptr is not None:
@@ -2380,6 +3814,15 @@ cdef inline void _ensure_ffi_silu() except *:
     if _ffi_ref is None:
         _ensure_ffi_binary()
     _silu_getws_ptr, _silu_exec_ptr = _ffi_ref.resolve_op("Silu")
+
+
+cdef inline void _ensure_ffi_silu_backward() except *:
+    global _ffi_ref, _silu_backward_getws_ptr, _silu_backward_exec_ptr
+    if _silu_backward_getws_ptr is not None:
+        return
+    if _ffi_ref is None:
+        _ensure_ffi_binary()
+    _silu_backward_getws_ptr, _silu_backward_exec_ptr = _ffi_ref.resolve_op("SiluBackward")
 
 
 cdef inline void _ensure_ffi_mish() except *:
@@ -2504,8 +3947,12 @@ def fast_lerp_tensor(a, b, weight):
     if weight.dtype != a.dtype:
         raise ValueError("NPU lerp requires matching dtypes")
 
-    a_dev = _device_obj_fast(a)
-    a_dtype = a.dtype
+    if isinstance(a, TensorImpl):
+        a_dev = (<TensorImpl>a)._device_obj
+        a_dtype = (<TensorImpl>a)._dtype_obj
+    else:
+        a_dev = a.device
+        a_dtype = a.dtype
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
 
@@ -2579,7 +4026,7 @@ def fast_lerp_tensor(a, b, weight):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _lerp_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -2660,7 +4107,7 @@ def fast_where(cond, x, y):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _where_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -2708,7 +4155,7 @@ def fast_digamma(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _digamma_getws_ptr, _digamma_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -2721,7 +4168,7 @@ def fast_digamma(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _digamma_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -2767,7 +4214,7 @@ def fast_lgamma(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _lgamma_getws_ptr, _lgamma_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -2780,7 +4227,7 @@ def fast_lgamma(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _lgamma_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -2826,7 +4273,7 @@ def fast_sinc(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sinc_getws_ptr, _sinc_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -2839,7 +4286,7 @@ def fast_sinc(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sinc_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -2885,7 +4332,7 @@ def fast_abs(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _abs_getws_ptr, _abs_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -2898,7 +4345,7 @@ def fast_abs(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _abs_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -2930,7 +4377,7 @@ def fast_abs_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _abs_getws_ptr, _abs_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -2943,7 +4390,7 @@ def fast_abs_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _abs_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3000,7 +4447,7 @@ def fast_neg(a):
     cdef int ret
 
     try:
-        ws_size, executor = _ffi_ref.unary_op(
+        ws_size, executor = _ffi_unary_op(
             _neg_getws_ptr, _neg_exec_ptr,
             src_shape, src_stride,
             out_shape, out_stride,
@@ -3020,7 +4467,7 @@ def fast_neg(a):
             a_ptr = <uintptr_t>src_for_neg.storage().data_ptr()
             src_shape = src_for_neg.shape
         src_stride = src_for_neg.stride
-        ws_size, executor = _ffi_ref.unary_op(
+        ws_size, executor = _ffi_unary_op(
             _neg_getws_ptr, _neg_exec_ptr,
             src_shape, src_stride,
             out_shape, out_stride,
@@ -3033,7 +4480,7 @@ def fast_neg(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _neg_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3065,7 +4512,7 @@ def fast_neg_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _neg_getws_ptr, _neg_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -3078,7 +4525,7 @@ def fast_neg_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _neg_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3124,7 +4571,7 @@ def fast_sign(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sign_getws_ptr, _sign_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3137,7 +4584,7 @@ def fast_sign(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sign_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3184,7 +4631,7 @@ def fast_signbit(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _signbit_getws_ptr, _signbit_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3197,7 +4644,7 @@ def fast_signbit(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _signbit_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3244,7 +4691,7 @@ def fast_isfinite(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _isfinite_getws_ptr, _isfinite_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3257,7 +4704,7 @@ def fast_isfinite(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _isfinite_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3304,7 +4751,7 @@ def fast_isposinf(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _isposinf_getws_ptr, _isposinf_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3317,7 +4764,7 @@ def fast_isposinf(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _isposinf_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3364,7 +4811,7 @@ def fast_isneginf(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _isneginf_getws_ptr, _isneginf_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3377,7 +4824,7 @@ def fast_isneginf(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _isneginf_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3424,7 +4871,7 @@ def fast_logical_not(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _logical_not_getws_ptr, _logical_not_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3437,7 +4884,7 @@ def fast_logical_not(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _logical_not_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3483,7 +4930,7 @@ def fast_bitwise_not(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _bitwise_not_getws_ptr, _bitwise_not_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3496,7 +4943,7 @@ def fast_bitwise_not(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _bitwise_not_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3528,7 +4975,7 @@ def fast_bitwise_not_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _bitwise_not_getws_ptr, _bitwise_not_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -3541,7 +4988,7 @@ def fast_bitwise_not_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _bitwise_not_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3587,7 +5034,7 @@ def fast_square(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _square_getws_ptr, _square_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3600,7 +5047,7 @@ def fast_square(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _square_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3646,7 +5093,7 @@ def fast_exp(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _exp_getws_ptr, _exp_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3659,7 +5106,7 @@ def fast_exp(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _exp_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3691,7 +5138,7 @@ def fast_exp_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _exp_getws_ptr, _exp_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -3704,7 +5151,7 @@ def fast_exp_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _exp_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3750,7 +5197,7 @@ def fast_expm1(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _expm1_getws_ptr, _expm1_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3763,7 +5210,7 @@ def fast_expm1(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _expm1_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3809,7 +5256,7 @@ def fast_log1p(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _log1p_getws_ptr, _log1p_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3822,7 +5269,7 @@ def fast_log1p(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _log1p_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3868,7 +5315,7 @@ def fast_log(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _log_getws_ptr, _log_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3881,7 +5328,7 @@ def fast_log(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _log_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3913,7 +5360,7 @@ def fast_log_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _log_getws_ptr, _log_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -3926,7 +5373,7 @@ def fast_log_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _log_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -3972,7 +5419,7 @@ def fast_rsqrt(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _rsqrt_getws_ptr, _rsqrt_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -3985,7 +5432,7 @@ def fast_rsqrt(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _rsqrt_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4031,7 +5478,7 @@ def fast_sqrt(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sqrt_getws_ptr, _sqrt_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -4044,7 +5491,7 @@ def fast_sqrt(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sqrt_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4076,7 +5523,7 @@ def fast_sqrt_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sqrt_getws_ptr, _sqrt_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -4089,7 +5536,7 @@ def fast_sqrt_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sqrt_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4311,7 +5758,7 @@ def fast_sin(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sin_getws_ptr, _sin_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -4324,7 +5771,7 @@ def fast_sin(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sin_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4356,7 +5803,7 @@ def fast_sin_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sin_getws_ptr, _sin_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -4369,7 +5816,7 @@ def fast_sin_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sin_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4415,7 +5862,7 @@ def fast_cos(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _cos_getws_ptr, _cos_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -4428,7 +5875,7 @@ def fast_cos(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _cos_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4460,7 +5907,7 @@ def fast_cos_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _cos_getws_ptr, _cos_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -4473,7 +5920,7 @@ def fast_cos_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _cos_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4519,7 +5966,7 @@ def fast_tan(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _tan_getws_ptr, _tan_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -4532,7 +5979,7 @@ def fast_tan(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _tan_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4564,7 +6011,7 @@ def fast_tan_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _tan_getws_ptr, _tan_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -4577,7 +6024,7 @@ def fast_tan_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _tan_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4623,7 +6070,7 @@ def fast_tanh(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _tanh_getws_ptr, _tanh_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -4636,7 +6083,7 @@ def fast_tanh(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _tanh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4669,7 +6116,7 @@ def fast_tanh_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _tanh_getws_ptr, _tanh_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -4682,7 +6129,7 @@ def fast_tanh_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _tanh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4728,7 +6175,7 @@ def fast_sigmoid(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sigmoid_getws_ptr, _sigmoid_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -4741,7 +6188,7 @@ def fast_sigmoid(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sigmoid_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4773,7 +6220,7 @@ def fast_sigmoid_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sigmoid_getws_ptr, _sigmoid_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -4786,7 +6233,7 @@ def fast_sigmoid_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sigmoid_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4832,7 +6279,7 @@ def fast_relu(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _relu_getws_ptr, _relu_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -4845,7 +6292,7 @@ def fast_relu(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _relu_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4877,7 +6324,7 @@ def fast_relu_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _relu_getws_ptr, _relu_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -4890,7 +6337,7 @@ def fast_relu_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _relu_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -4952,7 +6399,7 @@ def fast_leaky_relu(a, negative_slope):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _leaky_relu_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -5019,7 +6466,7 @@ def fast_elu(a, alpha):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _elu_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -5072,7 +6519,7 @@ def fast_leaky_relu_inplace(a, negative_slope):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _leaky_relu_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -5125,7 +6572,7 @@ def fast_elu_inplace(a, alpha):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _elu_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -5200,7 +6647,7 @@ def fast_clamp(a, min_val=None, max_val=None):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _clamp_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -5270,7 +6717,7 @@ def fast_clamp_inplace(a, min_val=None, max_val=None):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _clamp_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -5326,7 +6773,7 @@ def fast_copy_inplace(a, src):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _inplace_copy_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -5396,7 +6843,7 @@ def fast_hardtanh(a, min_val, max_val):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _hardtanh_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -5479,7 +6926,7 @@ def fast_embedding(weight, indices):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _embedding_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -5552,7 +6999,7 @@ def fast_dropout(a, p):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _dropout_gen_mask_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -5577,7 +7024,7 @@ def fast_dropout(a, p):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _dropout_do_mask_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -5647,7 +7094,7 @@ def fast_prelu(a, weight):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _prelu_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -5711,7 +7158,7 @@ def fast_softplus(a, beta, threshold):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _softplus_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -5776,7 +7223,7 @@ def fast_softmax(a, dim):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _softmax_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -5837,7 +7284,7 @@ def fast_log_softmax(a, dim):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _log_softmax_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -5849,7 +7296,7 @@ def fast_log_softmax(a, dim):
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
-def fast_gelu(a):
+cpdef object fast_gelu(object a):
     """Optimized out-of-place gelu(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()
     _ensure_ffi_gelu()
@@ -5877,13 +7324,13 @@ def fast_gelu(a):
     cdef int dtype_code = _dtype_to_acl_code(a_dtype)
     cdef uintptr_t a_ptr, o_ptr
     if isinstance(a, TensorImpl):
-        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr + <uintptr_t>((<TensorImpl>a)._c_offset * (<TensorImpl>a)._itemsize)
     else:
         a_ptr = <uintptr_t>a.storage().data_ptr()
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _gelu_getws_ptr, _gelu_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -5896,7 +7343,7 @@ def fast_gelu(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _gelu_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -5904,68 +7351,703 @@ def fast_gelu(a):
         finally:
             runtime.defer_raw_free(workspace_ptr)
 
-    _defer_executor_fn(executor)
+    _defer_executor_handle(executor)
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
-def fast_silu(a):
+cpdef object fast_gelu_exact(TensorImpl a):
+    """Gelu for already-validated exact base NPU tensors.
+
+    Mirrors fast_silu_exact: large-pool cached allocation, raw-handle executor
+    defer, and the torch_npu-aligned PTA executor cache.  aclnnGelu has no
+    strided-view limitation observed for the MLP shapes, but to stay safe we
+    materialize a contiguous copy when the cached stride is non-canonical.
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_gelu()
+
+    cdef int dev_idx = a._device_index
+    cdef object a_dev = a._device_obj
+    cdef object a_dtype = a._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object in_shape = a._shape_tuple
+    cdef object in_stride = a._stride_tuple
+    cdef object out_shape = in_shape
+    cdef int ndim = len(out_shape)
+    cdef int64_t[MAX_NDIM] shape_buf, out_stride_buf
+    cdef object out_stride
+    cdef bint input_is_contiguous
+    cdef bint strict_contiguous
+    cdef int64_t n
+    cdef object src_for_gelu = a
+    cdef int isize
+    cdef int64_t alloc_size_fgelu
+    cdef object out_ptr
+    cdef int dtype_code
+    cdef uintptr_t a_ptr, o_ptr
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+
+    if ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+    strict_contiguous = _tensor_has_strict_contiguous_stride(a)
+    if strict_contiguous:
+        out_stride = in_stride
+        input_is_contiguous = True
+    else:
+        _fill_shape(out_shape, shape_buf, ndim)
+        with nogil:
+            c_contiguous_stride(shape_buf, ndim, out_stride_buf)
+        out_stride = _to_tuple(out_stride_buf, ndim)
+        input_is_contiguous = in_stride == out_stride
+    n = a._c_numel
+
+    if not input_is_contiguous:
+        src_for_gelu = _npu_contiguous_copy(a)
+        if isinstance(src_for_gelu, TensorImpl):
+            in_shape = (<TensorImpl>src_for_gelu)._shape_tuple
+            in_stride = (<TensorImpl>src_for_gelu)._stride_tuple
+        else:
+            in_shape = src_for_gelu.shape
+            in_stride = src_for_gelu.stride
+
+    isize = a._itemsize
+    alloc_size_fgelu = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size_fgelu, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fgelu, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    if isinstance(src_for_gelu, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>src_for_gelu)._storage._untyped._device_ptr + <uintptr_t>((<TensorImpl>src_for_gelu)._c_offset * (<TensorImpl>src_for_gelu)._itemsize)
+    else:
+        a_ptr = <uintptr_t>src_for_gelu.storage().data_ptr()
+    o_ptr = out_ptr
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if _use_gelu_pta_cache and _pta_unary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_unary_cache_lookup_raw(
+            b"aclnnGelu",
+            in_shape, in_stride,
+            out_shape, out_stride,
+            dtype_code, dtype_code,
+            a_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _gelu_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnGelu execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_gelu_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnGelu execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_unary_op(
+            _gelu_getws_ptr, _gelu_exec_ptr,
+            in_shape, in_stride,
+            out_shape, out_stride,
+            dtype_code, dtype_code, 2,
+            a_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _gelu_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnGelu execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+    finally:
+        if executor:
+            _defer_executor_handle(executor)
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_silu(object a):
     """Optimized out-of-place silu(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()
     _ensure_ffi_silu()
 
-    cdef int dev_idx = a.device.index or 0
+    cdef int dev_idx = (<TensorImpl>a)._device_index if isinstance(a, TensorImpl) else (a.device.index or 0)
     a_dev = _device_obj_fast(a)
     a_dtype = a.dtype
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
 
-    out_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
-    out_stride = a.stride
-    cdef int64_t n = 1
-    for dim in out_shape:
-        n *= dim
+    in_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    in_stride = (<TensorImpl>a)._stride_tuple if isinstance(a, TensorImpl) else a.stride
+    out_shape = in_shape
+    cdef int ndim = len(out_shape)
+    if ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+    cdef int64_t[MAX_NDIM] shape_buf, out_stride_buf
+    _fill_shape(out_shape, shape_buf, ndim)
+    with nogil:
+        c_contiguous_stride(shape_buf, ndim, out_stride_buf)
+    out_stride = _to_tuple(out_stride_buf, ndim)
+    cdef bint input_is_contiguous = in_stride == out_stride
+    cdef int64_t n
+    if isinstance(a, TensorImpl):
+        n = (<TensorImpl>a)._c_numel
+    else:
+        n = 1
+        for dim in out_shape:
+            n *= dim
+
+    cdef object src_for_silu = a
+    if not input_is_contiguous:
+        # TODO: re-enable native strided-view silu when CANN fixes aclnnSilu 561103.
+        src_for_silu = _npu_contiguous_copy(a)
+        if isinstance(src_for_silu, TensorImpl):
+            in_shape = (<TensorImpl>src_for_silu)._shape_tuple
+            in_stride = (<TensorImpl>src_for_silu)._stride_tuple
+        else:
+            in_shape = src_for_silu.shape
+            in_stride = src_for_silu.stride
 
     cdef int isize = c_dtype_itemsize(a_dtype)
     cdef int64_t alloc_size_fsilu = n * isize
     if dev_idx == 0:
         _ensure_allocator_dev0()
-        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fsilu, stream=stream.stream)
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fsilu, stream.stream)
     else:
         out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fsilu, stream=stream.stream)
 
     cdef int dtype_code = _dtype_to_acl_code(a_dtype)
     cdef uintptr_t a_ptr, o_ptr
-    if isinstance(a, TensorImpl):
-        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    if isinstance(src_for_silu, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>src_for_silu)._storage._untyped._device_ptr
     else:
-        a_ptr = <uintptr_t>a.storage().data_ptr()
+        a_ptr = <uintptr_t>src_for_silu.storage().data_ptr()
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
+    cdef bint pta_active = False
 
-    ws_size, executor = _ffi_ref.unary_op(
-        _silu_getws_ptr, _silu_exec_ptr,
-        a.shape, a.stride,
-        out_shape, out_stride,
-        dtype_code, dtype_code, 2,
-        a_ptr, o_ptr,
-        stream_raw)
+    # Try PTA executor cache (torch_npu-aligned hit_cache_v2 path)
+    if _use_silu_pta_cache and _pta_unary_begin_fn is not None:
+        state = _ffi_pta_begin_unary_cache_lookup(
+            b"aclnnSilu",
+            in_shape, in_stride,
+            out_shape, out_stride,
+            dtype_code, dtype_code,
+            a_ptr, o_ptr,
+            stream_raw)
+        if state is not None:
+            pta_active = bool(state[0])
+            ws_size = state[1]
+            executor = state[2]
+            if executor:
+                try:
+                    # PTA hit_cache_v2 rebinds current addresses with
+                    # AddTensorAddrToCachedList during lookup, so cached Silu
+                    # executors are valid for freshly allocated outputs.
+                    if ws_size:
+                        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+                        if ret != 0:
+                            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                        try:
+                            ret = _ffi_execute(
+                                _silu_exec_ptr, int(workspace_ptr), ws_size,
+                                executor, stream_raw)
+                            if ret != 0:
+                                raise RuntimeError(f"aclnnSilu execute failed: {ret}")
+                        finally:
+                            runtime.defer_raw_free(workspace_ptr)
+                    else:
+                        ret = _ffi_execute(_silu_exec_ptr, 0, 0, executor, stream_raw)
+                        if ret != 0:
+                            raise RuntimeError(f"aclnnSilu execute failed: {ret}")
+                    return _make_npu_tensor_fast(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize)
+                finally:
+                    if pta_active:
+                        _ffi_pta_end_cache_lookup()
+                        pta_active = False
+            # else: PTA miss — fall through with pta_active still set so the
+            # GetWorkspaceSize path below runs inside the open PTA context and
+            # the miss-path finally closes it.
 
-    if ws_size:
-        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
-        if ret != 0:
-            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
-        try:
-            ret = _ffi_ref.execute(
-                _silu_exec_ptr, int(workspace_ptr), ws_size,
-                executor, stream_raw)
+    try:
+        ws_size, executor = _ffi_unary_op(
+            _silu_getws_ptr, _silu_exec_ptr,
+            in_shape, in_stride,
+            out_shape, out_stride,
+            dtype_code, dtype_code, 2,
+            a_ptr, o_ptr,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
             if ret != 0:
-                raise RuntimeError(f"aclnnSilu execute failed: {ret}")
-        finally:
-            runtime.defer_raw_free(workspace_ptr)
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _silu_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnSilu execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
 
-    _defer_executor_fn(executor)
+        _defer_executor_handle(executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize)
+
+
+cpdef object fast_silu_exact(TensorImpl a):
+    """Silu for already-validated exact base NPU tensors."""
+    _ensure_npu_imports()
+    _ensure_ffi_silu()
+
+    cdef int dev_idx = a._device_index
+    cdef object a_dev = a._device_obj
+    cdef object a_dtype = a._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object in_shape = a._shape_tuple
+    cdef object in_stride = a._stride_tuple
+    cdef object out_shape = in_shape
+    cdef int ndim = len(out_shape)
+    cdef int64_t[MAX_NDIM] shape_buf, out_stride_buf
+    cdef object out_stride
+    cdef bint input_is_contiguous
+    cdef bint strict_contiguous
+    cdef int64_t n
+    cdef object src_for_silu = a
+    cdef int isize
+    cdef int64_t alloc_size_fsilu
+    cdef object out_ptr
+    cdef int dtype_code
+    cdef uintptr_t a_ptr, o_ptr
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor
+    cdef object workspace_ptr
+    cdef object ret
+
+    if ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+    strict_contiguous = _tensor_has_strict_contiguous_stride(a)
+    if strict_contiguous:
+        out_stride = in_stride
+        input_is_contiguous = True
+    else:
+        _fill_shape(out_shape, shape_buf, ndim)
+        with nogil:
+            c_contiguous_stride(shape_buf, ndim, out_stride_buf)
+        out_stride = _to_tuple(out_stride_buf, ndim)
+        input_is_contiguous = in_stride == out_stride
+    n = a._c_numel
+
+    if not input_is_contiguous:
+        # TODO: re-enable native strided-view silu when CANN fixes aclnnSilu 561103.
+        src_for_silu = _npu_contiguous_copy(a)
+        if isinstance(src_for_silu, TensorImpl):
+            in_shape = (<TensorImpl>src_for_silu)._shape_tuple
+            in_stride = (<TensorImpl>src_for_silu)._stride_tuple
+        else:
+            in_shape = src_for_silu.shape
+            in_stride = src_for_silu.stride
+
+    isize = a._itemsize
+    alloc_size_fsilu = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size_fsilu, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fsilu, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    if isinstance(src_for_silu, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>src_for_silu)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>src_for_silu.storage().data_ptr()
+    o_ptr = out_ptr
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if _use_silu_pta_cache and _pta_unary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_unary_cache_lookup_raw(
+            b"aclnnSilu",
+            in_shape, in_stride,
+            out_shape, out_stride,
+            dtype_code, dtype_code,
+            a_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _silu_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnSilu execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_silu_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnSilu execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_unary_op(
+            _silu_getws_ptr, _silu_exec_ptr,
+            in_shape, in_stride,
+            out_shape, out_stride,
+            dtype_code, dtype_code, 2,
+            a_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _silu_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnSilu execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+        _defer_executor_handle(executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_gelu_backward(object grad, object saved_input):
+    """Optimized GELU backward via aclnnGeluBackward with cached Cython FFI."""
+    _ensure_npu_imports()
+    _ensure_ffi_gelu_backward()
+
+    if not (isinstance(grad, TensorImpl) and isinstance(saved_input, TensorImpl)):
+        raise ValueError("fast_gelu_backward expects base TensorImpl operands")
+    cdef TensorImpl grad_t = <TensorImpl>grad
+    cdef TensorImpl input_t = <TensorImpl>saved_input
+    if grad_t._device_type != 1 or input_t._device_type != 1:
+        raise ValueError("NPU gelu_backward expects NPU tensors")
+    if grad_t._device_index != input_t._device_index:
+        raise ValueError("NPU gelu_backward requires tensors on the same device")
+    if grad_t._dtype_code != input_t._dtype_code:
+        raise ValueError("NPU gelu_backward requires matching dtypes")
+
+    cdef int dev_idx = grad_t._device_index
+    cdef object a_dev = grad_t._device_obj
+    cdef object a_dtype = grad_t._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object py_grad_shape = grad_t._shape_tuple
+    cdef object py_self_shape = input_t._shape_tuple
+    cdef object grad_stride = grad_t._stride_tuple
+    cdef object input_stride = input_t._stride_tuple
+    if py_grad_shape != py_self_shape:
+        raise ValueError("NPU gelu_backward requires matching grad and input shapes")
+    cdef int ndim = grad_t._ndim
+    if ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] shape_buf, out_stride_buf
+    _fill_shape(py_grad_shape, shape_buf, ndim)
+    cdef int64_t n
+    with nogil:
+        c_contiguous_stride(shape_buf, ndim, out_stride_buf)
+        n = c_numel(shape_buf, ndim)
+    cdef object out_shape = py_grad_shape
+    cdef object out_stride = _to_tuple(out_stride_buf, ndim)
+
+    cdef int isize = grad_t._itemsize
+    cdef int64_t alloc_size = n * isize
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    cdef int dtype_code = _tensor_dtype_to_acl_code(grad_t)
+    cdef uintptr_t grad_ptr = <uintptr_t>grad_t._storage._untyped._device_ptr + <uintptr_t>(grad_t._c_offset * grad_t._itemsize)
+    cdef uintptr_t self_ptr = <uintptr_t>input_t._storage._untyped._device_ptr + <uintptr_t>(input_t._c_offset * input_t._itemsize)
+    cdef uintptr_t o_ptr = <uintptr_t>int(out_ptr)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+
+    if _use_gelu_backward_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_binary_cache_lookup_raw(
+            b"aclnnGeluBackward",
+            py_grad_shape, grad_stride,
+            py_self_shape, input_stride,
+            out_shape, out_stride,
+            dtype_code,
+            grad_ptr, self_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _gelu_backward_exec_ptr, int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnGeluBackward execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_gelu_backward_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnGeluBackward execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, grad_t._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_binary_op_no_alpha(
+            _gelu_backward_getws_ptr, _gelu_backward_exec_ptr,
+            py_grad_shape, grad_stride,
+            py_self_shape, input_stride,
+            out_shape, out_stride,
+            dtype_code, 2,
+            grad_ptr, self_ptr, o_ptr,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _gelu_backward_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnGeluBackward execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_handle(executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, grad_t._dtype_code)
+
+
+cpdef object fast_silu_backward(object grad, object saved_input):
+    """Optimized silu backward via aclnnSiluBackward with cached Cython FFI."""
+    _ensure_npu_imports()
+    _ensure_ffi_silu_backward()
+
+    cdef int dev_idx
+    _validate_npu_binary(grad, saved_input, "silu_backward", &dev_idx)
+    a_dev = _device_obj_fast(grad)
+    a_dtype = grad.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    py_grad_shape = (<TensorImpl>grad)._shape_tuple if isinstance(grad, TensorImpl) else grad.shape
+    py_self_shape = (<TensorImpl>saved_input)._shape_tuple if isinstance(saved_input, TensorImpl) else saved_input.shape
+    if py_grad_shape != py_self_shape:
+        raise ValueError("NPU silu_backward requires matching grad and input shapes")
+    cdef int ndim = len(py_grad_shape)
+    if ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] shape_buf, out_stride_buf
+    _fill_shape(py_grad_shape, shape_buf, ndim)
+    cdef int64_t n
+    with nogil:
+        c_contiguous_stride(shape_buf, ndim, out_stride_buf)
+        n = c_numel(shape_buf, ndim)
+    out_shape = py_grad_shape
+    out_stride = _to_tuple(out_stride_buf, ndim)
+
+    cdef int isize = c_dtype_itemsize(a_dtype)
+    cdef int64_t alloc_size = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream.stream)
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t grad_ptr, self_ptr, o_ptr
+    if isinstance(grad, TensorImpl):
+        grad_ptr = <uintptr_t>(<TensorImpl>grad)._storage._untyped._device_ptr
+    else:
+        grad_ptr = <uintptr_t>grad.storage().data_ptr()
+    if isinstance(saved_input, TensorImpl):
+        self_ptr = <uintptr_t>(<TensorImpl>saved_input)._storage._untyped._device_ptr
+    else:
+        self_ptr = <uintptr_t>saved_input.storage().data_ptr()
+    o_ptr = out_ptr
+
+    cdef uintptr_t stream_raw = int(stream.stream)
+    cdef bint pta_active = False
+    cdef bint pta_cache_miss = False
+    cdef object pta_key = None
+    cdef object pointer_key = None
+
+    if _use_silu_backward_pta_cache and _pta_binary_begin_fn is not None:
+        state = _ffi_pta_begin_binary_cache_lookup(
+            b"aclnnSiluBackward",
+            py_grad_shape, grad.stride,
+            py_self_shape, saved_input.stride,
+            out_shape, out_stride,
+            dtype_code,
+            grad_ptr, self_ptr, o_ptr,
+            stream_raw)
+        if state is not None:
+            pta_active = bool(state[0])
+            ws_size = state[1]
+            executor = state[2]
+            pta_key = (py_grad_shape, grad.stride, py_self_shape, saved_input.stride,
+                       out_shape, out_stride, dtype_code)
+            pointer_key = (grad_ptr, self_ptr, o_ptr)
+            if executor:
+                if _silu_backward_pta_pointer_keys.get(pta_key) == pointer_key:
+                    try:
+                        if ws_size:
+                            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+                            if ret != 0:
+                                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                            try:
+                                ret = _ffi_execute(
+                                    _silu_backward_exec_ptr, int(workspace_ptr), ws_size,
+                                    executor, stream_raw)
+                                if ret != 0:
+                                    raise RuntimeError(f"aclnnSiluBackward execute failed: {ret}")
+                            finally:
+                                runtime.defer_raw_free(workspace_ptr)
+                        else:
+                            ret = _ffi_execute(_silu_backward_exec_ptr, 0, 0, executor, stream_raw)
+                            if ret != 0:
+                                raise RuntimeError(f"aclnnSiluBackward execute failed: {ret}")
+                        return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+                    finally:
+                        if pta_active:
+                            _ffi_pta_end_cache_lookup()
+                            pta_active = False
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+            else:
+                pta_cache_miss = pta_active
+
+    try:
+        ws_size, executor = _ffi_binary_op_no_alpha(
+            _silu_backward_getws_ptr, _silu_backward_exec_ptr,
+            py_grad_shape, grad.stride,
+            py_self_shape, saved_input.stride,
+            out_shape, out_stride,
+            dtype_code, 2,
+            grad_ptr, self_ptr, o_ptr,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _silu_backward_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnSiluBackward execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
+
+        if pta_cache_miss and pta_key is not None:
+            _silu_backward_pta_pointer_keys[pta_key] = pointer_key
+
+        _defer_executor_handle(executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
-
 
 def fast_mish(a):
     """Optimized out-of-place mish(a) that calls _ffi.unary_op directly."""
@@ -6001,7 +8083,7 @@ def fast_mish(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _mish_getws_ptr, _mish_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6014,7 +8096,7 @@ def fast_mish(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _mish_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6060,7 +8142,7 @@ def fast_sinh(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sinh_getws_ptr, _sinh_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6073,7 +8155,7 @@ def fast_sinh(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sinh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6119,7 +8201,7 @@ def fast_cosh(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _cosh_getws_ptr, _cosh_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6132,7 +8214,7 @@ def fast_cosh(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _cosh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6178,7 +8260,7 @@ def fast_erf(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _erf_getws_ptr, _erf_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6191,7 +8273,7 @@ def fast_erf(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _erf_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6237,7 +8319,7 @@ def fast_erfc(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _erfc_getws_ptr, _erfc_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6250,7 +8332,7 @@ def fast_erfc(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _erfc_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6296,7 +8378,7 @@ def fast_floor(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _floor_getws_ptr, _floor_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6309,7 +8391,7 @@ def fast_floor(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _floor_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6341,7 +8423,7 @@ def fast_floor_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _floor_getws_ptr, _floor_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -6354,7 +8436,7 @@ def fast_floor_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _floor_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6400,7 +8482,7 @@ def fast_ceil(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _ceil_getws_ptr, _ceil_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6413,7 +8495,7 @@ def fast_ceil(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _ceil_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6445,7 +8527,7 @@ def fast_ceil_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _ceil_getws_ptr, _ceil_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -6458,7 +8540,7 @@ def fast_ceil_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _ceil_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6504,7 +8586,7 @@ def fast_round(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _round_getws_ptr, _round_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6517,7 +8599,7 @@ def fast_round(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _round_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6550,7 +8632,7 @@ def fast_round_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _round_getws_ptr, _round_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -6563,7 +8645,7 @@ def fast_round_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _round_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6609,7 +8691,7 @@ def fast_trunc(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _trunc_getws_ptr, _trunc_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6622,7 +8704,7 @@ def fast_trunc(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _trunc_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6654,7 +8736,7 @@ def fast_trunc_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _trunc_getws_ptr, _trunc_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -6667,7 +8749,7 @@ def fast_trunc_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _trunc_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6713,7 +8795,7 @@ def fast_log2(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _log2_getws_ptr, _log2_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6726,7 +8808,7 @@ def fast_log2(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _log2_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6758,7 +8840,7 @@ def fast_log2_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _log2_getws_ptr, _log2_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -6771,7 +8853,7 @@ def fast_log2_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _log2_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6817,7 +8899,7 @@ def fast_log10(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _log10_getws_ptr, _log10_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -6830,7 +8912,7 @@ def fast_log10(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _log10_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6862,7 +8944,7 @@ def fast_log10_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _log10_getws_ptr, _log10_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -6875,7 +8957,7 @@ def fast_log10_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _log10_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6907,7 +8989,7 @@ def fast_expm1_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _expm1_getws_ptr, _expm1_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -6920,7 +9002,7 @@ def fast_expm1_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _expm1_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6952,7 +9034,7 @@ def fast_log1p_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _log1p_getws_ptr, _log1p_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -6965,7 +9047,7 @@ def fast_log1p_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _log1p_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -6997,7 +9079,7 @@ def fast_exp2_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _exp2_getws_ptr, _exp2_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7010,7 +9092,7 @@ def fast_exp2_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _exp2_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7042,7 +9124,7 @@ def fast_erf_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _erf_getws_ptr, _erf_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7055,7 +9137,7 @@ def fast_erf_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _erf_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7087,7 +9169,7 @@ def fast_erfc_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _erfc_getws_ptr, _erfc_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7100,7 +9182,7 @@ def fast_erfc_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _erfc_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7132,7 +9214,7 @@ def fast_asin_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _asin_getws_ptr, _asin_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7145,7 +9227,7 @@ def fast_asin_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _asin_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7177,7 +9259,7 @@ def fast_acos_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _acos_getws_ptr, _acos_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7190,7 +9272,7 @@ def fast_acos_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _acos_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7222,7 +9304,7 @@ def fast_atan_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _atan_getws_ptr, _atan_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7235,7 +9317,7 @@ def fast_atan_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _atan_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7267,7 +9349,7 @@ def fast_sinh_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sinh_getws_ptr, _sinh_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7280,7 +9362,7 @@ def fast_sinh_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sinh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7312,7 +9394,7 @@ def fast_cosh_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _cosh_getws_ptr, _cosh_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7325,7 +9407,7 @@ def fast_cosh_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _cosh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7357,7 +9439,7 @@ def fast_asinh_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _asinh_getws_ptr, _asinh_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7370,7 +9452,7 @@ def fast_asinh_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _asinh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7402,7 +9484,7 @@ def fast_acosh_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _acosh_getws_ptr, _acosh_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7415,7 +9497,7 @@ def fast_acosh_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _acosh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7447,7 +9529,7 @@ def fast_atanh_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _atanh_getws_ptr, _atanh_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7460,7 +9542,7 @@ def fast_atanh_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _atanh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7492,7 +9574,7 @@ def fast_rsqrt_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _rsqrt_getws_ptr, _rsqrt_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7505,7 +9587,7 @@ def fast_rsqrt_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _rsqrt_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7537,7 +9619,7 @@ def fast_square_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _square_getws_ptr, _square_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7550,7 +9632,7 @@ def fast_square_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _square_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7582,7 +9664,7 @@ def fast_digamma_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _digamma_getws_ptr, _digamma_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7595,7 +9677,7 @@ def fast_digamma_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _digamma_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7627,7 +9709,7 @@ def fast_lgamma_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _lgamma_getws_ptr, _lgamma_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7640,7 +9722,7 @@ def fast_lgamma_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _lgamma_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7672,7 +9754,7 @@ def fast_sign_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _sign_getws_ptr, _sign_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7685,7 +9767,7 @@ def fast_sign_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _sign_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7717,7 +9799,7 @@ def fast_silu_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _silu_getws_ptr, _silu_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7730,7 +9812,7 @@ def fast_silu_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _silu_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7762,7 +9844,7 @@ def fast_mish_inplace(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _mish_getws_ptr, _mish_exec_ptr,
         a_shape, a_stride,
         a_shape, a_stride,
@@ -7775,7 +9857,7 @@ def fast_mish_inplace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _mish_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7821,7 +9903,7 @@ def fast_exp2(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _exp2_getws_ptr, _exp2_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -7834,7 +9916,7 @@ def fast_exp2(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _exp2_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7880,7 +9962,7 @@ def fast_asinh(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _asinh_getws_ptr, _asinh_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -7893,7 +9975,7 @@ def fast_asinh(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _asinh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7939,7 +10021,7 @@ def fast_acosh(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _acosh_getws_ptr, _acosh_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -7952,7 +10034,7 @@ def fast_acosh(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _acosh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -7998,7 +10080,7 @@ def fast_atanh(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _atanh_getws_ptr, _atanh_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -8011,7 +10093,7 @@ def fast_atanh(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _atanh_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -8057,7 +10139,7 @@ def fast_atan(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _atan_getws_ptr, _atan_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -8070,7 +10152,7 @@ def fast_atan(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _atan_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -8116,7 +10198,7 @@ def fast_asin(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _asin_getws_ptr, _asin_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -8129,7 +10211,7 @@ def fast_asin(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _asin_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -8175,7 +10257,7 @@ def fast_acos(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _acos_getws_ptr, _acos_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -8188,7 +10270,7 @@ def fast_acos(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _acos_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -8234,7 +10316,7 @@ def fast_erfinv(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _erfinv_getws_ptr, _erfinv_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -8247,7 +10329,7 @@ def fast_erfinv(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _erfinv_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -8276,7 +10358,7 @@ def fast_erfinv_(a):
         a_ptr = <uintptr_t>a.storage().data_ptr()
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _erfinv_getws_ptr, _erfinv_exec_ptr,
         a.shape, a.stride,
         a.shape, a.stride,
@@ -8289,7 +10371,7 @@ def fast_erfinv_(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _erfinv_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -8376,7 +10458,7 @@ def fast_lerp_scalar(a, b, value):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _lerps_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -8443,7 +10525,7 @@ def fast_addcmul(a, b, c, value):
     cdef int64_t alloc_size_fa = n * isize
     if dev_idx == 0:
         _ensure_allocator_dev0()
-        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fa, stream=stream.stream)
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fa, stream.stream)
     else:
         out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fa, stream=stream.stream)
 
@@ -8482,7 +10564,7 @@ def fast_addcmul(a, b, c, value):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _addcmul_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -8549,7 +10631,7 @@ def fast_addcdiv(a, b, c, value):
     cdef int64_t alloc_size_fa = n * isize
     if dev_idx == 0:
         _ensure_allocator_dev0()
-        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fa, stream=stream.stream)
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fa, stream.stream)
     else:
         out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fa, stream=stream.stream)
 
@@ -8588,7 +10670,7 @@ def fast_addcdiv(a, b, c, value):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _addcdiv_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -8658,7 +10740,7 @@ def fast_addcmul_inplace(a, b, c, value):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _addcmul_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -8727,7 +10809,7 @@ def fast_addcdiv_inplace(a, b, c, value):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _addcdiv_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -8793,7 +10875,7 @@ def fast_lerp_tensor_inplace(a, b, weight):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _lerp_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -8849,7 +10931,7 @@ def fast_lerp_scalar_inplace(a, b, value):
             if ret != 0:
                 raise RuntimeError(f"acl.rt.malloc failed: {ret}")
             try:
-                ret = _ffi_ref.execute(
+                ret = _ffi_execute(
                     _lerps_exec_ptr, int(workspace_ptr), ws_size,
                     executor, stream_raw)
                 if ret != 0:
@@ -8880,22 +10962,21 @@ def cy_npu_synchronize(int device_id=0):
     # 1. Cached runtime — already initialized, no activate() needed
     runtime = _get_runtime_fast(device_id)
 
-    # 2. Direct aclrtSynchronizeStream (~1.25 us)
-    _aclrt_sync_stream_fn(runtime.stream)
-
-    # 3. Allocator drain: pending events + return cached blocks
+    # 2. Allocator drain: pending events + device synchronize + return cached blocks.
+    #    This already provides torch.npu.synchronize() device-wide semantics; doing
+    #    an extra aclrtSynchronizeStream first doubles the hot benchmark sync cost.
     alloc = _get_allocator_fn_ref(device_id)
     alloc.synchronize()
 
-    # 4. Flush deferred executors (usually empty, ~0.2 us)
+    # 3. Flush deferred executors (usually empty, ~0.2 us)
     _flush_executors_fn()
 
-    # 5. Process all three deferred free lists from runtime
+    # 4. Process all three deferred free lists from runtime
     frees = runtime._deferred_frees
     if frees:
         runtime._deferred_frees = []
         for ptr in frees:
-            alloc.free(ptr, None)
+            alloc.free_synchronized(ptr)
 
     raw_frees = runtime._deferred_raw_frees
     if raw_frees:
@@ -8990,7 +11071,7 @@ def fast_trace(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _trace_getws_ptr, _trace_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -9003,7 +11084,7 @@ def fast_trace(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _trace_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:
@@ -9053,7 +11134,7 @@ def fast_inverse(a):
     o_ptr = out_ptr
     cdef uintptr_t stream_raw = int(stream.stream)
 
-    ws_size, executor = _ffi_ref.unary_op(
+    ws_size, executor = _ffi_unary_op(
         _inverse_getws_ptr, _inverse_exec_ptr,
         a.shape, a.stride,
         out_shape, out_stride,
@@ -9066,7 +11147,7 @@ def fast_inverse(a):
         if ret != 0:
             raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_ref.execute(
+            ret = _ffi_execute(
                 _inverse_exec_ptr, int(workspace_ptr), ws_size,
                 executor, stream_raw)
             if ret != 0:

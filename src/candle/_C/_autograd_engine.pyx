@@ -12,10 +12,23 @@ import weakref
 from candle.autograd.grad_mode import no_grad
 
 
+cdef dict _implicit_scalar_grad_cache = {}
+
+
+def _implicit_scalar_grad(tensor):
+    if tensor.device.type == "cpu" or tensor.device.type == "meta":
+        return tensor._ones_like()
+    key = (tensor.device.type, tensor.device.index, tensor.dtype, tuple(tensor.shape))
+    grad = _implicit_scalar_grad_cache.get(key)
+    if grad is None:
+        from candle._creation import ones
+        grad = ones(tuple(tensor.shape), dtype=tensor.dtype, device=tensor.device)
+        _implicit_scalar_grad_cache[key] = grad
+    return grad
+
+
 cdef object _GRAPH_STATE = threading.local()
 cdef object _ANOMALY_STATE = threading.local()
-
-
 _ANOMALY_ENABLE_WARNING = (
     "Anomaly Detection has been enabled. This mode will increase the runtime "
     "and should only be enabled for debugging."
@@ -44,6 +57,17 @@ def is_create_graph_enabled():
     if not stack:
         return False
     return bool(stack[len(stack) - 1].create_graph)
+
+
+cdef inline object _engine_next_functions(object node):
+    cdef object cached
+    try:
+        cached = node._next_functions_cache
+    except AttributeError:
+        return node.next_functions
+    if cached is not None:
+        return cached
+    return node.next_functions
 
 
 cdef list _anomaly_config_stack():
@@ -357,9 +381,31 @@ cdef class _GraphTask:
             if tensor.grad_fn is None or getattr(tensor, "_retain_grad", False):
                 if tensor.grad is None:
                     if tensor.grad_fn is None:
-                        stored_grad = grad.clone()
-                        stored_grad.requires_grad = False
-                        tensor.grad = stored_grad
+                        if (
+                            not self.create_graph
+                            and getattr(grad, "_candle_npu_owned_backward_grad", False)
+                            and not getattr(tensor, "_backward_hooks", None)
+                            and (
+                                acc_node is None
+                                or (
+                                    not getattr(acc_node, "_hooks", None)
+                                    and not getattr(acc_node, "_prehooks", None)
+                                )
+                            )
+                        ):
+                            try:
+                                delattr(grad, "_candle_npu_owned_backward_grad")
+                            except Exception:
+                                pass
+                            grad.requires_grad = False
+                            tensor.grad = grad
+                        else:
+                            if grad.is_contiguous():
+                                stored_grad = grad.clone()
+                            else:
+                                stored_grad = grad.contiguous()
+                            stored_grad.requires_grad = False
+                            tensor.grad = stored_grad
                     else:
                         tensor.grad = grad
                 else:
@@ -410,6 +456,7 @@ cdef class _GraphTask:
         cdef object next_fn
         cdef object _output_nr
         cdef bint should_visit
+        cdef bint defer_duplicate_leaf_clone
 
         while self.ready:
             node = self.ready.popleft()
@@ -451,11 +498,35 @@ cdef class _GraphTask:
             # backward slot. If the engine is later changed to a single-node-
             # per-function model like PyTorch, this loop must use _output_nr to
             # index gradients into the predecessor's output slot.
-            for (t, g), (next_fn, _output_nr) in zip(zip(node.inputs, grads), node.next_functions):
+            for (t, g), (next_fn, _output_nr) in zip(zip(node.inputs, grads), _engine_next_functions(node)):
                 if g is None:
                     continue
                 if grad_counts is not None and grad_counts.get(id(g), 0) > 1:
-                    g = g.clone()
+                    # A node that returns the SAME grad object for multiple inputs
+                    # (e.g. AddBackward → (grad, grad)) needs each consumer to own
+                    # its grad so downstream in-place accumulation can't corrupt a
+                    # sibling. But a plain leaf (no grad_fn, no retain_grad) is
+                    # about to store ``grad.clone()`` into ``.grad`` itself and
+                    # never mutates the shared object, so the eager clone here is
+                    # redundant work — defer it to the leaf store. This halves the
+                    # device copies for add/mul-style backward on NPU/CUDA.
+                    defer_duplicate_leaf_clone = (
+                        (next_fn is None or next_fn not in self.dependencies)
+                        and isinstance(t, Tensor)
+                        and t.grad_fn is None
+                        and not getattr(t, "_retain_grad", False)
+                        and not getattr(t, "_backward_hooks", None)
+                        and (
+                            getattr(t, "_accumulate_grad_node", None) is None
+                            or (
+                                not getattr(getattr(t, "_accumulate_grad_node", None), "_hooks", None)
+                                and not getattr(getattr(t, "_accumulate_grad_node", None), "_prehooks", None)
+                            )
+                        )
+                        and (self.inputs is None or id(t) in self.input_ids)
+                    )
+                    if not defer_duplicate_leaf_clone:
+                        g = g.clone()
                 should_visit = (
                     self.inputs is None or next_fn is not None or id(t) in self.input_ids
                 )
@@ -508,12 +579,12 @@ def _build_dependencies(outputs, inputs=None):
         if reachable is not None:
             node_inputs = getattr(node, "inputs", ())
             has_target = any(id(inp) in target_input_ids for inp in node_inputs)
-            for fn, _output_nr in node.next_functions:
+            for fn, _output_nr in _engine_next_functions(node):
                 if fn is not None and hasattr(fn, "backward"):
                     stack.append(fn)
             reachable[node] = has_target
         else:
-            for fn, _output_nr in node.next_functions:
+            for fn, _output_nr in _engine_next_functions(node):
                 if fn is not None and hasattr(fn, "backward"):
                     stack.append(fn)
     if reachable is not None:
@@ -524,7 +595,7 @@ def _build_dependencies(outputs, inputs=None):
                 has_target = reachable[node]
                 if has_target:
                     continue
-                for fn, _output_nr in node.next_functions:
+                for fn, _output_nr in _engine_next_functions(node):
                     if fn is not None and hasattr(fn, "backward") and reachable.get(fn, False):
                         reachable[node] = True
                         changed = True
@@ -533,7 +604,7 @@ def _build_dependencies(outputs, inputs=None):
     deps = {node: 0 for node in nodes}
     for node in nodes:
         seen = set()
-        for fn, _output_nr in node.next_functions:
+        for fn, _output_nr in _engine_next_functions(node):
             if fn is None or not hasattr(fn, "backward"):
                 continue
             if fn in seen:
@@ -612,7 +683,14 @@ def backward(tensor, grad=None, retain_graph=False, create_graph=False, inputs=N
     if grad is None:
         if tensor.numel() != 1:
             raise RuntimeError("grad can be implicitly created only for scalar outputs")
-        grad = tensor._ones_like()
+        if (
+            not create_graph
+            and not getattr(tensor, "_backward_hooks", None)
+            and getattr(getattr(tensor, "grad_fn", None), "name", lambda: None)() == "SumBackward0"
+        ):
+            grad = _implicit_scalar_grad(tensor)
+        else:
+            grad = tensor._ones_like()
     if create_graph and not retain_graph:
         retain_graph = True
     _run_backward(

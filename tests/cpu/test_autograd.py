@@ -14,6 +14,34 @@ def test_autograd_add_mul():
     assert y.grad is not None
 
 
+def test_autograd_dtype_to_preserves_grad_graph():
+    x = torch.tensor([1.0, 2.0, 3.0])
+    x.requires_grad = True
+
+    y = x.to(torch.float64)
+
+    assert y.dtype == torch.float64
+    assert y.requires_grad
+    assert y.grad_fn is not None
+
+    y.sum().backward()
+
+    assert x.grad is not None
+    assert x.grad.dtype == x.dtype
+    assert x.grad.tolist() == [1.0, 1.0, 1.0]
+
+
+def test_reduce_grad_bfloat16_preserves_numeric_values_cpu():
+    from candle.autograd.utils import reduce_grad
+
+    grad = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32).to(torch.bfloat16)
+
+    reduced = reduce_grad(grad, (2,))
+
+    assert reduced.dtype == torch.bfloat16
+    np.testing.assert_allclose(reduced.to(torch.float32).numpy(), [4.0, 6.0], atol=1e-2)
+
+
 def test_autograd_mul_tensor_scalar_backward():
     x = torch.tensor([1.0, 2.0, 3.0])
     x.requires_grad = True

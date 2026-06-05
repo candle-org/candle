@@ -29,7 +29,36 @@ def test_storage_dealloc_returns_to_pool(npu_device):
     assert active_after < active_mid
 
 
-def test_storage_data_ptr_nonzero(npu_device):
+def test_storage_dealloc_returns_to_allocator_without_sync(npu_device):
+    """Same-stream NPU frees should re-enter the caching allocator immediately.
+
+    Eager pipelines create and release many temporaries before the next explicit
+    synchronize(). Deferring every storage free until synchronize() exhausts the
+    cached pool and turns steady-state eager execution into raw acl.rt.malloc.
+    """
+    import gc
+    import candle as torch
+    from candle._backends.npu import allocator as am
+
+    alloc = am.get_allocator(0)
+    torch.npu.synchronize()
+
+    a = torch.empty((1024, 1024), dtype=torch.float16, device=npu_device)
+    ptr = a.storage().data_ptr()
+    active_mid = alloc.memory_stats()["active_bytes.all.current"]
+    mallocs_mid = alloc.memory_stats().get("num_device_alloc", 0)
+
+    del a
+    gc.collect()
+    active_after_del = alloc.memory_stats()["active_bytes.all.current"]
+    assert active_after_del < active_mid
+
+    b = torch.empty((1024, 1024), dtype=torch.float16, device=npu_device)
+    mallocs_after_realloc = alloc.memory_stats().get("num_device_alloc", 0)
+    assert mallocs_after_realloc == mallocs_mid
+    assert b.storage().data_ptr() == ptr
+
+
     import candle as torch
     a = torch.randn((4, 4), dtype=torch.float32, device=npu_device)
     s = a.storage()
@@ -82,6 +111,7 @@ def test_fast_synchronize_skips_fast_path_during_capture(monkeypatch):
             seen["runtime"] += 1
 
     monkeypatch.setattr(npu, "_NPU_INITIALIZED", True)
+    monkeypatch.setattr(npu, "_GRAPH_CAPTURE_DEPTH", 1)
     monkeypatch.setattr(npu_runtime.cann_discovery, "get_cann_version", lambda: (8, 5, 0))
     monkeypatch.setattr("candle._backends.npu.ops_soc.aclgraph_supported", lambda profile=None: True)
     monkeypatch.setattr(npu, "_cy_npu_sync", lambda dev_idx: seen.__setitem__("fast", seen["fast"] + 1))

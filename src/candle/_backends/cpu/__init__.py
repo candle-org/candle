@@ -908,9 +908,19 @@ registry.register("max_pool3d", "cpu", max_pool3d)
 registry.register("avg_pool3d", "cpu", avg_pool3d)
 registry.register("adaptive_avg_pool3d", "cpu", adaptive_avg_pool3d)
 
-# addmm
+# addmm and generated dense matmul backward helpers
 from .ops import addmm
+from ..common.matmul_backward import (
+    layout as _layout,
+    mm_mat1_backward,
+    mm_mat2_backward,
+    sym_strides,
+)
 registry.register("addmm", "cpu", addmm)
+registry.register("sym_strides", "cpu", sym_strides)
+registry.register("layout", "cpu", _layout)
+registry.register("mm_mat1_backward", "cpu", mm_mat1_backward)
+registry.register("mm_mat2_backward", "cpu", mm_mat2_backward)
 
 # adaptive_max_pool ops
 from .ops import adaptive_max_pool2d, adaptive_max_pool1d, adaptive_max_pool3d, max_unpool3d

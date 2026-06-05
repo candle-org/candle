@@ -67,6 +67,74 @@ def test_runtime_init_registers_cleanup_once(monkeypatch):
     assert calls.count("init") == 1
 
 
+def test_runtime_activate_skips_redundant_same_thread_device_context(monkeypatch):
+    calls = []
+
+    class DummyRT:
+        def set_device(self, device_id):
+            calls.append(("set_device", device_id))
+            return 0
+
+        def set_context(self, ctx):
+            calls.append(("set_context", ctx))
+            return 0
+
+    dummy_acl = types.SimpleNamespace(rt=DummyRT())
+    runtime = ascend._Runtime()
+    runtime.initialized = True
+    runtime.device_id = 0
+    runtime.context = "ctx"
+
+    monkeypatch.setattr(ascend, "acl", dummy_acl)
+    monkeypatch.setattr(ascend._active_tls, "device_id", None, raising=False)
+    monkeypatch.setattr(ascend._active_tls, "context", None, raising=False)
+
+    runtime.activate()
+    runtime.activate()
+
+    assert calls == [("set_device", 0), ("set_context", "ctx")]
+
+
+def test_runtime_activate_reactivates_after_device_or_context_change(monkeypatch):
+    calls = []
+
+    class DummyRT:
+        def set_device(self, device_id):
+            calls.append(("set_device", device_id))
+            return 0
+
+        def set_context(self, ctx):
+            calls.append(("set_context", ctx))
+            return 0
+
+    dummy_acl = types.SimpleNamespace(rt=DummyRT())
+    runtime0 = ascend._Runtime()
+    runtime0.initialized = True
+    runtime0.device_id = 0
+    runtime0.context = "ctx0"
+    runtime1 = ascend._Runtime()
+    runtime1.initialized = True
+    runtime1.device_id = 1
+    runtime1.context = "ctx1"
+
+    monkeypatch.setattr(ascend, "acl", dummy_acl)
+    monkeypatch.setattr(ascend._active_tls, "device_id", None, raising=False)
+    monkeypatch.setattr(ascend._active_tls, "context", None, raising=False)
+
+    runtime0.activate()
+    runtime1.activate()
+    runtime0.activate()
+
+    assert calls == [
+        ("set_device", 0),
+        ("set_context", "ctx0"),
+        ("set_device", 1),
+        ("set_context", "ctx1"),
+        ("set_device", 0),
+        ("set_context", "ctx0"),
+    ]
+
+
 def test_runtime_synchronize_drains_deferred(monkeypatch):
     calls = []
 
@@ -83,8 +151,8 @@ def test_runtime_synchronize_drains_deferred(monkeypatch):
         def synchronize(self):
             calls.append("alloc_sync")
 
-        def free(self, ptr):
-            calls.append(("alloc_free", ptr))
+        def free_synchronized(self, ptr):
+            calls.append(("alloc_free_synchronized", ptr))
 
     dummy_acl = types.SimpleNamespace(rt=DummyRT())
     runtime = ascend._Runtime()
@@ -105,8 +173,8 @@ def test_runtime_synchronize_drains_deferred(monkeypatch):
     runtime.synchronize()
 
     assert "alloc_sync" in calls
-    assert ("alloc_free", 111) in calls
-    assert ("alloc_free", 222) in calls
+    assert ("alloc_free_synchronized", 111) in calls
+    assert ("alloc_free_synchronized", 222) in calls
 
 
 def test_acl_launch_blocking_forces_sync(monkeypatch):

@@ -12,6 +12,20 @@ def test_silu_cpu():
     assert torch.allclose(result, expected, atol=1e-6)
 
 
+def test_gelu_rejects_invalid_approximate_string():
+    x = torch.tensor([[-1.0, 0.0, 1.0, 2.0]], device='cpu')
+
+    with pytest.raises(RuntimeError, match="approximate argument must be either none or tanh"):
+        F.gelu(x, approximate='bogus')
+
+
+def test_gelu_rejects_non_string_approximate():
+    x = torch.tensor([[-1.0, 0.0, 1.0, 2.0]], device='cpu')
+
+    with pytest.raises(TypeError, match=r"gelu\(\): argument 'approximate' must be str, not bool"):
+        F.gelu(x, approximate=True)
+
+
 def test_leaky_relu_cpu():
     x = torch.tensor([[-1.0, 0.0, 1.0, 2.0]], device='cpu')
     result = F.leaky_relu(x)

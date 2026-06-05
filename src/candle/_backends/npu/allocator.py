@@ -206,6 +206,7 @@ class Block:
         self.ptr = int(ptr)
         self.size = int(size)
         self.requested = int(requested)
+        self.seg_base = int(ptr)
         self.pool = pool
         self.stream = stream
         self.event = None
@@ -228,6 +229,7 @@ class NpuAllocator:
         self._stats = {}
         self._active = {}
         self._cached = {"small_pool": [], "large_pool": []}
+        self._segments = {}
         self._pending = []
         self._event_pool = []   # reusable ACL event handles
         self._event_pool_ready = False
@@ -277,7 +279,11 @@ class NpuAllocator:
 
     def _find_cached(self, size, pool):
         blocks = self._cached[pool]
-        for idx, block in enumerate(blocks):
+        # Prefer the most recently freed compatible block.  This keeps eager
+        # one-op loops reusing the same output pointer after synchronize(),
+        # which in turn lets pointer-guarded PTA executors hit reliably.
+        for idx in range(len(blocks) - 1, -1, -1):
+            block = blocks[idx]
             if block.size >= size:
                 return blocks.pop(idx)
         return None
@@ -292,6 +298,7 @@ class NpuAllocator:
         remaining = block.size - size
         block.size = size
         remainder = Block(block.ptr + size, remaining, 0, block.pool, None)
+        remainder.seg_base = block.seg_base
         return block, remainder
 
     def _drain_pending(self):
@@ -429,6 +436,8 @@ class NpuAllocator:
             except RuntimeError:
                 ptr = self._oom_retry(allocated)
             block = Block(ptr, allocated, requested, pool, stream)
+            block.seg_base = int(ptr)
+            self._segments[int(ptr)] = allocated
             self._track_alloc(requested, allocated, pool)
         else:
             cached_size = block.size
@@ -458,6 +467,22 @@ class NpuAllocator:
         self._pending.append(block)
         self._track_free(block)
 
+    def free_synchronized(self, ptr):
+        """Return an active block to the cache after a device synchronization.
+
+        runtime.synchronize() has already synchronized the device before draining
+        runtime._deferred_frees, so recording a fresh event here would be pure
+        host overhead and would unnecessarily delay reuse until the next drain.
+        """
+        block = self._active.pop(int(ptr), None)
+        if block is None:
+            return
+        block.event = None
+        self._cached[block.pool].append(block)
+        self._bump("inactive_split_bytes", block.pool, current=block.size, allocated=block.size)
+        self._bump("inactive_split", block.pool, current=1, allocated=1)
+        self._track_free(block)
+
     def synchronize(self):
         self._sync_device()
         self._stats["num_sync_all_streams"] += 1
@@ -469,14 +494,43 @@ class NpuAllocator:
         block.stream = stream
 
     def empty_cache(self):
-        for pool, blocks in self._cached.items():
+        # Driver frees require that no queued work can still reference cached
+        # blocks.  The allocator may move blocks into _cached immediately on the
+        # same stream so eager pipelines can reuse them, so synchronize before
+        # actually returning cached memory to ACL.
+        self._sync_device()
+        self._stats["num_sync_all_streams"] += 1
+        cached_by_segment = {}
+        pool_by_segment = {}
+        for blocks in self._cached.values():
             for block in blocks:
-                self._raw_free(block.ptr)
-                self._bump("reserved_bytes", block.pool, current=-block.size, freed=block.size)
-                self._bump("segment", block.pool, current=-1, freed=1)
-                self._bump("inactive_split_bytes", block.pool, current=-block.size, freed=block.size)
-                self._bump("inactive_split", block.pool, current=-1, freed=1)
-            blocks.clear()
+                cached_by_segment[block.seg_base] = cached_by_segment.get(block.seg_base, 0) + block.size
+                pool_by_segment.setdefault(block.seg_base, block.pool)
+        releasable = []
+        for seg_base, cached_size in cached_by_segment.items():
+            seg_size = self._segments.get(seg_base, 0)
+            if seg_size <= 0:
+                # Blocks injected by tests or created before segment tracking have
+                # no recorded segment size.  They were not split by this allocator
+                # instance, so preserve the historical whole-block release behavior.
+                seg_size = cached_size
+            if cached_size == seg_size:
+                releasable.append(seg_base)
+        releasable_set = set(releasable)
+        for blocks in self._cached.values():
+            survivors = []
+            for block in blocks:
+                if block.seg_base in releasable_set:
+                    self._bump("reserved_bytes", block.pool, current=-block.size, freed=block.size)
+                    self._bump("inactive_split_bytes", block.pool, current=-block.size, freed=block.size)
+                    self._bump("inactive_split", block.pool, current=-1, freed=1)
+                else:
+                    survivors.append(block)
+            blocks[:] = survivors
+        for seg_base in releasable:
+            self._raw_free(seg_base)
+            self._bump("segment", pool_by_segment[seg_base], current=-1, freed=1)
+            self._segments.pop(seg_base, None)
 
     def reset_peak_memory_stats(self):
         for key in list(self._stats.keys()):

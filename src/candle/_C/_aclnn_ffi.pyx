@@ -431,10 +431,10 @@ cdef inline void _pta_buf_append_scalar(
     _pta_buf_append(buf, offset, &scalar_dtype_code, sizeof(int32_t))
 
 
-def pta_begin_add_cache_lookup(
-        self_shape, self_stride,
-        other_shape, other_stride,
-        out_shape, out_stride,
+cpdef object pta_begin_add_cache_lookup(
+        object self_shape, object self_stride,
+        object other_shape, object other_stride,
+        object out_shape, object out_stride,
         int32_t dtype_code,
         uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,
         bytes alpha_scalar_bytes, int32_t alpha_dtype_code,
@@ -504,12 +504,384 @@ def pta_begin_add_cache_lookup(
     return (True, ws_size, <uintptr_t>executor)
 
 
-def pta_end_cache_lookup():
+cdef int pta_begin_add_cache_lookup_raw(
+        object self_shape, object self_stride,
+        object other_shape, object other_stride,
+        object out_shape, object out_stride,
+        int32_t dtype_code,
+        uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,
+        bytes alpha_scalar_bytes, int32_t alpha_dtype_code,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    """Tuple-less C entry for the aclnnAdd PTA cache lookup hot path."""
+    pta_active_out[0] = False
+    ws_size_out[0] = 0
+    executor_out[0] = 0
+    if not _pta_cache_available:
+        return 0
+
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(b"aclnnAdd")
+    if not can_use:
+        return 0
+
+    cdef int self_ndim = len(self_shape)
+    cdef int other_ndim = len(other_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int i
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int64_t[MAX_NDIM] o_shape, o_stride
+    cdef int64_t[MAX_NDIM] r_shape, r_stride
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef const uint8_t* alpha_data = <const uint8_t*>alpha_scalar_bytes
+    cdef int alpha_nbytes = len(alpha_scalar_bytes)
+
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(other_ndim):
+        o_shape[i] = other_shape[i]
+        o_stride[i] = other_stride[i]
+    for i in range(out_ndim):
+        r_shape[i] = out_shape[i]
+        r_stride[i] = out_stride[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"aclnnAdd")
+        _pta_buf_append_tensor(hash_buf, &hash_offset, s_shape, s_stride, self_ndim, dtype_code, 0, <void*>self_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, o_shape, o_stride, other_ndim, dtype_code, 0, <void*>other_ptr)
+        _pta_buf_append_scalar(hash_buf, &hash_offset, alpha_data, alpha_nbytes, alpha_dtype_code)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, r_shape, r_stride, out_ndim, dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    pta_active_out[0] = True
+    ws_size_out[0] = ws_size
+    executor_out[0] = <uintptr_t>executor
+    return 1
+
+
+cpdef void pta_end_cache_lookup():
     """End an active PTA cache context started by pta_begin_add_cache_lookup()."""
     if not _pta_cache_available:
         return
     with nogil:
         _fn_uninit_pta_cache()
+
+
+cpdef object pta_begin_binary_cache_lookup(
+        bytes op_name,
+        object self_shape, object self_stride,
+        object other_shape, object other_stride,
+        object out_shape, object out_stride,
+        int32_t dtype_code,
+        uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,
+        uintptr_t stream):
+    """torch_npu-style PTA cache context for two-input no-alpha ops (e.g. Mul).
+
+    Returns (pta_active, workspace_size, executor_ptr) or None when PTA is
+    unavailable / not usable for this op.  Hash order mirrors torch_npu
+    hit_cache_v2 with an extra input-alias discriminator before tensor metadata:
+    deterministic_status, op_name, inputs_alias, inputs..., output, stream.
+    The alias bit prevents CANN from reusing a cached square-style executor
+    (same data pointer bound to both inputs) for later non-aliased Mul calls.
+    """
+    cdef bint pta_active = False
+    cdef uint64_t ws_size = 0
+    cdef uintptr_t executor = 0
+    cdef int ok = pta_begin_binary_cache_lookup_raw(
+        op_name,
+        self_shape, self_stride,
+        other_shape, other_stride,
+        out_shape, out_stride,
+        dtype_code,
+        self_ptr, other_ptr, out_ptr,
+        stream,
+        &pta_active,
+        &ws_size,
+        &executor,
+    )
+    if not ok:
+        return None
+    return (pta_active, ws_size, executor)
+
+
+cdef int pta_begin_binary_cache_lookup_raw(
+        bytes op_name,
+        object self_shape, object self_stride,
+        object other_shape, object other_stride,
+        object out_shape, object out_stride,
+        int32_t dtype_code,
+        uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    """Tuple-less C entry for two-input no-alpha PTA lookup."""
+    pta_active_out[0] = False
+    ws_size_out[0] = 0
+    executor_out[0] = 0
+    if not _pta_cache_available:
+        return 0
+
+    cdef const char* op_cstr = op_name
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(op_cstr)
+    if not can_use:
+        return 0
+
+    cdef int self_ndim = len(self_shape)
+    cdef int other_ndim = len(other_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int i
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int64_t[MAX_NDIM] o_shape, o_stride
+    cdef int64_t[MAX_NDIM] r_shape, r_stride
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef bint inputs_alias = self_ptr == other_ptr
+
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(other_ndim):
+        o_shape[i] = other_shape[i]
+        o_stride[i] = other_stride[i]
+    for i in range(out_ndim):
+        r_shape[i] = out_shape[i]
+        r_stride[i] = out_stride[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, op_cstr)
+        _pta_buf_append(hash_buf, &hash_offset, &inputs_alias, sizeof(bint))
+        _pta_buf_append_tensor(hash_buf, &hash_offset, s_shape, s_stride, self_ndim, dtype_code, 0, <void*>self_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, o_shape, o_stride, other_ndim, dtype_code, 0, <void*>other_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, r_shape, r_stride, out_ndim, dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    pta_active_out[0] = True
+    ws_size_out[0] = ws_size
+    executor_out[0] = <uintptr_t>executor
+    return 1
+
+
+cdef int pta_begin_addmm_cache_lookup_raw(
+        object input_shape, object input_stride,
+        object mat1_shape, object mat1_stride,
+        object mat2_shape, object mat2_stride,
+        object out_shape, object out_stride,
+        int32_t input_dtype_code,
+        int32_t mat1_dtype_code,
+        int32_t mat2_dtype_code,
+        int32_t out_dtype_code,
+        uintptr_t input_ptr,
+        uintptr_t mat1_ptr,
+        uintptr_t mat2_ptr,
+        uintptr_t out_ptr,
+        bytes beta_scalar_bytes,
+        int32_t beta_dtype_code,
+        bytes alpha_scalar_bytes,
+        int32_t alpha_dtype_code,
+        int8_t cube_math_type,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    """Tuple-less PTA lookup for aclnnAddmm(input, mat1, mat2, beta, alpha, out)."""
+    pta_active_out[0] = False
+    ws_size_out[0] = 0
+    executor_out[0] = 0
+    if not _pta_cache_available:
+        return 0
+
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(b"aclnnAddmm")
+    if not can_use:
+        return 0
+
+    cdef int input_ndim = len(input_shape)
+    cdef int mat1_ndim = len(mat1_shape)
+    cdef int mat2_ndim = len(mat2_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int i
+    cdef int64_t[MAX_NDIM] input_shape_buf, input_stride_buf
+    cdef int64_t[MAX_NDIM] mat1_shape_buf, mat1_stride_buf
+    cdef int64_t[MAX_NDIM] mat2_shape_buf, mat2_stride_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef const uint8_t* beta_data = <const uint8_t*>beta_scalar_bytes
+    cdef int beta_nbytes = len(beta_scalar_bytes)
+    cdef const uint8_t* alpha_data = <const uint8_t*>alpha_scalar_bytes
+    cdef int alpha_nbytes = len(alpha_scalar_bytes)
+    cdef bint input_mat1_alias = input_ptr == mat1_ptr
+    cdef bint input_mat2_alias = input_ptr == mat2_ptr
+    cdef bint mat1_mat2_alias = mat1_ptr == mat2_ptr
+
+    for i in range(input_ndim):
+        input_shape_buf[i] = input_shape[i]
+        input_stride_buf[i] = input_stride[i]
+    for i in range(mat1_ndim):
+        mat1_shape_buf[i] = mat1_shape[i]
+        mat1_stride_buf[i] = mat1_stride[i]
+    for i in range(mat2_ndim):
+        mat2_shape_buf[i] = mat2_shape[i]
+        mat2_stride_buf[i] = mat2_stride[i]
+    for i in range(out_ndim):
+        out_shape_buf[i] = out_shape[i]
+        out_stride_buf[i] = out_stride[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"aclnnAddmm")
+        _pta_buf_append(hash_buf, &hash_offset, &input_mat1_alias, sizeof(bint))
+        _pta_buf_append(hash_buf, &hash_offset, &input_mat2_alias, sizeof(bint))
+        _pta_buf_append(hash_buf, &hash_offset, &mat1_mat2_alias, sizeof(bint))
+        _pta_buf_append_tensor(hash_buf, &hash_offset, input_shape_buf, input_stride_buf, input_ndim, input_dtype_code, 0, <void*>input_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, mat1_shape_buf, mat1_stride_buf, mat1_ndim, mat1_dtype_code, 0, <void*>mat1_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, mat2_shape_buf, mat2_stride_buf, mat2_ndim, mat2_dtype_code, 0, <void*>mat2_ptr)
+        _pta_buf_append_scalar(hash_buf, &hash_offset, beta_data, beta_nbytes, beta_dtype_code)
+        _pta_buf_append_scalar(hash_buf, &hash_offset, alpha_data, alpha_nbytes, alpha_dtype_code)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, out_shape_buf, out_stride_buf, out_ndim, out_dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &cube_math_type, sizeof(int8_t))
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    pta_active_out[0] = True
+    ws_size_out[0] = ws_size
+    executor_out[0] = <uintptr_t>executor
+    return 1
+
+
+cpdef object pta_begin_unary_cache_lookup(
+        bytes op_name,
+        object self_shape, object self_stride,
+        object out_shape, object out_stride,
+        int32_t self_dtype_code, int32_t out_dtype_code,
+        uintptr_t self_ptr, uintptr_t out_ptr,
+        uintptr_t stream):
+    """torch_npu-style PTA cache context for single-input ops (e.g. Silu).
+
+    Returns (pta_active, workspace_size, executor_ptr) or None when PTA is
+    unavailable / not usable for this op.
+    """
+    cdef bint pta_active = False
+    cdef uint64_t ws_size = 0
+    cdef uintptr_t executor = 0
+    cdef int ok = pta_begin_unary_cache_lookup_raw(
+        op_name,
+        self_shape, self_stride,
+        out_shape, out_stride,
+        self_dtype_code, out_dtype_code,
+        self_ptr, out_ptr,
+        stream,
+        &pta_active,
+        &ws_size,
+        &executor,
+    )
+    if not ok:
+        return None
+    return (pta_active, ws_size, executor)
+
+
+cdef int pta_begin_unary_cache_lookup_raw(
+        bytes op_name,
+        object self_shape, object self_stride,
+        object out_shape, object out_stride,
+        int32_t self_dtype_code, int32_t out_dtype_code,
+        uintptr_t self_ptr, uintptr_t out_ptr,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    """Tuple-less C entry for single-input PTA lookup."""
+    pta_active_out[0] = False
+    ws_size_out[0] = 0
+    executor_out[0] = 0
+    if not _pta_cache_available:
+        return 0
+
+    cdef const char* op_cstr = op_name
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(op_cstr)
+    if not can_use:
+        return 0
+
+    cdef int self_ndim = len(self_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int i
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int64_t[MAX_NDIM] r_shape, r_stride
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(out_ndim):
+        r_shape[i] = out_shape[i]
+        r_stride[i] = out_stride[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, op_cstr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, s_shape, s_stride, self_ndim, self_dtype_code, 0, <void*>self_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, r_shape, r_stride, out_ndim, out_dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    pta_active_out[0] = True
+    ws_size_out[0] = ws_size
+    executor_out[0] = <uintptr_t>executor
+    return 1
 
 
 
@@ -700,9 +1072,9 @@ def resolve_op_optional(str op_name):
 # Generic execute (the aclnn<Op> call that all ops share)
 # ---------------------------------------------------------------------------
 
-def execute(uintptr_t exec_ptr, uintptr_t workspace_ptr,
-            uint64_t workspace_size, uintptr_t executor,
-            uintptr_t stream):
+cpdef int execute(uintptr_t exec_ptr, uintptr_t workspace_ptr,
+                  uint64_t workspace_size, uintptr_t executor,
+                  uintptr_t stream):
     """Call aclnn<Op>(workspace, wsSize, executor, stream).
 
     This is the second half of every op — the signature is identical for
@@ -767,11 +1139,11 @@ cdef void _register_executor_cleanup(uintptr_t executor, object cleanup):
 # The executor is always returned for the caller to defer-destroy.
 # ---------------------------------------------------------------------------
 
-def binary_op_with_alpha(
+cpdef object binary_op_with_alpha(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        self_shape, self_stride,
-        other_shape, other_stride,
-        out_shape, out_stride,
+        object self_shape, object self_stride,
+        object other_shape, object other_stride,
+        object out_shape, object out_stride,
         int32_t dtype_code, int32_t fmt,
         uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,
         uintptr_t alpha_scalar,
@@ -862,11 +1234,11 @@ def binary_op_with_alpha(
                 _fast_destroy_tensor(out_t)
 
 
-def binary_op_no_alpha(
+cpdef object binary_op_no_alpha(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        self_shape, self_stride,
-        other_shape, other_stride,
-        out_shape, out_stride,
+        object self_shape, object self_stride,
+        object other_shape, object other_stride,
+        object out_shape, object out_stride,
         int32_t dtype_code, int32_t fmt,
         uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,
         uintptr_t stream):
@@ -1113,10 +1485,10 @@ def tensor_scalar_op_no_alpha(
                 _fast_destroy_tensor(out_t)
 
 
-def unary_op(
+cpdef object unary_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        self_shape, self_stride,
-        out_shape, out_stride,
+        object self_shape, object self_stride,
+        object out_shape, object out_stride,
         int32_t self_dtype_code, int32_t out_dtype_code, int32_t fmt,
         uintptr_t self_ptr, uintptr_t out_ptr,
         uintptr_t stream):
@@ -1252,11 +1624,80 @@ def unary_out_dtype_op(
                 _fast_destroy_tensor(out_t)
 
 
-def reduce_sum_op(
+cdef int pta_begin_reduce_sum_cache_lookup_raw(
+        object self_shape, object self_stride,
+        object out_shape, object out_stride,
+        object dims_tuple, bint keepdim,
+        int32_t dtype_code,
+        uintptr_t self_ptr, uintptr_t out_ptr,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    """Tuple-less C entry for ReduceSum PTA lookup."""
+    pta_active_out[0] = False
+    ws_size_out[0] = 0
+    executor_out[0] = 0
+    if not _pta_cache_available:
+        return 0
+
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(b"aclnnReduceSum")
+    if not can_use:
+        return 0
+
+    cdef int self_ndim = len(self_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int dims_ndim = len(dims_tuple)
+    cdef int i
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int64_t[MAX_NDIM] r_shape, r_stride
+    cdef int64_t[MAX_NDIM] dims_buf
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(out_ndim):
+        r_shape[i] = out_shape[i]
+        r_stride[i] = out_stride[i]
+    for i in range(dims_ndim):
+        dims_buf[i] = dims_tuple[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"aclnnReduceSum")
+        _pta_buf_append_tensor(hash_buf, &hash_offset, s_shape, s_stride, self_ndim, dtype_code, 0, <void*>self_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &dims_ndim, sizeof(int))
+        _pta_buf_append(hash_buf, &hash_offset, dims_buf, dims_ndim * sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &keepdim, sizeof(bint))
+        _pta_buf_append_tensor(hash_buf, &hash_offset, r_shape, r_stride, out_ndim, dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    pta_active_out[0] = True
+    ws_size_out[0] = ws_size
+    executor_out[0] = <uintptr_t>executor
+    return 1
+
+
+cpdef object reduce_sum_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        self_shape, self_stride,
-        out_shape, out_stride,
-        dims_tuple, bint keepdim,
+        object self_shape, object self_stride,
+        object out_shape, object out_stride,
+        object dims_tuple, bint keepdim,
         int32_t dtype_code, int32_t fmt,
         uintptr_t self_ptr, uintptr_t out_ptr,
         uintptr_t stream):
@@ -6136,12 +6577,12 @@ def three_tensor_two_ints_bool_op(
 
 
 
-def four_tensor_two_scalars_one_int8_op(
+cpdef object four_tensor_two_scalars_one_int8_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        a_shape, a_stride,
-        b_shape, b_stride,
-        c_shape, c_stride,
-        out_shape, out_stride,
+        object a_shape, object a_stride,
+        object b_shape, object b_stride,
+        object c_shape, object c_stride,
+        object out_shape, object out_stride,
         int8_t cube_math_type,
         int32_t a_dtype_code, int32_t b_dtype_code, int32_t c_dtype_code, int32_t out_dtype_code, int32_t fmt,
         uintptr_t a_ptr, uintptr_t b_ptr, uintptr_t c_ptr, uintptr_t out_ptr,
@@ -6196,6 +6637,17 @@ def four_tensor_two_scalars_one_int8_op(
                 a_t, b_t, c_t, <void*>scalar_a, <void*>scalar_b, out_t, cube_math_type, &ws_size, &executor)
         if ret != 0:
             raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>a_t)] if a_t != NULL else [])
+            + ([('t', <uintptr_t>b_t)] if b_t != NULL else [])
+            + ([('t', <uintptr_t>c_t)] if c_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        a_t = NULL
+        b_t = NULL
+        c_t = NULL
+        out_t = NULL
         if ws_size == 0:
             try:
                 with nogil:
@@ -6209,10 +6661,14 @@ def four_tensor_two_scalars_one_int8_op(
         return (ws_size, <uintptr_t>executor)
     finally:
         with nogil:
-            _fast_destroy_tensor(a_t)
-            _fast_destroy_tensor(b_t)
-            _fast_destroy_tensor(c_t)
-            _fast_destroy_tensor(out_t)
+            if a_t != NULL:
+                _fast_destroy_tensor(a_t)
+            if b_t != NULL:
+                _fast_destroy_tensor(b_t)
+            if c_t != NULL:
+                _fast_destroy_tensor(c_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
 
 
 
@@ -9244,11 +9700,11 @@ def binary_two_inputs_with_dim_op(
                 _fast_destroy_tensor(out_t)
 
 
-def binary_two_inputs_with_int8_op(
+cpdef object binary_two_inputs_with_int8_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        self_shape, self_stride,
-        other_shape, other_stride,
-        out_shape, out_stride,
+        object self_shape, object self_stride,
+        object other_shape, object other_stride,
+        object out_shape, object out_stride,
         int8_t extra_flag,
         int32_t self_dtype_code, int32_t other_dtype_code, int32_t out_dtype_code, int32_t fmt,
         uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,

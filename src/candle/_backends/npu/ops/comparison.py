@@ -236,7 +236,8 @@ def allclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
     if not isinstance(a, Tensor) or not isinstance(b, Tensor):
         raise ValueError("NPU allclose expects tensors")
     if _use_soc_fallback("allclose"):
-        raise RuntimeError("NPU allclose requires on-device comparison support")
+        from . import any_
+        return not any_(logical_not(isclose(a, b, rtol=rtol, atol=atol, equal_nan=equal_nan))).item()
     from .math import abs, sub, mul, add
     from .math import isnan
     diff = abs(sub(a, b))

@@ -137,6 +137,12 @@ from ._Storage import (
     _get_storage_classes,
     _install_typed_storage_compat,
     _make_legacy_classes,
+    _npu_probe_model_dirs,
+    _npu_model_dir,
+    _npu_aclnn_available,
+    _npu_aclnn_symbols_ok,
+    _npu_aclnn_ones_zero_ok,
+    _npu_device_count,
     __getattr__ as _storage_getattr,
 )
 

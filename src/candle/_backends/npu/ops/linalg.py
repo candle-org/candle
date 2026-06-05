@@ -20,14 +20,22 @@ from .shape import contiguous, diagonal_op, expand, index_select, split, tril, t
 
 try:
     from candle._C._npu_ops import (
+        fast_addmm as _fast_addmm_impl,
+        fast_matmul as _fast_matmul_impl,
         fast_trace as _fast_trace_impl,
         fast_inverse as _fast_inverse_impl,
     )  # pylint: disable=import-error,no-name-in-module
+    _HAS_FAST_ADDMM = True
+    _HAS_FAST_MATMUL = True
     _HAS_FAST_TRACE = True
     _HAS_FAST_INVERSE = True
 except ImportError:
+    _fast_addmm_impl = None  # type: ignore[assignment]
+    _fast_matmul_impl = None  # type: ignore[assignment]
     _fast_trace_impl = None  # type: ignore[assignment]
     _fast_inverse_impl = None  # type: ignore[assignment]
+    _HAS_FAST_ADDMM = False
+    _HAS_FAST_MATMUL = False
     _HAS_FAST_TRACE = False
     _HAS_FAST_INVERSE = False
 
@@ -55,6 +63,17 @@ def matmul(a, b, out=None):
     if _use_soc_fallback("matmul") and orig_dtype == float_dtype:
         a = _cast_tensor_dtype(a, float16_dtype)
         b = _cast_tensor_dtype(b, float16_dtype)
+
+    if (
+        _HAS_FAST_MATMUL
+        and len(a.shape) == 2
+        and len(b.shape) == 2
+        and a.shape[1] == b.shape[0]
+    ):
+        try:
+            return _return(_fast_matmul_impl(a, b))
+        except (TypeError, ValueError):
+            pass
 
     # aclnnMatmul rejects batched inputs with non-row-major strides
     # (GetWorkspaceSize 561103). Match torch_npu by materialising a contiguous
@@ -172,11 +191,10 @@ def matmul(a, b, out=None):
             )
 
     storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape_comp), a.dtype, device=a.device)
-    result = _wrap_tensor(storage, out_shape_comp, out_stride)
     if out_shape_comp != user_out_shape:
-        from ...common import view as view_backend
-
-        result = view_backend.reshape(result, user_out_shape)
+        result = _wrap_tensor(storage, user_out_shape, npu_runtime._contiguous_stride(user_out_shape))
+    else:
+        result = _wrap_tensor(storage, out_shape_comp, out_stride)
     # Cast result back to original dtype if we promoted for 310B float32 workaround.
     if _use_soc_fallback("matmul") and orig_dtype != a.dtype:
         result = _cast_tensor_dtype(result, orig_dtype)
@@ -326,6 +344,23 @@ def addmm(input, mat1, mat2, beta=1, alpha=1):
         input = _cast_tensor_dtype(input, float16_dtype)
         mat1 = _cast_tensor_dtype(mat1, float16_dtype)
         mat2 = _cast_tensor_dtype(mat2, float16_dtype)
+
+    if (
+        _HAS_FAST_ADDMM
+        and len(input.shape) == 1
+        and len(mat1.shape) == 2
+        and len(mat2.shape) == 2
+        and mat1.shape[1] == mat2.shape[0]
+        and input.shape[0] == mat2.shape[1]
+        and input.device == mat1.device == mat2.device
+        and input.dtype == mat1.dtype == mat2.dtype
+        and not hasattr(beta, "shape")
+        and not hasattr(alpha, "shape")
+    ):
+        out = _fast_addmm_impl(input, mat1, mat2, beta, alpha)
+        if _use_soc_fallback("addmm") and orig_dtype != input.dtype:
+            out = _cast_tensor_dtype(out, orig_dtype)
+        return out
 
     M, K = mat1.shape
     _, N = mat2.shape

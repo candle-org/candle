@@ -1,4 +1,4 @@
-from libc.stdint cimport uint32_t, uintptr_t
+from libc.stdint cimport uint32_t, uint64_t, uintptr_t
 
 cpdef capture_begin(uintptr_t stream, int mode)
 cpdef uintptr_t capture_end(uintptr_t stream)
@@ -12,3 +12,4 @@ cpdef str ri_get_name(uintptr_t model_ri)
 cpdef ri_debug_json_print(uintptr_t model_ri, str path, uint32_t flags=*)
 cpdef ri_abort(uintptr_t model_ri)
 cpdef synchronize_stream(uintptr_t handle)
+cpdef memcpy_d2d(uintptr_t dst, uint64_t size, uintptr_t src, uintptr_t stream=*, bint non_blocking=*)

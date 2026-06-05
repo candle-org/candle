@@ -49,6 +49,8 @@ ctypedef int32_t (*fn_aclrtQueryEvent_t)(void*, int32_t*) noexcept nogil
 ctypedef int32_t (*fn_aclrtSynchronizeEvent_t)(void*) noexcept nogil
 ctypedef int32_t (*fn_aclrtEventElapsedTime_t)(float*, void*, void*) noexcept nogil
 ctypedef int32_t (*fn_aclrtSynchronizeDevice_t)() noexcept nogil
+ctypedef int32_t (*fn_aclrtMemcpy_t)(void*, uint64_t, void*, uint64_t, int32_t) noexcept nogil
+ctypedef int32_t (*fn_aclrtMemcpyAsync_t)(void*, uint64_t, void*, uint64_t, int32_t, void*) noexcept nogil
 
 # ---------------------------------------------------------------------------
 # Function pointer typedefs — aclmdlRI capture/replay
@@ -92,6 +94,8 @@ cdef fn_aclrtQueryEvent_t               _fn_query_event = NULL
 cdef fn_aclrtSynchronizeEvent_t         _fn_sync_event = NULL
 cdef fn_aclrtEventElapsedTime_t         _fn_event_elapsed = NULL
 cdef fn_aclrtSynchronizeDevice_t        _fn_sync_device = NULL
+cdef fn_aclrtMemcpy_t                   _fn_memcpy = NULL
+cdef fn_aclrtMemcpyAsync_t              _fn_memcpy_async = NULL
 
 # aclmdlRI
 cdef fn_aclmdlRICaptureBegin_t          _fn_capture_begin = NULL
@@ -157,6 +161,7 @@ def init(str lib_path=None, bint enable_aclgraph=True):
     global _fn_create_event, _fn_create_event_flag, _fn_create_event_ex_flag
     global _fn_destroy_event, _fn_record_event, _fn_query_event
     global _fn_sync_event, _fn_event_elapsed, _fn_sync_device
+    global _fn_memcpy, _fn_memcpy_async
     global _fn_capture_begin, _fn_capture_end, _fn_capture_get_info
     global _fn_capture_exchange_mode
     global _fn_ri_exec_async, _fn_ri_exec, _fn_ri_destroy
@@ -203,6 +208,8 @@ def init(str lib_path=None, bint enable_aclgraph=True):
     _fn_sync_event = <fn_aclrtSynchronizeEvent_t>_sym(h, b"aclrtSynchronizeEvent")
     _fn_event_elapsed = <fn_aclrtEventElapsedTime_t>_sym(h, b"aclrtEventElapsedTime")
     _fn_sync_device = <fn_aclrtSynchronizeDevice_t>_sym(h, b"aclrtSynchronizeDevice")
+    _fn_memcpy = <fn_aclrtMemcpy_t>_sym(h, b"aclrtMemcpy")
+    _fn_memcpy_async = <fn_aclrtMemcpyAsync_t>_sym_optional(h, b"aclrtMemcpyAsync")
 
     # -- aclmdlRI capture/replay (CANN >= 8.5 only)
     if enable_aclgraph:
@@ -378,6 +385,23 @@ def synchronize_device():
     with nogil:
         ret = _fn_sync_device()
     _check_error(ret, b"aclrtSynchronizeDevice")
+
+
+cpdef memcpy_d2d(uintptr_t dst, uint64_t size, uintptr_t src, uintptr_t stream=0, bint non_blocking=False):
+    """Issue a device-to-device copy through direct ACLRT function pointers."""
+    _ensure_loaded()
+    cdef int32_t ret
+    if non_blocking and stream != 0 and _fn_memcpy_async != NULL:
+        with nogil:
+            ret = _fn_memcpy_async(
+                <void*>dst, size, <void*>src, size,
+                3,  # ACL_MEMCPY_DEVICE_TO_DEVICE
+                <void*>stream)
+        _check_error(ret, b"aclrtMemcpyAsync(D2D)")
+        return
+    with nogil:
+        ret = _fn_memcpy(<void*>dst, size, <void*>src, size, 3)
+    _check_error(ret, b"aclrtMemcpy(D2D)")
 
 # ===================================================================
 # Python-visible aclmdlRI wrappers

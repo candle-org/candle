@@ -805,6 +805,16 @@ registry.register("std", "npu", std_, meta=meta_infer.infer_sum)
 registry.register("reciprocal", "npu", reciprocal, meta=meta_infer.infer_unary)
 registry.register("reciprocal_", "npu", reciprocal_, meta=meta_infer.infer_unary)
 registry.register("addmm", "npu", addmm)
+from .matmul_backward import (  # pylint: disable=wrong-import-position
+    layout as _layout,
+    mm_mat1_backward,
+    mm_mat2_backward,
+    sym_strides,
+)
+registry.register("sym_strides", "npu", sym_strides)
+registry.register("layout", "npu", _layout)
+registry.register("mm_mat1_backward", "npu", mm_mat1_backward)
+registry.register("mm_mat2_backward", "npu", mm_mat2_backward)
 registry.register("einsum", "npu", einsum_)
 registry.register("upsample_nearest2d", "npu", upsample_nearest2d)
 registry.register("upsample_bilinear2d", "npu", upsample_bilinear2d)
