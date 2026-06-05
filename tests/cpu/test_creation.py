@@ -3,6 +3,21 @@ import pytest
 import candle as torch
 
 
+def test_tensor_bfloat16_scalar_stores_numeric_value_cpu():
+    x = torch.tensor(1.0, dtype=torch.bfloat16)
+
+    assert x.dtype == torch.bfloat16
+    assert x.to(torch.float32).item() == 1.0
+
+
+def test_factory_bfloat16_stores_numeric_values_cpu():
+    ones = torch.ones((2,), dtype=torch.bfloat16)
+    full = torch.full((2,), 2.0, dtype=torch.bfloat16)
+
+    np.testing.assert_allclose(ones.to(torch.float32).numpy(), [1.0, 1.0])
+    np.testing.assert_allclose(full.to(torch.float32).numpy(), [2.0, 2.0])
+
+
 def test_creation_ops():
     x = torch.zeros((2, 3))
     y = torch.ones((2, 3))

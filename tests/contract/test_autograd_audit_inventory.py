@@ -128,10 +128,12 @@ SHAPE_VIEW_COPY_OPS = {
     "as_strided_copy",
     "expand_copy",
     "flatten",
+    "layout",
     "movedim",
     "narrow",
     "slice_copy",
     "squeeze",
+    "sym_strides",
     "unflatten",
 }
 
@@ -143,6 +145,11 @@ NONDIFFERENTIABLE_OUTPUT_OPS = {
     "bitwise_right_shift",
     "bitwise_xor",
     "logical_xor",
+}
+
+INTERNAL_HELPER_SCHEMA_OPS = {
+    "mm_mat1_backward",
+    "mm_mat2_backward",
 }
 
 MANUAL_REVIEW_SCHEMA_OPS = set()
@@ -244,12 +251,13 @@ def test_schema_ops_without_autograd_registration_are_categorized():
         | COMPARISON_INDEX_OPS
         | SHAPE_VIEW_COPY_OPS
         | NONDIFFERENTIABLE_OUTPUT_OPS
+        | INTERNAL_HELPER_SCHEMA_OPS
         | MANUAL_REVIEW_SCHEMA_OPS
     )
     actual_missing = _schema_ops() - _autograd_registered_ops()
     assert sorted(actual_missing - expected_missing) == []
     assert sorted(expected_missing - actual_missing) == []
-    assert len(actual_missing) == 115
+    assert len(actual_missing) == 119
 
 
 def test_derivatives_not_implemented_inventory_is_classified():

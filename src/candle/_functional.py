@@ -124,6 +124,13 @@ def _py_matmul(*args, **kwargs):
     return dispatch("matmul", None, *args, **kwargs)
 
 
+def _py_addmm(input, mat1, mat2, *, beta=1, alpha=1):
+    r = _handle_torch_function(_py_addmm, (input, mat1, mat2), {"beta": beta, "alpha": alpha})
+    if r is not NotImplemented:
+        return r
+    return dispatch("addmm", input.device.type, input, mat1, mat2, beta=beta, alpha=alpha)
+
+
 def _py_relu(*args, **kwargs):
     r = _handle_torch_function(_py_relu, args, kwargs)
     if r is not NotImplemented:
@@ -145,6 +152,7 @@ def _py_neg(a):
 _py_add.__name__ = "add"
 _py_mul.__name__ = "mul"
 _py_matmul.__name__ = "matmul"
+_py_addmm.__name__ = "addmm"
 _py_relu.__name__ = "relu"
 _py_neg.__name__ = "neg"
 
@@ -172,6 +180,7 @@ try:
         sub as _cy_sub,
         div as _cy_div,
         matmul as _cy_matmul,
+        addmm as _cy_addmm,
         relu as _cy_relu,
         transpose as _cy_transpose,
         reshape as _cy_reshape,
@@ -1405,7 +1414,11 @@ def reciprocal(a):
 
 
 def addmm(input, mat1, mat2, *, beta=1, alpha=1):
-    return dispatch("addmm", input.device.type, input, mat1, mat2, beta=beta, alpha=alpha)
+    try:
+        return _cy_addmm(input, mat1, mat2, beta=beta, alpha=alpha)
+    except NameError:
+        pass
+    return _py_addmm(input, mat1, mat2, beta=beta, alpha=alpha)
 
 
 def maximum(a, b):

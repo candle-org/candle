@@ -1,4 +1,23 @@
 import ctypes
+import re
+from pathlib import Path
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_exact_base_npu_pair_guard_requires_same_device_index():
+    """Exact Cython NPU pair fast path must not bypass cross-device checks."""
+    src = (_REPO_ROOT / "src/candle/_C/_functional_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cdef inline bint _exact_base_npu_pair\(object a, object b\):(?P<body>.*?)\n\n",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "_device_index" in body
+    assert "==" in body
 
 
 def test_small_op_fast_paths_skip_python_defer_executor(npu_device, monkeypatch):
@@ -327,6 +346,210 @@ def test_fast_mul_broadcast_chain_remains_correct_across_distinct_outputs(npu_de
     expected = a.cpu().float().numpy() * b.cpu().float().numpy()
     got = outs[-1].cpu().float().numpy()
     assert np.allclose(got, expected, rtol=1e-2, atol=1e-2)
+
+
+def test_npu_gelu_functional_wrapper_uses_exact_base_route():
+    """GELU should use the exact TensorImpl fast path like SiLU does."""
+    src = (_REPO_ROOT / "src/candle/_C/_functional_ops.pyx").read_text(encoding="utf-8")
+    assert "fast_gelu_exact as _cy_fast_npu_gelu_exact" in src
+    match = re.search(r"def gelu\(a, approximate='none'\):(?P<body>.*?)\n\ndef ", src, flags=re.DOTALL)
+    assert match is not None
+    body = match.group("body")
+    assert "_cy_fast_npu_gelu_exact(<TensorImpl>a)" in body
+
+
+def test_fast_gelu_exact_defers_executor_on_error_path():
+    """GELU exact miss path should defer executor cleanup even if execution raises."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_gelu_exact\(TensorImpl a\):(?P<body>.*?)\n\ncpdef object fast_silu\(",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "executor = 0" in body
+    assert re.search(
+        r"finally:\n\s+if executor:\n\s+_defer_executor_handle\(executor\)",
+        body,
+    ) is not None
+
+
+
+def test_fast_gelu_skips_python_defer_executor_on_first_use(npu_device):
+    """GELU hot path should append raw executor handles without Python normalization."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        f"""
+        import candle as torch
+        import candle.nn.functional as F
+        import candle._backends.npu.aclnn as aclnn_mod
+
+        x = torch.randn(1, 128, 64, device={str(npu_device)!r}, dtype=torch.float16)
+        torch.npu.synchronize()
+
+        calls = {{"count": 0}}
+        original = aclnn_mod._defer_executor
+        def wrapped(*args, **kwargs):
+            calls["count"] += 1
+            return original(*args, **kwargs)
+        aclnn_mod._defer_executor = wrapped
+
+        out = F.gelu(x)
+        torch.npu.synchronize()
+
+        assert calls["count"] == 0, calls
+        assert out.device.type == "npu"
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+
+def test_fast_gelu_exact_respects_storage_offset_view(npu_device):
+    """GELU exact path should read from a view's storage_offset, not storage base."""
+    import math
+    import numpy as np
+    import candle as torch
+    import candle.nn.functional as F
+
+    base = torch.randn(2, 32, device=npu_device, dtype=torch.float16)
+    view = base[1]
+    out = F.gelu(view)
+    torch.npu.synchronize()
+
+    view_np = view.cpu().float().numpy()
+    expected = 0.5 * view_np * (1.0 + np.vectorize(math.erf)(view_np / math.sqrt(2.0)))
+    got = out.cpu().float().numpy()
+    assert np.allclose(got, expected, rtol=2e-2, atol=2e-2)
+
+
+def test_fast_gelu_dispatch_respects_storage_offset_view(npu_device):
+    """Dispatch GELU path should also honor storage_offset for views."""
+    import math
+    import numpy as np
+    import candle as torch
+    from candle._dispatch import dispatch
+
+    base = torch.randn(2, 32, device=npu_device, dtype=torch.float16)
+    view = base[1]
+    out = dispatch("gelu", view.device.type, view)
+    torch.npu.synchronize()
+
+    view_np = view.cpu().float().numpy()
+    expected = 0.5 * view_np * (1.0 + np.vectorize(math.erf)(view_np / math.sqrt(2.0)))
+    got = out.cpu().float().numpy()
+    assert np.allclose(got, expected, rtol=2e-2, atol=2e-2)
+
+
+def test_npu_gelu_tanh_preserves_input_dtype_for_composite_constants(npu_device):
+    """GELU tanh approximation should work on NPU float16 without mixed-dtype pow."""
+    import numpy as np
+    import math
+    import candle as torch
+    import candle.nn.functional as F
+
+    x = torch.randn(16, 16, device=npu_device, dtype=torch.float16)
+    out = F.gelu(x, approximate="tanh")
+    torch.npu.synchronize()
+
+    x_np = x.cpu().float().numpy()
+    expected = 0.5 * x_np * (1.0 + np.tanh(math.sqrt(2.0 / math.pi) * (x_np + 0.044715 * x_np ** 3)))
+    got = out.cpu().float().numpy()
+    assert out.dtype == x.dtype
+    assert np.allclose(got, expected, rtol=3e-2, atol=3e-2)
+
+    x_grad = torch.randn(8, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    F.gelu(x_grad, approximate="tanh").sum().backward()
+    torch.npu.synchronize()
+    assert x_grad.grad is not None
+    assert x_grad.grad.device.type == "npu"
+    assert x_grad.grad.dtype == x_grad.dtype
+
+
+
+def test_fast_gelu_chain_reuses_cached_executor_across_distinct_outputs(npu_device, monkeypatch):
+    """Same-signature gelu chains should reuse PTA cached executors across fresh outputs."""
+    import numpy as np
+    import math
+    import pytest
+    import candle as torch
+    import candle.nn.functional as F
+    import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+
+    if not ffi_mod.is_pta_cache_available():
+        pytest.skip("PTA executor cache not available on this CANN build")
+
+    x = torch.randn(1, 128, 64, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    warm = [F.gelu(x) for _ in range(5)]
+    torch.npu.synchronize()
+    del warm
+
+    calls = {"count": 0}
+    original_unary_op = ffi_mod.unary_op
+
+    def wrapped_unary_op(*args, **kwargs):
+        calls["count"] += 1
+        return original_unary_op(*args, **kwargs)
+
+    monkeypatch.setattr(ffi_mod, "unary_op", wrapped_unary_op)
+
+    outs = [F.gelu(x) for _ in range(10)]
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    x_np = x.cpu().float().numpy()
+    expected = 0.5 * x_np * (1.0 + np.vectorize(math.erf)(x_np / math.sqrt(2.0)))
+    got = outs[-1].cpu().float().numpy()
+    assert np.allclose(got, expected, rtol=2e-2, atol=2e-2)
+
+
+def test_fast_gelu_same_signature_uses_cython_executor_path(npu_device, monkeypatch):
+    """fast_gelu_exact should bypass the Python FFI wrapper for stable signatures."""
+    import numpy as np
+    import math
+    import candle as torch
+    import candle.nn.functional as F
+    import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+
+    x = torch.randn(7, 5, 3, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    # Warm so first-use cache population does not affect the assertion
+    _ = F.gelu(x)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_unary_op = ffi_mod.unary_op
+
+    def wrapped_unary_op(*args, **kwargs):
+        calls["count"] += 1
+        return original_unary_op(*args, **kwargs)
+
+    monkeypatch.setattr(ffi_mod, "unary_op", wrapped_unary_op)
+
+    out1 = F.gelu(x)
+    out2 = F.gelu(x)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    x_np = x.cpu().float().numpy()
+    expected = 0.5 * x_np * (1.0 + np.vectorize(math.erf)(x_np / math.sqrt(2.0)))
+    assert np.allclose(out1.cpu().float().numpy(), expected, rtol=2e-2, atol=2e-2)
+    assert np.allclose(out2.cpu().float().numpy(), expected, rtol=2e-2, atol=2e-2)
 
 
 def test_fast_silu_chain_reuses_cached_executor_across_distinct_outputs(npu_device, monkeypatch):
@@ -963,6 +1186,1131 @@ def test_fast_lt_skips_python_aclnn_wrapper(npu_device, monkeypatch):
     torch.npu.synchronize()
 
     assert calls["count"] == 0
+
+
+def test_fast_matmul_exact_uses_pta_executor_cache():
+    """fast_matmul_exact should reuse torch_npu-style PTA executors before GetWorkspaceSize."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_matmul_exact\(TensorImpl a, TensorImpl b\):(?P<body>.*?)\n\ncpdef object fast_matmul\(",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "_ffi_pta_begin_binary_cache_lookup_raw" in body
+    assert 'b"aclnnMatmul"' in body
+    assert body.index("_ffi_pta_begin_binary_cache_lookup_raw") < body.index(
+        "_ffi_binary_two_inputs_with_int8_op"
+    )
+
+
+def test_fast_mm_backward_helpers_use_pta_executor_cache():
+    """Matmul backward helpers should not rebuild ACLNN Matmul executors on every step."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    for name, next_name in (
+        ("fast_mm_mat1_backward", "fast_mm_mat2_backward"),
+        ("fast_mm_mat2_backward", "fast_addmm"),
+    ):
+        match = re.search(
+            rf"cpdef object {name}\(.*?\):(?P<body>.*?)\n\ncpdef object {next_name}\(",
+            src,
+            flags=re.DOTALL,
+        )
+        assert match is not None
+        body = match.group("body")
+        assert "_ffi_pta_begin_binary_cache_lookup_raw" in body, name
+        assert 'b"aclnnMatmul"' in body, name
+        assert body.index("_ffi_pta_begin_binary_cache_lookup_raw") < body.index(
+            "_ffi_binary_two_inputs_with_int8_op"
+        ), name
+
+
+def test_fast_gelu_backward_uses_pta_executor_cache():
+    """GELU backward should reuse PTA executors before rebuilding workspace."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_gelu_backward\(.*?\):(?P<body>.*?)\n\n\ncpdef object fast_silu_backward",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "_ffi_pta_begin_binary_cache_lookup_raw" in body
+    assert 'b"aclnnGeluBackward"' in body
+    assert body.index("_ffi_pta_begin_binary_cache_lookup_raw") < body.index(
+        "_ffi_binary_op_no_alpha"
+    )
+
+
+
+def test_fast_gelu_backward_uses_exact_tensorimpl_fast_wrapper():
+    """GELU backward base tensors should use direct fields and the fast NPU wrapper."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_gelu_backward\(.*?\):(?P<body>.*?)\n\n\ncpdef object fast_silu_backward",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    for snippet in (
+        "cdef TensorImpl grad_t",
+        "cdef TensorImpl input_t",
+        "grad_t._stride_tuple",
+        "input_t._stride_tuple",
+        "_tensor_dtype_to_acl_code(grad_t)",
+        "_get_stream_obj_fast(dev_idx)",
+        "_get_stream_raw_fast(dev_idx)",
+        "malloc_large_cached",
+        "_make_npu_tensor_fast_large",
+    ):
+        assert snippet in body
+    assert body.index("grad_t._stride_tuple") < body.index("_ffi_pta_begin_binary_cache_lookup_raw")
+
+
+
+def test_fast_sum_uses_pta_executor_cache():
+    """fast_sum should reuse PTA executors before rebuilding ReduceSum workspace."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_sum\(.*?\):(?P<body>.*?)\n\ncpdef object fast_mm_mat1_backward",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "_ffi_pta_begin_reduce_sum_cache_lookup_raw" in body
+    assert body.index("_ffi_pta_begin_reduce_sum_cache_lookup_raw") < body.index(
+        "_ffi_reduce_sum_op"
+    )
+
+
+
+def test_reduce_sum_pta_hash_includes_dims_and_keepdim():
+    """ReduceSum PTA keys must include reduction dims and keepdim semantics."""
+    src = (_REPO_ROOT / "src/candle/_C/_aclnn_ffi.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cdef int pta_begin_reduce_sum_cache_lookup_raw\(.*?\) except -1:(?P<body>.*?)\n\n\ncpdef object reduce_sum_op",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert 'b"aclnnReduceSum"' in body
+    assert "dims_buf" in body
+    assert "dims_ndim" in body
+    assert "&keepdim" in body
+    assert body.index("_pta_buf_append_cstr(hash_buf, &hash_offset, b\"aclnnReduceSum\")") < body.index(
+        "_pta_buf_append(hash_buf, &hash_offset, dims_buf"
+    )
+    assert body.index("_pta_buf_append(hash_buf, &hash_offset, &keepdim") < body.index(
+        "_pta_buf_append_tensor(hash_buf, &hash_offset, r_shape"
+    )
+
+
+
+def test_fast_addmm_uses_pta_executor_cache():
+    """fast_addmm should reuse PTA executors before rebuilding Addmm workspace."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_addmm\(.*?\):(?P<body>.*?)\n\n# ---------------------------------------------------------------------------\n# fast_sub",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "_ffi_pta_begin_addmm_cache_lookup_raw" in body
+    assert body.index("_ffi_pta_begin_addmm_cache_lookup_raw") < body.index(
+        "_ffi_four_tensor_two_scalars_one_int8_op"
+    )
+
+
+def test_addmm_ffi_helper_defers_descriptor_cleanup_until_executor_destroyed():
+    """Addmm descriptors must outlive GetWorkspaceSize when workspace execute is deferred."""
+    src = (_REPO_ROOT / "src/candle/_C/_aclnn_ffi.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object four_tensor_two_scalars_one_int8_op\(.*?\):(?P<body>.*?)\n\n\ndef tensor_int_array_two_outputs_op",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "_register_executor_cleanup" in body
+    assert body.index("_register_executor_cleanup") < body.index("if ws_size == 0:")
+    for name in ("a_t", "b_t", "c_t", "out_t"):
+        assert f"('t', <uintptr_t>{name})" in body
+        assert f"{name} = NULL" in body
+
+
+def test_addmm_pta_hash_discriminates_operand_aliases():
+    """Addmm PTA keys must separate aliased and non-aliased operand patterns."""
+    src = (_REPO_ROOT / "src/candle/_C/_aclnn_ffi.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cdef int pta_begin_addmm_cache_lookup_raw\(.*?\) except -1:(?P<body>.*?)\n\n\ncpdef object pta_begin_unary_cache_lookup",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    for name in ("input_mat1_alias", "input_mat2_alias", "mat1_mat2_alias"):
+        assert name in body
+        assert f"&{name}" in body
+    assert body.index("_pta_buf_append_cstr(hash_buf, &hash_offset, b\"aclnnAddmm\")") < body.index(
+        "_pta_buf_append(hash_buf, &hash_offset, &input_mat1_alias"
+    )
+    assert body.index("_pta_buf_append(hash_buf, &hash_offset, &mat1_mat2_alias") < body.index(
+        "_pta_buf_append_tensor(hash_buf, &hash_offset, input_shape_buf"
+    )
+
+
+def test_fast_matmul_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    """2D NPU matmul should bypass candle._backends.npu.aclnn.matmul when safe."""
+    import numpy as np
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+
+    a = torch.randn(8, 16, device=npu_device, dtype=torch.float16)
+    b = torch.randn(16, 12, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    expected = torch.matmul(a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_matmul = aclnn_mod.matmul
+
+    def wrapped_matmul(*args, **kwargs):
+        calls["count"] += 1
+        return original_matmul(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "matmul", wrapped_matmul)
+
+    out = torch.matmul(a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0, (
+        f"fast_matmul called aclnn.matmul {calls['count']} time(s); expected 0"
+    )
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-2, atol=1e-2)
+
+
+def test_fast_addmm_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    """2D NPU addmm should bypass candle._backends.npu.aclnn.addmm when safe."""
+    import numpy as np
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+
+    bias = torch.randn(12, device=npu_device, dtype=torch.float16)
+    a = torch.randn(8, 16, device=npu_device, dtype=torch.float16)
+    b = torch.randn(16, 12, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    expected = torch.addmm(bias, a, b)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_addmm = aclnn_mod.addmm
+
+    def wrapped_addmm(*args, **kwargs):
+        calls["count"] += 1
+        return original_addmm(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "addmm", wrapped_addmm)
+
+    out = torch.addmm(bias, a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0, (
+        f"fast_addmm called aclnn.addmm {calls['count']} time(s); expected 0"
+    )
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-2, atol=1e-2)
+
+
+def test_fast_addmm_default_scalars_are_cached_per_dtype(npu_device, monkeypatch):
+    """Default beta=alpha=1 addmm should reuse cached aclScalar handles."""
+    import candle as torch
+    from candle._C import _aclnn_ffi
+
+    bias = torch.randn(12, device=npu_device, dtype=torch.float16)
+    a = torch.randn(8, 16, device=npu_device, dtype=torch.float16)
+    b = torch.randn(16, 12, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_create_scalar = _aclnn_ffi.create_scalar
+
+    def wrapped_create_scalar(*args, **kwargs):
+        calls["count"] += 1
+        return original_create_scalar(*args, **kwargs)
+
+    monkeypatch.setattr(_aclnn_ffi, "create_scalar", wrapped_create_scalar)
+
+    _ = torch.addmm(bias, a, b)
+    torch.npu.synchronize()
+    _ = torch.addmm(bias, a, b)
+    torch.npu.synchronize()
+
+    assert calls["count"] <= 1
+
+
+
+def test_fast_addmm_pta_alias_and_nonalias_reuse_remain_correct(npu_device):
+    """Addmm PTA cache entries must not cross aliased/non-aliased mat operands."""
+    import numpy as np
+    import candle as torch
+
+    bias = torch.randn(8, device=npu_device, dtype=torch.float16)
+    a = torch.randn(8, 8, device=npu_device, dtype=torch.float16)
+    b = torch.randn(8, 8, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    # Warm both alias patterns with the same shapes/strides/dtypes.  A stale
+    # cached executor that does not distinguish mat1==mat2 can bind the wrong
+    # input list for one of these calls.
+    _ = [torch.addmm(bias, a, b) for _ in range(5)]
+    torch.npu.synchronize()
+    aliased = torch.addmm(bias, a, a)
+    torch.npu.synchronize()
+    _ = [torch.addmm(bias, a, a) for _ in range(5)]
+    torch.npu.synchronize()
+    nonaliased = torch.addmm(bias, a, b)
+    torch.npu.synchronize()
+
+    bias_np = bias.cpu().float().numpy()
+    a_np = a.cpu().float().numpy()
+    b_np = b.cpu().float().numpy()
+    assert np.allclose(aliased.cpu().float().numpy(), bias_np + a_np @ a_np, rtol=2e-2, atol=2e-2)
+    assert np.allclose(nonaliased.cpu().float().numpy(), bias_np + a_np @ b_np, rtol=2e-2, atol=2e-2)
+
+
+
+def test_linear_bias_uses_fused_addmm_kernel_without_python_wrapper(npu_device, monkeypatch):
+    """NPU linear with bias should use the fused addmm kernel, bypassing the Python wrapper."""
+    import numpy as np
+    import candle as torch
+    import candle._functional as functional_mod
+    import candle.nn.functional as F
+
+    x = torch.randn(8, 16, device=npu_device, dtype=torch.float16)
+    weight = torch.randn(12, 16, device=npu_device, dtype=torch.float16)
+    bias = torch.randn(12, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    expected = F.linear(x, weight, bias)
+    torch.npu.synchronize()
+
+    calls = {"addmm": 0}
+    original_addmm = functional_mod.addmm
+
+    def wrapped_addmm(*args, **kwargs):
+        calls["addmm"] += 1
+        return original_addmm(*args, **kwargs)
+
+    monkeypatch.setattr(functional_mod, "addmm", wrapped_addmm)
+
+    out = F.linear(x, weight, bias)
+    torch.npu.synchronize()
+
+    assert calls["addmm"] == 0
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-2, atol=1e-2)
+
+
+
+def test_linear_bias_avoids_matmul_add_decomposition(npu_device, monkeypatch):
+    """NPU linear with bias should use generic addmm, not matmul plus add."""
+    import numpy as np
+    import candle as torch
+    import candle._dispatch as dispatch_mod
+    import candle.nn.functional as F
+
+    x = torch.randn(8, 16, device=npu_device, dtype=torch.float16)
+    weight = torch.randn(12, 16, device=npu_device, dtype=torch.float16)
+    bias = torch.randn(12, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+
+    expected = F.linear(x, weight, bias)
+    torch.npu.synchronize()
+
+    ops = []
+    original_dispatch = dispatch_mod.dispatch
+
+    def wrapped_dispatch(op_name, *args, **kwargs):
+        ops.append(op_name)
+        return original_dispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(dispatch_mod, "dispatch", wrapped_dispatch)
+
+    out = F.linear(x, weight, bias)
+    torch.npu.synchronize()
+
+    assert "matmul" not in ops
+    assert "add" not in ops
+    assert np.allclose(out.cpu().numpy(), expected.cpu().numpy(), rtol=1e-2, atol=1e-2)
+
+
+def test_linear_bias_addmm_backward_runs_on_npu(npu_device):
+    """Linear routed through addmm must preserve NPU autograd for input/weight/bias."""
+    import candle as torch
+    import candle.nn.functional as F
+
+    x = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    weight = torch.randn(6, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+
+    loss = F.linear(x, weight, bias).sum()
+    loss.backward()
+    torch.npu.synchronize()
+
+    assert x.grad is not None
+    assert weight.grad is not None
+    assert bias.grad is not None
+    assert x.grad.device.type == "npu"
+    assert weight.grad.device.type == "npu"
+    assert bias.grad.device.type == "npu"
+    assert x.grad.shape == x.shape
+    assert weight.grad.shape == weight.shape
+    assert bias.grad.shape == bias.shape
+
+
+def test_npu_parameter_transpose_backward_skips_generated_python_node(npu_device, monkeypatch):
+    """NPU Parameter.t should attach a Cython transpose backward node."""
+    import candle as torch
+    import candle.nn as nn
+    import candle._generated.functions as functions_mod
+
+    layer = nn.Linear(8, 6).to(npu_device).to(torch.float16)
+    torch.npu.synchronize()
+
+    def fail_generated_node(*args, **kwargs):
+        raise AssertionError("NPU transpose should attach a Cython autograd node")
+
+    monkeypatch.setattr(functions_mod, "TransposeIntBackward0", fail_generated_node)
+
+    out = layer.weight.t()
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    assert layer.weight.grad is not None
+    assert layer.weight.grad.device.type == "npu"
+    assert layer.weight.grad.shape == layer.weight.shape
+
+
+
+def test_npu_parameter_transpose_skips_python_dispatch(npu_device):
+    """NPU Parameter.t should use the same safe view/autograd path as base tensors."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        f"""
+        import candle as torch
+        import candle.nn as nn
+        import candle._dispatch as dispatch_pkg
+
+        layer = nn.Linear(8, 6).to({str(npu_device)!r}).to(torch.float16)
+        torch.npu.synchronize()
+
+        calls = []
+        original_dispatch = dispatch_pkg.dispatch
+
+        def wrapped_dispatch(op_name, *args, **kwargs):
+            if op_name == "transpose":
+                calls.append(op_name)
+                raise AssertionError("Parameter transpose should bypass Python dispatch")
+            return original_dispatch(op_name, *args, **kwargs)
+
+        dispatch_pkg.dispatch = wrapped_dispatch
+        out = layer.weight.t()
+        out.sum().backward()
+        torch.npu.synchronize()
+        assert calls == []
+        assert out.device.type == "npu"
+        assert layer.weight.grad is not None and layer.weight.grad.device.type == "npu"
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+
+def test_npu_linear_with_parameter_bias_skips_addmm_dispatch(npu_device):
+    """nn.Linear Parameter tensors should use the safe NPU addmm hot path."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        f"""
+        import candle as torch
+        import candle.nn as nn
+        import candle._dispatch.dispatcher as dispatcher_mod
+
+        layer = nn.Linear(8, 6).to({str(npu_device)!r}).to(torch.float16)
+        x = torch.randn(4, 8, device={str(npu_device)!r}, dtype=torch.float16, requires_grad=True)
+        torch.npu.synchronize()
+
+        calls = []
+        original_dispatch = dispatcher_mod.dispatch
+
+        def wrapped_dispatch(op_name, *args, **kwargs):
+            if op_name == "addmm":
+                calls.append(op_name)
+                raise AssertionError("Parameter linear should bypass addmm Python dispatch")
+            return original_dispatch(op_name, *args, **kwargs)
+
+        dispatcher_mod.dispatch = wrapped_dispatch
+        out = layer(x)
+        out.sum().backward()
+        torch.npu.synchronize()
+        assert calls == []
+        assert out.device.type == "npu"
+        assert x.grad is not None and x.grad.device.type == "npu"
+        assert layer.weight.grad is not None and layer.weight.grad.device.type == "npu"
+        assert layer.bias.grad is not None and layer.bias.grad.device.type == "npu"
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+
+def test_npu_linear_cython_hot_path_skips_python_functional_addmm(npu_device, monkeypatch):
+    """Safe NPU F.linear should bypass the Python nn.functional/addmm glue."""
+    import candle as torch
+    import candle.nn.functional as F
+    import candle._functional as functional_mod
+
+    x = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    weight = torch.randn(6, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    def fail_python_addmm(*args, **kwargs):
+        raise AssertionError("NPU F.linear hot path should bypass Python _functional.addmm glue")
+
+    monkeypatch.setattr(functional_mod, "addmm", fail_python_addmm)
+
+    out = F.linear(x, weight, bias)
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    assert out.device.type == "npu"
+    assert x.grad is not None and x.grad.device.type == "npu"
+    assert weight.grad is not None and weight.grad.device.type == "npu"
+    assert bias.grad is not None and bias.grad.device.type == "npu"
+
+
+
+def test_npu_linear_cython_hot_path_skips_python_weight_t(npu_device, monkeypatch):
+    """Safe NPU F.linear should avoid the Python weight.t() wrapper."""
+    import candle as torch
+    import candle.nn.functional as F
+
+    x = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    weight = torch.randn(6, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    tensor_type = type(weight)
+
+    def fail_python_t(self, *args, **kwargs):
+        raise AssertionError("NPU F.linear hot path should bypass Python weight.t() glue")
+
+    monkeypatch.setattr(tensor_type, "t", fail_python_t)
+
+    out = F.linear(x, weight, bias)
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    assert out.device.type == "npu"
+    assert x.grad is not None and x.grad.device.type == "npu"
+    assert weight.grad is not None and weight.grad.device.type == "npu"
+    assert bias.grad is not None and bias.grad.device.type == "npu"
+
+
+
+def test_npu_addmm_autograd_skips_python_dispatch(npu_device, monkeypatch):
+    """NPU addmm training hot path should attach autograd without Python dispatch."""
+    import candle as torch
+    import candle._functional as functional_mod
+
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    a = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    b = torch.randn(8, 6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    original_dispatch = functional_mod.dispatch
+
+    def fail_dispatch(op_name, *args, **kwargs):
+        if op_name == "addmm":
+            raise AssertionError("NPU addmm autograd hot path should bypass Python dispatch")
+        return original_dispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(functional_mod, "dispatch", fail_dispatch)
+
+    out = torch.addmm(bias, a, b)
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    assert out.device.type == "npu"
+    assert a.grad is not None and a.grad.device.type == "npu"
+    assert b.grad is not None and b.grad.device.type == "npu"
+    assert bias.grad is not None and bias.grad.device.type == "npu"
+
+
+
+def test_npu_addmm_autograd_skips_generated_python_node(npu_device, monkeypatch):
+    """Default NPU addmm autograd should use the Cython node, not generated Python AddmmBackward0."""
+    import candle as torch
+    import candle._generated.functions as functions_mod
+
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    a = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    b = torch.randn(8, 6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    def fail_generated_node(*args, **kwargs):
+        raise AssertionError("NPU addmm should attach a Cython autograd node")
+
+    monkeypatch.setattr(functions_mod, "AddmmBackward0", fail_generated_node)
+
+    out = torch.addmm(bias, a, b)
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    assert a.grad is not None and a.grad.device.type == "npu"
+    assert b.grad is not None and b.grad.device.type == "npu"
+    assert bias.grad is not None and bias.grad.device.type == "npu"
+
+
+
+def test_addmm_backward_uses_direct_npu_mm_helpers_without_redispatch(npu_device, monkeypatch):
+    """Default NPU addmm backward should call direct Cython mm helpers, not redispatch them."""
+    import candle as torch
+    import candle._generated.functions as functions_mod
+
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    a = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    b = torch.randn(8, 6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    calls = {"mm_mat1_backward": 0, "mm_mat2_backward": 0}
+    original_redispatch = functions_mod.redispatch
+
+    def wrapped_redispatch(op_name, *args, **kwargs):
+        if op_name in calls:
+            calls[op_name] += 1
+        return original_redispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(functions_mod, "redispatch", wrapped_redispatch)
+
+    torch.addmm(bias, a, b).sum().backward()
+    torch.npu.synchronize()
+
+    assert calls == {"mm_mat1_backward": 0, "mm_mat2_backward": 0}
+
+
+
+def test_addmm_backward_uses_fused_mm_helpers_without_transpose_dispatch(npu_device, monkeypatch):
+    """Default addmm backward should avoid Python transpose/matmul helper composition."""
+    import candle as torch
+    import candle._dispatch as dispatch_pkg
+
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    a = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    b = torch.randn(8, 6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    calls = {"transpose": 0, "matmul": 0}
+    original_dispatch = dispatch_pkg.dispatch
+
+    def wrapped_dispatch(op_name, *args, **kwargs):
+        if op_name in calls:
+            calls[op_name] += 1
+        return original_dispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(dispatch_pkg, "dispatch", wrapped_dispatch)
+
+    torch.addmm(bias, a, b).sum().backward()
+    torch.npu.synchronize()
+
+    assert calls == {"transpose": 0, "matmul": 0}
+
+
+def test_npu_tensor_t_autograd_skips_python_dispatch(npu_device, monkeypatch):
+    """NPU tensor.t() should attach transpose autograd without Python dispatch."""
+    import candle as torch
+    import candle._dispatch as dispatch_mod
+
+    weight = torch.randn(6, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    def fail_dispatch(op_name, *args, **kwargs):
+        if op_name == "transpose":
+            raise AssertionError("NPU tensor.t() hot path should bypass Python transpose dispatch")
+        return original_dispatch(op_name, *args, **kwargs)
+
+    original_dispatch = dispatch_mod.dispatch
+    monkeypatch.setattr(dispatch_mod, "dispatch", fail_dispatch)
+
+    view = weight.t()
+    view.sum().backward()
+    torch.npu.synchronize()
+
+    assert view.device.type == "npu"
+    assert view.shape == (8, 6)
+    assert weight.grad is not None and weight.grad.device.type == "npu"
+
+
+
+def test_linear_backward_skips_transpose_redispatch_for_weight_view(npu_device, monkeypatch):
+    """Linear weight.T view backward should avoid Python transpose redispatch."""
+    import candle as torch
+    import candle.nn.functional as F
+    import candle._generated.functions as functions_mod
+
+    x = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    weight = torch.randn(6, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    loss = F.linear(x, weight, bias).sum()
+    torch.npu.synchronize()
+
+    calls = {"transpose": 0}
+    original_redispatch = functions_mod.redispatch
+
+    def wrapped_redispatch(op_name, *args, **kwargs):
+        if op_name == "transpose":
+            calls["transpose"] += 1
+        return original_redispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(functions_mod, "redispatch", wrapped_redispatch)
+
+    loss.backward()
+    torch.npu.synchronize()
+
+    assert calls["transpose"] == 0
+
+
+def test_npu_backward_implicit_grad_seed_stays_on_device(npu_device, monkeypatch):
+    """Implicit scalar backward grad should be created on NPU, not copied from CPU."""
+    import candle as torch
+    import candle._functional as functional_mod
+
+    x = torch.randn(8, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    loss = x.sum()
+    torch.npu.synchronize()
+
+    calls = {"cpu_to_npu": 0}
+    original_to = functional_mod.to
+    original_dispatch = functional_mod.dispatch
+
+    def is_cpu_to_npu(a, device):
+        target_type = getattr(device, "type", None)
+        if target_type is None and isinstance(device, str):
+            target_type = device.split(":", 1)[0]
+        return a.device.type == "cpu" and target_type == "npu"
+
+    def wrapped_to(a, device=None, *args, **kwargs):
+        if is_cpu_to_npu(a, device):
+            calls["cpu_to_npu"] += 1
+        return original_to(a, device, *args, **kwargs)
+
+    def wrapped_dispatch(op_name, *dispatch_args, **kwargs):
+        if op_name == "to" and len(dispatch_args) >= 3 and is_cpu_to_npu(dispatch_args[1], dispatch_args[2]):
+            calls["cpu_to_npu"] += 1
+        return original_dispatch(op_name, *dispatch_args, **kwargs)
+
+    monkeypatch.setattr(functional_mod, "to", wrapped_to)
+    monkeypatch.setattr(functional_mod, "dispatch", wrapped_dispatch)
+
+    loss.backward()
+    torch.npu.synchronize()
+
+    assert calls["cpu_to_npu"] == 0
+
+
+
+
+def test_npu_backward_implicit_grad_seed_uses_cached_device_scalar(npu_device, monkeypatch):
+    """Implicit scalar backward grad should not launch a fresh NPU ones kernel per call."""
+    import candle as torch
+    import candle._functional as functional_mod
+
+    # Warm the scalar seed cache and op caches before asserting the hot path.
+    warm = torch.randn(8, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    warm.sum().backward()
+    torch.npu.synchronize()
+
+    x = torch.randn(8, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    loss = x.sum()
+    torch.npu.synchronize()
+
+    calls = {"ones": 0}
+    original_dispatch = functional_mod.dispatch
+
+    def wrapped_dispatch(op_name, *dispatch_args, **kwargs):
+        if op_name == "ones":
+            calls["ones"] += 1
+        return original_dispatch(op_name, *dispatch_args, **kwargs)
+
+    monkeypatch.setattr(functional_mod, "dispatch", wrapped_dispatch)
+
+    loss.backward()
+    torch.npu.synchronize()
+
+    assert calls["ones"] == 0
+
+
+def test_linear_backward_fresh_npu_grads_skip_leaf_clone(npu_device, monkeypatch):
+    """Fresh NPU linear backward grads should be stolen into .grad without clone copies."""
+    import candle as torch
+    import candle.nn.functional as F
+
+    x = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    weight = torch.randn(6, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    loss = F.linear(x, weight, bias).sum()
+    torch.npu.synchronize()
+
+    clones = []
+    tensor_type = type(x)
+    original_clone = tensor_type.clone
+
+    def wrapped_clone(self, *args, **kwargs):
+        clones.append(tuple(self.shape))
+        return original_clone(self, *args, **kwargs)
+
+    monkeypatch.setattr(tensor_type, "clone", wrapped_clone)
+
+    loss.backward()
+    torch.npu.synchronize()
+
+    assert clones == []
+
+
+def test_npu_linear_addmm_backward_skips_internal_leaf_accumulate_grad_nodes(npu_device):
+    """NPU hot backward should not create public AccumulateGrad nodes unless inspected."""
+    import candle as torch
+    import candle.nn.functional as F
+
+    def assert_no_accumulate_grad_nodes(*tensors):
+        for tensor in tensors:
+            assert getattr(tensor, "_accumulate_grad_node", None) is None
+
+    x = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    weight = torch.randn(6, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    linear_out = F.linear(x, weight, bias)
+    assert_no_accumulate_grad_nodes(x, weight, bias)
+
+    linear_out.sum().backward()
+    torch.npu.synchronize()
+
+    assert x.grad is not None
+    assert weight.grad is not None
+    assert bias.grad is not None
+    assert_no_accumulate_grad_nodes(x, weight, bias)
+    assert linear_out.grad_fn.next_functions[0][0] is not None
+    assert linear_out.grad_fn.next_functions[1][0] is not None
+    assert linear_out.grad_fn.next_functions[2][0] is not None
+
+    addmm_bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    mat1 = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    mat2 = torch.randn(8, 6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    addmm_out = torch.addmm(addmm_bias, mat1, mat2)
+    assert_no_accumulate_grad_nodes(addmm_bias, mat1, mat2)
+
+    addmm_out.sum().backward()
+    torch.npu.synchronize()
+
+    assert addmm_bias.grad is not None
+    assert mat1.grad is not None
+    assert mat2.grad is not None
+    assert_no_accumulate_grad_nodes(addmm_bias, mat1, mat2)
+    assert addmm_out.grad_fn.next_functions[0][0] is not None
+    assert addmm_out.grad_fn.next_functions[1][0] is not None
+    assert addmm_out.grad_fn.next_functions[2][0] is not None
+
+
+def test_addmm_bias_grad_sum_uses_direct_npu_sum_without_redispatch(npu_device, monkeypatch):
+    """NPU addmm bias gradients should reduce through direct Cython sum, not redispatch sum."""
+    import candle as torch
+    import candle._generated.functions as functions_mod
+
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    a = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    b = torch.randn(8, 6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    calls = {"sum": 0}
+    original_redispatch = functions_mod.redispatch
+
+    def wrapped_redispatch(op_name, *args, **kwargs):
+        if op_name == "sum":
+            calls["sum"] += 1
+        return original_redispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(functions_mod, "redispatch", wrapped_redispatch)
+
+    torch.addmm(bias, a, b).sum().backward()
+    torch.npu.synchronize()
+
+    assert calls["sum"] == 0
+
+
+
+def test_full_sum_backward_skips_contiguous_materialization(npu_device, monkeypatch):
+    """Full sum backward should pass the expanded grad view through without materializing it."""
+    import candle as torch
+    import candle.nn.functional as F
+    import candle._generated.functions as functions_mod
+
+    x = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    weight = torch.randn(6, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    loss = F.linear(x, weight, bias).sum()
+    torch.npu.synchronize()
+
+    calls = {"contiguous": 0}
+    original_redispatch = functions_mod.redispatch
+
+    def wrapped_redispatch(op_name, *args, **kwargs):
+        if op_name == "contiguous":
+            calls["contiguous"] += 1
+        return original_redispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(functions_mod, "redispatch", wrapped_redispatch)
+
+    loss.backward()
+    torch.npu.synchronize()
+
+    assert calls["contiguous"] == 0
+
+
+
+def test_addmm_backward_skips_unused_metadata_redispatch(npu_device, monkeypatch):
+    """addmm backward helpers do not need sym_strides/layout metadata dispatches."""
+    import candle as torch
+    import candle._generated.functions as functions_mod
+
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    a = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    b = torch.randn(8, 6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    calls = {"sym_strides": 0, "layout": 0}
+    original_redispatch = functions_mod.redispatch
+
+    def wrapped_redispatch(op_name, *args, **kwargs):
+        if op_name in calls:
+            calls[op_name] += 1
+        return original_redispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(functions_mod, "redispatch", wrapped_redispatch)
+
+    torch.addmm(bias, a, b).sum().backward()
+    torch.npu.synchronize()
+
+    assert calls == {"sym_strides": 0, "layout": 0}
+
+
+
+def test_addmm_backward_default_scalars_skip_mul_redispatch(npu_device, monkeypatch):
+    """Default alpha=beta=1 addmm backward should not launch no-op mul kernels."""
+    import candle as torch
+    import candle._generated.functions as functions_mod
+
+    bias = torch.randn(6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    a = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    b = torch.randn(8, 6, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    calls = {"mul": 0}
+    original_redispatch = functions_mod.redispatch
+
+    def wrapped_redispatch(op_name, *args, **kwargs):
+        if op_name == "mul":
+            calls["mul"] += 1
+        return original_redispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(functions_mod, "redispatch", wrapped_redispatch)
+
+    torch.addmm(bias, a, b).sum().backward()
+    torch.npu.synchronize()
+
+    assert calls["mul"] == 0
+
+
+def test_sum_hot_paths_skip_python_aclnn_wrapper(npu_device, monkeypatch):
+    """NPU scalar sum and dim=0 sum should bypass candle._backends.npu.aclnn.reduce_sum."""
+    import numpy as np
+    import candle as torch
+    import candle._backends.npu.aclnn as aclnn_mod
+
+    x = torch.randn(8, 16, device=npu_device, dtype=torch.float16)
+    torch.npu.synchronize()
+    expected_all = x.sum()
+    expected_dim0 = x.sum(dim=0)
+    torch.npu.synchronize()
+
+    calls = {"count": 0}
+    original_reduce_sum = aclnn_mod.reduce_sum
+
+    def wrapped_reduce_sum(*args, **kwargs):
+        calls["count"] += 1
+        return original_reduce_sum(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "reduce_sum", wrapped_reduce_sum)
+
+    out_all = x.sum()
+    out_dim0 = x.sum(dim=0)
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    assert np.allclose(out_all.cpu().numpy(), expected_all.cpu().numpy(), rtol=1e-2, atol=1e-2)
+    assert np.allclose(out_dim0.cpu().numpy(), expected_dim0.cpu().numpy(), rtol=1e-2, atol=1e-2)
+
+
+def test_npu_tensor_sum_backward_skips_generated_python_node(npu_device, monkeypatch):
+    """Default full NPU Tensor.sum backward should use the Cython node, not Python SumBackward0."""
+    import candle as torch
+    import candle._generated.functions as functions_mod
+
+    x = torch.randn(8, 16, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    def fail_generated_node(*args, **kwargs):
+        raise AssertionError("NPU Tensor.sum should attach a Cython autograd node")
+
+    monkeypatch.setattr(functions_mod, "SumBackward0", fail_generated_node)
+
+    out = x.sum()
+    out.backward()
+    torch.npu.synchronize()
+
+    assert x.grad is not None
+    assert x.grad.device.type == "npu"
+    assert x.grad.shape == x.shape
+
+
+
+def test_npu_tensor_sum_method_skips_python_dispatch(npu_device):
+    """Safe base NPU Tensor.sum should bypass Python dispatch and attach autograd in Cython."""
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent(
+        f"""
+        import candle as torch
+        import candle._dispatch as dispatch_mod
+
+        x = torch.randn(8, 16, device={str(npu_device)!r}, dtype=torch.float16, requires_grad=True)
+        torch.npu.synchronize()
+
+        calls = []
+        original_dispatch = dispatch_mod.dispatch
+
+        def wrapped_dispatch(op_name, *args, **kwargs):
+            if op_name == "sum":
+                calls.append(op_name)
+                raise AssertionError("Tensor.sum should bypass Python dispatch")
+            return original_dispatch(op_name, *args, **kwargs)
+
+        dispatch_mod.dispatch = wrapped_dispatch
+        out = x.sum()
+        out.backward()
+        torch.npu.synchronize()
+        assert calls == []
+        assert out.device.type == "npu"
+        assert x.grad is not None
+        assert x.grad.device.type == "npu"
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_gelu_backward_skips_python_aclnn_wrapper(npu_device, monkeypatch):
+    """NPU GELU backward should use the Cython native kernel path, not Python aclnn wrapper."""
+    import candle as torch
+    import candle.nn.functional as F
+    import candle._backends.npu.aclnn as aclnn_mod
+
+    x = torch.randn(16, 32, device=npu_device, dtype=torch.float16, requires_grad=True)
+    F.gelu(x).sum().backward()
+    torch.npu.synchronize()
+    x.grad = None
+
+    calls = {"count": 0}
+    original_gelu_backward = aclnn_mod.gelu_backward
+
+    def wrapped_gelu_backward(*args, **kwargs):
+        calls["count"] += 1
+        return original_gelu_backward(*args, **kwargs)
+
+    monkeypatch.setattr(aclnn_mod, "gelu_backward", wrapped_gelu_backward)
+
+    F.gelu(x).sum().backward()
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    assert x.grad is not None
+    assert x.grad.device.type == "npu"
+
+
+def test_gelu_backward_uses_direct_npu_kernel_without_formula_redispatch(npu_device, monkeypatch):
+    """Safe base NPU GELU backward should not expand into the Python formula ops."""
+    import candle as torch
+    import candle.nn.functional as F
+    import candle._generated.functions as functions_mod
+
+    x = torch.randn(16, 32, device=npu_device, dtype=torch.float16, requires_grad=True)
+    F.gelu(x).sum().backward()
+    torch.npu.synchronize()
+    x.grad = None
+
+    formula_ops = {"div", "erf", "exp"}
+    calls = []
+    original_redispatch = functions_mod.redispatch
+
+    def wrapped_redispatch(op_name, *args, **kwargs):
+        if op_name in formula_ops:
+            calls.append(op_name)
+            raise AssertionError("gelu backward should use native NPU kernel, not formula redispatch")
+        return original_redispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(functions_mod, "redispatch", wrapped_redispatch)
+
+    F.gelu(x).sum().backward()
+    torch.npu.synchronize()
+
+    assert calls == []
+    assert x.grad is not None
+    assert x.grad.device.type == "npu"
 
 
 def test_fast_le_skips_python_aclnn_wrapper(npu_device, monkeypatch):
@@ -1620,6 +2968,37 @@ def test_gelu_skips_python_aclnn_wrapper(npu_device, monkeypatch):
     torch.npu.synchronize()
 
     assert calls["count"] == 0
+
+
+
+def test_npu_gelu_autograd_skips_python_dispatch(npu_device, monkeypatch):
+    """Safe base NPU GELU autograd should attach in Cython without Python dispatch."""
+    import candle as torch
+    import candle.nn.functional as F
+    import candle._dispatch as dispatch_mod
+
+    x = torch.randn(16, 32, device=npu_device, dtype=torch.float16, requires_grad=True)
+    F.gelu(x).sum().backward()
+    torch.npu.synchronize()
+    x.grad = None
+
+    calls = []
+    original_dispatch = dispatch_mod.dispatch
+
+    def wrapped_dispatch(op_name, *args, **kwargs):
+        if op_name == "gelu":
+            calls.append(op_name)
+            raise AssertionError("gelu should bypass Python dispatch")
+        return original_dispatch(op_name, *args, **kwargs)
+
+    monkeypatch.setattr(dispatch_mod, "dispatch", wrapped_dispatch)
+
+    F.gelu(x).sum().backward()
+    torch.npu.synchronize()
+
+    assert calls == []
+    assert x.grad is not None
+    assert x.grad.device.type == "npu"
 
 
 

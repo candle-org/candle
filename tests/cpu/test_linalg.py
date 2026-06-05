@@ -311,6 +311,23 @@ class TestLinalgMisc:
         expected = A.numpy() @ B.numpy()
         np.testing.assert_allclose(result.numpy(), expected, atol=1e-5)
 
+    def test_matmul_bfloat16_uses_numeric_values_not_storage_bits(self):
+        A = torch.tensor([[1.0, 2.0], [3.0, 4.0]]).to(torch.bfloat16)
+        B = torch.tensor([[5.0, 6.0], [7.0, 8.0]]).to(torch.bfloat16)
+
+        result = torch.matmul(A, B)
+
+        np.testing.assert_allclose(result.to(torch.float32).numpy(), [[19.0, 22.0], [43.0, 50.0]], atol=1e-2)
+
+    def test_addmm_bfloat16_uses_numeric_values_not_storage_bits(self):
+        bias = torch.tensor([[1.0, 1.0], [1.0, 1.0]]).to(torch.bfloat16)
+        A = torch.tensor([[1.0, 2.0], [3.0, 4.0]]).to(torch.bfloat16)
+        B = torch.tensor([[5.0, 6.0], [7.0, 8.0]]).to(torch.bfloat16)
+
+        result = torch.addmm(bias, A, B)
+
+        np.testing.assert_allclose(result.to(torch.float32).numpy(), [[20.0, 23.0], [44.0, 51.0]], atol=1e-2)
+
 
 class TestLinalgLU:
     """Tests for LU decomposition functions."""

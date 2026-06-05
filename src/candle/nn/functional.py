@@ -58,12 +58,31 @@ def _npu_silu_fast(input):
     return _NPU_SILU_FAST(input)
 
 
-def linear(input, weight, bias=None):
+def _py_linear(input, weight, bias=None):
     from .._dispatch import dispatch
-    output = dispatch("matmul", input.device.type, input, weight.t() if hasattr(weight, 't') else weight)
+    weight_t = weight.t() if hasattr(weight, 't') else weight
+    if (
+        bias is not None
+        and len(input.shape) == 2
+        and len(weight_t.shape) == 2
+        and len(bias.shape) == 1
+        and input.shape[1] == weight_t.shape[0]
+        and bias.shape[0] == weight_t.shape[1]
+    ):
+        from .._functional import addmm
+        return addmm(bias, input, weight_t)
+    output = dispatch("matmul", input.device.type, input, weight_t)
     if bias is not None:
         output = dispatch("add", input.device.type, output, bias)
     return output
+
+
+try:
+    from .._C._functional_ops import linear as _cy_linear  # pylint: disable=import-error,no-name-in-module
+    linear = _cy_linear
+except ImportError:
+    linear = _py_linear
+
 
 
 def relu(input, inplace=False):
@@ -101,17 +120,21 @@ def log_softmax(input, dim=None, _stacklevel=3, dtype=None):
     return dispatch("log_softmax", input.device.type, input, dim)
 
 
-def gelu(input, approximate='none'):
+def _py_gelu(input, approximate='none'):
+    if not isinstance(approximate, str):
+        raise TypeError(
+            f"gelu(): argument 'approximate' must be str, not {type(approximate).__name__}"
+        )
     if approximate == 'tanh':
         import math
         from .._dispatch import dispatch
         from .._creation import tensor as _tensor
         # 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 * x^3)))
-        coeff = _tensor(math.sqrt(2.0 / math.pi), device=input.device)
-        k = _tensor(0.044715, device=input.device)
-        half = _tensor(0.5, device=input.device)
-        one = _tensor(1.0, device=input.device)
-        three = _tensor(3.0, device=input.device)
+        coeff = _tensor(math.sqrt(2.0 / math.pi), dtype=input.dtype, device=input.device)
+        k = _tensor(0.044715, dtype=input.dtype, device=input.device)
+        half = _tensor(0.5, dtype=input.dtype, device=input.device)
+        one = _tensor(1.0, dtype=input.dtype, device=input.device)
+        three = _tensor(3.0, dtype=input.dtype, device=input.device)
         x_cubed = dispatch("pow", input.device.type, input, three)
         kx3 = dispatch("mul", input.device.type, k, x_cubed)
         shifted = dispatch("add", input.device.type, input, kx3)
@@ -120,8 +143,17 @@ def gelu(input, approximate='none'):
         one_plus_tanh = dispatch("add", input.device.type, one, tanh_inner)
         input_scaled = dispatch("mul", input.device.type, input, one_plus_tanh)
         return dispatch("mul", input.device.type, half, input_scaled)
+    if approximate != 'none':
+        raise RuntimeError("approximate argument must be either none or tanh.")
     from .._dispatch import dispatch
     return dispatch("gelu", input.device.type, input)
+
+
+try:
+    from .._C._functional_ops import gelu as _cy_gelu  # pylint: disable=import-error,no-name-in-module
+    gelu = _cy_gelu
+except ImportError:
+    gelu = _py_gelu
 
 
 def _py_silu(input, inplace=False):

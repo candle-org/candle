@@ -5,20 +5,24 @@ try:
         fast_fmax as _fast_fmax_impl,
         fast_maximum as _fast_maximum_impl,
         fast_minimum as _fast_minimum_impl,
+        fast_sum as _fast_sum_impl,
     )
     _HAS_FAST_FMIN = True
     _HAS_FAST_FMAX = True
     _HAS_FAST_MAXIMUM = True
     _HAS_FAST_MINIMUM = True
+    _HAS_FAST_SUM = True
 except ImportError:
     _fast_fmin_impl = None  # type: ignore[assignment]
     _fast_fmax_impl = None  # type: ignore[assignment]
     _fast_maximum_impl = None  # type: ignore[assignment]
     _fast_minimum_impl = None  # type: ignore[assignment]
+    _fast_sum_impl = None  # type: ignore[assignment]
     _HAS_FAST_FMIN = False
     _HAS_FAST_FMAX = False
     _HAS_FAST_MAXIMUM = False
     _HAS_FAST_MINIMUM = False
+    _HAS_FAST_SUM = False
 
 from ._helpers import (
     _unwrap_storage, _wrap_tensor,
@@ -752,6 +756,9 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
     elif isinstance(dim, (list, tuple)):
         for d in dim:
             _check_dim_range(d)
+
+    if _HAS_FAST_SUM:
+        return _fast_sum_impl(a, dim, keepdim)
 
     a_storage = _unwrap_storage(a)
     out_shape = list(a.shape)

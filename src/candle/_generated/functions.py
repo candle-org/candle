@@ -160,6 +160,40 @@ def _gelu_backward_helper(grad, self_, approximate, keyset):
     return _gelu_grad(grad, self_, keyset)
 
 
+def _npu_mm_mat1_backward_helper(grad, mat2, mat1_shape, alpha, keyset):
+    if alpha == 1 and getattr(getattr(grad, "device", None), "type", None) == "npu":
+        try:
+            from .._C._autograd_engine import is_create_graph_enabled
+            if not is_create_graph_enabled():
+                from .._C._npu_ops import fast_mm_mat1_backward  # pylint: disable=import-error,no-name-in-module
+                return fast_mm_mat1_backward(grad, mat2, alpha)
+        except (ImportError, ValueError, TypeError):
+            pass
+    return redispatch("mm_mat1_backward", keyset, grad, mat2, mat1_shape, None, None, alpha)
+
+
+def _npu_mm_mat2_backward_helper(grad, mat1, mat2_shape, alpha, keyset):
+    if alpha == 1 and getattr(getattr(grad, "device", None), "type", None) == "npu":
+        try:
+            from .._C._autograd_engine import is_create_graph_enabled
+            if not is_create_graph_enabled():
+                from .._C._npu_ops import fast_mm_mat2_backward  # pylint: disable=import-error,no-name-in-module
+                return fast_mm_mat2_backward(grad, mat1, alpha)
+        except (ImportError, ValueError, TypeError):
+            pass
+    return redispatch("mm_mat2_backward", keyset, grad, mat1, mat2_shape, None, None, alpha)
+
+
+def _mark_npu_owned_backward_grad(grad):
+    """Mark a fresh NPU backward result that leaf accumulation can steal."""
+    if grad is not None and getattr(getattr(grad, "device", None), "type", None) == "npu":
+        try:
+            grad._candle_npu_owned_backward_grad = True
+        except (AttributeError, TypeError):
+            pass
+    return grad
+
+
 def _maybe_multiply_helper(grad, scalar, keyset):
     if scalar == 1:
         return grad
@@ -171,6 +205,18 @@ def _unsqueeze_to_backward_helper(grad, dim, input_sizes, keyset):
     return redispatch("reshape", keyset, grad, input_sizes)
 
 
+def _npu_sum_helper(input_, dim, keepdim, keyset):
+    if getattr(getattr(input_, "device", None), "type", None) == "npu":
+        try:
+            from .._C._autograd_engine import is_create_graph_enabled
+            if not is_create_graph_enabled():
+                from .._C._npu_ops import fast_sum  # pylint: disable=import-error,no-name-in-module
+                return fast_sum(input_, dim, keepdim)
+        except (ImportError, ValueError, TypeError):
+            pass
+    return redispatch("sum", keyset, input_, dim=dim, keepdim=keepdim)
+
+
 def _sum_to_backward_helper(grad, size, keyset):
     target_shape = tuple(size)
     if tuple(grad.shape) == target_shape:
@@ -180,11 +226,11 @@ def _sum_to_backward_helper(grad, size, keyset):
     n_extra = len(result.shape) - len(target_shape)
     if n_extra > 0:
         dims = tuple(range(n_extra))
-        result = redispatch("sum", keyset, result, dim=dims, keepdim=False)
+        result = _npu_sum_helper(result, dims, False, keyset)
     # Reduce broadcast dimensions (size-1 dims)
     for i, (g_dim, s_dim) in enumerate(zip(result.shape, target_shape)):
         if s_dim == 1 and g_dim != 1:
-            result = redispatch("sum", keyset, result, dim=i, keepdim=True)
+            result = _npu_sum_helper(result, i, True, keyset)
     if tuple(result.shape) != target_shape:
         result = redispatch("reshape", keyset, result, target_shape)
     return result
@@ -195,6 +241,19 @@ def _permute_backward_helper(grad, dims, keyset):
     for i, d in enumerate(dims):
         inv[d] = i
     return redispatch("permute", keyset, grad, inv)
+
+
+def _transpose_backward_helper(grad, dim0, dim1, keyset):
+    try:
+        from .._C._autograd_engine import is_create_graph_enabled
+        if not is_create_graph_enabled():
+            result = grad.cy_transpose(dim0, dim1)
+            if getattr(grad, "_candle_npu_owned_backward_grad", False):
+                result = _mark_npu_owned_backward_grad(result)
+            return result
+    except (AttributeError, ImportError, TypeError):
+        pass
+    return redispatch("transpose", keyset, grad, dim0, dim1)
 
 
 def _select_backward_symint_helper(grad, input_sizes, dim, index, keyset):
@@ -1779,9 +1838,11 @@ class AddmmBackward0(Node):
         beta = self._beta
         alpha = self._alpha
         with _grad_context(keyset):
-            grad_self = _sum_to_backward_helper(redispatch("mul", keyset, grad, beta), self._self_shape, keyset)
-            grad_mat1 = redispatch("mm_mat1_backward", keyset, grad, mat2, mat1.shape, redispatch("sym_strides", keyset, mat1), redispatch("layout", keyset, mat1), alpha)
-            grad_mat2 = redispatch("mm_mat2_backward", keyset, grad, mat1, mat2.shape, redispatch("sym_strides", keyset, mat2), redispatch("layout", keyset, mat2), alpha)
+            grad_self = _sum_to_backward_helper(_maybe_multiply_helper(grad, beta, keyset), self._self_shape, keyset)
+            if grad_self is not grad:
+                grad_self = _mark_npu_owned_backward_grad(grad_self)
+            grad_mat1 = _mark_npu_owned_backward_grad(_npu_mm_mat1_backward_helper(grad, mat2, mat1.shape, alpha, keyset))
+            grad_mat2 = _mark_npu_owned_backward_grad(_npu_mm_mat2_backward_helper(grad, mat1, mat2.shape, alpha, keyset))
         return (grad_self, grad_mat1, grad_mat2,)
 
 class SparseAddmmBackward0(Node):
@@ -10932,8 +10993,7 @@ class SumBackward0(Node):
         self_ = _saved[self._saved_self_idx]
         dtype = self._dtype
         with _grad_context(keyset):
-            grad_self = redispatch("contiguous", keyset,
-                redispatch("expand", keyset, grad, self_.shape))
+            grad_self = redispatch("expand", keyset, grad, self_.shape)
         return (grad_self,)
 
 class SumDimIntListBackward0(Node):
@@ -11303,7 +11363,7 @@ class TransposeIntBackward0(Node):
         dim0 = self._dim0
         dim1 = self._dim1
         with _grad_context(keyset):
-            grad_self = redispatch("transpose", keyset, grad, dim0, dim1)
+            grad_self = _transpose_backward_helper(grad, dim0, dim1, keyset)
         return (grad_self,)
 
 class TransposeBackward0(Node):
@@ -11320,7 +11380,7 @@ class TransposeBackward0(Node):
         dim0 = self._dim0
         dim1 = self._dim1
         with _grad_context(keyset):
-            grad_self = redispatch("transpose", keyset, grad, dim0, dim1)
+            grad_self = _transpose_backward_helper(grad, dim0, dim1, keyset)
         return (grad_self,)
 
 class TriangularSolveBackward0(Node):

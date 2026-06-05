@@ -1774,6 +1774,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "isposinf",
         "isreal",
         "leaky_relu_",
+        "layout",
         "lerp_",
         "lgamma_",
         "linspace",
@@ -1787,6 +1788,8 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "logical_xor",
         "logspace",
         "mish_",
+        "mm_mat1_backward",
+        "mm_mat2_backward",
         "movedim",
         "narrow",
         "neg_",
@@ -1816,6 +1819,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "sqrt_",
         "square_",
         "squeeze",
+        "sym_strides",
         "tan_",
         "tanh_",
         "tensor",
@@ -1828,7 +1832,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 457
+    assert len(forward_ops) == 461
     assert len(autograd_ops & forward_ops) == 335
 
 

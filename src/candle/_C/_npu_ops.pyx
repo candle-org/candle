@@ -22,9 +22,14 @@ from candle._C._allocator cimport FastNpuAllocator
 from candle._C._aclnn_ffi cimport (
     binary_op_no_alpha as _ffi_binary_op_no_alpha,
     binary_op_with_alpha as _ffi_binary_op_with_alpha,
+    binary_two_inputs_with_int8_op as _ffi_binary_two_inputs_with_int8_op,
+    four_tensor_two_scalars_one_int8_op as _ffi_four_tensor_two_scalars_one_int8_op,
+    reduce_sum_op as _ffi_reduce_sum_op,
     execute as _ffi_execute,
     pta_begin_add_cache_lookup as _ffi_pta_begin_add_cache_lookup,
     pta_begin_add_cache_lookup_raw as _ffi_pta_begin_add_cache_lookup_raw,
+    pta_begin_addmm_cache_lookup_raw as _ffi_pta_begin_addmm_cache_lookup_raw,
+    pta_begin_reduce_sum_cache_lookup_raw as _ffi_pta_begin_reduce_sum_cache_lookup_raw,
     pta_begin_binary_cache_lookup as _ffi_pta_begin_binary_cache_lookup,
     pta_begin_binary_cache_lookup_raw as _ffi_pta_begin_binary_cache_lookup_raw,
     pta_begin_unary_cache_lookup as _ffi_pta_begin_unary_cache_lookup,
@@ -226,6 +231,20 @@ cdef inline bint _tensor_has_strict_contiguous_stride(TensorImpl t) noexcept:
 cdef inline tuple _to_tuple(const int64_t* arr, int n):
     """Convert C int64 array to Python tuple."""
     return tuple([arr[i] for i in range(n)])
+
+
+cdef inline tuple _contiguous_stride_tuple(object shape):
+    """Compute contiguous strides for a Python shape tuple/list."""
+    cdef Py_ssize_t ndim = len(shape)
+    cdef list strides = [1] * ndim
+    cdef int64_t acc = 1
+    cdef Py_ssize_t j
+    cdef Py_ssize_t i
+    for j in range(ndim):
+        i = ndim - 1 - j
+        strides[i] = acc
+        acc *= <int64_t>shape[i]
+    return tuple(strides)
 
 
 cdef inline int _validate_npu_binary(object a, object b, str name,
@@ -832,6 +851,12 @@ cdef object _sub_getws_ptr = None        # cached Sub getws pointer
 cdef object _sub_exec_ptr = None         # cached Sub exec pointer
 cdef object _div_getws_ptr = None        # cached Div getws pointer
 cdef object _div_exec_ptr = None         # cached Div exec pointer
+cdef object _matmul_getws_ptr = None     # cached Matmul getws pointer
+cdef object _matmul_exec_ptr = None      # cached Matmul exec pointer
+cdef object _addmm_getws_ptr = None      # cached Addmm getws pointer
+cdef object _addmm_exec_ptr = None       # cached Addmm exec pointer
+cdef object _reduce_sum_getws_ptr = None  # cached ReduceSum getws pointer
+cdef object _reduce_sum_exec_ptr = None   # cached ReduceSum exec pointer
 cdef object _bitwise_and_getws_ptr = None  # cached BitwiseAndTensor getws pointer
 cdef object _bitwise_and_exec_ptr = None   # cached BitwiseAndTensor exec pointer
 cdef object _bitwise_or_getws_ptr = None   # cached BitwiseOrTensor getws pointer
@@ -859,8 +884,13 @@ cdef object _pta_cache_end_fn = None     # _aclnn_ffi.pta_end_cache_lookup
 # while square-style and non-aliased Mul entries stay separate.
 cdef bint _use_add_pta_cache = True
 cdef bint _use_mul_pta_cache = True
+cdef bint _use_matmul_pta_cache = True
+cdef bint _use_addmm_pta_cache = True
+cdef bint _use_reduce_sum_pta_cache = True
 cdef bint _use_silu_pta_cache = True
+cdef bint _use_gelu_pta_cache = True
 cdef bint _use_silu_backward_pta_cache = True
+cdef bint _use_gelu_backward_pta_cache = True
 cdef dict _mul_pta_pointer_keys = {}
 cdef dict _silu_backward_pta_pointer_keys = {}
 
@@ -877,6 +907,7 @@ cdef inline void _ensure_ffi_binary() except *:
     global _mul_getws_ptr, _mul_exec_ptr
     global _sub_getws_ptr, _sub_exec_ptr
     global _div_getws_ptr, _div_exec_ptr
+    global _matmul_getws_ptr, _matmul_exec_ptr
     global _defer_executor_fn, _deferred_executors_ref
     global _acl_rt_malloc_fn, _acl_rt_free_fn
     global _pta_cache_begin_fn, _pta_binary_begin_fn, _pta_unary_begin_fn, _pta_cache_end_fn
@@ -889,6 +920,7 @@ cdef inline void _ensure_ffi_binary() except *:
     _mul_getws_ptr, _mul_exec_ptr = _f.resolve_op("Mul")
     _sub_getws_ptr, _sub_exec_ptr = _f.resolve_op("Sub")
     _div_getws_ptr, _div_exec_ptr = _f.resolve_op("Div")
+    _matmul_getws_ptr, _matmul_exec_ptr = _f.resolve_op("Matmul")
     _defer_executor_fn = _aclnn_mod._defer_executor
     _deferred_executors_ref = _aclnn_mod._DEFERRED_EXECUTORS
     # Direct-append fast path bypasses _defer_executor's Python normalization, so
@@ -1263,6 +1295,8 @@ cpdef object fast_add_exact(TensorImpl a, TensorImpl b):
     cdef object workspace_ptr
     cdef object ret
 
+    if a._device_index != b._device_index:
+        raise ValueError("NPU add requires tensors on the same device")
     if a._dtype_code != b._dtype_code:
         raise ValueError("NPU add requires matching dtypes")
     if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
@@ -1603,6 +1637,8 @@ cpdef object fast_mul_exact(TensorImpl a, TensorImpl b):
     cdef object workspace_ptr
     cdef object ret
 
+    if a._device_index != b._device_index:
+        raise ValueError("NPU mul requires tensors on the same device")
     if a._dtype_code != b._dtype_code:
         raise ValueError("NPU mul requires matching dtypes")
     if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
@@ -1727,6 +1763,737 @@ cpdef object fast_mul_exact(TensorImpl a, TensorImpl b):
             _ffi_pta_end_cache_lookup()
 
     return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_matmul_exact(TensorImpl a, TensorImpl b):
+    """2D Matmul for already-validated exact base NPU tensors."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx = a._device_index
+    cdef object a_dev = a._device_obj
+    cdef object a_dtype = a._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef int64_t m
+    cdef int64_t k
+    cdef int64_t k_b
+    cdef int64_t n
+    cdef int64_t numel
+    cdef int64_t alloc_size
+    cdef int isize
+    cdef int dtype_code
+    cdef object out_shape
+    cdef object out_stride
+    cdef object out_ptr
+    cdef uintptr_t a_ptr
+    cdef uintptr_t b_ptr
+    cdef uintptr_t o_ptr
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+
+    if a._dtype_code != b._dtype_code:
+        raise ValueError("NPU matmul requires matching dtypes")
+    if a._device_index != b._device_index:
+        raise ValueError("NPU matmul requires tensors on the same device")
+    if a._ndim != 2 or b._ndim != 2:
+        raise ValueError("fast_matmul_exact currently supports 2D tensors")
+
+    m = a._c_shape[0]
+    k = a._c_shape[1]
+    k_b = b._c_shape[0]
+    n = b._c_shape[1]
+    if k != k_b:
+        raise ValueError(f"matmul shape mismatch: ({m}, {k}) @ ({k_b}, {n})")
+
+    isize = a._itemsize
+    numel = m * n
+    alloc_size = numel * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    out_shape = (m, n)
+    out_stride = (n, 1)
+    a_ptr = <uintptr_t>a._storage._untyped._device_ptr + <uintptr_t>(a._c_offset * isize)
+    b_ptr = <uintptr_t>b._storage._untyped._device_ptr + <uintptr_t>(b._c_offset * isize)
+    o_ptr = <uintptr_t>int(out_ptr)
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if _use_matmul_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_binary_cache_lookup_raw(
+            b"aclnnMatmul",
+            a._shape_tuple, a._stride_tuple,
+            b._shape_tuple, b._stride_tuple,
+            out_shape, out_stride,
+            dtype_code,
+            a_ptr, b_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _matmul_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_matmul_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_binary_two_inputs_with_int8_op(
+            _matmul_getws_ptr, _matmul_exec_ptr,
+            a._shape_tuple, a._stride_tuple,
+            b._shape_tuple, b._stride_tuple,
+            out_shape, out_stride,
+            1,
+            dtype_code, dtype_code, dtype_code, 2,
+            a_ptr, b_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _matmul_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnMatmul execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+    finally:
+        if executor:
+            _defer_executor_handle(<uintptr_t>int(executor))
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_matmul(object a, object b):
+    """Optimized 2D NPU matmul that bypasses the Python aclnn.matmul wrapper."""
+    if isinstance(a, TensorImpl) and isinstance(b, TensorImpl):
+        return fast_matmul_exact(<TensorImpl>a, <TensorImpl>b)
+    raise ValueError("fast_matmul expects base TensorImpl operands")
+
+
+cpdef object fast_sum(object a, object dim=None, bint keepdim=False):
+    """Optimized NPU ReduceSum that bypasses the Python aclnn.reduce_sum wrapper."""
+    _ensure_npu_imports()
+    _ensure_ffi_reduce_sum()
+
+    if not isinstance(a, TensorImpl):
+        raise ValueError("fast_sum expects a base TensorImpl operand")
+    cdef TensorImpl t = <TensorImpl>a
+    if t._device_type != 1:
+        raise ValueError("NPU sum expects an NPU tensor")
+
+    cdef int dev_idx = t._device_index
+    cdef object a_dev = t._device_obj
+    cdef object a_dtype = t._dtype_obj
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object shape = t._shape_tuple
+    cdef object stride = t._stride_tuple
+    cdef int ndim = t._ndim
+    cdef object dims
+    cdef list out_shape_list
+    cdef object out_shape
+    cdef object out_stride
+    cdef int d
+    cdef int d_norm
+    cdef int64_t n = 1
+    cdef int isize = t._itemsize
+    cdef int dtype_code = _tensor_dtype_to_acl_code(t)
+    cdef int64_t alloc_size
+    cdef object out_ptr
+    cdef uintptr_t a_ptr
+    cdef uintptr_t o_ptr
+    cdef uintptr_t stream_raw
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+    cdef object runtime = None
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+
+    if dim is None or (isinstance(dim, (list, tuple)) and len(dim) == 0):
+        dims = tuple(range(ndim))
+    elif isinstance(dim, int):
+        d = <int>dim
+        if d < -ndim or d >= ndim:
+            raise IndexError(f"Dimension out of range (expected to be in range of [{-ndim}, {ndim - 1}], but got {d})")
+        dims = ((d + ndim) if d < 0 else d,)
+    elif isinstance(dim, (list, tuple)):
+        norm_dims = []
+        for item in dim:
+            d = <int>item
+            if d < -ndim or d >= ndim:
+                raise IndexError(f"Dimension out of range (expected to be in range of [{-ndim}, {ndim - 1}], but got {d})")
+            norm_dims.append((d + ndim) if d < 0 else d)
+        dims = tuple(norm_dims)
+    else:
+        raise TypeError("sum dim must be int, tuple/list, or None")
+
+    out_shape_list = [shape[i] for i in range(ndim)]
+    for d_norm in sorted(dims):
+        out_shape_list[d_norm] = 1
+    if not keepdim:
+        out_shape_list = [s for i, s in enumerate(out_shape_list) if i not in dims]
+    out_shape = tuple(out_shape_list)
+    out_stride = _contiguous_stride_tuple(out_shape)
+    for size in out_shape:
+        n *= <int64_t>size
+    if len(out_shape) == 0:
+        n = 1
+
+    alloc_size = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    a_ptr = <uintptr_t>t._storage._untyped._device_ptr + <uintptr_t>(t._c_offset * isize)
+    o_ptr = <uintptr_t>int(out_ptr)
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if _use_reduce_sum_pta_cache and _pta_cache_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_reduce_sum_cache_lookup_raw(
+            shape, stride,
+            out_shape, out_stride,
+            dims, keepdim,
+            dtype_code,
+            a_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _reduce_sum_exec_ptr, int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnReduceSum execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_reduce_sum_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnReduceSum execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, t._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_reduce_sum_op(
+            _reduce_sum_getws_ptr, _reduce_sum_exec_ptr,
+            shape, stride,
+            out_shape, out_stride,
+            dims, keepdim,
+            dtype_code, 2,
+            a_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _reduce_sum_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnReduceSum execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_handle(<uintptr_t>int(executor))
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, t._dtype_code)
+
+
+cpdef object fast_mm_mat1_backward(object grad, object mat2, object alpha=1):
+    """Optimized addmm/mm mat1 gradient: grad @ mat2.T without transpose dispatch."""
+    if alpha != 1:
+        raise ValueError("fast_mm_mat1_backward only handles alpha=1")
+    if not (isinstance(grad, TensorImpl) and isinstance(mat2, TensorImpl)):
+        raise ValueError("fast_mm_mat1_backward expects base TensorImpl operands")
+    cdef TensorImpl g = <TensorImpl>grad
+    cdef TensorImpl b = <TensorImpl>mat2
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+    if g._device_type != 1 or b._device_type != 1:
+        raise ValueError("NPU mm_mat1_backward expects NPU tensors")
+    if g._device_index != b._device_index:
+        raise ValueError("NPU mm_mat1_backward requires tensors on the same device")
+    if g._dtype_code != b._dtype_code:
+        raise ValueError("NPU mm_mat1_backward requires matching dtypes")
+    if g._ndim != 2 or b._ndim != 2:
+        raise ValueError("fast_mm_mat1_backward expects 2D operands")
+
+    cdef int64_t m = g._c_shape[0]
+    cdef int64_t n = g._c_shape[1]
+    cdef int64_t k = b._c_shape[0]
+    cdef int64_t n_b = b._c_shape[1]
+    if n != n_b:
+        raise ValueError(f"mm_mat1_backward shape mismatch: grad ({m}, {n}) and mat2 ({k}, {n_b})")
+
+    cdef int dev_idx = g._device_index
+    cdef object a_dtype = g._dtype_obj
+    cdef object a_dev = g._device_obj
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef int isize = g._itemsize
+    cdef int64_t numel = m * k
+    cdef int64_t alloc_size = numel * isize
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    cdef object out_shape = (m, k)
+    cdef object out_stride = (k, 1)
+    cdef object b_t_shape = (n_b, k)
+    cdef object b_t_stride = (b._c_stride[1], b._c_stride[0])
+    cdef int dtype_code = _tensor_dtype_to_acl_code(g)
+    cdef uintptr_t g_ptr = <uintptr_t>g._storage._untyped._device_ptr + <uintptr_t>(g._c_offset * isize)
+    cdef uintptr_t b_ptr = <uintptr_t>b._storage._untyped._device_ptr + <uintptr_t>(b._c_offset * b._itemsize)
+    cdef uintptr_t o_ptr = <uintptr_t>int(out_ptr)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+    cdef object runtime = None
+
+    if _use_matmul_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_binary_cache_lookup_raw(
+            b"aclnnMatmul",
+            g._shape_tuple, g._stride_tuple,
+            b_t_shape, b_t_stride,
+            out_shape, out_stride,
+            dtype_code,
+            g_ptr, b_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(_matmul_exec_ptr, int(workspace_ptr), ws_size_raw, executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_matmul_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, g._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_binary_two_inputs_with_int8_op(
+            _matmul_getws_ptr, _matmul_exec_ptr,
+            g._shape_tuple, g._stride_tuple,
+            b_t_shape, b_t_stride,
+            out_shape, out_stride,
+            1,
+            dtype_code, dtype_code, dtype_code, 2,
+            g_ptr, b_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(_matmul_exec_ptr, int(workspace_ptr), ws_size, executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnMatmul execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+    finally:
+        if executor:
+            _defer_executor_handle(<uintptr_t>int(executor))
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+    return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, g._dtype_code)
+
+
+cpdef object fast_mm_mat2_backward(object grad, object mat1, object alpha=1):
+    """Optimized addmm/mm mat2 gradient: mat1.T @ grad without transpose dispatch."""
+    if alpha != 1:
+        raise ValueError("fast_mm_mat2_backward only handles alpha=1")
+    if not (isinstance(grad, TensorImpl) and isinstance(mat1, TensorImpl)):
+        raise ValueError("fast_mm_mat2_backward expects base TensorImpl operands")
+    cdef TensorImpl g = <TensorImpl>grad
+    cdef TensorImpl a = <TensorImpl>mat1
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+    if g._device_type != 1 or a._device_type != 1:
+        raise ValueError("NPU mm_mat2_backward expects NPU tensors")
+    if g._device_index != a._device_index:
+        raise ValueError("NPU mm_mat2_backward requires tensors on the same device")
+    if g._dtype_code != a._dtype_code:
+        raise ValueError("NPU mm_mat2_backward requires matching dtypes")
+    if g._ndim != 2 or a._ndim != 2:
+        raise ValueError("fast_mm_mat2_backward expects 2D operands")
+
+    cdef int64_t m = g._c_shape[0]
+    cdef int64_t n = g._c_shape[1]
+    cdef int64_t m_a = a._c_shape[0]
+    cdef int64_t k = a._c_shape[1]
+    if m != m_a:
+        raise ValueError(f"mm_mat2_backward shape mismatch: grad ({m}, {n}) and mat1 ({m_a}, {k})")
+
+    cdef int dev_idx = g._device_index
+    cdef object a_dtype = g._dtype_obj
+    cdef object a_dev = g._device_obj
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef int isize = g._itemsize
+    cdef int64_t numel = k * n
+    cdef int64_t alloc_size = numel * isize
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    cdef object a_t_shape = (k, m_a)
+    cdef object a_t_stride = (a._c_stride[1], a._c_stride[0])
+    cdef object out_shape = (k, n)
+    cdef object out_stride = (n, 1)
+    cdef int dtype_code = _tensor_dtype_to_acl_code(g)
+    cdef uintptr_t a_ptr = <uintptr_t>a._storage._untyped._device_ptr + <uintptr_t>(a._c_offset * a._itemsize)
+    cdef uintptr_t g_ptr = <uintptr_t>g._storage._untyped._device_ptr + <uintptr_t>(g._c_offset * isize)
+    cdef uintptr_t o_ptr = <uintptr_t>int(out_ptr)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+    cdef object runtime = None
+
+    if _use_matmul_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_binary_cache_lookup_raw(
+            b"aclnnMatmul",
+            a_t_shape, a_t_stride,
+            g._shape_tuple, g._stride_tuple,
+            out_shape, out_stride,
+            dtype_code,
+            a_ptr, g_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(_matmul_exec_ptr, int(workspace_ptr), ws_size_raw, executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_matmul_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, g._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_binary_two_inputs_with_int8_op(
+            _matmul_getws_ptr, _matmul_exec_ptr,
+            a_t_shape, a_t_stride,
+            g._shape_tuple, g._stride_tuple,
+            out_shape, out_stride,
+            1,
+            dtype_code, dtype_code, dtype_code, 2,
+            a_ptr, g_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(_matmul_exec_ptr, int(workspace_ptr), ws_size, executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnMatmul execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+    finally:
+        if executor:
+            _defer_executor_handle(<uintptr_t>int(executor))
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+    return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, g._dtype_code)
+
+
+cpdef object fast_addmm(object bias, object mat1, object mat2, object beta=1, object alpha=1):
+    """Optimized 2D NPU addmm that bypasses the Python aclnn.addmm wrapper."""
+    _ensure_npu_imports()
+    _ensure_ffi_addmm()
+
+    if not (isinstance(bias, TensorImpl) and isinstance(mat1, TensorImpl) and isinstance(mat2, TensorImpl)):
+        raise ValueError("fast_addmm expects base TensorImpl operands")
+    cdef TensorImpl self_t = <TensorImpl>bias
+    cdef TensorImpl a = <TensorImpl>mat1
+    cdef TensorImpl b = <TensorImpl>mat2
+    cdef int dev_idx = a._device_index
+    cdef object a_dtype = a._dtype_obj
+    cdef object a_dev = a._device_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef int64_t m
+    cdef int64_t k
+    cdef int64_t k_b
+    cdef int64_t n
+    cdef int64_t numel
+    cdef int64_t alloc_size
+    cdef int isize
+    cdef int dtype_code
+    cdef object out_shape
+    cdef object out_stride
+    cdef object out_ptr
+    cdef uintptr_t self_ptr
+    cdef uintptr_t a_ptr
+    cdef uintptr_t b_ptr
+    cdef uintptr_t o_ptr
+    cdef uintptr_t beta_scalar = 0
+    cdef uintptr_t alpha_scalar = 0
+    cdef bint beta_scalar_owned = False
+    cdef bint alpha_scalar_owned = False
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object beta_bytes_pair
+    cdef object alpha_bytes_pair
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+
+    if a._device_type != 1 or b._device_type != 1 or self_t._device_type != 1:
+        raise ValueError("NPU addmm expects NPU tensors")
+    if a._device_index != b._device_index or a._device_index != self_t._device_index:
+        raise ValueError("NPU addmm requires tensors on the same device")
+    if a._dtype_code != b._dtype_code or a._dtype_code != self_t._dtype_code:
+        raise ValueError("NPU addmm requires matching dtypes")
+    if a._ndim != 2 or b._ndim != 2:
+        raise ValueError("fast_addmm currently supports 2D mat operands")
+
+    m = a._c_shape[0]
+    k = a._c_shape[1]
+    k_b = b._c_shape[0]
+    n = b._c_shape[1]
+    if k != k_b:
+        raise ValueError(f"addmm shape mismatch: ({m}, {k}) @ ({k_b}, {n})")
+    if not (self_t._ndim == 1 and self_t._c_shape[0] == n):
+        raise ValueError("fast_addmm currently supports 1D bias matching output columns")
+
+    isize = a._itemsize
+    numel = m * n
+    alloc_size = numel * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    out_shape = (m, n)
+    out_stride = (n, 1)
+    self_ptr = <uintptr_t>self_t._storage._untyped._device_ptr + <uintptr_t>(self_t._c_offset * isize)
+    a_ptr = <uintptr_t>a._storage._untyped._device_ptr + <uintptr_t>(a._c_offset * isize)
+    b_ptr = <uintptr_t>b._storage._untyped._device_ptr + <uintptr_t>(b._c_offset * isize)
+    o_ptr = <uintptr_t>int(out_ptr)
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if beta == 1:
+        beta_scalar = _get_alpha_one(dtype_code)
+        beta_bytes_pair = _get_alpha_one_bytes(dtype_code)
+    else:
+        beta_bytes_pair = (_scalar_bytes_fn(beta, a_dtype), dtype_code)
+        beta_scalar = _create_scalar_fn(beta_bytes_pair[0], beta_bytes_pair[1])
+        beta_scalar_owned = True
+    if alpha == 1:
+        alpha_scalar = _get_alpha_one(dtype_code)
+        alpha_bytes_pair = _get_alpha_one_bytes(dtype_code)
+    else:
+        alpha_bytes_pair = (_scalar_bytes_fn(alpha, a_dtype), dtype_code)
+        alpha_scalar = _create_scalar_fn(alpha_bytes_pair[0], alpha_bytes_pair[1])
+        alpha_scalar_owned = True
+
+    if _use_addmm_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_addmm_cache_lookup_raw(
+            self_t._shape_tuple, self_t._stride_tuple,
+            a._shape_tuple, a._stride_tuple,
+            b._shape_tuple, b._stride_tuple,
+            out_shape, out_stride,
+            dtype_code, dtype_code, dtype_code, dtype_code,
+            self_ptr, a_ptr, b_ptr, o_ptr,
+            beta_bytes_pair[0], beta_bytes_pair[1],
+            alpha_bytes_pair[0], alpha_bytes_pair[1],
+            1,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _addmm_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnAddmm execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_addmm_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnAddmm execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+                if beta_scalar_owned and beta_scalar:
+                    _destroy_scalar_fn(int(beta_scalar))
+                if alpha_scalar_owned and alpha_scalar:
+                    _destroy_scalar_fn(int(alpha_scalar))
+
+    try:
+        ws_size, executor = _ffi_four_tensor_two_scalars_one_int8_op(
+            _addmm_getws_ptr, _addmm_exec_ptr,
+            self_t._shape_tuple, self_t._stride_tuple,
+            a._shape_tuple, a._stride_tuple,
+            b._shape_tuple, b._stride_tuple,
+            out_shape, out_stride,
+            1,
+            dtype_code, dtype_code, dtype_code, dtype_code, 2,
+            self_ptr, a_ptr, b_ptr, o_ptr,
+            beta_scalar, alpha_scalar,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _addmm_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnAddmm execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+        if executor:
+            _defer_executor_handle(<uintptr_t>int(executor))
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+        if beta_scalar_owned and beta_scalar:
+            _destroy_scalar_fn(int(beta_scalar))
+        if alpha_scalar_owned and alpha_scalar:
+            _destroy_scalar_fn(int(alpha_scalar))
+
+    return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
 
 
 # ---------------------------------------------------------------------------
@@ -2478,6 +3245,8 @@ cdef object _inplace_copy_getws_ptr = None  # cached InplaceCopy getws pointer
 cdef object _inplace_copy_exec_ptr = None   # cached InplaceCopy exec pointer
 cdef object _gelu_getws_ptr = None       # cached Gelu getws pointer
 cdef object _gelu_exec_ptr = None        # cached Gelu exec pointer
+cdef object _gelu_backward_getws_ptr = None  # cached GeluBackward getws pointer
+cdef object _gelu_backward_exec_ptr = None   # cached GeluBackward exec pointer
 cdef object _silu_getws_ptr = None       # cached Silu getws pointer
 cdef object _silu_exec_ptr = None        # cached Silu exec pointer
 cdef object _silu_backward_getws_ptr = None  # cached SiluBackward getws pointer
@@ -2531,6 +3300,25 @@ cdef inline void _ensure_ffi_scalar_helpers() except *:
     _scalar_bytes_fn = _sb
     _create_scalar_fn = _ffi_ref.create_scalar
     _destroy_scalar_fn = _ffi_ref.destroy_scalar
+
+
+cdef inline void _ensure_ffi_addmm() except *:
+    global _ffi_ref, _addmm_getws_ptr, _addmm_exec_ptr
+    if _addmm_getws_ptr is not None:
+        return
+    if _ffi_ref is None:
+        _ensure_ffi_binary()
+    _addmm_getws_ptr, _addmm_exec_ptr = _ffi_ref.resolve_op("Addmm")
+    _ensure_ffi_scalar_helpers()
+
+
+cdef inline void _ensure_ffi_reduce_sum() except *:
+    global _ffi_ref, _reduce_sum_getws_ptr, _reduce_sum_exec_ptr
+    if _reduce_sum_getws_ptr is not None:
+        return
+    if _ffi_ref is None:
+        _ensure_ffi_binary()
+    _reduce_sum_getws_ptr, _reduce_sum_exec_ptr = _ffi_ref.resolve_op("ReduceSum")
 
 
 cdef inline void _ensure_ffi_addcmul() except *:
@@ -3008,6 +3796,15 @@ cdef inline void _ensure_ffi_gelu() except *:
     if _ffi_ref is None:
         _ensure_ffi_binary()
     _gelu_getws_ptr, _gelu_exec_ptr = _ffi_ref.resolve_op("Gelu")
+
+
+cdef inline void _ensure_ffi_gelu_backward() except *:
+    global _ffi_ref, _gelu_backward_getws_ptr, _gelu_backward_exec_ptr
+    if _gelu_backward_getws_ptr is not None:
+        return
+    if _ffi_ref is None:
+        _ensure_ffi_binary()
+    _gelu_backward_getws_ptr, _gelu_backward_exec_ptr = _ffi_ref.resolve_op("GeluBackward")
 
 
 cdef inline void _ensure_ffi_silu() except *:
@@ -6499,7 +7296,7 @@ def fast_log_softmax(a, dim):
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
 
 
-def fast_gelu(a):
+cpdef object fast_gelu(object a):
     """Optimized out-of-place gelu(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()
     _ensure_ffi_gelu()
@@ -6527,7 +7324,7 @@ def fast_gelu(a):
     cdef int dtype_code = _dtype_to_acl_code(a_dtype)
     cdef uintptr_t a_ptr, o_ptr
     if isinstance(a, TensorImpl):
-        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr + <uintptr_t>((<TensorImpl>a)._c_offset * (<TensorImpl>a)._itemsize)
     else:
         a_ptr = <uintptr_t>a.storage().data_ptr()
     o_ptr = out_ptr
@@ -6554,8 +7351,157 @@ def fast_gelu(a):
         finally:
             runtime.defer_raw_free(workspace_ptr)
 
-    _defer_executor_fn(executor)
+    _defer_executor_handle(executor)
     return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+
+
+cpdef object fast_gelu_exact(TensorImpl a):
+    """Gelu for already-validated exact base NPU tensors.
+
+    Mirrors fast_silu_exact: large-pool cached allocation, raw-handle executor
+    defer, and the torch_npu-aligned PTA executor cache.  aclnnGelu has no
+    strided-view limitation observed for the MLP shapes, but to stay safe we
+    materialize a contiguous copy when the cached stride is non-canonical.
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_gelu()
+
+    cdef int dev_idx = a._device_index
+    cdef object a_dev = a._device_obj
+    cdef object a_dtype = a._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object in_shape = a._shape_tuple
+    cdef object in_stride = a._stride_tuple
+    cdef object out_shape = in_shape
+    cdef int ndim = len(out_shape)
+    cdef int64_t[MAX_NDIM] shape_buf, out_stride_buf
+    cdef object out_stride
+    cdef bint input_is_contiguous
+    cdef bint strict_contiguous
+    cdef int64_t n
+    cdef object src_for_gelu = a
+    cdef int isize
+    cdef int64_t alloc_size_fgelu
+    cdef object out_ptr
+    cdef int dtype_code
+    cdef uintptr_t a_ptr, o_ptr
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+
+    if ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+    strict_contiguous = _tensor_has_strict_contiguous_stride(a)
+    if strict_contiguous:
+        out_stride = in_stride
+        input_is_contiguous = True
+    else:
+        _fill_shape(out_shape, shape_buf, ndim)
+        with nogil:
+            c_contiguous_stride(shape_buf, ndim, out_stride_buf)
+        out_stride = _to_tuple(out_stride_buf, ndim)
+        input_is_contiguous = in_stride == out_stride
+    n = a._c_numel
+
+    if not input_is_contiguous:
+        src_for_gelu = _npu_contiguous_copy(a)
+        if isinstance(src_for_gelu, TensorImpl):
+            in_shape = (<TensorImpl>src_for_gelu)._shape_tuple
+            in_stride = (<TensorImpl>src_for_gelu)._stride_tuple
+        else:
+            in_shape = src_for_gelu.shape
+            in_stride = src_for_gelu.stride
+
+    isize = a._itemsize
+    alloc_size_fgelu = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size_fgelu, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fgelu, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    if isinstance(src_for_gelu, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>src_for_gelu)._storage._untyped._device_ptr + <uintptr_t>((<TensorImpl>src_for_gelu)._c_offset * (<TensorImpl>src_for_gelu)._itemsize)
+    else:
+        a_ptr = <uintptr_t>src_for_gelu.storage().data_ptr()
+    o_ptr = out_ptr
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if _use_gelu_pta_cache and _pta_unary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_unary_cache_lookup_raw(
+            b"aclnnGelu",
+            in_shape, in_stride,
+            out_shape, out_stride,
+            dtype_code, dtype_code,
+            a_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _gelu_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnGelu execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_gelu_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnGelu execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_unary_op(
+            _gelu_getws_ptr, _gelu_exec_ptr,
+            in_shape, in_stride,
+            out_shape, out_stride,
+            dtype_code, dtype_code, 2,
+            a_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _gelu_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnGelu execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+    finally:
+        if executor:
+            _defer_executor_handle(executor)
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
 
 
 cpdef object fast_silu(object a):
@@ -6832,6 +7778,141 @@ cpdef object fast_silu_exact(TensorImpl a):
             _ffi_pta_end_cache_lookup()
 
     return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_gelu_backward(object grad, object saved_input):
+    """Optimized GELU backward via aclnnGeluBackward with cached Cython FFI."""
+    _ensure_npu_imports()
+    _ensure_ffi_gelu_backward()
+
+    if not (isinstance(grad, TensorImpl) and isinstance(saved_input, TensorImpl)):
+        raise ValueError("fast_gelu_backward expects base TensorImpl operands")
+    cdef TensorImpl grad_t = <TensorImpl>grad
+    cdef TensorImpl input_t = <TensorImpl>saved_input
+    if grad_t._device_type != 1 or input_t._device_type != 1:
+        raise ValueError("NPU gelu_backward expects NPU tensors")
+    if grad_t._device_index != input_t._device_index:
+        raise ValueError("NPU gelu_backward requires tensors on the same device")
+    if grad_t._dtype_code != input_t._dtype_code:
+        raise ValueError("NPU gelu_backward requires matching dtypes")
+
+    cdef int dev_idx = grad_t._device_index
+    cdef object a_dev = grad_t._device_obj
+    cdef object a_dtype = grad_t._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object py_grad_shape = grad_t._shape_tuple
+    cdef object py_self_shape = input_t._shape_tuple
+    cdef object grad_stride = grad_t._stride_tuple
+    cdef object input_stride = input_t._stride_tuple
+    if py_grad_shape != py_self_shape:
+        raise ValueError("NPU gelu_backward requires matching grad and input shapes")
+    cdef int ndim = grad_t._ndim
+    if ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] shape_buf, out_stride_buf
+    _fill_shape(py_grad_shape, shape_buf, ndim)
+    cdef int64_t n
+    with nogil:
+        c_contiguous_stride(shape_buf, ndim, out_stride_buf)
+        n = c_numel(shape_buf, ndim)
+    cdef object out_shape = py_grad_shape
+    cdef object out_stride = _to_tuple(out_stride_buf, ndim)
+
+    cdef int isize = grad_t._itemsize
+    cdef int64_t alloc_size = n * isize
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    cdef int dtype_code = _tensor_dtype_to_acl_code(grad_t)
+    cdef uintptr_t grad_ptr = <uintptr_t>grad_t._storage._untyped._device_ptr + <uintptr_t>(grad_t._c_offset * grad_t._itemsize)
+    cdef uintptr_t self_ptr = <uintptr_t>input_t._storage._untyped._device_ptr + <uintptr_t>(input_t._c_offset * input_t._itemsize)
+    cdef uintptr_t o_ptr = <uintptr_t>int(out_ptr)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+
+    if _use_gelu_backward_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_binary_cache_lookup_raw(
+            b"aclnnGeluBackward",
+            py_grad_shape, grad_stride,
+            py_self_shape, input_stride,
+            out_shape, out_stride,
+            dtype_code,
+            grad_ptr, self_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _gelu_backward_exec_ptr, int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnGeluBackward execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_gelu_backward_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnGeluBackward execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, grad_t._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_binary_op_no_alpha(
+            _gelu_backward_getws_ptr, _gelu_backward_exec_ptr,
+            py_grad_shape, grad_stride,
+            py_self_shape, input_stride,
+            out_shape, out_stride,
+            dtype_code, 2,
+            grad_ptr, self_ptr, o_ptr,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _gelu_backward_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnGeluBackward execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_handle(executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, grad_t._dtype_code)
 
 
 cpdef object fast_silu_backward(object grad, object saved_input):

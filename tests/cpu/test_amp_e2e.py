@@ -106,6 +106,15 @@ def test_grad_scaler_state_dict():
     assert scaler2.get_scale() == 1024.0
 
 
+def test_cpu_bfloat16_mse_loss_uses_numeric_values_not_storage_bits():
+    x = torch.tensor([1.0, 2.0], dtype=torch.float32).to(torch.bfloat16)
+    y = torch.tensor([0.0, 1.0], dtype=torch.float32)
+
+    loss = F.mse_loss(x, y)
+
+    assert abs(loss.item() - 1.0) < 1e-5
+
+
 def test_amp_training_loop():
     """Full AMP training loop: autocast + GradScaler over multiple steps."""
     torch.manual_seed(42)

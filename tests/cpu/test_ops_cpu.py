@@ -19,6 +19,38 @@ def test_add_mul_matmul_relu_sum():
     assert s.shape == (2, 1)
 
 
+def test_cpu_bfloat16_relu_uses_numeric_values_not_storage_bits():
+    x = torch.tensor([-2.0, -0.5, 0.0, 1.0], dtype=torch.float32).to(torch.bfloat16)
+
+    out = torch.relu(x)
+
+    np.testing.assert_allclose(out.to(torch.float32).numpy(), [0.0, 0.0, 0.0, 1.0])
+
+
+def test_cpu_bfloat16_reductions_and_norms_use_numeric_values_not_storage_bits():
+    x = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float32).to(torch.bfloat16)
+
+    assert abs(x.var(unbiased=False).to(torch.float32).item() - (2.0 / 3.0)) < 5e-3
+    assert abs(x.std(unbiased=False).to(torch.float32).item() - math.sqrt(2.0 / 3.0)) < 5e-3
+    assert abs(torch.norm(x).to(torch.float32).item() - math.sqrt(14.0)) < 1e-2
+
+    from candle._functional import rms_norm
+    y = torch.tensor([[1.0, 2.0]], dtype=torch.float32).to(torch.bfloat16)
+    out = rms_norm(y, (2,), eps=0.0).to(torch.float32).numpy()
+    expected = np.array([[1.0, 2.0]], dtype=np.float32) / math.sqrt(2.5)
+    np.testing.assert_allclose(out, expected, rtol=5e-3, atol=5e-3)
+
+
+def test_cpu_bfloat16_sum_mean_prod_use_numeric_values_not_storage_bits():
+    x = torch.tensor([[1.0, 2.0], [3.0, 4.0]], dtype=torch.float32).to(torch.bfloat16)
+
+    np.testing.assert_allclose(x.sum(dim=0).to(torch.float32).numpy(), [4.0, 6.0])
+    assert abs(x.sum().to(torch.float32).item() - 10.0) < 1e-5
+    assert abs(x.mean().to(torch.float32).item() - 2.5) < 1e-5
+    assert abs(x.prod().to(torch.float32).item() - 24.0) < 1e-5
+
+
+
 def test_abs_cpu():
     x = torch.tensor([-1.0, 0.5, 2.0])
     expected = np.abs(x.numpy())
@@ -1282,11 +1314,12 @@ def test_sum_dtype_accumulates_in_target_dtype_matches_torch_cpu():
     assert out.item() == tout.item() == 240
 
 
-def test_sum_full_reduction_shape():
-    x = torch.tensor([1.0, 2.0, 3.0])
-    s = x.sum()
-    assert s.shape == ()
-    assert float(s.item()) == 6.0
+def test_scalar_reducers_preserve_zero_dim_shape_cpu():
+    x = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+
+    assert x.sum().shape == ()
+    assert x.mean().shape == ()
+    assert x.prod().shape == ()
 
 
 def test_scalar_inplace_sub():

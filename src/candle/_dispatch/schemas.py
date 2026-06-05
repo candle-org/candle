@@ -579,6 +579,10 @@ def register_schemas():  # pylint: disable=too-many-statements
 
     # P1 ops from upstream
     registry.register_schema("addmm", "addmm(Tensor input, Tensor mat1, Tensor mat2, *, Scalar beta=1, Scalar alpha=1) -> Tensor")
+    registry.register_schema("sym_strides", "sym_strides(Tensor input) -> Any")
+    registry.register_schema("layout", "layout(Tensor input) -> Any")
+    registry.register_schema("mm_mat1_backward", "mm_mat1_backward(Tensor grad, Tensor mat2, int[] mat1_shape, int[]? mat1_strides=None, Any mat1_layout=None, Scalar alpha=1) -> Tensor")
+    registry.register_schema("mm_mat2_backward", "mm_mat2_backward(Tensor grad, Tensor mat1, int[] mat2_shape, int[]? mat2_strides=None, Any mat2_layout=None, Scalar alpha=1) -> Tensor")
     registry.register_schema("upsample_nearest2d", "upsample_nearest2d(Tensor input, Any output_size) -> Tensor")
     registry.register_schema("upsample_bilinear2d", "upsample_bilinear2d(Tensor input, Any output_size, bool align_corners=False, Any scales_h=None, Any scales_w=None) -> Tensor")
     registry.register_schema("one_hot", "one_hot(Tensor input, int num_classes=-1) -> Tensor")

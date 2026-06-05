@@ -1,5 +1,6 @@
 import numpy as np
 
+from ..._dtype import bfloat16 as bfloat16_dtype
 from ..._dtype import to_numpy_dtype
 from ..._C import typed_storage_from_numpy
 from ..._C._tensor_impl import cy_make_tensor_from_storage  # pylint: disable=import-error,no-name-in-module
@@ -30,6 +31,25 @@ def _resolve_stride(shape, memory_format):
     raise TypeError(f"unsupported memory_format {memory_format}")
 
 
+def _numeric_array_dtype(dtype):
+    if dtype == bfloat16_dtype:
+        return np.float32
+    return to_numpy_dtype(dtype)
+
+
+def _f32_to_bf16_bits(arr):
+    u32 = arr.astype(np.float32, copy=False).view(np.uint32)
+    rounding_bias = (u32 >> 16) & 1
+    u32 = u32 + 0x7FFF + rounding_bias
+    return (u32 >> 16).astype(np.uint16)
+
+
+def _numeric_to_storage_array(arr, dtype):
+    if dtype == bfloat16_dtype:
+        return _f32_to_bf16_bits(arr)
+    return arr.astype(to_numpy_dtype(dtype), copy=False)
+
+
 def _resolve_like_memory_format(other, memory_format):
     name = getattr(memory_format, "_name", None)
     if memory_format is None or name == "preserve_format":
@@ -41,7 +61,8 @@ def _resolve_like_memory_format(other, memory_format):
 
 
 def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_format=None):
-    arr = np.array(data, dtype=to_numpy_dtype(dtype))
+    arr = np.array(data, dtype=_numeric_array_dtype(dtype))
+    arr = _numeric_to_storage_array(arr, dtype)
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, requires_grad)
@@ -51,7 +72,8 @@ def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
-    storage = typed_storage_from_numpy(np.zeros(shape, dtype=to_numpy_dtype(dtype)), dtype, device=device)
+    arr = np.zeros(shape, dtype=to_numpy_dtype(dtype))
+    storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
@@ -60,7 +82,9 @@ def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_form
     if isinstance(shape, int):
         shape = (shape,)
     shape = tuple(shape)
-    storage = typed_storage_from_numpy(np.ones(shape, dtype=to_numpy_dtype(dtype)), dtype, device=device)
+    arr = np.ones(shape, dtype=_numeric_array_dtype(dtype))
+    arr = _numeric_to_storage_array(arr, dtype)
+    storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
 
@@ -75,14 +99,16 @@ def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_for
 
 
 def arange_create(start, end, step=1, dtype=None, device=None):
-    arr = np.arange(start, end, step, dtype=to_numpy_dtype(dtype))
+    arr = np.arange(start, end, step, dtype=_numeric_array_dtype(dtype))
+    arr = _numeric_to_storage_array(arr, dtype)
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def linspace_create(start, end, steps, dtype=None, device=None):
-    arr = np.linspace(start, end, steps, dtype=to_numpy_dtype(dtype))
+    arr = np.linspace(start, end, steps, dtype=_numeric_array_dtype(dtype))
+    arr = _numeric_to_storage_array(arr, dtype)
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
@@ -90,17 +116,16 @@ def linspace_create(start, end, steps, dtype=None, device=None):
 
 def full_create(shape, fill_value, dtype=None, device=None, memory_format=None):
     shape = tuple(shape)
-    storage = typed_storage_from_numpy(
-        np.full(shape, fill_value, dtype=to_numpy_dtype(dtype)),
-        dtype,
-        device=device,
-    )
+    arr = np.full(shape, fill_value, dtype=_numeric_array_dtype(dtype))
+    arr = _numeric_to_storage_array(arr, dtype)
+    storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, False)
 
 
 def logspace_create(start, end, steps, dtype=None, device=None):
-    arr = np.logspace(start, end, steps, dtype=to_numpy_dtype(dtype))
+    arr = np.logspace(start, end, steps, dtype=_numeric_array_dtype(dtype))
+    arr = _numeric_to_storage_array(arr, dtype)
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
@@ -109,18 +134,20 @@ def logspace_create(start, end, steps, dtype=None, device=None):
 def eye_create(n, m=None, dtype=None, device=None, out=None):
     if m is None:
         m = n
-    arr = np.eye(n, m, dtype=to_numpy_dtype(dtype))
+    arr = np.eye(n, m, dtype=_numeric_array_dtype(dtype))
     if out is not None:
         out_arr = out._numpy_view()
-        out_arr[:] = arr.astype(out_arr.dtype)
+        out_arr[:] = _numeric_to_storage_array(arr, out.dtype)
         return out
+    arr = _numeric_to_storage_array(arr, dtype)
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
 
 
 def range_create(start, end, step=1, dtype=None, device=None):
-    arr = np.arange(start, end + step, step, dtype=to_numpy_dtype(dtype))
+    arr = np.arange(start, end + step, step, dtype=_numeric_array_dtype(dtype))
+    arr = _numeric_to_storage_array(arr, dtype)
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return cy_make_tensor_from_storage(storage, arr.shape, stride, 0, False)
@@ -136,7 +163,7 @@ def randn_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     if not shape:
         # numpy RandomState.randn() returns a Python float for empty shape.
         arr = np.array(arr)
-    arr = arr.astype(to_numpy_dtype(dtype))
+    arr = _numeric_to_storage_array(arr.astype(_numeric_array_dtype(dtype)), dtype)
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)
@@ -152,7 +179,7 @@ def rand_create(shape, dtype=None, device=None, requires_grad=False, memory_form
     if not shape:
         # numpy RandomState.random_sample(()) returns a scalar for empty shape.
         arr = np.array(arr)
-    arr = arr.astype(to_numpy_dtype(dtype))
+    arr = _numeric_to_storage_array(arr.astype(_numeric_array_dtype(dtype)), dtype)
     storage = typed_storage_from_numpy(arr, dtype, device=device)
     stride = _resolve_stride(shape, memory_format)
     return cy_make_tensor_from_storage(storage, shape, stride, 0, requires_grad)

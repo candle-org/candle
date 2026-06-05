@@ -17,8 +17,17 @@ from candle._C._npu_ops cimport (
     fast_add_exact as _cy_fast_npu_add_exact,
     fast_mul as _cy_fast_npu_mul,
     fast_mul_exact as _cy_fast_npu_mul_exact,
+    fast_matmul as _cy_fast_npu_matmul,
+    fast_matmul_exact as _cy_fast_npu_matmul_exact,
+    fast_addmm as _cy_fast_npu_addmm,
+    fast_sum as _cy_fast_npu_sum,
+    fast_mm_mat1_backward as _cy_fast_npu_mm_mat1_backward,
+    fast_mm_mat2_backward as _cy_fast_npu_mm_mat2_backward,
+    fast_gelu as _cy_fast_npu_gelu,
+    fast_gelu_exact as _cy_fast_npu_gelu_exact,
     fast_silu as _cy_fast_npu_silu,
     fast_silu_exact as _cy_fast_npu_silu_exact,
+    fast_gelu_backward as _cy_fast_npu_gelu_backward,
     fast_silu_backward as _cy_fast_npu_silu_backward,
 )
 
@@ -119,13 +128,24 @@ cdef inline bint _is_base_tensor(object t):
     return type(t) is _BaseTensor
 
 
+cdef inline bint _class_overrides_torch_function(object cls):
+    cdef object base
+    _ensure_base()
+    for base in cls.__mro__:
+        if base is _BaseTensor:
+            return False
+        if "__torch_function__" in getattr(base, "__dict__", {}):
+            return True
+    return True
+
+
 cdef bint _check_value(object val):
     cdef object cls
     cdef object item
 
     if isinstance(val, _BaseTensor) and type(val) is not _BaseTensor:
         cls = type(val)
-        if cls.__torch_function__ is not _BaseTensor.__torch_function__:
+        if _class_overrides_torch_function(cls):
             return True
 
     if isinstance(val, (list, tuple)):
@@ -142,7 +162,7 @@ cdef void _collect_types(object val, object types):
 
     if isinstance(val, _BaseTensor) and type(val) is not _BaseTensor:
         cls = type(val)
-        if cls.__torch_function__ is not _BaseTensor.__torch_function__:
+        if _class_overrides_torch_function(cls):
             types.add(cls)
 
     if isinstance(val, (list, tuple)):
@@ -252,12 +272,91 @@ cdef inline bint _exact_base_npu_pair(object a, object b):
         and type(b) is _BaseTensor
         and (<TensorImpl>a)._device_type == 1
         and (<TensorImpl>b)._device_type == 1
+        and (<TensorImpl>a)._device_index == (<TensorImpl>b)._device_index
     )
 
 
 cdef inline bint _exact_base_npu_unary(object a):
     _ensure_base()
     return type(a) is _BaseTensor and (<TensorImpl>a)._device_type == 1
+
+
+cdef inline int _exact_npu_addmm_hot_state(object input, object mat1, object mat2, object beta, object alpha):
+    """Return 1 for inference, 2 for autograd, 0 for fallback."""
+    cdef bint grad_on
+    cdef bint requires_grad
+    cdef TensorImpl bias
+    cdef TensorImpl a
+    cdef TensorImpl b
+    _ensure_base()
+    if not (isinstance(input, _BaseTensor) and isinstance(mat1, _BaseTensor) and isinstance(mat2, _BaseTensor)):
+        return 0
+    if _check_value(input) or _check_value(mat1) or _check_value(mat2):
+        return 0
+    bias = <TensorImpl>input
+    a = <TensorImpl>mat1
+    b = <TensorImpl>mat2
+    if bias._device_type != 1 or a._device_type != 1 or b._device_type != 1:
+        return 0
+    if _functionalize_active_flag or _pipeline_active_flag or _npu_autocast_active_flag:
+        return 0
+    if hasattr(beta, "shape") or hasattr(alpha, "shape"):
+        return 0
+    if bias._ndim != 1 or a._ndim != 2 or b._ndim != 2:
+        return 0
+    if a._c_shape[1] != b._c_shape[0] or bias._c_shape[0] != b._c_shape[1]:
+        return 0
+    if bias._device_index != a._device_index or bias._device_index != b._device_index:
+        return 0
+    if bias._dtype_code != a._dtype_code or bias._dtype_code != b._dtype_code:
+        return 0
+    grad_on = _grad_enabled_fast()
+    requires_grad = bias.requires_grad or a.requires_grad or b.requires_grad
+    if not grad_on or not requires_grad:
+        return 1
+    if _npu_profiler_active_flag:
+        return 0
+    if beta != 1 or alpha != 1:
+        return 0
+    return 2
+
+
+cdef inline int _exact_npu_linear_hot_state(object input, object weight, object bias):
+    """Return 1 for inference, 2 for autograd, 0 for fallback."""
+    cdef bint grad_on
+    cdef bint requires_grad
+    cdef TensorImpl inp
+    cdef TensorImpl w
+    cdef TensorImpl b
+    _ensure_base()
+    if bias is None:
+        return 0
+    if not (isinstance(input, _BaseTensor) and isinstance(weight, _BaseTensor) and isinstance(bias, _BaseTensor)):
+        return 0
+    if _check_value(input) or _check_value(weight) or _check_value(bias):
+        return 0
+    inp = <TensorImpl>input
+    w = <TensorImpl>weight
+    b = <TensorImpl>bias
+    if inp._device_type != 1 or w._device_type != 1 or b._device_type != 1:
+        return 0
+    if _functionalize_active_flag or _pipeline_active_flag or _npu_autocast_active_flag:
+        return 0
+    if inp._ndim != 2 or w._ndim != 2 or b._ndim != 1:
+        return 0
+    if inp._c_shape[1] != w._c_shape[1] or b._c_shape[0] != w._c_shape[0]:
+        return 0
+    if inp._device_index != w._device_index or inp._device_index != b._device_index:
+        return 0
+    if inp._dtype_code != w._dtype_code or inp._dtype_code != b._dtype_code:
+        return 0
+    grad_on = _grad_enabled_fast()
+    requires_grad = inp.requires_grad or w.requires_grad or b.requires_grad
+    if not grad_on or not requires_grad:
+        return 1
+    if _npu_profiler_active_flag:
+        return 0
+    return 2
 
 
 cdef inline int _exact_npu_binary_hot_state(object a, object b):
@@ -893,6 +992,441 @@ cdef class _NpuMulBackward(_CyAutogradNode):
         return grad_self, grad_other
 
 
+cdef class _NpuAddmmBackward(_CyAutogradNode):
+    cdef public object _self
+    cdef public object _mat1
+    cdef public object _mat2
+    cdef public object _beta
+    cdef public object _alpha
+    cdef public object _self_shape
+    cdef int64_t _saved_mat1_version
+    cdef int64_t _saved_mat2_version
+    cdef bint _saved_mat1_released
+    cdef bint _saved_mat2_released
+    cdef object _saved_mat1_obj
+    cdef object _saved_mat2_obj
+
+    cdef void _init_fast(self, object self_, object mat1, object mat2):
+        cdef object saved_mat1
+        cdef object saved_mat2
+        self.inputs = (self_, mat1, mat2)
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "AddmmBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = (_npu_edge_for(<TensorImpl>self_), _npu_edge_for(<TensorImpl>mat1), _npu_edge_for(<TensorImpl>mat2))
+        self._self = self_
+        self._mat1 = mat1
+        self._mat2 = mat2
+        self._beta = 1
+        self._alpha = 1
+        self._self_shape = (<TensorImpl>self_)._shape_tuple
+        self._saved_mat1_released = False
+        self._saved_mat2_released = False
+        if _npu_has_saved_hooks():
+            saved_mat1 = SavedTensor(mat1)
+            if mat1 is mat2:
+                saved_mat2 = saved_mat1
+            else:
+                saved_mat2 = SavedTensor(mat2)
+            self._saved_mat1_obj = saved_mat1
+            self._saved_mat2_obj = saved_mat2
+            self._saved_mat1_version = 0
+            self._saved_mat2_version = 0
+        else:
+            self._saved_mat1_obj = None
+            self._saved_mat2_obj = None
+            self._saved_mat1_version = (<TensorImpl>mat1)._version_value
+            self._saved_mat2_version = self._saved_mat1_version if mat1 is mat2 else (<TensorImpl>mat2)._version_value
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+
+    def __init__(self, self_, mat1, mat2):
+        self._init_fast(self_, mat1, mat2)
+
+    cpdef tuple _engine_next_functions(self):
+        return self._next_functions_cache
+
+    @property
+    def next_functions(self):
+        cached = _npu_materialize_leaf_edges(self.inputs, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    cpdef object _saved_proxy_tensor_py(self, int slot):
+        if slot == 0:
+            return self._mat1
+        return self._mat2
+
+    cpdef bint _saved_proxy_released_py(self, int slot):
+        if slot == 0:
+            return self._saved_mat1_released
+        return self._saved_mat2_released
+
+    cpdef void _saved_proxy_release_py(self, int slot):
+        if slot == 0:
+            self._saved_mat1_released = True
+        else:
+            self._saved_mat2_released = True
+
+    cpdef object _saved_proxy_materialize_py(self, int slot):
+        if slot == 0:
+            return _npu_materialize_tensor_version(self._mat1, self._saved_mat1_version, self._saved_mat1_released)
+        return _npu_materialize_tensor_version(self._mat2, self._saved_mat2_version, self._saved_mat2_released)
+
+    cdef object _raw_saved_mat1_proxy(self):
+        if self._saved_mat1_obj is None:
+            self._saved_mat1_obj = _npu_saved_tensor_proxy(self, 0)
+        return self._saved_mat1_obj
+
+    cdef object _raw_saved_mat2_proxy(self):
+        if self._saved_mat2_obj is None:
+            if self._mat1 is self._mat2:
+                self._saved_mat2_obj = self._raw_saved_mat1_proxy()
+            else:
+                self._saved_mat2_obj = _npu_saved_tensor_proxy(self, 1)
+        return self._saved_mat2_obj
+
+    def saved_tensors(self):
+        cdef object mat1_saved
+        cdef object mat2_saved
+        if self._saved_mat1_obj is not None:
+            mat1_saved = self._saved_mat1_obj.materialize()
+        else:
+            mat1_saved = self._saved_proxy_materialize_py(0)
+        if self._saved_mat2_obj is not None:
+            mat2_saved = self._saved_mat2_obj.materialize()
+        elif self._mat1 is self._mat2 and self._saved_mat1_obj is not None:
+            mat2_saved = self._saved_mat1_obj.materialize()
+        else:
+            mat2_saved = self._saved_proxy_materialize_py(1)
+        return (mat1_saved, mat2_saved)
+
+    def release_saved_tensors(self):
+        if self._saved_mat1_obj is not None:
+            self._saved_mat1_obj.release()
+        else:
+            self._saved_mat1_released = True
+        if self._mat1 is self._mat2 or self._saved_mat2_obj is self._saved_mat1_obj:
+            self._saved_mat2_released = True
+            return
+        if self._saved_mat2_obj is not None:
+            self._saved_mat2_obj.release()
+        else:
+            self._saved_mat2_released = True
+
+    def __getattr__(self, name):
+        if name == "_raw_saved_mat1":
+            return self._raw_saved_mat1_proxy()
+        if name == "_raw_saved_mat2":
+            return self._raw_saved_mat2_proxy()
+        if name == "_saved_mat1":
+            if self._saved_mat1_obj is not None:
+                return self._saved_mat1_obj.materialize()
+            return self._saved_proxy_materialize_py(0)
+        if name == "_saved_mat2":
+            if self._saved_mat2_obj is not None:
+                return self._saved_mat2_obj.materialize()
+            if self._mat1 is self._mat2 and self._saved_mat1_obj is not None:
+                return self._saved_mat1_obj.materialize()
+            return self._saved_proxy_materialize_py(1)
+        if name == "_raw_saved_tensors":
+            return (self._raw_saved_mat1_proxy(), self._raw_saved_mat2_proxy())
+        if name == "_saved_tensors":
+            return self.saved_tensors()
+        return _CyAutogradNode.__getattr__(self, name)
+
+    def backward(self, grad):
+        cdef object mat1
+        cdef object mat2
+        cdef object grad_self = None
+        cdef object grad_mat1 = None
+        cdef object grad_mat2 = None
+        if self._saved_mat1_obj is not None:
+            mat1 = self._saved_mat1_obj.materialize()
+        else:
+            mat1 = self._saved_proxy_materialize_py(0)
+        if self._saved_mat2_obj is not None:
+            mat2 = self._saved_mat2_obj.materialize()
+        elif self._mat1 is self._mat2 and self._saved_mat1_obj is not None:
+            mat2 = self._saved_mat1_obj.materialize()
+        else:
+            mat2 = self._saved_proxy_materialize_py(1)
+        _ensure_npu_refs()
+        _ensure_npu_autograd_refs()
+        if _npu_create_graph_fn():
+            _ensure_dispatch()
+            if getattr(self._self, "requires_grad", False):
+                grad_self = _dispatch_fn("sum", None, grad, dim=0, keepdim=False)
+            if getattr(mat1, "requires_grad", False):
+                grad_mat1 = _dispatch_fn("mm_mat1_backward", None, grad, mat2, mat1.shape, None, None, 1)
+            if getattr(mat2, "requires_grad", False):
+                grad_mat2 = _dispatch_fn("mm_mat2_backward", None, grad, mat1, mat2.shape, None, None, 1)
+            return grad_self, grad_mat1, grad_mat2
+        if getattr(self._self, "requires_grad", False):
+            grad_self = _mark_npu_owned_backward_grad(_cy_fast_npu_sum(grad, 0, False))
+        if getattr(mat1, "requires_grad", False):
+            grad_mat1 = _mark_npu_owned_backward_grad(_cy_fast_npu_mm_mat1_backward(grad, mat2, 1))
+        if getattr(mat2, "requires_grad", False):
+            grad_mat2 = _mark_npu_owned_backward_grad(_cy_fast_npu_mm_mat2_backward(grad, mat1, 1))
+        return grad_self, grad_mat1, grad_mat2
+
+
+cdef class _NpuLinearBackward(_CyAutogradNode):
+    cdef public object _input
+    cdef public object _weight
+    cdef public object _bias
+    cdef int64_t _saved_input_version
+    cdef int64_t _saved_weight_version
+    cdef bint _saved_input_released
+    cdef bint _saved_weight_released
+    cdef object _saved_input_obj
+    cdef object _saved_weight_obj
+
+    cdef void _init_fast(self, object input_, object weight, object bias):
+        cdef object saved_input
+        cdef object saved_weight
+        self.inputs = (input_, weight, bias)
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "LinearBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = (_npu_edge_for(<TensorImpl>input_), _npu_edge_for(<TensorImpl>weight), _npu_edge_for(<TensorImpl>bias))
+        self._input = input_
+        self._weight = weight
+        self._bias = bias
+        self._saved_input_released = False
+        self._saved_weight_released = False
+        if _npu_has_saved_hooks():
+            saved_input = SavedTensor(input_)
+            saved_weight = SavedTensor(weight)
+            self._saved_input_obj = saved_input
+            self._saved_weight_obj = saved_weight
+            self._saved_input_version = 0
+            self._saved_weight_version = 0
+        else:
+            self._saved_input_obj = None
+            self._saved_weight_obj = None
+            self._saved_input_version = (<TensorImpl>input_)._version_value
+            self._saved_weight_version = (<TensorImpl>weight)._version_value
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+
+    def __init__(self, input_, weight, bias):
+        self._init_fast(input_, weight, bias)
+
+    cpdef tuple _engine_next_functions(self):
+        return self._next_functions_cache
+
+    @property
+    def next_functions(self):
+        cached = _npu_materialize_leaf_edges(self.inputs, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    cpdef object _saved_proxy_tensor_py(self, int slot):
+        if slot == 0:
+            return self._input
+        return self._weight
+
+    cpdef bint _saved_proxy_released_py(self, int slot):
+        if slot == 0:
+            return self._saved_input_released
+        return self._saved_weight_released
+
+    cpdef void _saved_proxy_release_py(self, int slot):
+        if slot == 0:
+            self._saved_input_released = True
+        else:
+            self._saved_weight_released = True
+
+    cpdef object _saved_proxy_materialize_py(self, int slot):
+        if slot == 0:
+            return _npu_materialize_tensor_version(self._input, self._saved_input_version, self._saved_input_released)
+        return _npu_materialize_tensor_version(self._weight, self._saved_weight_version, self._saved_weight_released)
+
+    cdef object _raw_saved_input_proxy(self):
+        if self._saved_input_obj is None:
+            self._saved_input_obj = _npu_saved_tensor_proxy(self, 0)
+        return self._saved_input_obj
+
+    cdef object _raw_saved_weight_proxy(self):
+        if self._saved_weight_obj is None:
+            self._saved_weight_obj = _npu_saved_tensor_proxy(self, 1)
+        return self._saved_weight_obj
+
+    def saved_tensors(self):
+        cdef object input_saved
+        cdef object weight_saved
+        if self._saved_input_obj is not None:
+            input_saved = self._saved_input_obj.materialize()
+        else:
+            input_saved = self._saved_proxy_materialize_py(0)
+        if self._saved_weight_obj is not None:
+            weight_saved = self._saved_weight_obj.materialize()
+        else:
+            weight_saved = self._saved_proxy_materialize_py(1)
+        return (input_saved, weight_saved)
+
+    def release_saved_tensors(self):
+        if self._saved_input_obj is not None:
+            self._saved_input_obj.release()
+        else:
+            self._saved_input_released = True
+        if self._saved_weight_obj is not None:
+            self._saved_weight_obj.release()
+        else:
+            self._saved_weight_released = True
+
+    def __getattr__(self, name):
+        if name == "_raw_saved_input":
+            return self._raw_saved_input_proxy()
+        if name == "_raw_saved_weight":
+            return self._raw_saved_weight_proxy()
+        if name == "_saved_input":
+            if self._saved_input_obj is not None:
+                return self._saved_input_obj.materialize()
+            return self._saved_proxy_materialize_py(0)
+        if name == "_saved_weight":
+            if self._saved_weight_obj is not None:
+                return self._saved_weight_obj.materialize()
+            return self._saved_proxy_materialize_py(1)
+        if name == "_raw_saved_tensors":
+            return (self._raw_saved_input_proxy(), self._raw_saved_weight_proxy())
+        if name == "_saved_tensors":
+            return self.saved_tensors()
+        return _CyAutogradNode.__getattr__(self, name)
+
+    def backward(self, grad):
+        cdef object input_
+        cdef object weight
+        cdef object grad_input = None
+        cdef object grad_weight = None
+        cdef object grad_bias = None
+        if self._saved_input_obj is not None:
+            input_ = self._saved_input_obj.materialize()
+        else:
+            input_ = self._saved_proxy_materialize_py(0)
+        if self._saved_weight_obj is not None:
+            weight = self._saved_weight_obj.materialize()
+        else:
+            weight = self._saved_proxy_materialize_py(1)
+        _ensure_npu_refs()
+        _ensure_npu_autograd_refs()
+        if _npu_create_graph_fn():
+            _ensure_dispatch()
+            if getattr(input_, "requires_grad", False):
+                grad_input = _dispatch_fn("matmul", None, grad, weight)
+            if getattr(weight, "requires_grad", False):
+                grad_t = _dispatch_fn("transpose", None, grad, 0, 1)
+                grad_weight = _dispatch_fn("matmul", None, grad_t, input_)
+            if getattr(self._bias, "requires_grad", False):
+                grad_bias = _dispatch_fn("sum", None, grad, dim=0, keepdim=False)
+            return grad_input, grad_weight, grad_bias
+        if getattr(input_, "requires_grad", False):
+            grad_input = _mark_npu_owned_backward_grad(_cy_fast_npu_matmul(grad, weight))
+        if getattr(weight, "requires_grad", False):
+            grad_weight = _mark_npu_owned_backward_grad(_cy_fast_npu_mm_mat2_backward(input_, grad, 1))
+        if getattr(self._bias, "requires_grad", False):
+            grad_bias = _mark_npu_owned_backward_grad(_cy_fast_npu_sum(grad, 0, False))
+        return grad_input, grad_weight, grad_bias
+
+
+cdef class _NpuGeluBackward(_CyAutogradNode):
+    cdef public object _self
+    cdef int64_t _saved_self_version
+    cdef bint _saved_self_released
+    cdef object _saved_self_obj
+
+    cdef void _init_fast(self, object self_):
+        cdef object saved_self
+        self.inputs = (self_,)
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "GeluBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = _npu_unary_edges_if_needed(self_)
+        self._self = self_
+        self._saved_self_released = False
+        if _npu_has_saved_hooks():
+            saved_self = SavedTensor(self_)
+            self._saved_self_obj = saved_self
+            self._saved_self_version = 0
+        else:
+            self._saved_self_obj = None
+            self._saved_self_version = (<TensorImpl>self_)._version_value
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+
+    def __init__(self, self_):
+        self._init_fast(self_)
+
+    @property
+    def next_functions(self):
+        cached = _npu_get_unary_edges(self._self, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    cpdef object _saved_proxy_tensor_py(self, int slot):
+        return self._self
+
+    cpdef bint _saved_proxy_released_py(self, int slot):
+        return self._saved_self_released
+
+    cpdef void _saved_proxy_release_py(self, int slot):
+        self._saved_self_released = True
+
+    cpdef object _saved_proxy_materialize_py(self, int slot):
+        return _npu_materialize_tensor_version(self._self, self._saved_self_version, self._saved_self_released)
+
+    cdef object _raw_saved_self_proxy(self):
+        if self._saved_self_obj is None:
+            self._saved_self_obj = _npu_saved_tensor_proxy(self, 0)
+        return self._saved_self_obj
+
+    def saved_tensors(self):
+        if self._saved_self_obj is not None:
+            return (self._saved_self_obj.materialize(),)
+        return (self._saved_proxy_materialize_py(0),)
+
+    def release_saved_tensors(self):
+        if self._saved_self_obj is not None:
+            self._saved_self_obj.release()
+        else:
+            self._saved_self_released = True
+
+    def __getattr__(self, name):
+        if name == "_raw_saved_self":
+            return self._raw_saved_self_proxy()
+        if name == "_saved_self":
+            if self._saved_self_obj is not None:
+                return self._saved_self_obj.materialize()
+            return self._saved_proxy_materialize_py(0)
+        if name == "_raw_saved_tensors":
+            return (self._raw_saved_self_proxy(),)
+        if name == "_saved_tensors":
+            if self._saved_self_obj is not None:
+                return (self._saved_self_obj.materialize(),)
+            return (self._saved_proxy_materialize_py(0),)
+        return _CyAutogradNode.__getattr__(self, name)
+
+    def backward(self, grad):
+        if self._saved_self_obj is not None:
+            self_ = self._saved_self_obj.materialize()
+        else:
+            self_ = self._saved_proxy_materialize_py(0)
+        _ensure_npu_autograd_refs()
+        if not getattr(self_, "requires_grad", False):
+            return (None,)
+        return (_mark_npu_owned_backward_grad(_cy_fast_npu_gelu_backward(grad, self_)),)
+
+
 cdef class _NpuSiluBackward(_CyAutogradNode):
     cdef public object _self
     cdef int64_t _saved_self_version
@@ -984,6 +1518,24 @@ cdef class _NpuSiluBackward(_CyAutogradNode):
         return (_mark_npu_owned_backward_grad(_cy_fast_npu_silu_backward(grad, self_)),)
 
 
+cdef inline object _attach_npu_addmm_grad(object result, object input, object mat1, object mat2, object beta, object alpha):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuAddmmBackward grad_fn = _NpuAddmmBackward.__new__(_NpuAddmmBackward)
+    grad_fn._init_fast(input, mat1, mat2)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
+cdef inline object _attach_npu_linear_grad(object result, object input, object weight, object bias):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuLinearBackward grad_fn = _NpuLinearBackward.__new__(_NpuLinearBackward)
+    grad_fn._init_fast(input, weight, bias)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
 cdef inline object _attach_npu_add_grad(object result, object a, object b):
     cdef TensorImpl out = <TensorImpl>result
     cdef _NpuAddBackward grad_fn = _NpuAddBackward.__new__(_NpuAddBackward)
@@ -997,6 +1549,15 @@ cdef inline object _attach_npu_mul_grad(object result, object a, object b):
     cdef TensorImpl out = <TensorImpl>result
     cdef _NpuMulBackward grad_fn = _NpuMulBackward.__new__(_NpuMulBackward)
     grad_fn._init_fast(a, b)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
+cdef inline object _attach_npu_gelu_grad(object result, object a):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuGeluBackward grad_fn = _NpuGeluBackward.__new__(_NpuGeluBackward)
+    grad_fn._init_fast(a)
     out.grad_fn = grad_fn
     out.requires_grad = True
     return result
@@ -1150,6 +1711,20 @@ def mul(a, b, *, out=None):
     return result
 
 
+def gelu(a, approximate='none'):
+    """Fast nn.functional.gelu NPU eager route for the native GELU variant."""
+    cdef int npu_state
+    if approximate == 'none':
+        if _exact_base_npu_unary(a):
+            npu_state = _exact_npu_unary_hot_state(a)
+            if npu_state == 1 and not _npu_profiler_active_flag and not _npu_autocast_active_flag:
+                return _cy_fast_npu_gelu_exact(<TensorImpl>a)
+            if npu_state == 2:
+                return _attach_npu_gelu_grad(_cy_fast_npu_gelu_exact(<TensorImpl>a), a)
+    from candle.nn import functional as _nn_functional
+    return _nn_functional._py_gelu(a, approximate=approximate)
+
+
 def silu(a, inplace=False):
     """Fast nn.functional.silu NPU inference route."""
     cdef int npu_state
@@ -1221,6 +1796,27 @@ def matmul(a, b, *, out=None):
     cdef object r
     cdef object result
     cdef object kwargs
+    cdef bint requires_grad
+
+    # Front-load safe 2D exact NPU inference matmul before loading Python
+    # fallback callables.  Training/autograd cases stay on dispatch until a
+    # dedicated matmul autograd attach path is implemented and tested.
+    if _exact_base_npu_pair(a, b):
+        requires_grad = (<TensorImpl>a).requires_grad or (<TensorImpl>b).requires_grad
+        if (
+            out is None
+            and not _functionalize_active_flag
+            and not _pipeline_active_flag
+            and not _npu_profiler_active_flag
+            and not _npu_autocast_active_flag
+            and (not _grad_enabled_fast() or not requires_grad)
+            and (<TensorImpl>a)._ndim == 2
+            and (<TensorImpl>b)._ndim == 2
+            and (<TensorImpl>a)._dtype_code == (<TensorImpl>b)._dtype_code
+            and (<TensorImpl>a)._device_index == (<TensorImpl>b)._device_index
+            and (<TensorImpl>a)._c_shape[1] == (<TensorImpl>b)._c_shape[0]
+        ):
+            return _cy_fast_npu_matmul_exact(<TensorImpl>a, <TensorImpl>b)
 
     _ensure_originals()
 
@@ -1243,6 +1839,48 @@ def matmul(a, b, *, out=None):
         out.copy_(result)
         return out
     return result
+
+
+def addmm(input, mat1, mat2, *, beta=1, alpha=1):
+    """Fast addmm: direct NPU kernel plus autograd attach for safe base tensors."""
+    cdef int state
+    cdef object result
+
+    state = _exact_npu_addmm_hot_state(input, mat1, mat2, beta, alpha)
+    if state != 0:
+        try:
+            result = _cy_fast_npu_addmm(input, mat1, mat2, beta, alpha)
+        except ValueError:
+            result = None
+        if result is not None:
+            if state == 2:
+                return _attach_npu_addmm_grad(result, input, mat1, mat2, beta, alpha)
+            return result
+
+    _ensure_dispatch()
+    return _dispatch_fn("addmm", getattr(getattr(input, "device", None), "type", None), input, mat1, mat2, beta=beta, alpha=alpha)
+
+
+def linear(input, weight, bias=None):
+    """Fast linear: fuse safe NPU weight.t() + addmm glue in Cython."""
+    cdef int state
+    cdef object weight_t
+    cdef object result
+
+    state = _exact_npu_linear_hot_state(input, weight, bias)
+    if state != 0:
+        weight_t = (<TensorImpl>weight).cy_transpose(0, 1)
+        try:
+            result = _cy_fast_npu_addmm(bias, input, weight_t, 1, 1)
+        except ValueError:
+            result = None
+        if result is not None:
+            if state == 2:
+                return _attach_npu_linear_grad(result, input, weight, bias)
+            return result
+
+    from candle.nn import functional as _nn_functional
+    return _nn_functional._py_linear(input, weight, bias)
 
 
 def relu(a):

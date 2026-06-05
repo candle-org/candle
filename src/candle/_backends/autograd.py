@@ -299,7 +299,7 @@ def _contiguous_backward(grad, _a, _saved_a, _keyset):
 
 def _to_backward(grad, a, _saved_a, keyset, args, _kwargs):
     with _grad_context(keyset):
-        return (redispatch("to", keyset, grad, a.device, non_blocking=False),)
+        return (redispatch("to", keyset, grad, a.device, dtype=a.dtype, non_blocking=False),)
 
 
 def _silu_backward(grad, _a, saved_a, keyset):
@@ -7385,8 +7385,12 @@ def _npu_silu_backward(grad, _a, saved_a, keyset):
     return (npu_silu_backward(grad, saved_a),)
 
 def _npu_gelu_backward(grad, _a, saved_a, keyset):
-    from .npu.backward import npu_gelu_backward
-    return (npu_gelu_backward(grad, saved_a),)
+    try:
+        from .._C._npu_ops import fast_gelu_backward  # pylint: disable=import-error,no-name-in-module
+        return (fast_gelu_backward(grad, saved_a),)
+    except ImportError:
+        from .npu.backward import npu_gelu_backward
+        return (npu_gelu_backward(grad, saved_a),)
 
 def _npu_hardswish_backward(grad, _a, saved_a, keyset):
     from .npu.backward import npu_hardswish_backward

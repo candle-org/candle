@@ -18,6 +18,13 @@ from ..._dtype import from_numpy_dtype
 from ..._dtype import to_numpy_dtype
 
 
+def _bf16_bits_to_f32(arr):
+    u32 = (arr.astype(np.uint32, copy=False) << np.uint32(16)).astype(np.uint32, copy=False)
+    if u32.ndim == 0:
+        return u32.reshape(1).view(np.float32).reshape(())
+    return u32.view(np.float32)
+
+
 def _f32_to_bf16_bits(arr):
     u32 = arr.astype(np.float32, copy=False).view(np.uint32)
     rounding_bias = (u32 >> 16) & 1
@@ -247,54 +254,78 @@ def _cython_scalar_unary_inplace(kernel_f32, kernel_f64, arr, scalar):
     return False
 
 
-def add(a, b):
-    a_np = _to_numpy(a)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    out_dtype = _binary_out_dtype(a, b)
-    out_np_dtype = to_numpy_dtype(out_dtype)
-    if isinstance(b, Tensor):
-        result = _cython_binary(_ck.add_f32, _ck.add_f64, a_np, b_np, out_np_dtype)
+def _contiguous_array_preserve_scalar(arr):
+    arr = np.asarray(arr)
+    if arr.ndim == 0 or arr.flags['C_CONTIGUOUS']:
+        return arr
+    return np.ascontiguousarray(arr)
+
+
+def _to_numeric_array_for_cpu_op(tensor):
+    arr = _to_numpy(tensor)
+    if tensor.dtype == bfloat16_dtype:
+        return _bf16_bits_to_f32(arr)
+    return arr
+
+
+def _from_numeric_array_for_cpu_op(arr, dtype, device):
+    if dtype == bfloat16_dtype:
+        arr = _f32_to_bf16_bits(arr.astype(np.float32, copy=False))
     else:
-        result = _cython_scalar_binary(_ck.add_scalar_f32, _ck.add_scalar_f64, a_np, b_np, out_np_dtype)
-    if result is not None:
-        return _from_numpy(result, out_dtype, a.device)
+        arr = arr.astype(to_numpy_dtype(dtype), copy=False)
+    return _from_numpy(arr, dtype, device)
+
+
+def add(a, b):
+    a_np = _to_numeric_array_for_cpu_op(a)
+    b_np = _to_numeric_array_for_cpu_op(b) if isinstance(b, Tensor) else b
+    out_dtype = _binary_out_dtype(a, b)
+    out_np_dtype = np.float32 if out_dtype == bfloat16_dtype else to_numpy_dtype(out_dtype)
+    if a.dtype != bfloat16_dtype and (not isinstance(b, Tensor) or b.dtype != bfloat16_dtype):
+        if isinstance(b, Tensor):
+            result = _cython_binary(_ck.add_f32, _ck.add_f64, a_np, b_np, out_np_dtype)
+        else:
+            result = _cython_scalar_binary(_ck.add_scalar_f32, _ck.add_scalar_f64, a_np, b_np, out_np_dtype)
+        if result is not None:
+            return _from_numpy(result, out_dtype, a.device)
     try:
         out = np.add(a_np, b_np)
     except ValueError as exc:
         raise RuntimeError(str(exc)) from exc
-    out = out.astype(out_np_dtype, copy=False)
-    return _from_numpy(out, out_dtype, a.device)
+    return _from_numeric_array_for_cpu_op(out, out_dtype, a.device)
 
 
 def mul(a, b):
-    a_np = _to_numpy(a)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
+    a_np = _to_numeric_array_for_cpu_op(a)
+    b_np = _to_numeric_array_for_cpu_op(b) if isinstance(b, Tensor) else b
     out_dtype = _binary_out_dtype(a, b)
-    out_np_dtype = to_numpy_dtype(out_dtype)
-    if isinstance(b, Tensor):
-        result = _cython_binary(_ck.mul_f32, _ck.mul_f64, a_np, b_np, out_np_dtype)
-    else:
-        result = _cython_scalar_binary(_ck.mul_scalar_f32, _ck.mul_scalar_f64, a_np, b_np, out_np_dtype)
-    if result is not None:
-        return _from_numpy(result, out_dtype, a.device)
-    out = np.multiply(a_np, b_np).astype(out_np_dtype, copy=False)
-    return _from_numpy(out, out_dtype, a.device)
+    out_np_dtype = np.float32 if out_dtype == bfloat16_dtype else to_numpy_dtype(out_dtype)
+    if a.dtype != bfloat16_dtype and (not isinstance(b, Tensor) or b.dtype != bfloat16_dtype):
+        if isinstance(b, Tensor):
+            result = _cython_binary(_ck.mul_f32, _ck.mul_f64, a_np, b_np, out_np_dtype)
+        else:
+            result = _cython_scalar_binary(_ck.mul_scalar_f32, _ck.mul_scalar_f64, a_np, b_np, out_np_dtype)
+        if result is not None:
+            return _from_numpy(result, out_dtype, a.device)
+    out = np.multiply(a_np, b_np)
+    return _from_numeric_array_for_cpu_op(out, out_dtype, a.device)
 
 
 def div(a, b):
-    a_np = _to_numpy(a)
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
+    a_np = _to_numeric_array_for_cpu_op(a)
+    b_np = _to_numeric_array_for_cpu_op(b) if isinstance(b, Tensor) else b
     out_dtype = _binary_out_dtype(a, b, for_div=True)
-    out_np_dtype = to_numpy_dtype(out_dtype)
-    if isinstance(b, Tensor):
-        result = _cython_binary(_ck.div_f32, _ck.div_f64, a_np, b_np, out_np_dtype)
-    else:
-        result = _cython_scalar_binary(_ck.div_scalar_f32, _ck.div_scalar_f64, a_np, b_np, out_np_dtype)
-    if result is not None:
-        return _from_numpy(result, out_dtype, a.device)
+    out_np_dtype = np.float32 if out_dtype == bfloat16_dtype else to_numpy_dtype(out_dtype)
+    if a.dtype != bfloat16_dtype and (not isinstance(b, Tensor) or b.dtype != bfloat16_dtype):
+        if isinstance(b, Tensor):
+            result = _cython_binary(_ck.div_f32, _ck.div_f64, a_np, b_np, out_np_dtype)
+        else:
+            result = _cython_scalar_binary(_ck.div_scalar_f32, _ck.div_scalar_f64, a_np, b_np, out_np_dtype)
+        if result is not None:
+            return _from_numpy(result, out_dtype, a.device)
     with np.errstate(divide="ignore", invalid="ignore"):
-        out = np.true_divide(a_np, b_np).astype(out_np_dtype, copy=False)
-    return _from_numpy(out, out_dtype, a.device)
+        out = np.true_divide(a_np, b_np)
+    return _from_numeric_array_for_cpu_op(out, out_dtype, a.device)
 
 
 def true_divide(a, b):
@@ -302,7 +333,17 @@ def true_divide(a, b):
 
 
 def matmul(a, b, out=None):
-    result = _from_numpy(_to_numpy(a) @ _to_numpy(b), a.dtype, a.device)
+    a_arr = _to_numpy(a)
+    b_arr = _to_numpy(b)
+    out_dtype = a.dtype
+    if a.dtype == bfloat16_dtype:
+        a_arr = _bf16_bits_to_f32(a_arr)
+    if b.dtype == bfloat16_dtype:
+        b_arr = _bf16_bits_to_f32(b_arr)
+    result_arr = a_arr @ b_arr
+    if out_dtype == bfloat16_dtype:
+        result_arr = _f32_to_bf16_bits(result_arr.astype(np.float32, copy=False))
+    result = _from_numpy(result_arr, out_dtype, a.device)
     if out is not None:
         out.copy_(result)
         return out
@@ -318,20 +359,24 @@ def bmm(a, b):
 
 
 def relu(a):
-    arr = _to_numpy(a)
-    result = _cython_unary(_ck.relu_f32, _ck.relu_f64, arr, to_numpy_dtype(a.dtype))
+    arr = _to_numeric_array_for_cpu_op(a)
+    result = None
+    if a.dtype != bfloat16_dtype:
+        result = _cython_unary(_ck.relu_f32, _ck.relu_f64, arr, to_numpy_dtype(a.dtype))
     if result is not None:
         return _from_numpy(result, a.dtype, a.device)
-    return _from_numpy(np.maximum(arr, 0), a.dtype, a.device)
+    return _from_numeric_array_for_cpu_op(np.maximum(arr, 0), a.dtype, a.device)
 
 
 def gelu(a):
-    arr = _to_numpy(a)
-    result = _cython_unary(_ck.gelu_f32, _ck.gelu_f64, arr, to_numpy_dtype(a.dtype))
+    arr = _to_numeric_array_for_cpu_op(a)
+    result = None
+    if a.dtype != bfloat16_dtype:
+        result = _cython_unary(_ck.gelu_f32, _ck.gelu_f64, arr, to_numpy_dtype(a.dtype))
     if result is not None:
         return _from_numpy(result, a.dtype, a.device)
     out = 0.5 * arr * (1.0 + np.vectorize(math.erf)(arr / math.sqrt(2.0)))
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    return _from_numeric_array_for_cpu_op(np.ascontiguousarray(out), a.dtype, a.device)
 
 
 def sum_(a, dim=None, keepdim=False, dtype=None):
@@ -354,7 +399,7 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
         for d in dim:
             _check_dim_range(d)
 
-    arr = _to_numpy(a)
+    arr = _to_numeric_array_for_cpu_op(a)
     if dtype is not None:
         out_dtype = dtype
         acc_dtype = to_numpy_dtype(dtype)
@@ -367,7 +412,10 @@ def sum_(a, dim=None, keepdim=False, dtype=None):
             acc_dtype = np.int64
 
     out = arr.sum(axis=dim, keepdims=keepdim, dtype=acc_dtype)
-    out = out.astype(to_numpy_dtype(out_dtype), copy=False)
+    if out_dtype == bfloat16_dtype:
+        out = _f32_to_bf16_bits(out.astype(np.float32, copy=False))
+    else:
+        out = out.astype(to_numpy_dtype(out_dtype), copy=False)
     if hasattr(out, "flags") and not out.flags['C_CONTIGUOUS']:
         out = np.ascontiguousarray(out)
     return _from_numpy(out, out_dtype, a.device)
@@ -378,18 +426,16 @@ def mean_(a, dim=None, keepdim=False):
         raise RuntimeError(
             f"mean(): could not infer output dtype. Input dtype must be either a floating point or complex dtype. Got: {a.dtype.name.capitalize()}"
         )
-    out = _to_numpy(a).mean(axis=dim, keepdims=keepdim)
-    if not out.flags['C_CONTIGUOUS']:
-        out = np.ascontiguousarray(out)
-    return _from_numpy(out, a.dtype, a.device)
+    out = _to_numeric_array_for_cpu_op(a).mean(axis=dim, keepdims=keepdim)
+    return _from_numeric_array_for_cpu_op(_contiguous_array_preserve_scalar(out), a.dtype, a.device)
 
 
 def std_(a, dim=None, keepdim=False, unbiased=True):
     if not a.dtype.is_floating_point and not a.dtype.is_complex:
         raise RuntimeError("std and var only support floating point and complex dtypes")
     ddof = 1 if unbiased else 0
-    out = np.std(_to_numpy(a), axis=dim, keepdims=keepdim, ddof=ddof)
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    out = np.std(_to_numeric_array_for_cpu_op(a), axis=dim, keepdims=keepdim, ddof=ddof)
+    return _from_numeric_array_for_cpu_op(_contiguous_array_preserve_scalar(out), a.dtype, a.device)
 
 
 def all_(a, dim=None, keepdim=False):
@@ -1000,37 +1046,37 @@ def isclose(a, b, rtol=1e-05, atol=1e-08, equal_nan=False):
 
 
 def equal(a, b):
-    return np.array_equal(_to_numpy(a), _to_numpy(b))
+    return np.array_equal(_to_numeric_array_for_cpu_op(a), _to_numeric_array_for_cpu_op(b))
 
 
 def eq(a, b):
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.equal(_to_numpy(a), b_np), bool_dtype, a.device)
+    b_np = _to_numeric_array_for_cpu_op(b) if isinstance(b, Tensor) else b
+    return _from_numpy(np.equal(_to_numeric_array_for_cpu_op(a), b_np), bool_dtype, a.device)
 
 
 def ne(a, b):
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.not_equal(_to_numpy(a), b_np), bool_dtype, a.device)
+    b_np = _to_numeric_array_for_cpu_op(b) if isinstance(b, Tensor) else b
+    return _from_numpy(np.not_equal(_to_numeric_array_for_cpu_op(a), b_np), bool_dtype, a.device)
 
 
 def lt(a, b):
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.less(_to_numpy(a), b_np), bool_dtype, a.device)
+    b_np = _to_numeric_array_for_cpu_op(b) if isinstance(b, Tensor) else b
+    return _from_numpy(np.less(_to_numeric_array_for_cpu_op(a), b_np), bool_dtype, a.device)
 
 
 def le(a, b):
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.less_equal(_to_numpy(a), b_np), bool_dtype, a.device)
+    b_np = _to_numeric_array_for_cpu_op(b) if isinstance(b, Tensor) else b
+    return _from_numpy(np.less_equal(_to_numeric_array_for_cpu_op(a), b_np), bool_dtype, a.device)
 
 
 def gt(a, b):
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.greater(_to_numpy(a), b_np), bool_dtype, a.device)
+    b_np = _to_numeric_array_for_cpu_op(b) if isinstance(b, Tensor) else b
+    return _from_numpy(np.greater(_to_numeric_array_for_cpu_op(a), b_np), bool_dtype, a.device)
 
 
 def ge(a, b):
-    b_np = _to_numpy(b) if isinstance(b, Tensor) else b
-    return _from_numpy(np.greater_equal(_to_numpy(a), b_np), bool_dtype, a.device)
+    b_np = _to_numeric_array_for_cpu_op(b) if isinstance(b, Tensor) else b
+    return _from_numpy(np.greater_equal(_to_numeric_array_for_cpu_op(a), b_np), bool_dtype, a.device)
 
 
 def add_(a, b):
@@ -1548,35 +1594,37 @@ def rsqrt(a):
 
 
 def sign(a):
-    return _from_numpy(np.sign(_to_numpy(a)), a.dtype, a.device)
+    return _from_numeric_array_for_cpu_op(np.sign(_to_numeric_array_for_cpu_op(a)), a.dtype, a.device)
 
 
 def square(a):
-    arr = _to_numpy(a)
-    result = _cython_unary(_ck.square_f32, _ck.square_f64, arr, to_numpy_dtype(a.dtype))
+    arr = _to_numeric_array_for_cpu_op(a)
+    result = None
+    if a.dtype != bfloat16_dtype:
+        result = _cython_unary(_ck.square_f32, _ck.square_f64, arr, to_numpy_dtype(a.dtype))
     if result is not None:
         return _from_numpy(result, a.dtype, a.device)
     out = np.square(arr)
-    return _from_numpy(np.ascontiguousarray(out), a.dtype, a.device)
+    return _from_numeric_array_for_cpu_op(np.ascontiguousarray(out), a.dtype, a.device)
 
 
 def signbit(a):
-    arr = np.signbit(_to_numpy(a))
+    arr = np.signbit(_to_numeric_array_for_cpu_op(a))
     return _from_numpy(arr, bool_dtype, a.device)
 
 
 def isnan(a):
-    arr = np.isnan(_to_numpy(a))
+    arr = np.isnan(_to_numeric_array_for_cpu_op(a))
     return _from_numpy(arr, bool_dtype, a.device)
 
 
 def isinf(a):
-    arr = np.isinf(_to_numpy(a))
+    arr = np.isinf(_to_numeric_array_for_cpu_op(a))
     return _from_numpy(arr, bool_dtype, a.device)
 
 
 def isfinite(a):
-    arr = np.isfinite(_to_numpy(a))
+    arr = np.isfinite(_to_numeric_array_for_cpu_op(a))
     return _from_numpy(arr, bool_dtype, a.device)
 
 
@@ -2543,7 +2591,7 @@ def unfold(a, dimension, size, step):
 
 
 def var_(a, dim=None, unbiased=True, keepdim=False):
-    arr = _to_numpy(a)
+    arr = _to_numeric_array_for_cpu_op(a)
     ddof = 1 if unbiased else 0
     if dim is not None:
         if isinstance(dim, (list, tuple)):
@@ -2553,10 +2601,7 @@ def var_(a, dim=None, unbiased=True, keepdim=False):
         out = np.var(arr, ddof=ddof)
         if keepdim:
             out = np.full([1] * arr.ndim, out)
-    out = out.astype(arr.dtype, copy=False)
-    if not out.flags['C_CONTIGUOUS']:
-        out = np.ascontiguousarray(out)
-    return _from_numpy(out, a.dtype, a.device)
+    return _from_numeric_array_for_cpu_op(_contiguous_array_preserve_scalar(out), a.dtype, a.device)
 
 
 def var_mean(a, dim=None, unbiased=True, keepdim=False):
@@ -2566,7 +2611,7 @@ def var_mean(a, dim=None, unbiased=True, keepdim=False):
 
 
 def norm_(a, p=2, dim=None, keepdim=False):
-    arr = _to_numpy(a).astype(np.float64)
+    arr = _to_numeric_array_for_cpu_op(a).astype(np.float64)
     if dim is not None:
         if isinstance(dim, (list, tuple)):
             dim = tuple(dim)
@@ -2578,7 +2623,9 @@ def norm_(a, p=2, dim=None, keepdim=False):
             out = np.full([1] * arr.ndim, out)
     from ..._dtype import float32 as f32
     out_dtype = a.dtype if a.dtype.is_floating_point else f32
-    out = out.astype(to_numpy_dtype(out_dtype), copy=False)
+    if out_dtype == bfloat16_dtype:
+        return _from_numeric_array_for_cpu_op(_contiguous_array_preserve_scalar(out), out_dtype, a.device)
+    out = np.asarray(out).astype(to_numpy_dtype(out_dtype), copy=False)
     if hasattr(out, "flags") and not out.flags['C_CONTIGUOUS']:
         out = np.ascontiguousarray(out)
     return _from_numpy(out, out_dtype, a.device)
@@ -2586,14 +2633,14 @@ def norm_(a, p=2, dim=None, keepdim=False):
 
 
 def prod_(a, dim=None, keepdim=False):
-    arr = _to_numpy(a)
+    arr = _to_numeric_array_for_cpu_op(a)
     if dim is not None:
         out = np.prod(arr, axis=dim, keepdims=keepdim)
     else:
         out = np.prod(arr)
         if keepdim:
             out = np.full([1] * arr.ndim, out)
-    return _from_numpy(np.ascontiguousarray(np.atleast_1d(out).astype(arr.dtype, copy=False)), a.dtype, a.device)
+    return _from_numeric_array_for_cpu_op(_contiguous_array_preserve_scalar(out), a.dtype, a.device)
 
 
 def floor_divide(a, b):
@@ -2604,14 +2651,14 @@ def floor_divide(a, b):
 
 
 def rms_norm(input, normalized_shape, weight=None, eps=1e-6):
-    arr = _to_numpy(input)
+    arr = _to_numeric_array_for_cpu_op(input)
     norm_shape = tuple(normalized_shape)
     axis = tuple(range(arr.ndim - len(norm_shape), arr.ndim))
     variance = np.mean(arr ** 2, axis=axis, keepdims=True)
     out = arr / np.sqrt(variance + eps)
     if weight is not None:
-        out = out * _to_numpy(weight).reshape((1,) * (arr.ndim - len(norm_shape)) + norm_shape)
-    return _from_numpy(np.ascontiguousarray(out), input.dtype, input.device)
+        out = out * _to_numeric_array_for_cpu_op(weight).reshape((1,) * (arr.ndim - len(norm_shape)) + norm_shape)
+    return _from_numeric_array_for_cpu_op(np.ascontiguousarray(out), input.dtype, input.device)
 
 
 def conv2d(input, weight, bias=None, stride=(1, 1), padding=(0, 0), dilation=(1, 1), groups=1):
@@ -5254,8 +5301,17 @@ def addmm(input, mat1, mat2, beta=1, alpha=1):
     inp = _to_numpy(input)
     m1 = _to_numpy(mat1)
     m2 = _to_numpy(mat2)
+    out_dtype = input.dtype
+    if input.dtype == bfloat16_dtype:
+        inp = _bf16_bits_to_f32(inp)
+    if mat1.dtype == bfloat16_dtype:
+        m1 = _bf16_bits_to_f32(m1)
+    if mat2.dtype == bfloat16_dtype:
+        m2 = _bf16_bits_to_f32(m2)
     out = beta * inp + alpha * np.dot(m1, m2)
-    return _from_numpy(np.ascontiguousarray(out), input.dtype, input.device)
+    if out_dtype == bfloat16_dtype:
+        out = _f32_to_bf16_bits(out.astype(np.float32, copy=False))
+    return _from_numpy(np.ascontiguousarray(out), out_dtype, input.device)
 
 
 def conv3d(input, weight, bias=None, stride=(1, 1, 1), padding=(0, 0, 0), dilation=(1, 1, 1), groups=1):
