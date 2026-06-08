@@ -171,17 +171,32 @@ device = torch.Device(f"npu:{rank}")
 try:
     dist.init_process_group(backend="hccl", device_id=device)
 
-    torch.manual_seed(42)
-    model = nn.Linear(16, 8).to(device)
+    model = nn.Linear(4, 2, bias=False).to(device)
+    model.weight.data = torch.tensor(
+        [[1.0, 2.0, 3.0, 4.0], [-1.0, 0.5, -0.5, 1.5]],
+        device=device,
+        dtype=torch.float32,
+    )
 
     mesh = DeviceMesh("npu", (world_size,))
     fully_shard(model, mesh=mesh)
 
     opt = torch.optim.SGD(model.parameters(), lr=0.01)
 
-    x = torch.randn(4, 16, device=device)
+    x = torch.tensor(
+        [[1.0, 0.0, -1.0, 2.0], [0.5, -0.5, 1.0, 0.0]],
+        device=device,
+        dtype=torch.float32,
+    )
     out = model(x)
-    assert out.shape == (4, 8), f"rank {rank}: unexpected shape {out.shape}"
+    assert out.shape == (2, 2), f"rank {rank}: unexpected shape {out.shape}"
+    expected_out = torch.tensor(
+        [[6.0, 1.5], [2.5, -1.25]],
+        device=device,
+        dtype=torch.float32,
+    )
+    max_out_diff = float((out - expected_out).abs().max().to("cpu").item())
+    assert max_out_diff < 1e-5, f"rank {rank}: output diff {max_out_diff}"
 
     loss = out.sum()
     loss.backward()
@@ -192,13 +207,27 @@ try:
         else model.weight
     )
     assert local_w.grad is not None, f"rank {rank}: weight grad missing"
+    expected_grad = torch.tensor(
+        [[1.5, -0.5, 0.0, 2.0]],
+        device=device,
+        dtype=torch.float32,
+    )
+    grad_diff = float((local_w.grad - expected_grad).abs().max().to("cpu").item())
+    assert grad_diff < 1e-5, f"rank {rank}: grad diff {grad_diff}"
 
     opt.step()
+    expected_weight = torch.tensor(
+        [[1.0, 2.0, 3.0, 4.0], [-1.0, 0.5, -0.5, 1.5]][rank:rank + 1],
+        device=device,
+        dtype=torch.float32,
+    ) - 0.01 * expected_grad
+    weight_diff = float((local_w - expected_weight).abs().max().to("cpu").item())
+    assert weight_diff < 1e-5, f"rank {rank}: optimizer weight diff {weight_diff}"
     opt.zero_grad()
 
     dist.barrier()
     dist.destroy_process_group()
-    print(f"[rank {rank}] fwd+bwd+opt PASS")
+    print(f"[rank {rank}] fwd+bwd+opt numerical parity PASS")
 except Exception:
     traceback.print_exc()
     try:
@@ -426,6 +455,109 @@ except Exception:
 def test_npu_fsdp_reshard_after_forward_false():
     """reshard_after_forward=False keeps full params live until backward."""
     _run_npu_workers(_WORKER_RESHARD_FALSE, world_size=2)
+
+
+# ---------------------------------------------------------------------------
+# Worker script: PyTorch-compatible public FSDP2 API smoke
+# ---------------------------------------------------------------------------
+
+_WORKER_PUBLIC_API = textwrap.dedent(r"""\
+import os, sys, traceback
+sys.path.insert(0, os.environ["CANDLE_SRC"])
+
+import candle as torch
+import candle.nn as nn
+import candle.distributed as dist
+from candle.distributed.device_mesh import DeviceMesh
+from candle.distributed.fsdp import (
+    MixedPrecisionPolicy,
+    fully_shard,
+    register_fsdp_forward_method,
+    share_comm_ctx,
+)
+from candle.distributed.tensor.dtensor import DTensor
+
+rank = int(os.environ["RANK"])
+world_size = int(os.environ["WORLD_SIZE"])
+device = torch.Device(f"npu:{rank}")
+
+class Projector(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = nn.Linear(8, 4)
+
+    def forward(self, x):
+        return self.linear(x)
+
+    def project(self, x):
+        return self.linear(x)
+
+try:
+    dist.init_process_group(backend="hccl", device_id=device)
+
+    torch.manual_seed(42)
+    left = Projector().to(device)
+    right = nn.Linear(4, 2).to(device)
+    mesh = DeviceMesh("npu", (world_size,))
+    mp_policy = MixedPrecisionPolicy(
+        param_dtype=torch.float16,
+        reduce_dtype=torch.float32,
+        output_dtype=torch.float32,
+    )
+
+    fully_shard(left, mesh=mesh, mp_policy=mp_policy)
+    fully_shard(right, mesh=mesh, mp_policy=mp_policy)
+    register_fsdp_forward_method(left, "project")
+    share_comm_ctx([left, right])
+
+    assert left._fsdp_state._comm_ctx is right._fsdp_state._comm_ctx
+
+    handle = left.unshard(async_op=True)
+    handle.wait()
+    left.reshard()
+    left.set_requires_gradient_sync(False)
+    left.set_requires_gradient_sync(True)
+    left.set_requires_all_reduce(True)
+    left.set_reshard_after_forward(True)
+    left.set_reshard_after_backward(True)
+    left.set_reduce_scatter_divide_factor(1.0)
+    left.set_gradient_divide_factor(1.0)
+    left.set_force_sum_reduction_for_comms(False)
+    left.set_unshard_in_backward(True)
+    left.set_allocate_memory_from_process_group_for_comm(False)
+
+    x = torch.randn(3, 8, device=device)
+    hidden = left.project(x)
+    out = right(hidden)
+    assert out.shape == (3, 2), f"rank {rank}: unexpected shape {out.shape}"
+    assert out.dtype == torch.float32, f"rank {rank}: expected float32 output, got {out.dtype}"
+
+    out.sum().backward()
+    local_w = (
+        left.linear.weight.to_local()
+        if isinstance(left.linear.weight, DTensor)
+        else left.linear.weight
+    )
+    assert local_w.grad is not None, f"rank {rank}: weight grad missing"
+
+    dist.barrier()
+    dist.destroy_process_group()
+    print(f"[rank {rank}] public FSDP2 API smoke PASS")
+except Exception:
+    traceback.print_exc()
+    try:
+        if dist.is_initialized():
+            dist.destroy_process_group()
+    except Exception:
+        pass
+    sys.exit(1)
+""")
+
+
+@_SKIP_NO_NPU
+def test_npu_fsdp_public_api_smoke():
+    """Public FSDP2 API methods work on NPU/HCCL without CPU fallback."""
+    _run_npu_workers(_WORKER_PUBLIC_API, world_size=2)
 
 
 # ---------------------------------------------------------------------------

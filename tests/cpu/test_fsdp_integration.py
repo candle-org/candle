@@ -1,4 +1,6 @@
 """Integration tests for FSDP2 forward + backward (single-process, world_size=1)."""
+import numpy as np
+
 import candle as torch
 import candle.nn as nn
 from candle.distributed.tensor.dtensor import DTensor
@@ -140,6 +142,100 @@ def test_fsdp_optimizer_step():
     w2_diff = float((w2_after - w2_before).abs().sum())
     assert w1_diff > 0, "fc1.weight should have been updated"
     assert w2_diff > 0, "fc2.weight should have been updated"
+
+
+def test_fsdp_single_rank_training_step_matches_torch_cpu():
+    """FSDP should preserve torch-equivalent outputs, grads, and SGD updates."""
+    import torch as real_torch
+    from candle.distributed._composable.fsdp import fully_shard
+    from candle.optim import SGD
+
+    class TorchSimpleMLP(real_torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc1 = real_torch.nn.Linear(2, 4)
+            self.fc2 = real_torch.nn.Linear(4, 2)
+
+        def forward(self, x):
+            x = self.fc1(x)
+            x = real_torch.relu(x)
+            return self.fc2(x)
+
+    weights = {
+        "fc1.weight": [[0.10, -0.20], [0.30, 0.40], [-0.50, 0.20], [0.70, -0.10]],
+        "fc1.bias": [0.05, -0.10, 0.15, -0.20],
+        "fc2.weight": [[0.20, -0.30, 0.40, -0.50], [-0.10, 0.25, -0.35, 0.45]],
+        "fc2.bias": [0.12, -0.08],
+    }
+    x_data = [[1.0, -2.0], [0.5, 1.5], [-1.0, 0.25]]
+    target_data = [[0.3, -0.2], [0.1, 0.4], [-0.5, 0.2]]
+    lr = 0.05
+
+    candle_model = SimpleMLP(2)
+    candle_model.fc1.weight.data = torch.tensor(weights["fc1.weight"], dtype=torch.float32)
+    candle_model.fc1.bias.data = torch.tensor(weights["fc1.bias"], dtype=torch.float32)
+    candle_model.fc2.weight.data = torch.tensor(weights["fc2.weight"], dtype=torch.float32)
+    candle_model.fc2.bias.data = torch.tensor(weights["fc2.bias"], dtype=torch.float32)
+    fully_shard(candle_model.fc1, mesh=MockMesh())
+    fully_shard(candle_model.fc2, mesh=MockMesh())
+    fully_shard(candle_model, mesh=MockMesh())
+    candle_opt = SGD(candle_model.parameters(), lr=lr)
+
+    torch_model = TorchSimpleMLP()
+    with real_torch.no_grad():
+        for name, param in torch_model.named_parameters():
+            param.copy_(real_torch.tensor(weights[name], dtype=real_torch.float32))
+
+    candle_x = torch.tensor(x_data, dtype=torch.float32)
+    candle_target = torch.tensor(target_data, dtype=torch.float32)
+    torch_x = real_torch.tensor(x_data, dtype=real_torch.float32)
+    torch_target = real_torch.tensor(target_data, dtype=real_torch.float32)
+
+    candle_out = candle_model(candle_x)
+    candle_loss = ((candle_out - candle_target) * (candle_out - candle_target)).sum()
+    candle_loss.backward()
+
+    torch_out = torch_model(torch_x)
+    torch_loss = ((torch_out - torch_target) * (torch_out - torch_target)).sum()
+    torch_loss.backward()
+
+    np.testing.assert_allclose(
+        candle_out.detach().numpy(),
+        torch_out.detach().cpu().numpy(),
+        rtol=1e-5,
+        atol=1e-6,
+    )
+    np.testing.assert_allclose(
+        float(candle_loss.item()),
+        float(torch_loss.detach().cpu().item()),
+        rtol=1e-5,
+        atol=1e-6,
+    )
+
+    candle_named_params = dict(candle_model.named_parameters())
+    torch_named_params = dict(torch_model.named_parameters())
+    for name, candle_param in candle_named_params.items():
+        candle_local = candle_param.to_local() if isinstance(candle_param, DTensor) else candle_param
+        np.testing.assert_allclose(
+            candle_local.grad.detach().numpy(),
+            torch_named_params[name].grad.detach().cpu().numpy(),
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+    candle_opt.step()
+    with real_torch.no_grad():
+        for param in torch_model.parameters():
+            param -= lr * param.grad
+
+    for name, candle_param in candle_model.named_parameters():
+        candle_local = candle_param.to_local() if isinstance(candle_param, DTensor) else candle_param
+        np.testing.assert_allclose(
+            candle_local.detach().numpy(),
+            torch_named_params[name].detach().cpu().numpy(),
+            rtol=1e-5,
+            atol=1e-6,
+        )
 
 
 def test_fsdp_unused_parameter():
@@ -448,3 +544,35 @@ def test_shard_grad_op_strategy():
     for name, param in model.named_parameters():
         local = param.to_local() if isinstance(param, DTensor) else param
         assert local.grad is not None, f"No gradient for {name}"
+
+
+def test_fsdp_root_without_own_state_apply_delegates_to_children():
+    """Root FSDPModule without own params should still support Module._apply()."""
+    from candle.distributed._composable.fsdp import fully_shard
+
+    model = SimpleMLP(8)
+    mesh = MockMesh()
+    fully_shard(model.fc1, mesh=mesh)
+    fully_shard(model.fc2, mesh=mesh)
+    fully_shard(model, mesh=mesh)
+
+    assert model._fsdp_state is None
+    model._apply(lambda tensor: tensor)
+
+    assert isinstance(model.fc1.weight, DTensor)
+    assert isinstance(model.fc2.weight, DTensor)
+
+
+def test_fsdp_apply_transforms_buffers_on_managed_modules():
+    """FSDPModule._apply should keep normal Module buffer semantics."""
+    from candle.distributed._composable.fsdp import fully_shard
+
+    model = nn.Linear(8, 4)
+    model.register_buffer("running", torch.ones(4))
+    fully_shard(model, mesh=MockMesh())
+
+    model._apply(lambda tensor: tensor.to(torch.float16))
+
+    assert isinstance(model.weight, DTensor)
+    assert model.weight.to_local().dtype == torch.float16
+    assert model.running.dtype == torch.float16

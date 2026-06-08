@@ -30,7 +30,8 @@ class FSDPParam:
     the DTensor view.
     """
 
-    def __init__(self, param, module, param_name, mesh_info, mp_policy=None):
+    def __init__(self, param, module, param_name, mesh_info, mp_policy=None,
+                 shard_dim=0):
         self._module = module
         self._param_name = param_name
         self._mesh_info = mesh_info
@@ -38,7 +39,7 @@ class FSDPParam:
         self._sharded_state = ShardedState.SHARDED
         self._orig_shape = param.shape
         self._orig_dtype = param.dtype
-        self._shard_dim = 0
+        self._shard_dim = shard_dim
 
         self._sharded_param = self._init_shard(param)
         self._unsharded_param = None
@@ -136,7 +137,11 @@ class FSDPParam:
         """Unshard for single-rank testing (no collective needed)."""
         if self._sharded_state == ShardedState.UNSHARDED:
             return
-        local = self._sharded_param.to_local()
+        # Use a distinct tensor object even for the single-rank case. Backward
+        # hooks copy gradients back to the sharded local tensor before returning;
+        # if the unsharded tensor aliases that exact object, autograd then
+        # accumulates the returned hook gradient a second time into shard.grad.
+        local = self._sharded_param.to_local().detach().clone()
         # Strip padding to restore original shape
         if self._padded_dim_size > 0:
             from ...._functional import narrow

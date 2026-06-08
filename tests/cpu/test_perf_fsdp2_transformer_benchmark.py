@@ -147,6 +147,112 @@ def test_fsdp_post_backward_uses_grouped_reduce_scatter_path():
     assert "fsdp_param.reduce_scatter_grad(grad)" not in body
 
 
+def test_accuracy_check_compares_candle_and_torch_npu_vectors():
+    candle = {
+        "framework": "candle",
+        "case": "xfmr_fsdp2_small",
+        "rank_results": [
+            {
+                "rank": 0,
+                "accuracy": {
+                    "loss": 1.0,
+                    "output_checksum": 6.0,
+                    "output_values": [1.0, 2.0, 3.0],
+                    "input_grad_checksum": 0.3,
+                    "input_grad_values": [0.1, 0.2],
+                    "param_grad_checksum_values": [1.0, 2.0],
+                    "param_checksum_after_step": 4.0,
+                    "param_checksum_after_step_values": [1.5, 2.5],
+                },
+            },
+        ],
+    }
+    torch_ref = {
+        "framework": "torch_npu",
+        "case": "xfmr_fsdp2_small",
+        "rank_results": [
+            {
+                "rank": 0,
+                "accuracy": {
+                    "loss": 1.00001,
+                    "output_checksum": 6.00001,
+                    "output_values": [1.0, 2.00002, 2.99999],
+                    "input_grad_checksum": 0.30001,
+                    "input_grad_values": [0.10001, 0.20001],
+                    "param_grad_checksum_values": [1.00002, 1.99999],
+                    "param_checksum_after_step": 4.00002,
+                    "param_checksum_after_step_values": [1.50001, 2.50001],
+                },
+            },
+        ],
+    }
+
+    failures = _bench_mod._annotate_accuracy_checks(
+        [candle, torch_ref],
+        ["xfmr_fsdp2_small"],
+        atol=1e-3,
+        rtol=1e-3,
+    )
+
+    assert failures == []
+    accuracy = candle["accuracy"]
+    assert accuracy["loss_abs_diff_max"] < 1e-3
+    assert accuracy["output_max_abs_diff"] < 1e-3
+    assert accuracy["input_grad_max_abs_diff"] < 1e-3
+    assert accuracy["param_checksum_after_step_abs_diff_max"] < 1e-3
+
+
+def test_accuracy_check_fails_when_vectors_exceed_tolerance():
+    candle = {
+        "framework": "candle",
+        "case": "xfmr_fsdp2_small",
+        "rank_results": [
+            {
+                "rank": 0,
+                "accuracy": {
+                    "loss": 1.0,
+                    "output_checksum": 5.0,
+                    "output_values": [1.0, 4.0],
+                    "input_grad_checksum": 0.1,
+                    "input_grad_values": [0.1],
+                    "param_grad_checksum_values": [1.0],
+                    "param_checksum_after_step": 4.0,
+                    "param_checksum_after_step_values": [4.0],
+                },
+            },
+        ],
+    }
+    torch_ref = {
+        "framework": "torch_npu",
+        "case": "xfmr_fsdp2_small",
+        "rank_results": [
+            {
+                "rank": 0,
+                "accuracy": {
+                    "loss": 1.0,
+                    "output_checksum": 3.0,
+                    "output_values": [1.0, 2.0],
+                    "input_grad_checksum": 0.1,
+                    "input_grad_values": [0.1],
+                    "param_grad_checksum_values": [1.0],
+                    "param_checksum_after_step": 4.0,
+                    "param_checksum_after_step_values": [4.0],
+                },
+            },
+        ],
+    }
+
+    failures = _bench_mod._annotate_accuracy_checks(
+        [candle, torch_ref],
+        ["xfmr_fsdp2_small"],
+        atol=1e-3,
+        rtol=1e-3,
+    )
+
+    assert failures
+    assert "output" in failures[0]
+
+
 def test_aggregate_results_preserves_candle_profile_summary():
     result = _bench_mod._aggregate_rank_results(
         "candle",
