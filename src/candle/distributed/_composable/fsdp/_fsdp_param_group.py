@@ -1,5 +1,6 @@
 """FSDPParamGroup -- batched communication for parameter groups."""
 from .... import distributed as dist
+from . import _profile
 
 try:
     from ....distributed._fsdp_fastpath import (
@@ -11,6 +12,18 @@ try:
     _HAVE_FASTPATH = True
 except ImportError:  # pragma: no cover
     _HAVE_FASTPATH = False
+
+
+def _should_use_flat_buffer(world_size, param_count, device):
+    """Return whether flat-buffer unshard is ready for this device."""
+    device_type = getattr(device, "type", None)
+    return world_size > 1 and param_count > 1 and device_type != "npu"
+
+
+def _should_use_flat_reduce_scatter(use_flat_buffer, device):
+    """Return whether flat reduce-scatter is ready for this device."""
+    device_type = getattr(device, "type", None)
+    return use_flat_buffer and device_type != "npu"
 
 
 class FSDPParamGroup:
@@ -29,7 +42,19 @@ class FSDPParamGroup:
         self._is_unsharded = False
 
         world_size = mesh_info.shard_mesh_size
-        self._use_flat_buffer = world_size > 1 and len(fsdp_params) > 1
+        first_device = fsdp_params[0]._sharded_param.to_local().device
+        self._use_flat_buffer = _should_use_flat_buffer(
+            world_size, len(fsdp_params), first_device
+        )
+        # NPU flat reduce-scatter currently requires Python/on-device slice
+        # packing into the rank-strided flat buffer. For Transformer-sized
+        # groups that packing is much slower than issuing per-parameter NPU
+        # reduce-scatter collectives, so keep flat all-gather enabled but use
+        # the generic per-parameter gradient reduction path on NPU until the
+        # flat gradient pack path is implemented as a native device kernel.
+        self._use_flat_reduce_scatter = _should_use_flat_reduce_scatter(
+            self._use_flat_buffer, first_device
+        )
 
         # Build owner map: param_name -> group_index (0 for all params in this
         # single group).  Uses Cython fastpath when available.
@@ -96,20 +121,21 @@ class FSDPParamGroup:
         The fallback slice-assignment path is preserved for environments
         where the extension has not been compiled.
         """
-        if _HAVE_FASTPATH and getattr(self._flat_shard.device, "type", None) == "cpu":
-            shards = [
-                list(fp._sharded_param.to_local().reshape(-1))
-                for fp in self.fsdp_params
-            ]
-            flat_list = list(self._flat_shard)
-            _cy_pack_shards(shards, flat_list, self._shard_offsets)
-            # Write the updated list back into the tensor
-            for i, val in enumerate(flat_list):
-                self._flat_shard[i] = val
-        else:
-            for fp, (start, end) in zip(self.fsdp_params, self._shard_offsets):
-                local = fp._sharded_param.to_local()
-                self._flat_shard[start:end] = local.reshape(-1)
+        with _profile.record("fsdp.flat_pack"):
+            if _HAVE_FASTPATH and getattr(self._flat_shard.device, "type", None) == "cpu":
+                shards = [
+                    list(fp._sharded_param.to_local().reshape(-1))
+                    for fp in self.fsdp_params
+                ]
+                flat_list = list(self._flat_shard)
+                _cy_pack_shards(shards, flat_list, self._shard_offsets)
+                # Write the updated list back into the tensor
+                for i, val in enumerate(flat_list):
+                    self._flat_shard[i] = val
+            else:
+                for fp, (start, end) in zip(self.fsdp_params, self._shard_offsets):
+                    local = fp._sharded_param.to_local()
+                    self._flat_shard[start:end] = local.reshape(-1)
 
     def _copy_flat_to_shard_grads(self, flat_src):
         """Write gradient data from *flat_src* back to each param shard's grad.
@@ -123,29 +149,30 @@ class FSDPParamGroup:
         The fallback slice-reshape path is preserved for environments where
         the extension has not been compiled.
         """
-        if _HAVE_FASTPATH and getattr(flat_src.device, "type", None) == "cpu":
-            from ...._creation import zeros
-            # Convert flat_src tensor to list for the Cython helper
-            flat_list = list(flat_src)
-            # Pre-allocate mutable shard lists
-            shard_lists = [
-                [0.0] * (end - start)
-                for start, end in self._shard_offsets
-            ]
-            _cy_unpack_shards(flat_list, shard_lists, self._shard_offsets)
-            for fp, shard_list, shape in zip(
-                self.fsdp_params, shard_lists, self._shard_shapes
-            ):
-                flat_g = zeros(len(shard_list), dtype=flat_src.dtype,
-                               device=flat_src.device)
-                for i, val in enumerate(shard_list):
-                    flat_g[i] = val
-                fp._sharded_param.to_local().grad = flat_g.reshape(*shape)
-        else:
-            for i, fp in enumerate(self.fsdp_params):
-                start, end = self._shard_offsets[i]
-                shape = self._shard_shapes[i]
-                fp._sharded_param.to_local().grad = flat_src[start:end].reshape(*shape)
+        with _profile.record("fsdp.flat_unpack"):
+            if _HAVE_FASTPATH and getattr(flat_src.device, "type", None) == "cpu":
+                from ...._creation import zeros
+                # Convert flat_src tensor to list for the Cython helper
+                flat_list = list(flat_src)
+                # Pre-allocate mutable shard lists
+                shard_lists = [
+                    [0.0] * (end - start)
+                    for start, end in self._shard_offsets
+                ]
+                _cy_unpack_shards(flat_list, shard_lists, self._shard_offsets)
+                for fp, shard_list, shape in zip(
+                    self.fsdp_params, shard_lists, self._shard_shapes
+                ):
+                    flat_g = zeros(len(shard_list), dtype=flat_src.dtype,
+                                   device=flat_src.device)
+                    for i, val in enumerate(shard_list):
+                        flat_g[i] = val
+                    fp._sharded_param.to_local().grad = flat_g.reshape(*shape)
+            else:
+                for i, fp in enumerate(self.fsdp_params):
+                    start, end = self._shard_offsets[i]
+                    shape = self._shard_shapes[i]
+                    fp._sharded_param.to_local().grad = flat_src[start:end].reshape(*shape)
 
     # ------------------------------------------------------------------
     # Batched shard lifecycle
@@ -155,59 +182,64 @@ class FSDPParamGroup:
         """Unshard all parameters in the group."""
         if self._is_unsharded:
             return
-        if self._use_flat_buffer:
-            self._unshard_flat()
-        else:
-            for p in self.fsdp_params:
-                p.unshard()
+        with _profile.record("fsdp.unshard"):
+            if self._use_flat_buffer:
+                self._unshard_flat()
+            else:
+                for p in self.fsdp_params:
+                    p.unshard()
         self._is_unsharded = True
 
     def _unshard_flat(self):
         """Single all-gather on the flat buffer, then scatter to params."""
         self._copy_shards_to_flat()
         pg = self.mesh_info.shard_process_group
-        dist.all_gather_into_tensor(self._flat_full, self._flat_shard, group=pg)
+        with _profile.record("fsdp.all_gather"):
+            dist.all_gather_into_tensor(self._flat_full, self._flat_shard, group=pg)
 
         # Scatter gathered data back to individual params
         world_size = self.mesh_info.shard_mesh_size
-        for i, fp in enumerate(self.fsdp_params):
-            start, end = self._shard_offsets[i]
-            numel = end - start
-            # Reconstruct full param: gather chunks from each rank's region
-            chunks = []
-            for rank in range(world_size):
-                rank_offset = rank * self._total_shard_numel
-                chunk = self._flat_full[rank_offset + start:rank_offset + end]
-                chunks.append(chunk)
-            from ...._functional import cat, narrow
-            full_flat = cat(chunks, dim=0)
-            # Reshape to full param shape
-            full_shape = list(fp._orig_shape)
-            full_param = full_flat.reshape(*full_shape)
-            # Strip padding if needed
-            if fp._padded_dim_size > 0:
-                orig_dim = fp._orig_shape[fp._shard_dim]
-                full_param = narrow(full_param, fp._shard_dim, 0, orig_dim)
-            full_param.requires_grad = fp._sharded_param.requires_grad
-            fp._unsharded_param = full_param
-            fp._set_param_on_module(full_param)
-            fp._sharded_state = fp._sharded_state.__class__.UNSHARDED
+        with _profile.record("fsdp.unshard_reconstruct"):
+            for i, fp in enumerate(self.fsdp_params):
+                start, end = self._shard_offsets[i]
+                numel = end - start
+                # Reconstruct full param: gather chunks from each rank's region
+                chunks = []
+                for rank in range(world_size):
+                    rank_offset = rank * self._total_shard_numel
+                    chunk = self._flat_full[rank_offset + start:rank_offset + end]
+                    chunks.append(chunk)
+                from ...._functional import cat, narrow
+                full_flat = cat(chunks, dim=0)
+                # Reshape to full param shape
+                full_shape = list(fp._orig_shape)
+                full_param = full_flat.reshape(*full_shape)
+                # Strip padding if needed
+                if fp._padded_dim_size > 0:
+                    orig_dim = fp._orig_shape[fp._shard_dim]
+                    full_param = narrow(full_param, fp._shard_dim, 0, orig_dim)
+                full_param.requires_grad = fp._sharded_param.requires_grad
+                fp._unsharded_param = full_param
+                fp._set_param_on_module(full_param)
+                fp._sharded_state = fp._sharded_state.__class__.UNSHARDED
 
     def reshard(self):
         """Reshard all parameters in the group."""
         if not self._is_unsharded:
             return
-        for p in self.fsdp_params:
-            p.reshard()
+        with _profile.record("fsdp.reshard"):
+            for p in self.fsdp_params:
+                p.reshard()
         self._is_unsharded = False
 
     def reduce_scatter_grads(self):
         """Reduce-scatter gradients for all parameters in the group."""
-        if self._use_flat_buffer:
-            self._reduce_scatter_flat()
-        else:
-            for p in self.fsdp_params:
-                p.reduce_scatter_grad()
+        with _profile.record("fsdp.grad_reduce_scatter"):
+            if self._use_flat_reduce_scatter:
+                self._reduce_scatter_flat()
+            else:
+                for p in self.fsdp_params:
+                    p.reduce_scatter_grad()
 
     def _reduce_scatter_flat(self):
         """Single reduce-scatter on flat gradient buffer."""
@@ -248,7 +280,8 @@ class FSDPParamGroup:
             dtype=self._flat_shard.dtype,
             device=self._flat_shard.device,
         )
-        dist.reduce_scatter_tensor(reduced_flat, self._flat_full, group=pg)
+        with _profile.record("fsdp.flat_reduce_scatter_collective"):
+            dist.reduce_scatter_tensor(reduced_flat, self._flat_full, group=pg)
 
         # Scatter reduced shards back to params via Cython unpack or fallback
         self._copy_flat_to_shard_grads(reduced_flat)

@@ -148,7 +148,7 @@ from .special import (
 )
 
 from .optim import (
-    _adam_step_op, _sgd_step_op,
+    _adam_step_op, _sgd_step_op, _sgd_step_many_op,
     _adagrad_step_op, _rmsprop_step_op, _adadelta_step_op,
     _adamax_step_op, _asgd_step_op, _nadam_step_op,
     _radam_step_op, _rprop_step_op, _sparse_adam_step_op,

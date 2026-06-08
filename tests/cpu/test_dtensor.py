@@ -78,3 +78,33 @@ def test_dtensor_sharded_blocks_compute():
         assert False, "Should have raised RuntimeError"
     except RuntimeError as e:
         assert "sharded" in str(e).lower() or "not supported" in str(e).lower()
+
+
+def test_dtensor_sgd_step_many_passthrough_unwraps_local_shards():
+    """Batched optimizer steps should operate on local shards like _sgd_step."""
+    from candle._dispatch.dispatcher import dispatch
+    from candle._dispatch.registry import registry
+
+    local_param = torch.ones(4)
+    local_grad = torch.ones(4)
+    spec = _make_spec((Shard(0),), global_shape=(8,))
+    dt = DTensor(local_param, spec)
+    captured = {}
+
+    def kernel(params, grads, lr):
+        captured["params"] = params
+        captured["grads"] = grads
+        captured["lr"] = lr
+        return None
+
+    snapshot = registry.snapshot()
+    try:
+        registry.register("_sgd_step_many", "cpu", kernel)
+        dispatch("_sgd_step_many", None, [dt], [local_grad], 0.1)
+    finally:
+        registry.restore(snapshot)
+
+    assert captured["params"] == [local_param]
+    assert captured["grads"] == [local_grad]
+    assert captured["lr"] == 0.1
+    assert not isinstance(captured["params"][0], DTensor)

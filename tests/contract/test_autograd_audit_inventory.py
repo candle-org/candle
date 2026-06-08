@@ -24,6 +24,7 @@ OPTIMIZER_STEP_OPS = {
     "_rmsprop_step",
     "_rprop_step",
     "_sgd_step",
+    "_sgd_step_many",
     "_sparse_adam_step",
 }
 
@@ -257,7 +258,7 @@ def test_schema_ops_without_autograd_registration_are_categorized():
     actual_missing = _schema_ops() - _autograd_registered_ops()
     assert sorted(actual_missing - expected_missing) == []
     assert sorted(expected_missing - actual_missing) == []
-    assert len(actual_missing) == 119
+    assert len(actual_missing) == 120
 
 
 def test_derivatives_not_implemented_inventory_is_classified():

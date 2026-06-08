@@ -174,7 +174,7 @@ try:
     torch.manual_seed(42)
     model = nn.Linear(16, 8).to(device)
 
-    mesh = DeviceMesh("npu", list(range(world_size)))
+    mesh = DeviceMesh("npu", (world_size,))
     fully_shard(model, mesh=mesh)
 
     opt = torch.optim.SGD(model.parameters(), lr=0.01)
@@ -240,7 +240,7 @@ try:
 
     torch.manual_seed(42)
     model = nn.Linear(8, 4).to(device)
-    mesh = DeviceMesh("npu", list(range(world_size)))
+    mesh = DeviceMesh("npu", (world_size,))
     fully_shard(model, mesh=mesh)
 
     local_w = (
@@ -312,7 +312,7 @@ try:
 
     torch.manual_seed(42)
     model = nn.Linear(8, 4).to(device)
-    mesh = DeviceMesh("npu", list(range(world_size)))
+    mesh = DeviceMesh("npu", (world_size,))
     fully_shard(model, mesh=mesh)
 
     # Record sharded weight shape before summoning
@@ -387,7 +387,7 @@ try:
 
     torch.manual_seed(42)
     model = nn.Linear(8, 4).to(device)
-    mesh = DeviceMesh("npu", list(range(world_size)))
+    mesh = DeviceMesh("npu", (world_size,))
     # reshard_after_forward=False: keep full params between fwd and bwd
     fully_shard(model, mesh=mesh, reshard_after_forward=False)
 

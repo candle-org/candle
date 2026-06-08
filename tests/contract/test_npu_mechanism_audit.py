@@ -1716,6 +1716,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
         "_rmsprop_step",
         "_rprop_step",
         "_sgd_step",
+        "_sgd_step_many",
         "_sparse_adam_step",
         "abs_",
         "acos_",
@@ -1834,7 +1835,7 @@ def test_npu_forward_autograd_registration_inventory_is_explicit():
     }
 
     assert missing_autograd == expected_missing
-    assert len(forward_ops) == 461
+    assert len(forward_ops) == 462
     assert len(autograd_ops & forward_ops) == 335
 
 

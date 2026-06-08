@@ -1,5 +1,6 @@
 """FSDPState -- hook orchestration for FSDP2."""
 from ....distributed.tensor.dtensor import DTensor
+from . import _profile
 
 try:
     from ....distributed._fsdp_fastpath import (
@@ -51,15 +52,18 @@ class FSDPState:
             self._lazy_init_root()
         # Clear stale backward hook handles from previous iteration
         self._pre_backward_hook_handles.clear()
-        self.param_group.pre_forward()
+        with _profile.record("fsdp.pre_forward"):
+            self.param_group.pre_forward()
         return args, kwargs
 
     def _post_forward(self, module, args, output):
         """Post-forward: register backward hooks + reshard + output cast."""
-        self._register_pre_backward_hooks(output)
-        self._register_post_backward_hooks()
+        with _profile.record("fsdp.hook_setup"):
+            self._register_pre_backward_hooks(output)
+            self._register_post_backward_hooks()
         if self.reshard_after_forward:
-            self.param_group.post_forward()
+            with _profile.record("fsdp.post_forward_reshard"):
+                self.param_group.post_forward()
         # Mixed precision: cast output to output_dtype
         if (self._mp_policy is not None
                 and self._mp_policy.output_dtype is not None):
@@ -132,7 +136,10 @@ class FSDPState:
         """Reduce-scatter captured gradients and reshard."""
         if self._sync_gradients:
             for fsdp_param, grad in self._pending_grads.values():
-                fsdp_param.reduce_scatter_grad(grad)
+                unsharded = fsdp_param._unsharded_param
+                if unsharded is not None:
+                    unsharded.grad = grad
+            self.param_group.reduce_scatter_grads()
         else:
             # no_sync mode: accumulate grads on unsharded params directly
             for fsdp_param, grad in self._pending_grads.values():
