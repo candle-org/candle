@@ -2243,30 +2243,79 @@ def chunk(a, chunks, dim=0):
         end = min(start + chunk_size, dim_size)
         if start >= end:
             break
-        outputs.append(_slice_along_dim(a, start, end, dim))
+        outputs.append(
+            view_backend.narrow(a, dim, start, end - start, creation_kind="multi_view")
+        )
+    return tuple(outputs)
+
+
+def _npu_aclnn_split_with_size(tensor, sizes, dim):
+    """Materializing split via a single aclnnSplitWithSize TensorList kernel."""
+    if not sizes:
+        return tuple()
+    runtime = npu_runtime.get_runtime((tensor.device.index or 0))
+    stream = npu_state.current_stream((tensor.device.index or 0))
+    itemsize = _dtype_itemsize(tensor.dtype)
+
+    out_shapes = []
+    out_strides = []
+    out_ptrs = []
+    outputs = []
+    for size in sizes:
+        out_shape = tensor.shape[:dim] + (int(size),) + tensor.shape[dim + 1:]
+        out_numel = _numel(out_shape)
+        out_stride = npu_runtime._contiguous_stride(out_shape) if out_shape else ()
+        out_ptr = npu_runtime._alloc_device(max(out_numel, 1) * itemsize, runtime=runtime)
+        out_shapes.append(out_shape)
+        out_strides.append(out_stride)
+        out_ptrs.append(out_ptr)
+        storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), tensor.dtype, device=tensor.device)
+        outputs.append(_wrap_tensor(storage, out_shape, out_stride))
+
+    src_ptr = int(_unwrap_storage(tensor).data_ptr()) + tensor.offset * itemsize
+    aclnn.split_with_size(
+        src_ptr,
+        tensor.shape,
+        tensor.stride,
+        tensor.dtype,
+        tuple(int(size) for size in sizes),
+        dim,
+        tuple(out_ptrs),
+        tuple(out_shapes),
+        tuple(out_strides),
+        tensor.dtype,
+        runtime,
+        stream=stream.stream,
+    )
     return tuple(outputs)
 
 
 def split(a, split_size_or_sections, dim=0):
     dim = _normalize_dim(dim, a.dim())
     dim_size = a.shape[dim]
-    outputs = []
     if isinstance(split_size_or_sections, int):
         if split_size_or_sections <= 0:
             raise ValueError("split_size must be > 0")
         step = split_size_or_sections
-        for start in range(0, dim_size, step):
-            end = min(start + step, dim_size)
-            outputs.append(_slice_along_dim(a, start, end, dim))
+        sizes = [min(step, dim_size - start) for start in range(0, dim_size, step)]
     else:
-        sizes = list(split_size_or_sections)
+        sizes = [int(size) for size in split_size_or_sections]
         if sum(sizes) != dim_size:
             raise ValueError("split sections must sum to dim size")
-        start = 0
-        for size in sizes:
-            end = start + size
+
+    if aclnn.split_with_size_symbols_ok():
+        return _npu_aclnn_split_with_size(a, sizes, dim)
+
+    outputs = []
+    use_native_slice = aclnn.slice_symbols_ok()
+    start = 0
+    for size in sizes:
+        end = start + size
+        if use_native_slice:
+            outputs.append(_npu_aclnn_slice(a, dim, start, end, 1))
+        else:
             outputs.append(_slice_along_dim(a, start, end, dim))
-            start = end
+        start = end
     return tuple(outputs)
 
 

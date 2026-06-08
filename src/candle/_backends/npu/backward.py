@@ -71,6 +71,16 @@ def _wrap_output(ptr, numel, shape, stride, dtype, device):
     return _wrap_tensor(storage, shape, stride)
 
 
+def _mark_owned_backward_grad(grad):
+    """Mark a fresh native backward output that leaf accumulation can steal."""
+    if grad is not None:
+        try:
+            grad._candle_npu_owned_backward_grad = True
+        except (AttributeError, TypeError):
+            pass
+    return grad
+
+
 # ---------------------------------------------------------------
 # Simple activation backward (need forward input)
 # ---------------------------------------------------------------
@@ -424,7 +434,11 @@ def npu_layer_norm_backward(grad, saved_input, backward_data, normalized_shape,
         gb_numel_val = _numel(gb_shape)
         grad_bias = _wrap_output(gb_ptr, gb_numel_val, gb_shape, gb_stride, grad.dtype, grad.device)
 
-    return grad_input, grad_weight, grad_bias
+    return (
+        _mark_owned_backward_grad(grad_input),
+        _mark_owned_backward_grad(grad_weight),
+        _mark_owned_backward_grad(grad_bias),
+    )
 
 
 def npu_group_norm_backward(grad, saved_input, num_groups, weight=None, eps=1e-5):

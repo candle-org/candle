@@ -45,7 +45,12 @@ class TransformerEncoderLayer(Module):
         return x
 
     def _sa_block(self, x, attn_mask, key_padding_mask):
-        x = self.self_attn(x, x, x, attn_mask=attn_mask, key_padding_mask=key_padding_mask)[0]
+        x = self.self_attn(
+            x, x, x,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=False,
+        )[0]
         return self.dropout1(x)
 
     def _ff_block(self, x):
@@ -95,11 +100,21 @@ class TransformerDecoderLayer(Module):
         return x
 
     def _sa_block(self, x, attn_mask, key_padding_mask):
-        x = self.self_attn(x, x, x, attn_mask=attn_mask, key_padding_mask=key_padding_mask)[0]
+        x = self.self_attn(
+            x, x, x,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=False,
+        )[0]
         return self.dropout1(x)
 
     def _mha_block(self, x, mem, attn_mask, key_padding_mask):
-        x = self.multihead_attn(x, mem, mem, attn_mask=attn_mask, key_padding_mask=key_padding_mask)[0]
+        x = self.multihead_attn(
+            x, mem, mem,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            need_weights=False,
+        )[0]
         return self.dropout2(x)
 
     def _ff_block(self, x):

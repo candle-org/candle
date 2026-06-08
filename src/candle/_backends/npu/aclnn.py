@@ -686,6 +686,27 @@ class AclnnBindings:
             [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
         )
 
+        # aclnnSplitWithSize — materializing split into TensorList outputs
+        self.aclnn_split_with_size_get_workspace = _optional_symbol(
+            libs,
+            "aclnnSplitWithSizeGetWorkspaceSize",
+            ctypes.c_int32,
+            [
+                ctypes.c_void_p,  # self
+                ctypes.c_void_p,  # splitSize aclIntArray
+                ctypes.c_int64,   # dim
+                ctypes.c_void_p,  # out aclTensorList
+                ctypes.POINTER(ctypes.c_uint64),
+                ctypes.POINTER(ctypes.c_void_p),
+            ],
+        )
+        self.aclnn_split_with_size = _optional_symbol(
+            libs,
+            "aclnnSplitWithSize",
+            ctypes.c_int32,
+            [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_void_p],
+        )
+
         # aclnnInplaceMaskedFillScalar
         self.aclnn_inplace_masked_fill_scalar_get_workspace = _optional_symbol(
             libs,
@@ -4694,6 +4715,45 @@ def sub_scalar(self_ptr, scalar_value, out_ptr, shape, stride, dtype, runtime, s
             runtime.defer_raw_free(workspace)
 
 
+def mul_scalar(self_ptr, scalar_value, out_ptr, shape, stride, dtype, runtime, stream=None):
+    global acl
+    if acl is None:
+        acl = ensure_acl()
+    get_bindings()
+    stream_ptr = int(runtime.stream if stream is None else stream)
+    dtype_code = _dtype_to_acl(dtype)
+
+    _require_native_npu_ffi("mul_scalar")
+    scalar_handle = _ffi.create_scalar(_scalar_bytes(scalar_value, dtype), dtype_code)
+    executor = 0
+    workspace = None
+    try:
+        getws_ptr, exec_ptr = _ffi.resolve_op("Muls")
+        ws_size, executor = _ffi.tensor_scalar_op_no_alpha(
+            getws_ptr, exec_ptr,
+            shape, stride,
+            shape, stride,
+            dtype_code, _ACL_FORMAT_ND,
+            int(self_ptr), int(out_ptr),
+            scalar_handle,
+            stream_ptr,
+        )
+        if ws_size:
+            workspace_ptr, ret = acl.rt.malloc(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            workspace = workspace_ptr
+            ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
+            if ret != 0:
+                raise RuntimeError(f"aclnnMuls failed: {ret}")
+        _maybe_sync(runtime)
+    finally:
+        _defer_executor(ctypes.c_void_p(executor))
+        _ffi.destroy_scalar(scalar_handle)
+        if workspace is not None:
+            runtime.defer_raw_free(workspace)
+
+
 def maximum(self_ptr, other_ptr, out_ptr, self_shape, self_stride, other_shape, other_stride, out_shape, out_stride,
             dtype, runtime, stream=None):
     global acl
@@ -8184,6 +8244,19 @@ def slice_symbols_ok():
         return False
 
 
+def split_with_size_symbols_ok():
+    try:
+        bindings = get_bindings()
+        return all([
+            bindings.acl_create_tensor_list,
+            bindings.acl_destroy_tensor_list,
+            bindings.aclnn_split_with_size_get_workspace,
+            bindings.aclnn_split_with_size,
+        ])
+    except Exception:
+        return False
+
+
 def index(self_ptr, self_shape, self_stride, self_dtype,
           index_entries, out_ptr, out_shape, out_stride, out_dtype,
           runtime, stream=None,
@@ -8283,6 +8356,49 @@ def slice_op(self_ptr, self_shape, self_stride, self_dtype,
             ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
             if ret != 0:
                 raise RuntimeError(f"aclnnSlice failed: {ret}")
+        _maybe_sync(runtime)
+    finally:
+        _defer_executor(ctypes.c_void_p(executor))
+        if workspace is not None:
+            runtime.defer_raw_free(workspace)
+
+
+def split_with_size(self_ptr, self_shape, self_stride, self_dtype,
+                    split_sizes, dim,
+                    out_ptrs, out_shapes, out_strides, out_dtype,
+                    runtime, stream=None):
+    """aclnnSplitWithSize — materializing split into multiple contiguous outputs."""
+    global acl
+    if acl is None:
+        acl = ensure_acl()
+    bindings = get_bindings()
+    if bindings.aclnn_split_with_size_get_workspace is None or bindings.aclnn_split_with_size is None:
+        raise RuntimeError("aclnnSplitWithSize symbols not available")
+    stream_ptr = int(runtime.stream if stream is None else stream)
+
+    _require_native_npu_ffi("split_with_size")
+    executor = 0
+    workspace = None
+    try:
+        getws_ptr, exec_ptr = _ffi.resolve_op("SplitWithSize")
+        ws_size, executor = _ffi.split_with_size_op(
+            getws_ptr, exec_ptr,
+            self_shape, self_stride,
+            tuple(split_sizes),
+            tuple(out_ptrs), tuple(out_shapes), tuple(out_strides),
+            int(dim),
+            _dtype_to_acl(self_dtype), _ACL_FORMAT_ND,
+            int(self_ptr),
+            stream_ptr,
+        )
+        if ws_size:
+            workspace_ptr, ret = acl.rt.malloc(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            workspace = workspace_ptr
+            ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
+            if ret != 0:
+                raise RuntimeError(f"aclnnSplitWithSize failed: {ret}")
         _maybe_sync(runtime)
     finally:
         _defer_executor(ctypes.c_void_p(executor))
@@ -9604,8 +9720,42 @@ def inplace_copy(dst_ptr, src_ptr, dst_shape, dst_stride, dst_dtype, src_shape, 
     executor = 0
     workspace = None
 
+    pta_active = False
+    executor_owned = False
+
     try:
         getws_ptr, exec_ptr = _ffi.resolve_op("InplaceCopy")
+        pta_state = getattr(_ffi, "pta_begin_inplace_copy_cache_lookup", lambda *args: None)(
+            dst_shape,
+            dst_stride,
+            src_shape,
+            src_stride,
+            dst_dtype_code,
+            src_dtype_code,
+            int(dst_ptr),
+            int(src_ptr),
+            stream_ptr,
+        )
+        if pta_state is not None:
+            pta_active = bool(pta_state[0])
+            ws_size = int(pta_state[1])
+            executor = int(pta_state[2])
+            if executor:
+                if ws_size:
+                    workspace_ptr, ret = acl.rt.malloc(int(ws_size), 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    workspace = workspace_ptr
+                    ret = _ffi.execute(exec_ptr, int(workspace), ws_size, executor, stream_ptr)
+                    if ret != 0:
+                        raise RuntimeError(f"aclnnInplaceCopy failed: {ret}")
+                else:
+                    ret = _ffi.execute(exec_ptr, 0, 0, executor, stream_ptr)
+                    if ret != 0:
+                        raise RuntimeError(f"aclnnInplaceCopy failed: {ret}")
+                _maybe_sync(runtime)
+                return
+
         ws_size, executor = _ffi.inplace_copy_op(
             getws_ptr,
             exec_ptr,
@@ -9620,6 +9770,7 @@ def inplace_copy(dst_ptr, src_ptr, dst_shape, dst_stride, dst_dtype, src_shape, 
             int(src_ptr),
             stream_ptr,
         )
+        executor_owned = True
         if ws_size:
             workspace_ptr, ret = acl.rt.malloc(int(ws_size), 0)
             if ret != 0:
@@ -9630,7 +9781,10 @@ def inplace_copy(dst_ptr, src_ptr, dst_shape, dst_stride, dst_dtype, src_shape, 
                 raise RuntimeError(f"aclnnInplaceCopy failed: {ret}")
         _maybe_sync(runtime)
     finally:
-        _defer_executor(ctypes.c_void_p(executor))
+        if pta_active:
+            _ffi.pta_end_cache_lookup()
+        if executor_owned:
+            _defer_executor(ctypes.c_void_p(executor))
         if workspace is not None:
             runtime.defer_raw_free(workspace)
 

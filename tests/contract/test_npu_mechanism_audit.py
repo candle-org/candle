@@ -1,6 +1,8 @@
 import re
 from pathlib import Path
 
+import pytest
+
 import candle
 from candle._dispatch.keys import DispatchKey
 from candle._dispatch.registry import registry

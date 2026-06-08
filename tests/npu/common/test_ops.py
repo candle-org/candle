@@ -73,6 +73,78 @@ def test_npu_matmul_noncontig_batched_input():
     assert out.shape == (16, 4, 64)
     assert np.allclose(out.to("cpu").numpy(), expected, atol=1e-2, rtol=1e-2)
 
+
+def test_npu_matmul_attention_rhs_transpose_skips_contiguous(monkeypatch):
+    """Rank-4 attention matmul should avoid materializing K.transpose(-2, -1)."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    import candle._backends.npu.ops.linalg as npu_linalg
+
+    calls = {"contiguous": 0}
+    original_contiguous = npu_linalg.contiguous
+
+    def wrapped_contiguous(tensor, *args, **kwargs):
+        calls["contiguous"] += 1
+        return original_contiguous(tensor, *args, **kwargs)
+
+    monkeypatch.setattr(npu_linalg, "contiguous", wrapped_contiguous)
+    q = torch.randn(1, 2, 8, 16, device="npu", dtype=torch.float16)
+    k = torch.randn(1, 2, 8, 16, device="npu", dtype=torch.float16)
+    kt = k.transpose(-2, -1)
+
+    out = torch.matmul(q, kt)
+    torch.npu.synchronize()
+
+    expected = np.matmul(q.to("cpu").numpy(), kt.to("cpu").numpy())
+    assert out.shape == (1, 2, 8, 8)
+    assert np.allclose(out.to("cpu").numpy(), expected, atol=1e-2, rtol=1e-2)
+    assert calls["contiguous"] == 0
+
+
+def test_npu_rank3_linear_uses_cython_fast_path(monkeypatch):
+    """Contiguous rank-3 linear training should avoid Python linalg.matmul wrappers."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    import candle._backends.npu.ops.linalg as npu_linalg
+    import candle.nn.functional as nn_functional
+
+    calls = {"matmul": 0, "py_linear": 0}
+    original_matmul = npu_linalg.aclnn.matmul
+    original_py_linear = nn_functional._py_linear
+
+    def wrapped_matmul(*args, **kwargs):
+        calls["matmul"] += 1
+        return original_matmul(*args, **kwargs)
+
+    def wrapped_py_linear(*args, **kwargs):
+        calls["py_linear"] += 1
+        return original_py_linear(*args, **kwargs)
+
+    monkeypatch.setattr(npu_linalg.aclnn, "matmul", wrapped_matmul)
+    monkeypatch.setattr(nn_functional, "_py_linear", wrapped_py_linear)
+    x = torch.randn(2, 4, 8, device="npu", dtype=torch.float16, requires_grad=True)
+    weight = torch.randn(12, 8, device="npu", dtype=torch.float16, requires_grad=True)
+    bias = torch.randn(12, device="npu", dtype=torch.float16, requires_grad=True)
+
+    out = F.linear(x, weight, bias)
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    assert out.shape == (2, 4, 12)
+    assert x.grad is not None and x.grad.device.type == "npu"
+    assert weight.grad is not None and weight.grad.device.type == "npu"
+    assert bias.grad is not None and bias.grad.device.type == "npu"
+
+    x_np = x.to("cpu").numpy()
+    weight_np = weight.to("cpu").numpy()
+    expected_x_grad = np.broadcast_to(weight_np.sum(axis=0), x.shape)
+    expected_weight_grad = np.broadcast_to(x_np.reshape(-1, 8).sum(axis=0), weight.shape)
+    expected_bias_grad = np.full(bias.shape, x.shape[0] * x.shape[1], dtype=np.float16)
+    np.testing.assert_allclose(x.grad.to("cpu").numpy(), expected_x_grad, atol=1e-2, rtol=1e-2)
+    np.testing.assert_allclose(weight.grad.to("cpu").numpy(), expected_weight_grad, atol=1e-2, rtol=1e-2)
+    np.testing.assert_allclose(bias.grad.to("cpu").numpy(), expected_bias_grad, atol=1e-2, rtol=1e-2)
+    assert calls == {"matmul": 0, "py_linear": 0}
+
 @pytest.mark.parametrize(
     "op_name, numpy_fn",
     [
@@ -285,6 +357,46 @@ def test_npu_view_to_cpu_preserves_offset_window():
     np.testing.assert_allclose(view.to("cpu").numpy(), np.array([3.0, 4.0]))
 
 
+def test_npu_grad_split_uses_native_materializing_copy(monkeypatch):
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops.shape as npu_shape
+
+    if not npu_shape.aclnn.split_with_size_symbols_ok():
+        pytest.skip("aclnnSplitWithSize symbols not available")
+
+    calls = {"split": 0, "slice": 0}
+    original_split = npu_shape.aclnn.split_with_size
+    original_slice = npu_shape.aclnn.slice_op
+
+    def wrapped_split(*args, **kwargs):
+        calls["split"] += 1
+        return original_split(*args, **kwargs)
+
+    def wrapped_slice(*args, **kwargs):
+        calls["slice"] += 1
+        return original_slice(*args, **kwargs)
+
+    monkeypatch.setattr(npu_shape.aclnn, "split_with_size", wrapped_split)
+    monkeypatch.setattr(npu_shape.aclnn, "slice_op", wrapped_slice)
+
+    x = torch.tensor(
+        np.arange(2 * 3 * 12, dtype=np.float32).reshape(2, 3, 12),
+        device="npu",
+        dtype=torch.float16,
+    )
+    x.requires_grad = True
+    q, k, v = torch.split(x, 4, dim=-1)
+    torch.npu.synchronize()
+
+    assert calls == {"split": 1, "slice": 0}
+    assert q.is_contiguous()
+    assert k.is_contiguous()
+    assert v.is_contiguous()
+    np.testing.assert_allclose(k.to("cpu").numpy(), x.to("cpu").numpy()[..., 4:8])
+
+
 def test_npu_hstack():
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
@@ -493,6 +605,25 @@ def test_npu_mul_relu():
     assert relu.device.type == "npu"
     assert prod.to("cpu").numpy().tolist() == [-3.0, 8.0]
     assert relu.to("cpu").numpy().tolist() == [0.0, 2.0]
+
+
+def test_npu_mul_scalar_is_capture_safe():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    x = torch.ones(2, 3, device="npu", dtype=torch.float16, requires_grad=True)
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = x * 0.125
+        out.sum().backward()
+    torch.npu.synchronize()
+
+    graph.replay()
+    torch.npu.synchronize()
+    assert out.device.type == "npu"
+    assert x.grad is not None
+    assert x.grad.device.type == "npu"
+    np.testing.assert_allclose(out.to("cpu").numpy(), np.full((2, 3), 0.125, dtype=np.float16))
+    np.testing.assert_allclose(x.grad.to("cpu").numpy(), np.full((2, 3), 0.125, dtype=np.float16))
 
 
 def test_npu_sum():

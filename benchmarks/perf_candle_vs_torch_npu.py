@@ -79,6 +79,76 @@ def build_xfmr(torch, device, dtype):
     return model, (x,)
 
 
+def build_sdpa(torch, device, dtype):
+    nn = torch.nn
+    f = torch.nn.functional
+
+    b, heads, s, head_dim = 2, 8, 128, 64
+
+    class SDPABlock(nn.Module):
+        def forward(self, q, k, v):
+            return f.scaled_dot_product_attention(q, k, v, dropout_p=0.0)
+
+    model = SDPABlock().to(device).to(dtype)
+    q = torch.randn(b, heads, s, head_dim, device=device, dtype=dtype, requires_grad=True)
+    k = torch.randn(b, heads, s, head_dim, device=device, dtype=dtype, requires_grad=True)
+    v = torch.randn(b, heads, s, head_dim, device=device, dtype=dtype, requires_grad=True)
+    return model, (q, k, v)
+
+
+def build_mha_sdpa(torch, device, dtype):
+    nn = torch.nn
+
+    b, s, h, heads = 2, 128, 512, 8
+
+    class MhaSdpBlock(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.mha = nn.MultiheadAttention(h, heads, batch_first=True, dropout=0.0)
+
+        def forward(self, x):
+            out, _ = self.mha(x, x, x, need_weights=False)
+            return out
+
+    model = MhaSdpBlock().to(device).to(dtype)
+    x = torch.randn(b, s, h, device=device, dtype=dtype, requires_grad=True)
+    return model, (x,)
+
+
+def _build_xfmr_sdpa(torch, device, dtype, b, s, h, heads):
+    nn = torch.nn
+    f = torch.nn.functional
+
+    class XfmrSdpaBlock(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm1 = nn.LayerNorm(h)
+            self.attn = nn.MultiheadAttention(h, heads, batch_first=True, dropout=0.0)
+            self.norm2 = nn.LayerNorm(h)
+            self.ff1 = nn.Linear(h, 4 * h)
+            self.ff2 = nn.Linear(4 * h, h)
+
+        def forward(self, x):
+            y = self.norm1(x)
+            attn_out, _ = self.attn(y, y, y, need_weights=False)
+            x = x + attn_out
+            z = self.norm2(x)
+            z = f.gelu(self.ff1(z))
+            return x + self.ff2(z)
+
+    model = XfmrSdpaBlock().to(device).to(dtype)
+    x = torch.randn(b, s, h, device=device, dtype=dtype, requires_grad=True)
+    return model, (x,)
+
+
+def build_xfmr_sdpa(torch, device, dtype):
+    return _build_xfmr_sdpa(torch, device, dtype, b=2, s=128, h=512, heads=8)
+
+
+def build_xfmr_sdpa_large(torch, device, dtype):
+    return _build_xfmr_sdpa(torch, device, dtype, b=2, s=256, h=1024, heads=16)
+
+
 def build_resnet(torch, device, dtype):
     nn = torch.nn
     f = torch.nn.functional
@@ -104,6 +174,10 @@ def build_resnet(torch, device, dtype):
 CASES = {
     "mlp": build_mlp,
     "xfmr": build_xfmr,
+    "sdpa": build_sdpa,
+    "mha_sdpa": build_mha_sdpa,
+    "xfmr_sdpa": build_xfmr_sdpa,
+    "xfmr_sdpa_large": build_xfmr_sdpa_large,
     "resnet": build_resnet,
 }
 
@@ -181,8 +255,67 @@ def _profile_candle_step(torch, model, inputs, case, profile_dir, profile_topk):
     }
 
 
+def _profile_candle_graph_step(torch, graph, case, profile_dir, profile_topk):
+    from candle import profiler  # pylint: disable=import-outside-toplevel
+
+    with profiler.profile(activities=[profiler.ProfilerActivity.CPU, profiler.ProfilerActivity.NPU]) as prof:
+        with profiler.record_function(f"{case}.graph_step"):
+            graph.replay()
+            _sync(torch)
+
+    trace_path = None
+    if profile_dir:
+        os.makedirs(profile_dir, exist_ok=True)
+        trace_path = os.path.join(profile_dir, f"{case}-candle-graph-trace.json")
+        prof.export_chrome_trace(trace_path)
+
+    table = prof.key_averages().table(sort_by="self_cpu_time_total", row_limit=max(0, int(profile_topk)))
+    return {
+        "trace_path": trace_path,
+        "table": table,
+        "top": _profile_top_rows(prof, profile_topk),
+    }
+
+
+def _capture_graph_step(torch, model, inputs):
+    if not hasattr(torch.npu, "NPUGraph") or not hasattr(torch.npu, "graph"):
+        raise RuntimeError("torch.npu.NPUGraph/graph is not available")
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = model(*inputs)
+        loss = out.sum()
+        loss.backward()
+    _sync(torch)
+    return graph
+
+
+def _summarize_graph_step_result(framework, case, iters, total_samples, profile):
+    total_summary = summarize_samples(total_samples)
+    result = {
+        "framework": framework,
+        "case": case,
+        "iters": iters,
+        "graph_step": True,
+        "fwd_ms_median": None,
+        "bwd_ms_median": None,
+        "total_ms_median": total_summary["median_ms"],
+        "fwd_ms_min": None,
+        "bwd_ms_min": None,
+        "total_ms_min": total_summary["min_ms"],
+        "fwd_ms_p10": None,
+        "bwd_ms_p10": None,
+        "total_ms_p10": total_summary["p10_ms"],
+        "fwd_ms_p90": None,
+        "bwd_ms_p90": None,
+        "total_ms_p90": total_summary["p90_ms"],
+    }
+    if profile is not None:
+        result["profile"] = profile
+    return result
+
+
 def run_worker(framework, case, iters, warmup, dtype_name, profile_candle=False,
-               profile_dir=None, profile_topk=20):
+               profile_dir=None, profile_topk=20, graph_step=False):
     torch = _import_framework(framework)
     dtype = _resolve_dtype(torch, dtype_name)
 
@@ -201,6 +334,21 @@ def run_worker(framework, case, iters, warmup, dtype_name, profile_candle=False,
     _sync(torch)
 
     profile = None
+    if graph_step:
+        _clear_grads(model, inputs)
+        graph = _capture_graph_step(torch, model, inputs)
+        total_samples = []
+        if framework == "candle" and profile_candle:
+            profile = _profile_candle_graph_step(torch, graph, case, profile_dir, profile_topk)
+        for _ in range(iters):
+            _sync(torch)
+            t0 = time.perf_counter()
+            graph.replay()
+            _sync(torch)
+            t1 = time.perf_counter()
+            total_samples.append((t1 - t0) * 1000.0)
+        return _summarize_graph_step_result(framework, case, iters, total_samples, profile)
+
     if framework == "candle" and profile_candle:
         profile = _profile_candle_step(torch, model, inputs, case, profile_dir, profile_topk)
         _clear_grads(model, inputs)
@@ -251,7 +399,8 @@ def run_worker(framework, case, iters, warmup, dtype_name, profile_candle=False,
 
 
 def _spawn_worker(framework, case, iters, warmup, dtype_name, python_exe=None,
-                  profile_candle=False, profile_dir=None, profile_topk=20):
+                  profile_candle=False, profile_dir=None, profile_topk=20,
+                  graph_step=False):
     cmd = [
         python_exe or sys.executable,
         os.path.abspath(__file__),
@@ -265,6 +414,8 @@ def _spawn_worker(framework, case, iters, warmup, dtype_name, python_exe=None,
     ]
     if framework == "candle" and profile_candle:
         cmd.append("--profile-candle")
+    if graph_step:
+        cmd.append("--graph-step")
     if profile_dir is not None:
         cmd.extend(("--profile-dir", profile_dir))
 
@@ -325,12 +476,15 @@ def _annotate_ratios(results):
         torch_fwd = torch_ref.get("fwd_ms_median")
         torch_bwd = torch_ref.get("bwd_ms_median")
         torch_total = torch_ref.get("total_ms_median")
-        if torch_fwd:
-            candle["fwd_ratio"] = candle["fwd_ms_median"] / torch_fwd
-        if torch_bwd:
-            candle["bwd_ratio"] = candle["bwd_ms_median"] / torch_bwd
-        if torch_total:
-            candle["total_ratio"] = candle["total_ms_median"] / torch_total
+        candle_fwd = candle.get("fwd_ms_median")
+        candle_bwd = candle.get("bwd_ms_median")
+        candle_total = candle.get("total_ms_median")
+        if torch_fwd and candle_fwd is not None:
+            candle["fwd_ratio"] = candle_fwd / torch_fwd
+        if torch_bwd and candle_bwd is not None:
+            candle["bwd_ratio"] = candle_bwd / torch_bwd
+        if torch_total and candle_total is not None:
+            candle["total_ratio"] = candle_total / torch_total
 
 
 def _ratio_failures(results, cases, max_fwd_ratio, max_bwd_ratio, max_total_ratio):
@@ -352,13 +506,17 @@ def _ratio_failures(results, cases, max_fwd_ratio, max_bwd_ratio, max_total_rati
         fwd_ratio = candle.get("fwd_ratio")
         bwd_ratio = candle.get("bwd_ratio")
         total_ratio = candle.get("total_ratio")
-        if fwd_ratio is None or bwd_ratio is None or total_ratio is None:
-            failures.append(f"{case}: unable to compute candle/torch_npu ratio")
+        if total_ratio is None:
+            failures.append(f"{case}: unable to compute candle/torch_npu total ratio")
             continue
-        if fwd_ratio > max_fwd_ratio:
-            failures.append(f"{case}: fwd ratio {fwd_ratio:.2f}x > {max_fwd_ratio:.2f}x")
-        if bwd_ratio > max_bwd_ratio:
-            failures.append(f"{case}: bwd ratio {bwd_ratio:.2f}x > {max_bwd_ratio:.2f}x")
+        if not (candle.get("graph_step") or torch_ref.get("graph_step")):
+            if fwd_ratio is None or bwd_ratio is None:
+                failures.append(f"{case}: unable to compute candle/torch_npu ratio")
+                continue
+            if fwd_ratio > max_fwd_ratio:
+                failures.append(f"{case}: fwd ratio {fwd_ratio:.2f}x > {max_fwd_ratio:.2f}x")
+            if bwd_ratio > max_bwd_ratio:
+                failures.append(f"{case}: bwd ratio {bwd_ratio:.2f}x > {max_bwd_ratio:.2f}x")
         if total_ratio > max_total_ratio:
             failures.append(f"{case}: total ratio {total_ratio:.2f}x > {max_total_ratio:.2f}x")
     return failures
@@ -387,6 +545,8 @@ def _print_table(results, frameworks, stream=None):
                 elif "fwd_ratio" in r and "bwd_ratio" in r:
                     total_part = f" / t {r['total_ratio']:.2f}x" if "total_ratio" in r else ""
                     ratio = f"f {r['fwd_ratio']:.2f}x / b {r['bwd_ratio']:.2f}x{total_part}"
+                elif "total_ratio" in r:
+                    ratio = f"t {r['total_ratio']:.2f}x"
                 else:
                     ratio = "-"
                 row = [algo, _fmt(fwd), _fmt(bwd), _fmt(total), ratio]
@@ -464,6 +624,10 @@ def main():
                         help="number of Candle profiler rows to keep and print")
     parser.add_argument("--print-candle-profile-table", action="store_true",
                         help="print Candle profiler key_averages tables for profiled workers")
+    parser.add_argument("--graph-step", action="store_true",
+                        help="capture one forward+backward step with torch.npu.NPUGraph and time replay")
+    parser.add_argument("--candle-graph-step", action="store_true",
+                        help="capture only Candle workers with torch.npu.NPUGraph; compare against torch_npu eager")
     args = parser.parse_args()
 
     if args.max_fwd_ratio <= 0:
@@ -483,6 +647,7 @@ def main():
             profile_candle=args.profile_candle,
             profile_dir=args.profile_dir,
             profile_topk=args.profile_topk,
+            graph_step=args.graph_step or (args.candle_graph_step and args.framework == "candle"),
         )
         print(json.dumps(result))
         return
@@ -519,6 +684,7 @@ def main():
                 profile_candle=args.profile_candle,
                 profile_dir=args.profile_dir,
                 profile_topk=args.profile_topk,
+                graph_step=args.graph_step or (args.candle_graph_step and fw == "candle"),
             ))
 
     _annotate_ratios(results)
@@ -551,6 +717,8 @@ def main():
         "max_fwd_ratio": args.max_fwd_ratio,
         "max_bwd_ratio": args.max_bwd_ratio,
         "max_total_ratio": args.max_total_ratio,
+        "graph_step": args.graph_step,
+        "candle_graph_step": args.candle_graph_step,
         "failures": failures,
         "results": results,
     }

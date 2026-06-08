@@ -54,44 +54,60 @@ class MultiheadAttention(Module):
 
     def forward(self, query, key, value, key_padding_mask=None, need_weights=True,
                 attn_mask=None, average_attn_weights=True, is_causal=False):
-        # Handle batch_first: convert (N, L, E) -> (L, N, E)
+        is_self_attention = query is key and key is value
+
         if self.batch_first:
-            query = query.transpose(0, 1)
-            key = key.transpose(0, 1)
-            value = value.transpose(0, 1)
-
-        tgt_len, bsz, embed_dim = query.shape
-        src_len = key.shape[0]
-
-        # Project Q, K, V
-        if self._qkv_same_embed_dim:
-            w_q = self.in_proj_weight[:embed_dim]
-            w_k = self.in_proj_weight[embed_dim:2*embed_dim]
-            w_v = self.in_proj_weight[2*embed_dim:]
+            bsz, tgt_len, embed_dim = query.shape
+            src_len = key.shape[1]
         else:
-            w_q = self.q_proj_weight
-            w_k = self.k_proj_weight
-            w_v = self.v_proj_weight
+            tgt_len, bsz, embed_dim = query.shape
+            src_len = key.shape[0]
 
-        if self.in_proj_bias is not None:
-            b_q = self.in_proj_bias[:embed_dim]
-            b_k = self.in_proj_bias[embed_dim:2*embed_dim]
-            b_v = self.in_proj_bias[2*embed_dim:]
+        # Project Q, K, V.  Self-attention can use PyTorch's packed projection
+        # pattern: one linear with the packed in_proj_weight/bias, then split
+        # the last dimension into q/k/v views.  Cross-attention keeps separate
+        # projections because query and key/value have distinct sequence data.
+        if self._qkv_same_embed_dim and is_self_attention:
+            packed_qkv = F.linear(query, self.in_proj_weight, self.in_proj_bias)
+            q, k, v = F._split_packed_qkv_projection(
+                packed_qkv, embed_dim, self.num_heads, batch_first=self.batch_first
+            )
         else:
-            b_q = b_k = b_v = None
+            if self._qkv_same_embed_dim:
+                w_q = self.in_proj_weight[:embed_dim]
+                w_k = self.in_proj_weight[embed_dim:2*embed_dim]
+                w_v = self.in_proj_weight[2*embed_dim:]
+            else:
+                w_q = self.q_proj_weight
+                w_k = self.k_proj_weight
+                w_v = self.v_proj_weight
 
-        q = F.linear(query, w_q, b_q)
-        k = F.linear(key, w_k, b_k)
-        v = F.linear(value, w_v, b_v)
+            if self.in_proj_bias is not None:
+                b_q = self.in_proj_bias[:embed_dim]
+                b_k = self.in_proj_bias[embed_dim:2*embed_dim]
+                b_v = self.in_proj_bias[2*embed_dim:]
+            else:
+                b_q = b_k = b_v = None
+
+            q = F.linear(query, w_q, b_q)
+            k = F.linear(key, w_k, b_k)
+            v = F.linear(value, w_v, b_v)
 
         # Reshape: (L, N, E) -> (L, N, H, D) -> (N, H, L, D)
         head_dim = self.head_dim
         num_heads = self.num_heads
 
-        # (L, N, H, D) -t(0,1)-> (N, L, H, D) -t(1,2)-> (N, H, L, D)
-        q = q.reshape(tgt_len, bsz, num_heads, head_dim).transpose(0, 1).transpose(1, 2)
-        k = k.reshape(src_len, bsz, num_heads, head_dim).transpose(0, 1).transpose(1, 2)
-        v = v.reshape(src_len, bsz, num_heads, head_dim).transpose(0, 1).transpose(1, 2)
+        if not (self._qkv_same_embed_dim and is_self_attention):
+            if self.batch_first:
+                # (N, L, H, D) -t(1,2)-> (N, H, L, D)
+                q = q.reshape(bsz, tgt_len, num_heads, head_dim).transpose(1, 2)
+                k = k.reshape(bsz, src_len, num_heads, head_dim).transpose(1, 2)
+                v = v.reshape(bsz, src_len, num_heads, head_dim).transpose(1, 2)
+            else:
+                # (L, N, H, D) -t(0,1)-> (N, L, H, D) -t(1,2)-> (N, H, L, D)
+                q = q.reshape(tgt_len, bsz, num_heads, head_dim).transpose(0, 1).transpose(1, 2)
+                k = k.reshape(src_len, bsz, num_heads, head_dim).transpose(0, 1).transpose(1, 2)
+                v = v.reshape(src_len, bsz, num_heads, head_dim).transpose(0, 1).transpose(1, 2)
 
         # Handle key_padding_mask: (N, S) bool where True = ignore
         if key_padding_mask is not None:
@@ -123,16 +139,17 @@ class MultiheadAttention(Module):
             attn_output = F.scaled_dot_product_attention(
                 q, k, v, attn_mask=attn_mask, dropout_p=dropout_p, is_causal=is_causal)
 
-        # (N, H, L, D) -> (N, L, H, D) -> (N, L, E) -> (L, N, E)
+        # (N, H, L, D) -> (N, L, H, D) -> (N, L, E).  For batch_first
+        # callers, keep this contiguous B,L,E layout through the output
+        # projection; linear acts on the last dimension, so this is equivalent
+        # to projecting the transposed L,N,E view while avoiding a non-contig
+        # projection input on accelerator backends.
         attn_output = attn_output.transpose(1, 2).reshape(bsz, tgt_len, embed_dim)
-        attn_output = attn_output.transpose(0, 1)
-
-        # Output projection
-        attn_output = F.linear(attn_output, self.out_proj.weight, self.out_proj.bias)
-
-        # Convert back to batch_first if needed
         if self.batch_first:
+            attn_output = F.linear(attn_output, self.out_proj.weight, self.out_proj.bias)
+        else:
             attn_output = attn_output.transpose(0, 1)
+            attn_output = F.linear(attn_output, self.out_proj.weight, self.out_proj.bias)
 
         if need_weights:
             if average_attn_weights:

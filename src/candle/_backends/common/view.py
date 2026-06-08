@@ -31,6 +31,11 @@ def _make_view(base, shape, stride, offset, op, source=None, *, creation_kind=No
     }
     view._view_func = view_func
     view._rev_view_func = rev_view_func
+    if source is not None and getattr(source, "_candle_npu_owned_backward_grad", False):
+        try:
+            view._candle_npu_owned_backward_grad = True
+        except (AttributeError, TypeError):
+            pass
     return view
 
 
@@ -70,6 +75,14 @@ def reshape(a, shape):
     if size != new_size:
         raise ValueError("reshape size mismatch")
     if not a.is_contiguous():
+        # A broadcasted tensor whose non-singleton dimensions all have stride 0
+        # aliases the same storage element for every logical index. Any reshape
+        # with the same numel can preserve that aliasing as a zero-stride view;
+        # materializing it would be an unnecessary device copy on accelerator
+        # backends and is especially hot in sum -> reshape backward chains.
+        if all(dim == 1 or stride == 0 for dim, stride in zip(a.shape, a.stride)):
+            base = _get_base(a)
+            return _make_view(base, shape, tuple(0 for _ in shape), a.offset, "reshape", source=a)
         a = a.contiguous()
     stride = _contiguous_stride(shape)
     base = _get_base(a)

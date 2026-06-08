@@ -1,6 +1,7 @@
 """Functional interface for nn operations."""
 
 _NPU_SILU_FAST = None
+_NPU_IN_GRAPH_CAPTURE = None
 _BASE_TENSOR = None
 _IS_PROFILER_ENABLED = None
 _IS_FUNCTIONALIZE_ENABLED = None
@@ -58,19 +59,31 @@ def _npu_silu_fast(input):
     return _NPU_SILU_FAST(input)
 
 
+def _npu_in_graph_capture():
+    global _NPU_IN_GRAPH_CAPTURE  # pylint: disable=global-statement
+    if _NPU_IN_GRAPH_CAPTURE is None:
+        from .. import npu as _npu
+        _NPU_IN_GRAPH_CAPTURE = _npu._is_in_graph_capture  # pylint: disable=protected-access
+    return _NPU_IN_GRAPH_CAPTURE()
+
+
 def _py_linear(input, weight, bias=None):
     from .._dispatch import dispatch
     weight_t = weight.t() if hasattr(weight, 't') else weight
     if (
         bias is not None
-        and len(input.shape) == 2
         and len(weight_t.shape) == 2
         and len(bias.shape) == 1
-        and input.shape[1] == weight_t.shape[0]
+        and input.shape[-1] == weight_t.shape[0]
         and bias.shape[0] == weight_t.shape[1]
     ):
         from .._functional import addmm
-        return addmm(bias, input, weight_t)
+        if len(input.shape) == 2:
+            return addmm(bias, input, weight_t)
+        if input.is_contiguous():
+            out_shape = tuple(input.shape[:-1]) + (weight_t.shape[1],)
+            flat = input.reshape(-1, input.shape[-1])
+            return addmm(bias, flat, weight_t).reshape(out_shape)
     output = dispatch("matmul", input.device.type, input, weight_t)
     if bias is not None:
         output = dispatch("add", input.device.type, output, bias)
@@ -83,6 +96,104 @@ try:
 except ImportError:
     linear = _py_linear
 
+
+class _SplitPackedQkvProjection:
+    """Custom autograd wrapper for packed self-attention Q/K/V projection layout."""
+
+    @staticmethod
+    def apply(packed_qkv, embed_dim, num_heads, batch_first=False):
+        from candle.autograd.function import Function
+
+        class _SplitPackedQkvProjection(Function):
+            @staticmethod
+            def forward(ctx, packed, embed, heads, is_batch_first):
+                from ..autograd.grad_mode import no_grad
+                from .._functional import split
+
+                ctx.set_materialize_grads(False)
+                ctx.input_shape = tuple(packed.shape)
+                ctx.embed_dim = int(embed)
+                ctx.num_heads = int(heads)
+                ctx.batch_first = bool(is_batch_first)
+
+                head_dim = int(embed) // int(heads)
+                with no_grad():
+                    q_raw, k_raw, v_raw = split(packed, int(embed), dim=-1)
+
+                    def _to_bnsd(tensor):
+                        if not tensor.is_contiguous():
+                            tensor = tensor.contiguous()
+                        if is_batch_first:
+                            bsz, tgt_len, _ = tensor.shape
+                            return tensor.reshape(bsz, tgt_len, int(heads), head_dim).transpose(1, 2)
+                        tgt_len, bsz, _ = tensor.shape
+                        return tensor.reshape(tgt_len, bsz, int(heads), head_dim).transpose(0, 1).transpose(1, 2)
+
+                    q, k, v = _to_bnsd(q_raw), _to_bnsd(k_raw), _to_bnsd(v_raw)
+                    packed_meta = (ctx.input_shape, ctx.embed_dim, ctx.num_heads, ctx.batch_first)
+                    for slot, tensor in enumerate((q, k, v)):
+                        try:
+                            tensor._candle_packed_qkv_projection_meta = packed_meta + (slot,)
+                        except (AttributeError, TypeError):
+                            pass
+                    return q, k, v
+
+            @staticmethod
+            def backward(ctx, grad_q, grad_k, grad_v):
+                if grad_q is not None and grad_k is not None and grad_v is not None:
+                    packed_grad = getattr(grad_q, "_candle_packed_qkv_backward_grad", None)
+                    if (
+                        packed_grad is not None
+                        and getattr(grad_k, "_candle_packed_qkv_backward_grad", None) is packed_grad
+                        and getattr(grad_v, "_candle_packed_qkv_backward_grad", None) is packed_grad
+                    ):
+                        return (packed_grad,)
+
+                ref = grad_q if grad_q is not None else grad_k if grad_k is not None else grad_v
+                if ref is None:
+                    return (None,)
+
+                from .._functional import stack, zeros
+
+                embed = ctx.embed_dim
+                heads = ctx.num_heads
+                head_dim = embed // heads
+                if ctx.batch_first:
+                    bsz, tgt_len, _ = ctx.input_shape
+                    raw_shape = (bsz, tgt_len, embed)
+
+                    def _from_bnsd(grad):
+                        if grad is None:
+                            return zeros(raw_shape, dtype=ref.dtype, device=ref.device)
+                        return grad.transpose(1, 2).reshape(bsz, tgt_len, embed)
+                else:
+                    tgt_len, bsz, _ = ctx.input_shape
+                    raw_shape = (tgt_len, bsz, embed)
+
+                    def _from_bnsd(grad):
+                        if grad is None:
+                            return zeros(raw_shape, dtype=ref.dtype, device=ref.device)
+                        return grad.transpose(1, 2).transpose(0, 1).reshape(tgt_len, bsz, embed)
+
+                packed_grad = stack((_from_bnsd(grad_q), _from_bnsd(grad_k), _from_bnsd(grad_v)), dim=-2)
+                return (packed_grad.reshape(ctx.input_shape),)
+
+        return _SplitPackedQkvProjection.apply(packed_qkv, embed_dim, num_heads, batch_first)
+
+
+def _split_packed_qkv_projection(packed_qkv, embed_dim, num_heads, batch_first=False):
+    """Return packed self-attention Q/K/V as FlashAttention-compatible BNSD tensors."""
+    is_npu = getattr(getattr(packed_qkv, "device", None), "type", None) == "npu"
+    try:
+        from .._C._functional_ops import split_packed_qkv_projection  # pylint: disable=import-error,no-name-in-module
+        fast_qkv = split_packed_qkv_projection(packed_qkv, embed_dim, num_heads, batch_first)
+    except ImportError:
+        fast_qkv = None
+    if fast_qkv is not None:
+        return fast_qkv
+    if is_npu:
+        raise RuntimeError("NPU packed QKV projection Cython path failed")
+    return _SplitPackedQkvProjection.apply(packed_qkv, embed_dim, num_heads, batch_first)
 
 
 def relu(input, inplace=False):
@@ -282,9 +393,16 @@ def feature_alpha_dropout(input, p=0.5, training=False, inplace=False):
     return result * a + b
 
 
-def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
+def _py_layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
     from .._dispatch import dispatch
     return dispatch("layer_norm", input.device.type, input, normalized_shape, weight, bias, eps)
+
+
+try:
+    from .._C._functional_ops import layer_norm as _cy_layer_norm  # pylint: disable=import-error,no-name-in-module
+    layer_norm = _cy_layer_norm
+except ImportError:
+    layer_norm = _py_layer_norm
 
 
 def group_norm(input, num_groups, weight=None, bias=None, eps=1e-5):
@@ -830,25 +948,63 @@ def upsample_bilinear(input, size=None, scale_factor=None, align_corners=False):
     return interpolate(input, size=size, scale_factor=scale_factor, mode='bilinear', align_corners=align_corners)
 
 
+def _try_npu_sdpa_flash_attention(query, key, value, attn_mask, dropout_p, is_causal, scale_factor, enable_gqa):
+    """Use native NPU FlashAttention for the PyTorch-compatible default SDPA case."""
+    if attn_mask is not None or dropout_p != 0.0 or is_causal or enable_gqa:
+        return None
+    if getattr(getattr(query, "device", None), "type", None) != "npu":
+        return None
+    if getattr(getattr(key, "device", None), "type", None) != "npu":
+        return None
+    if getattr(getattr(value, "device", None), "type", None) != "npu":
+        return None
+    if query.ndim != 4 or key.ndim != 4 or value.ndim != 4:
+        return None
+    if query.shape[0] != key.shape[0] or query.shape[0] != value.shape[0]:
+        return None
+    if query.shape[1] != key.shape[1] or query.shape[1] != value.shape[1]:
+        return None
+    if query.shape[-1] != key.shape[-1] or query.shape[-1] != value.shape[-1]:
+        return None
+    if key.shape[-2] != value.shape[-2]:
+        return None
+    # TODO: re-enable native FlashAttentionScore during aclgraph capture
+    # when CANN fixes captured training replay latency for this kernel.
+    if _npu_in_graph_capture():
+        return None
+    from .._C._functional_ops import npu_flash_sdpa  # pylint: disable=import-error,no-name-in-module
+    return npu_flash_sdpa(query, key, value, float(scale_factor))
+
+
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,
-                                 is_causal=False, scale=None):
+                                 is_causal=False, *, scale=None, enable_gqa=False):
     import math
-    from .._functional import matmul, mul, add, neg
+    from .._functional import matmul, mul, add, repeat_interleave
     from .._creation import ones, tensor as _tensor
     from .._dtype import bool as bool_dtype
 
     L, S = query.size(-2), key.size(-2)
     scale_factor = 1.0 / math.sqrt(query.size(-1)) if scale is None else scale
 
+    fused = _try_npu_sdpa_flash_attention(
+        query, key, value, attn_mask, dropout_p, is_causal, scale_factor, enable_gqa
+    )
+    if fused is not None:
+        return fused
+
+    if enable_gqa:
+        repeat_factor = query.size(-3) // key.size(-3)
+        key = repeat_interleave(key, repeat_factor, dim=-3)
+        value = repeat_interleave(value, repeat_factor, dim=-3)
+
     # query @ key^T
     key_t = key.transpose(-2, -1)
     attn_weight = matmul(query, key_t)
-    scale_t = _tensor(scale_factor, device=query.device)
-    attn_weight = mul(attn_weight, scale_t)
+    attn_weight = mul(attn_weight, scale_factor)
 
     if is_causal:
         causal_mask = ones((L, S), dtype=bool_dtype, device=query.device).tril()
-        neg_inf = _tensor(float('-inf'), device=query.device)
+        neg_inf = _tensor(float('-inf'), dtype=attn_weight.dtype, device=query.device)
         from .._dispatch import dispatch
         inv_mask = dispatch("eq", None, causal_mask, False)
         from .._functional import where as _where
@@ -856,7 +1012,7 @@ def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.
 
     if attn_mask is not None:
         if attn_mask.dtype == bool_dtype:
-            neg_inf = _tensor(float('-inf'), device=query.device)
+            neg_inf = _tensor(float('-inf'), dtype=attn_weight.dtype, device=query.device)
             from .._dispatch import dispatch as _dispatch
             inv_mask = _dispatch("eq", None, attn_mask, False)
             from .._functional import where as _where
@@ -932,7 +1088,7 @@ def multi_head_attention_forward(
             pass
         if not mask_is_float:
             # torch: zeros_like(mask, dtype=target_type).masked_fill_(mask, -inf)
-            neg_inf = _tensor(float('-inf'), device=query.device)
+            neg_inf = _tensor(float('-inf'), dtype=target_type, device=query.device)
             mask = _zeros_like(mask, dtype=target_type).masked_fill_(mask, neg_inf)
         return mask
 

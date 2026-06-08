@@ -25,21 +25,50 @@ from candle._C._aclnn_ffi cimport (
     binary_two_inputs_with_int8_op as _ffi_binary_two_inputs_with_int8_op,
     four_tensor_two_scalars_one_int8_op as _ffi_four_tensor_two_scalars_one_int8_op,
     reduce_sum_op as _ffi_reduce_sum_op,
+    layer_norm_op as _ffi_layer_norm_op,
+    split_with_size_op as _ffi_split_with_size_op,
     execute as _ffi_execute,
     pta_begin_add_cache_lookup as _ffi_pta_begin_add_cache_lookup,
     pta_begin_add_cache_lookup_raw as _ffi_pta_begin_add_cache_lookup_raw,
     pta_begin_addmm_cache_lookup_raw as _ffi_pta_begin_addmm_cache_lookup_raw,
     pta_begin_reduce_sum_cache_lookup_raw as _ffi_pta_begin_reduce_sum_cache_lookup_raw,
+    pta_begin_sdpa_flash_cache_lookup_raw as _ffi_pta_begin_sdpa_flash_cache_lookup_raw,
+    pta_begin_sdpa_flash_grad_cache_lookup_raw as _ffi_pta_begin_sdpa_flash_grad_cache_lookup_raw,
+    pta_begin_sdpa_flash_grad_v2_cache_lookup_raw as _ffi_pta_begin_sdpa_flash_grad_v2_cache_lookup_raw,
+    pta_begin_sdpa_flash_grad_storage_cache_lookup_raw as _ffi_pta_begin_sdpa_flash_grad_storage_cache_lookup_raw,
     pta_begin_binary_cache_lookup as _ffi_pta_begin_binary_cache_lookup,
     pta_begin_binary_cache_lookup_raw as _ffi_pta_begin_binary_cache_lookup_raw,
     pta_begin_unary_cache_lookup as _ffi_pta_begin_unary_cache_lookup,
     pta_begin_unary_cache_lookup_raw as _ffi_pta_begin_unary_cache_lookup_raw,
+    pta_begin_inplace_copy_cache_lookup as _ffi_pta_begin_inplace_copy_cache_lookup,
+    pta_begin_split_with_size_cache_lookup as _ffi_pta_begin_split_with_size_cache_lookup,
+    pta_begin_stack_cache_lookup as _ffi_pta_begin_stack_cache_lookup,
     pta_end_cache_lookup as _ffi_pta_end_cache_lookup,
     unary_op as _ffi_unary_op,
+    create_tensor_raw as _ffi_create_tensor_raw,
+    create_tensor_raw_with_storage as _ffi_create_tensor_raw_with_storage,
+    destroy_tensor_raw as _ffi_destroy_tensor_raw,
 )
 import importlib
 
 DEF MAX_NDIM = 16
+
+ctypedef int32_t (*FlashAttentionScoreGetWorkspaceSize_t)(
+    void*, void*, void*, void*, void*, void*, void*, void*,
+    double, double, int64_t, int64_t, int64_t, char*, int64_t, int64_t,
+    void*, void*, void*, void*, uint64_t*, void**) noexcept nogil
+
+ctypedef int32_t (*FlashAttentionScoreGradGetWorkspaceSize_t)(
+    void*, void*, void*, void*, void*, void*, void*, void*,
+    void*, void*, void*, void*, void*, double, double, int64_t, int64_t,
+    int64_t, char*, int64_t, int64_t, void*, void*, void*, void*,
+    uint64_t*, void**) noexcept nogil
+
+ctypedef int32_t (*FlashAttentionScoreGradV2GetWorkspaceSize_t)(
+    void*, void*, void*, void*, void*, void*, void*, void*,
+    void*, void*, void*, void*, void*, void*, void*, double, double,
+    int64_t, int64_t, int64_t, char*, int64_t, int64_t, int64_t,
+    void*, void*, void*, void*, uint64_t*, void**) noexcept nogil
 
 # ---------------------------------------------------------------------------
 # C-level shape utilities (nogil)
@@ -308,6 +337,7 @@ cdef object _cy_make_npu_tensor = None
 cdef object _FastNPUStorage_cls = None
 cdef object _FastTypedStorage_cls = None
 cdef object _StrideTuple_cls = None
+cdef object _float32_dtype_obj = None
 
 cdef object _get_runtime_fast = None
 cdef object _get_stream_fast = None
@@ -396,6 +426,14 @@ cdef inline void _ensure_npu_imports():
     _aclrt_sync_stream_fn = _ssf
     _flush_executors_fn = _fef
     _get_allocator_fn_ref = _alloc_mod.get_allocator
+
+
+cdef inline object _get_float32_dtype():
+    global _float32_dtype_obj
+    if _float32_dtype_obj is None:
+        from candle._dtype import float32 as _f32
+        _float32_dtype_obj = _f32
+    return _float32_dtype_obj
 
 
 cdef inline object _make_npu_tensor_fast(int64_t device_ptr, int64_t n_elements,
@@ -853,10 +891,20 @@ cdef object _div_getws_ptr = None        # cached Div getws pointer
 cdef object _div_exec_ptr = None         # cached Div exec pointer
 cdef object _matmul_getws_ptr = None     # cached Matmul getws pointer
 cdef object _matmul_exec_ptr = None      # cached Matmul exec pointer
+cdef object _sdpa_flash_getws_ptr = None  # cached FlashAttentionScore getws pointer
+cdef object _sdpa_flash_exec_ptr = None   # cached FlashAttentionScore exec pointer
+cdef object _sdpa_flash_grad_getws_ptr = None  # cached FlashAttentionScoreGrad getws pointer
+cdef object _sdpa_flash_grad_exec_ptr = None   # cached FlashAttentionScoreGrad exec pointer
+cdef object _sdpa_flash_grad_v2_getws_ptr = None  # cached FlashAttentionScoreGradV2 getws pointer
+cdef object _sdpa_flash_grad_v2_exec_ptr = None   # cached FlashAttentionScoreGradV2 exec pointer
 cdef object _addmm_getws_ptr = None      # cached Addmm getws pointer
 cdef object _addmm_exec_ptr = None       # cached Addmm exec pointer
 cdef object _reduce_sum_getws_ptr = None  # cached ReduceSum getws pointer
 cdef object _reduce_sum_exec_ptr = None   # cached ReduceSum exec pointer
+cdef object _layer_norm_getws_ptr = None  # cached LayerNorm getws pointer
+cdef object _layer_norm_exec_ptr = None   # cached LayerNorm exec pointer
+cdef object _layer_norm_backward_getws_ptr = None  # cached LayerNormBackward getws pointer
+cdef object _layer_norm_backward_exec_ptr = None   # cached LayerNormBackward exec pointer
 cdef object _bitwise_and_getws_ptr = None  # cached BitwiseAndTensor getws pointer
 cdef object _bitwise_and_exec_ptr = None   # cached BitwiseAndTensor exec pointer
 cdef object _bitwise_or_getws_ptr = None   # cached BitwiseOrTensor getws pointer
@@ -887,6 +935,11 @@ cdef bint _use_mul_pta_cache = True
 cdef bint _use_matmul_pta_cache = True
 cdef bint _use_addmm_pta_cache = True
 cdef bint _use_reduce_sum_pta_cache = True
+cdef bint _use_sdpa_flash_pta_cache = True
+cdef bint _use_sdpa_flash_grad_pta_cache = True
+# TODO: re-enable when CANN FlashAttentionScoreGradV2 avoids its ~45MB workspace
+# and multi-second latency on the default BNSD training shape.
+cdef bint _use_sdpa_flash_grad_v2 = False
 cdef bint _use_silu_pta_cache = True
 cdef bint _use_gelu_pta_cache = True
 cdef bint _use_silu_backward_pta_cache = True
@@ -934,6 +987,30 @@ cdef inline void _ensure_ffi_binary() except *:
         _pta_binary_begin_fn = _f.pta_begin_binary_cache_lookup
         _pta_unary_begin_fn = _f.pta_begin_unary_cache_lookup
         _pta_cache_end_fn = _f.pta_end_cache_lookup
+
+
+cdef inline void _ensure_ffi_sdpa_flash() except *:
+    global _sdpa_flash_getws_ptr, _sdpa_flash_exec_ptr
+    global _sdpa_flash_grad_getws_ptr, _sdpa_flash_grad_exec_ptr
+    global _sdpa_flash_grad_v2_getws_ptr, _sdpa_flash_grad_v2_exec_ptr
+    _ensure_ffi_binary()
+    if _sdpa_flash_getws_ptr is not None:
+        return
+    _sdpa_flash_getws_ptr, _sdpa_flash_exec_ptr = _ffi_ref.resolve_op("FlashAttentionScore")
+    _sdpa_flash_grad_getws_ptr, _sdpa_flash_grad_exec_ptr = _ffi_ref.resolve_op("FlashAttentionScoreGrad")
+    grad_v2 = _ffi_ref.resolve_op_optional("FlashAttentionScoreGradV2")
+    if grad_v2 is not None:
+        _sdpa_flash_grad_v2_getws_ptr, _sdpa_flash_grad_v2_exec_ptr = grad_v2
+
+
+cdef inline void _ensure_ffi_layer_norm() except *:
+    global _layer_norm_getws_ptr, _layer_norm_exec_ptr
+    global _layer_norm_backward_getws_ptr, _layer_norm_backward_exec_ptr
+    _ensure_ffi_binary()
+    if _layer_norm_getws_ptr is not None:
+        return
+    _layer_norm_getws_ptr, _layer_norm_exec_ptr = _ffi_ref.resolve_op("LayerNorm")
+    _layer_norm_backward_getws_ptr, _layer_norm_backward_exec_ptr = _ffi_ref.resolve_op("LayerNormBackward")
 
 
 cdef inline void _ensure_ffi_bitwise() except *:
@@ -1765,6 +1842,1421 @@ cpdef object fast_mul_exact(TensorImpl a, TensorImpl b):
     return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
 
 
+cdef inline tuple _shape_tuple_from_buf(const int64_t* buf, int ndim):
+    return tuple([buf[i] for i in range(ndim)])
+
+
+cdef inline bint _sdpa_flash_valid_layout(TensorImpl t, int64_t B, int64_t H, int64_t S, int64_t D) noexcept:
+    if t._ndim != 4:
+        return False
+    if t._c_shape[0] != B or t._c_shape[1] != H or t._c_shape[2] != S or t._c_shape[3] != D:
+        return False
+    if t._c_stride[3] != 1:
+        return False
+    return True
+
+
+cdef inline bint _sdpa_flash_valid_grad_layout(TensorImpl t, int64_t B, int64_t H, int64_t S, int64_t D) noexcept:
+    if t._ndim != 4:
+        return False
+    if t._c_shape[0] != B or t._c_shape[1] != H or t._c_shape[2] != S or t._c_shape[3] != D:
+        return False
+    if t._c_stride[3] == 1:
+        return True
+    return t._c_stride[0] == 0 and t._c_stride[1] == 0 and t._c_stride[2] == 0 and t._c_stride[3] == 0
+
+
+cdef inline object _run_executor(uintptr_t exec_ptr, uint64_t ws_size, uintptr_t executor,
+                                uintptr_t stream_raw, int dev_idx, object runtime,
+                                str op_name):
+    cdef object workspace_ptr
+    cdef int ret_i
+    if ws_size:
+        if dev_idx == 0:
+            _ensure_allocator_dev0()
+            workspace_ptr = _fast_allocator_dev0.malloc_large_cached(<int64_t>ws_size, _get_stream_obj_fast(dev_idx))
+        else:
+            workspace_ptr = _get_allocator_fn_ref(dev_idx).malloc(<int64_t>ws_size, stream=_get_stream_obj_fast(dev_idx))
+        try:
+            ret_i = _ffi_execute(exec_ptr, <uintptr_t>int(workspace_ptr), ws_size, executor, stream_raw)
+            if ret_i != 0:
+                raise RuntimeError(f"{op_name} execute failed: {ret_i}")
+        finally:
+            if runtime is None:
+                runtime = _get_runtime_fast(dev_idx)
+            runtime.defer_free(workspace_ptr)
+    else:
+        ret_i = _ffi_execute(exec_ptr, 0, 0, executor, stream_raw)
+        if ret_i != 0:
+            raise RuntimeError(f"{op_name} execute failed: {ret_i}")
+    return runtime
+
+
+cpdef object fast_layer_norm(object input, object normalized_shape, object weight=None, object bias=None, object eps=1e-5):
+    """Cython NPU LayerNorm forward wrapper with native ACLNN execution."""
+    _ensure_npu_imports()
+    _ensure_ffi_layer_norm()
+
+    if not isinstance(input, TensorImpl):
+        raise ValueError("fast_layer_norm expects a base TensorImpl input")
+    cdef TensorImpl x = <TensorImpl>input
+    if x._device_type != 1:
+        raise ValueError("fast_layer_norm expects an NPU tensor")
+    cdef TensorImpl w
+    cdef TensorImpl b
+    cdef bint has_weight = weight is not None
+    cdef bint has_bias = bias is not None
+    if has_weight:
+        if not isinstance(weight, TensorImpl):
+            raise ValueError("fast_layer_norm expects TensorImpl weight")
+        w = <TensorImpl>weight
+        if w._device_type != 1 or w._device_index != x._device_index or w._dtype_code != x._dtype_code:
+            raise ValueError("fast_layer_norm requires matching NPU weight")
+    if has_bias:
+        if not isinstance(bias, TensorImpl):
+            raise ValueError("fast_layer_norm expects TensorImpl bias")
+        b = <TensorImpl>bias
+        if b._device_type != 1 or b._device_index != x._device_index or b._dtype_code != x._dtype_code:
+            raise ValueError("fast_layer_norm requires matching NPU bias")
+
+    if isinstance(normalized_shape, int):
+        normalized_shape = (normalized_shape,)
+    else:
+        normalized_shape = tuple(normalized_shape)
+    cdef int norm_ndim = len(normalized_shape)
+    if norm_ndim <= 0 or norm_ndim > x._ndim:
+        raise ValueError("fast_layer_norm expects a non-empty normalized_shape suffix")
+    cdef int i
+    cdef int lead = x._ndim - norm_ndim
+    for i in range(norm_ndim):
+        if x._c_shape[lead + i] != <int64_t>normalized_shape[i]:
+            raise ValueError("fast_layer_norm normalized_shape does not match input suffix")
+    if has_weight:
+        if w._ndim != norm_ndim:
+            raise ValueError("fast_layer_norm weight rank mismatch")
+        for i in range(norm_ndim):
+            if w._c_shape[i] != <int64_t>normalized_shape[i]:
+                raise ValueError("fast_layer_norm weight shape mismatch")
+    if has_bias:
+        if b._ndim != norm_ndim:
+            raise ValueError("fast_layer_norm bias rank mismatch")
+        for i in range(norm_ndim):
+            if b._c_shape[i] != <int64_t>normalized_shape[i]:
+                raise ValueError("fast_layer_norm bias shape mismatch")
+
+    cdef int dev_idx = x._device_index
+    cdef object x_dev = x._device_obj
+    cdef object x_dtype = x._dtype_obj
+    cdef int dtype_code = _tensor_dtype_to_acl_code(x)
+    cdef int isize = x._itemsize
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef int64_t out_numel = x._c_numel
+    cdef int64_t out_alloc = max(out_numel, 1) * isize
+    cdef int64_t stats_numel = 1
+    cdef int64_t[MAX_NDIM] out_shape_buf
+    cdef int64_t[MAX_NDIM] out_stride_buf
+    cdef int64_t[MAX_NDIM] stats_shape_buf
+    cdef int64_t[MAX_NDIM] stats_stride_buf
+    for i in range(x._ndim):
+        out_shape_buf[i] = x._c_shape[i]
+    c_contiguous_stride(out_shape_buf, x._ndim, out_stride_buf)
+    for i in range(x._ndim):
+        if i < lead:
+            stats_shape_buf[i] = x._c_shape[i]
+        else:
+            stats_shape_buf[i] = 1
+        stats_numel = stats_numel * stats_shape_buf[i]
+    c_contiguous_stride(stats_shape_buf, x._ndim, stats_stride_buf)
+    cdef tuple out_shape = _shape_tuple_from_buf(out_shape_buf, x._ndim)
+    cdef tuple out_stride = _shape_tuple_from_buf(out_stride_buf, x._ndim)
+    cdef tuple stats_shape = _shape_tuple_from_buf(stats_shape_buf, x._ndim)
+    cdef tuple stats_stride = _shape_tuple_from_buf(stats_stride_buf, x._ndim)
+
+    cdef object out_ptr
+    cdef object mean_ptr
+    cdef object rstd_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(out_alloc, stream_obj)
+        mean_ptr = _fast_allocator_dev0.malloc_large_cached(max(stats_numel, 1) * 4, stream_obj)
+        rstd_ptr = _fast_allocator_dev0.malloc_large_cached(max(stats_numel, 1) * 4, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(out_alloc, stream=stream_obj)
+        mean_ptr = _get_allocator_fn_ref(dev_idx).malloc(max(stats_numel, 1) * 4, stream=stream_obj)
+        rstd_ptr = _get_allocator_fn_ref(dev_idx).malloc(max(stats_numel, 1) * 4, stream=stream_obj)
+
+    cdef uintptr_t input_ptr = <uintptr_t>x._storage._untyped._device_ptr + <uintptr_t>(x._c_offset * isize)
+    cdef uintptr_t weight_ptr = 0
+    cdef uintptr_t bias_ptr = 0
+    if has_weight:
+        weight_ptr = <uintptr_t>w._storage._untyped._device_ptr + <uintptr_t>(w._c_offset * w._itemsize)
+    if has_bias:
+        bias_ptr = <uintptr_t>b._storage._untyped._device_ptr + <uintptr_t>(b._c_offset * b._itemsize)
+    cdef uintptr_t out_raw = <uintptr_t>int(out_ptr)
+    cdef uintptr_t mean_raw = <uintptr_t>int(mean_ptr)
+    cdef uintptr_t rstd_raw = <uintptr_t>int(rstd_ptr)
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object runtime = None
+    try:
+        ws_size, executor = _ffi_layer_norm_op(
+            <uintptr_t>int(_layer_norm_getws_ptr),
+            <uintptr_t>int(_layer_norm_exec_ptr),
+            x._shape_tuple,
+            x._stride_tuple,
+            out_shape,
+            out_stride,
+            stats_shape,
+            stats_stride,
+            w._shape_tuple if has_weight else (),
+            w._stride_tuple if has_weight else (),
+            b._shape_tuple if has_bias else (),
+            b._stride_tuple if has_bias else (),
+            normalized_shape,
+            float(eps),
+            dtype_code,
+            2,
+            input_ptr,
+            weight_ptr,
+            bias_ptr,
+            out_raw,
+            mean_raw,
+            rstd_raw,
+            stream_raw,
+        )
+        runtime = _run_executor(<uintptr_t>int(_layer_norm_exec_ptr), ws_size, <uintptr_t>int(executor), stream_raw, dev_idx, runtime, "aclnnLayerNorm")
+        _defer_executor_handle(<uintptr_t>int(executor))
+        executor = 0
+    finally:
+        if executor:
+            _ffi_ref.destroy_executor(<uintptr_t>int(executor))
+
+    cdef object out = _make_npu_tensor_fast_large(out_raw, out_numel, x_dtype, x_dev, out_shape, out_stride, isize, dev_idx, x._dtype_code)
+    cdef object mean = _make_npu_tensor_fast_large(mean_raw, max(stats_numel, 1), _get_float32_dtype(), x_dev, stats_shape, stats_stride, 4, dev_idx, 0)
+    cdef object rstd = _make_npu_tensor_fast_large(rstd_raw, max(stats_numel, 1), _get_float32_dtype(), x_dev, stats_shape, stats_stride, 4, dev_idx, 0)
+    out._backward_data = {
+        "mean_ptr": mean_raw,
+        "rstd_ptr": rstd_raw,
+        "mean_storage": (<TensorImpl>mean)._storage,
+        "rstd_storage": (<TensorImpl>rstd)._storage,
+        "stats_shape": stats_shape,
+        "stats_stride": stats_stride,
+        "normalized_shape": normalized_shape,
+    }
+    return out
+
+
+cpdef object fast_layer_norm_backward(object grad, object saved_input, object backward_data,
+                                      object normalized_shape, object weight=None, object bias=None):
+    """Cython NPU LayerNorm backward wrapper around aclnnLayerNormBackward."""
+    _ensure_npu_imports()
+    _ensure_ffi_layer_norm()
+
+    if not (isinstance(grad, TensorImpl) and isinstance(saved_input, TensorImpl)):
+        raise ValueError("fast_layer_norm_backward expects TensorImpl grad/input")
+    cdef TensorImpl g = <TensorImpl>grad
+    cdef TensorImpl x = <TensorImpl>saved_input
+    if g._device_type != 1 or x._device_type != 1:
+        raise ValueError("fast_layer_norm_backward expects NPU tensors")
+    if g._device_index != x._device_index or g._dtype_code != x._dtype_code:
+        raise ValueError("fast_layer_norm_backward requires matching grad/input")
+    cdef TensorImpl w
+    cdef TensorImpl b
+    cdef bint need_weight = weight is not None and getattr(weight, "requires_grad", False)
+    cdef bint need_bias = bias is not None and getattr(bias, "requires_grad", False)
+    cdef bint has_weight = weight is not None
+    cdef bint has_bias = bias is not None
+    if has_weight:
+        if not isinstance(weight, TensorImpl):
+            raise ValueError("fast_layer_norm_backward expects TensorImpl weight")
+        w = <TensorImpl>weight
+        if w._device_type != 1 or w._device_index != x._device_index or w._dtype_code != x._dtype_code:
+            raise ValueError("fast_layer_norm_backward requires matching weight")
+    if has_bias:
+        if not isinstance(bias, TensorImpl):
+            raise ValueError("fast_layer_norm_backward expects TensorImpl bias")
+        b = <TensorImpl>bias
+        if b._device_type != 1 or b._device_index != x._device_index or b._dtype_code != x._dtype_code:
+            raise ValueError("fast_layer_norm_backward requires matching bias")
+    if isinstance(normalized_shape, int):
+        normalized_shape = (normalized_shape,)
+    else:
+        normalized_shape = tuple(normalized_shape)
+
+    cdef int dev_idx = x._device_index
+    cdef object x_dev = x._device_obj
+    cdef object x_dtype = x._dtype_obj
+    cdef int dtype_code = _tensor_dtype_to_acl_code(x)
+    cdef int isize = x._itemsize
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef tuple gi_shape = x._shape_tuple
+    cdef tuple gi_stride = _contiguous_stride_tuple(gi_shape)
+    cdef int64_t gi_numel = x._c_numel
+    cdef object gi_ptr
+    cdef object gw_ptr = None
+    cdef object gb_ptr = None
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        gi_ptr = _fast_allocator_dev0.malloc_large_cached(max(gi_numel, 1) * isize, stream_obj)
+        if need_weight:
+            gw_ptr = _fast_allocator_dev0.malloc_large_cached(max(w._c_numel, 1) * isize, stream_obj)
+        if need_bias:
+            gb_ptr = _fast_allocator_dev0.malloc_large_cached(max(b._c_numel, 1) * isize, stream_obj)
+    else:
+        gi_ptr = _get_allocator_fn_ref(dev_idx).malloc(max(gi_numel, 1) * isize, stream=stream_obj)
+        if need_weight:
+            gw_ptr = _get_allocator_fn_ref(dev_idx).malloc(max(w._c_numel, 1) * isize, stream=stream_obj)
+        if need_bias:
+            gb_ptr = _get_allocator_fn_ref(dev_idx).malloc(max(b._c_numel, 1) * isize, stream=stream_obj)
+
+    cdef uintptr_t grad_ptr = <uintptr_t>g._storage._untyped._device_ptr + <uintptr_t>(g._c_offset * g._itemsize)
+    cdef uintptr_t input_ptr_bwd = <uintptr_t>x._storage._untyped._device_ptr + <uintptr_t>(x._c_offset * isize)
+    cdef uintptr_t weight_ptr_bwd = 0
+    cdef uintptr_t bias_ptr_bwd = 0
+    if has_weight:
+        weight_ptr_bwd = <uintptr_t>w._storage._untyped._device_ptr + <uintptr_t>(w._c_offset * w._itemsize)
+    if has_bias:
+        bias_ptr_bwd = <uintptr_t>b._storage._untyped._device_ptr + <uintptr_t>(b._c_offset * b._itemsize)
+    cdef uintptr_t gi_raw = <uintptr_t>int(gi_ptr)
+    cdef uintptr_t gw_raw = <uintptr_t>int(gw_ptr) if need_weight else 0
+    cdef uintptr_t gb_raw = <uintptr_t>int(gb_ptr) if need_bias else 0
+    cdef uintptr_t mean_raw = <uintptr_t>backward_data["mean_ptr"]
+    cdef uintptr_t rstd_raw = <uintptr_t>backward_data["rstd_ptr"]
+    cdef object output_mask = (True, need_weight, need_bias)
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object runtime = None
+    try:
+        ws_size, executor = _ffi_ref.layer_norm_backward_op(
+            _layer_norm_backward_getws_ptr,
+            _layer_norm_backward_exec_ptr,
+            g._shape_tuple,
+            g._stride_tuple,
+            x._shape_tuple,
+            x._stride_tuple,
+            gi_shape,
+            gi_stride,
+            backward_data["stats_shape"],
+            backward_data["stats_stride"],
+            w._shape_tuple if has_weight else None,
+            w._stride_tuple if has_weight else None,
+            b._shape_tuple if has_bias else None,
+            b._stride_tuple if has_bias else None,
+            normalized_shape,
+            output_mask,
+            dtype_code,
+            0,
+            2,
+            grad_ptr,
+            input_ptr_bwd,
+            mean_raw,
+            rstd_raw,
+            weight_ptr_bwd,
+            bias_ptr_bwd,
+            gi_raw,
+            gw_raw,
+            gb_raw,
+            stream_raw,
+        )
+        runtime = _run_executor(<uintptr_t>int(_layer_norm_backward_exec_ptr), ws_size, <uintptr_t>int(executor), stream_raw, dev_idx, runtime, "aclnnLayerNormBackward")
+        _defer_executor_handle(<uintptr_t>int(executor))
+        executor = 0
+    finally:
+        if executor:
+            _ffi_ref.destroy_executor(<uintptr_t>int(executor))
+
+    cdef object grad_input = _make_npu_tensor_fast_large(gi_raw, max(gi_numel, 1), x_dtype, x_dev, gi_shape, gi_stride, isize, dev_idx, x._dtype_code)
+    cdef object grad_weight = None
+    cdef object grad_bias = None
+    if need_weight:
+        grad_weight = _make_npu_tensor_fast_large(gw_raw, max(w._c_numel, 1), x_dtype, x_dev, w._shape_tuple, w._stride_tuple, isize, dev_idx, x._dtype_code)
+    if need_bias:
+        grad_bias = _make_npu_tensor_fast_large(gb_raw, max(b._c_numel, 1), x_dtype, x_dev, b._shape_tuple, b._stride_tuple, isize, dev_idx, x._dtype_code)
+    return grad_input, grad_weight, grad_bias
+
+
+cpdef object fast_sdpa_flash_attention(object query, object key, object value, double scale_value):
+    """Fused NPU SDPA forward using ACLNN FlashAttentionScore for BNSD q/k/v."""
+    _ensure_npu_imports()
+    _ensure_ffi_sdpa_flash()
+
+    if not (isinstance(query, TensorImpl) and isinstance(key, TensorImpl) and isinstance(value, TensorImpl)):
+        raise ValueError("fast_sdpa_flash_attention expects base TensorImpl operands")
+    cdef TensorImpl q = <TensorImpl>query
+    cdef TensorImpl k = <TensorImpl>key
+    cdef TensorImpl v = <TensorImpl>value
+    if q._device_type != 1 or k._device_type != 1 or v._device_type != 1:
+        raise ValueError("fast_sdpa_flash_attention expects NPU tensors")
+    if q._dtype_code != k._dtype_code or q._dtype_code != v._dtype_code:
+        raise ValueError("fast_sdpa_flash_attention requires matching dtypes")
+    if q._device_index != k._device_index or q._device_index != v._device_index:
+        raise ValueError("fast_sdpa_flash_attention requires tensors on the same device")
+    if q._ndim != 4:
+        raise ValueError("fast_sdpa_flash_attention expects rank-4 BNSD query")
+
+    cdef int dev_idx = q._device_index
+    cdef object q_dev = q._device_obj
+    cdef object q_dtype = q._dtype_obj
+    cdef int dtype_code = _tensor_dtype_to_acl_code(q)
+    cdef int isize = q._itemsize
+    cdef int64_t B = q._c_shape[0]
+    cdef int64_t H = q._c_shape[1]
+    cdef int64_t Sq = q._c_shape[2]
+    cdef int64_t D = q._c_shape[3]
+    cdef int64_t Sk = k._c_shape[2]
+    if not _sdpa_flash_valid_layout(q, B, H, Sq, D):
+        raise ValueError("unsupported query layout for FlashAttentionScore")
+    if not _sdpa_flash_valid_layout(k, B, H, Sk, D):
+        raise ValueError("unsupported key layout for FlashAttentionScore")
+    if not _sdpa_flash_valid_layout(v, B, H, Sk, D):
+        raise ValueError("unsupported value layout for FlashAttentionScore")
+
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef int64_t out_numel = q._c_numel
+    cdef int64_t out_alloc = out_numel * isize
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(out_alloc, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(out_alloc, stream=stream_obj)
+
+    cdef int64_t out_shape_buf[MAX_NDIM]
+    cdef int64_t out_stride_buf[MAX_NDIM]
+    cdef int64_t aux_shape_buf[MAX_NDIM]
+    cdef int64_t aux_stride_buf[MAX_NDIM]
+    out_shape_buf[0] = B; out_shape_buf[1] = H; out_shape_buf[2] = Sq; out_shape_buf[3] = D
+    if q._c_stride[0] == H * Sq * D and q._c_stride[1] == D and q._c_stride[2] == H * D and q._c_stride[3] == 1:
+        # Preserve the dense BNSD view over a contiguous (B, S, H, D) buffer.
+        # This lets MHA merge heads back to (B, S, E) with a view instead of
+        # materializing an extra contiguous copy, while still allocating a compact
+        # output storage (the layout's storage footprint equals numel).
+        out_stride_buf[0] = q._c_stride[0]
+        out_stride_buf[1] = q._c_stride[1]
+        out_stride_buf[2] = q._c_stride[2]
+        out_stride_buf[3] = q._c_stride[3]
+    else:
+        c_contiguous_stride(out_shape_buf, 4, out_stride_buf)
+    aux_shape_buf[0] = B; aux_shape_buf[1] = H; aux_shape_buf[2] = Sq; aux_shape_buf[3] = 8
+    c_contiguous_stride(aux_shape_buf, 4, aux_stride_buf)
+    cdef tuple out_shape = _shape_tuple_from_buf(out_shape_buf, 4)
+    cdef tuple out_stride = _shape_tuple_from_buf(out_stride_buf, 4)
+    cdef tuple aux_shape = _shape_tuple_from_buf(aux_shape_buf, 4)
+    cdef tuple aux_stride = _shape_tuple_from_buf(aux_stride_buf, 4)
+    cdef int64_t aux_numel = B * H * Sq * 8
+    cdef int64_t aux_alloc = aux_numel * 4
+    cdef object softmax_max_ptr
+    cdef object softmax_sum_ptr
+    if dev_idx == 0:
+        softmax_max_ptr = _fast_allocator_dev0.malloc_large_cached(aux_alloc, stream_obj)
+        softmax_sum_ptr = _fast_allocator_dev0.malloc_large_cached(aux_alloc, stream_obj)
+    else:
+        softmax_max_ptr = _get_allocator_fn_ref(dev_idx).malloc(aux_alloc, stream=stream_obj)
+        softmax_sum_ptr = _get_allocator_fn_ref(dev_idx).malloc(aux_alloc, stream=stream_obj)
+
+    cdef uintptr_t q_ptr = <uintptr_t>q._storage._untyped._device_ptr + <uintptr_t>(q._c_offset * isize)
+    cdef uintptr_t k_ptr = <uintptr_t>k._storage._untyped._device_ptr + <uintptr_t>(k._c_offset * isize)
+    cdef uintptr_t v_ptr = <uintptr_t>v._storage._untyped._device_ptr + <uintptr_t>(v._c_offset * isize)
+    cdef uintptr_t o_ptr = <uintptr_t>int(out_ptr)
+    cdef uintptr_t sm_max_ptr = <uintptr_t>int(softmax_max_ptr)
+    cdef uintptr_t sm_sum_ptr = <uintptr_t>int(softmax_sum_ptr)
+    cdef uintptr_t flash_getws_raw = <uintptr_t>int(_sdpa_flash_getws_ptr)
+    cdef uintptr_t flash_exec_raw = <uintptr_t>int(_sdpa_flash_exec_ptr)
+
+    cdef void* q_t = NULL
+    cdef void* k_t = NULL
+    cdef void* v_t = NULL
+    cdef void* out_t = NULL
+    cdef void* softmax_max_t = NULL
+    cdef void* softmax_sum_t = NULL
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef bint pta_active = False
+    cdef uint64_t pta_ws_size = 0
+    cdef uintptr_t pta_executor = 0
+    cdef int pta_lookup = 0
+    cdef object workspace_ptr
+    cdef object ret_obj
+    cdef int ret_i
+    cdef int32_t ret
+    cdef object runtime = None
+    cdef char layout[5]
+    layout[0] = 66; layout[1] = 78; layout[2] = 83; layout[3] = 68; layout[4] = 0
+    if _use_sdpa_flash_pta_cache and _pta_cache_end_fn is not None:
+        pta_lookup = _ffi_pta_begin_sdpa_flash_cache_lookup_raw(
+            q._shape_tuple, q._stride_tuple,
+            k._shape_tuple, k._stride_tuple,
+            v._shape_tuple, v._stride_tuple,
+            out_shape, out_stride,
+            aux_shape, aux_stride,
+            dtype_code,
+            q_ptr, k_ptr, v_ptr, o_ptr, sm_max_ptr, sm_sum_ptr,
+            scale_value, 1.0, 2147483647, 2147483647, H, 0, 0,
+            stream_raw,
+            &pta_active,
+            &pta_ws_size,
+            &pta_executor)
+        if pta_lookup and pta_executor != 0:
+            try:
+                runtime = _run_executor(
+                    flash_exec_raw, pta_ws_size, pta_executor,
+                    stream_raw, dev_idx, runtime, "FlashAttentionScore")
+                return _make_npu_tensor_fast_large(o_ptr, out_numel, q_dtype, q_dev, out_shape, out_stride, isize, dev_idx, q._dtype_code), _make_npu_tensor_fast_large(sm_max_ptr, aux_numel, _get_float32_dtype(), q_dev, aux_shape, aux_stride, 4, dev_idx, 0), _make_npu_tensor_fast_large(sm_sum_ptr, aux_numel, _get_float32_dtype(), q_dev, aux_shape, aux_stride, 4, dev_idx, 0)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    with nogil:
+        q_t = _ffi_create_tensor_raw(q._c_shape, q._c_stride, <uint64_t>4, dtype_code, 2, <void*>q_ptr)
+        k_t = _ffi_create_tensor_raw(k._c_shape, k._c_stride, <uint64_t>4, dtype_code, 2, <void*>k_ptr)
+        v_t = _ffi_create_tensor_raw(v._c_shape, v._c_stride, <uint64_t>4, dtype_code, 2, <void*>v_ptr)
+        out_t = _ffi_create_tensor_raw(out_shape_buf, out_stride_buf, <uint64_t>4, dtype_code, 2, <void*>o_ptr)
+        softmax_max_t = _ffi_create_tensor_raw(aux_shape_buf, aux_stride_buf, <uint64_t>4, 0, 2, <void*>sm_max_ptr)
+        softmax_sum_t = _ffi_create_tensor_raw(aux_shape_buf, aux_stride_buf, <uint64_t>4, 0, 2, <void*>sm_sum_ptr)
+    if q_t == NULL or k_t == NULL or v_t == NULL or out_t == NULL or softmax_max_t == NULL or softmax_sum_t == NULL:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+            pta_active = False
+        raise RuntimeError("aclCreateTensor returned null")
+    try:
+        with nogil:
+            ret = (<FlashAttentionScoreGetWorkspaceSize_t>flash_getws_raw)(
+                q_t, k_t, v_t, NULL, NULL, NULL, NULL, NULL,
+                scale_value, 1.0, 2147483647, 2147483647, H, layout, 0, 0,
+                softmax_max_t, softmax_sum_t, NULL, out_t, &ws_size, &executor)
+        if ret != 0:
+            raise RuntimeError(f"FlashAttentionScore GetWorkspaceSize failed: {ret}")
+        runtime = _run_executor(flash_exec_raw, ws_size, <uintptr_t>executor, stream_raw, dev_idx, runtime, "FlashAttentionScore")
+        _defer_executor_handle(<uintptr_t>executor)
+        executor = NULL
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+        if executor != NULL:
+            _ffi_ref.destroy_executor(<uintptr_t>executor)
+        with nogil:
+            if q_t != NULL: _ffi_destroy_tensor_raw(q_t)
+            if k_t != NULL: _ffi_destroy_tensor_raw(k_t)
+            if v_t != NULL: _ffi_destroy_tensor_raw(v_t)
+            if out_t != NULL: _ffi_destroy_tensor_raw(out_t)
+            if softmax_max_t != NULL: _ffi_destroy_tensor_raw(softmax_max_t)
+            if softmax_sum_t != NULL: _ffi_destroy_tensor_raw(softmax_sum_t)
+
+    cdef object out = _make_npu_tensor_fast_large(o_ptr, out_numel, q_dtype, q_dev, out_shape, out_stride, isize, dev_idx, q._dtype_code)
+    cdef object softmax_max = _make_npu_tensor_fast_large(sm_max_ptr, aux_numel, _get_float32_dtype(), q_dev, aux_shape, aux_stride, 4, dev_idx, 0)
+    cdef object softmax_sum = _make_npu_tensor_fast_large(sm_sum_ptr, aux_numel, _get_float32_dtype(), q_dev, aux_shape, aux_stride, 4, dev_idx, 0)
+    return out, softmax_max, softmax_sum
+
+
+cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, object key, object value,
+                                                object output, object softmax_max, object softmax_sum,
+                                                double scale_value):
+    """Fused NPU SDPA backward using ACLNN FlashAttentionScoreGrad."""
+    _ensure_npu_imports()
+    _ensure_ffi_sdpa_flash()
+
+    if not (
+        isinstance(grad_out, TensorImpl)
+        and isinstance(query, TensorImpl)
+        and isinstance(key, TensorImpl)
+        and isinstance(value, TensorImpl)
+        and isinstance(output, TensorImpl)
+        and isinstance(softmax_max, TensorImpl)
+        and isinstance(softmax_sum, TensorImpl)
+    ):
+        raise ValueError("fast_sdpa_flash_attention_backward expects base TensorImpl operands")
+    cdef TensorImpl g = <TensorImpl>grad_out
+    cdef TensorImpl q = <TensorImpl>query
+    cdef TensorImpl k = <TensorImpl>key
+    cdef TensorImpl v = <TensorImpl>value
+    cdef TensorImpl o = <TensorImpl>output
+    cdef TensorImpl sm_max = <TensorImpl>softmax_max
+    cdef TensorImpl sm_sum = <TensorImpl>softmax_sum
+
+    if q._device_type != 1 or k._device_type != 1 or v._device_type != 1 or g._device_type != 1:
+        raise ValueError("fast_sdpa_flash_attention_backward expects NPU tensors")
+    if q._dtype_code != k._dtype_code or q._dtype_code != v._dtype_code or q._dtype_code != g._dtype_code:
+        raise ValueError("fast_sdpa_flash_attention_backward requires matching q/k/v/grad dtypes")
+    if q._device_index != k._device_index or q._device_index != v._device_index or q._device_index != g._device_index:
+        raise ValueError("fast_sdpa_flash_attention_backward requires tensors on the same device")
+    cdef int dev_idx = q._device_index
+    cdef object q_dev = q._device_obj
+    cdef object q_dtype = q._dtype_obj
+    cdef int dtype_code = _tensor_dtype_to_acl_code(q)
+    cdef int isize = q._itemsize
+    cdef int64_t B = q._c_shape[0]
+    cdef int64_t H = q._c_shape[1]
+    cdef int64_t Sq = q._c_shape[2]
+    cdef int64_t D = q._c_shape[3]
+    cdef int64_t Sk = k._c_shape[2]
+    if not _sdpa_flash_valid_layout(q, B, H, Sq, D):
+        raise ValueError("unsupported query layout for FlashAttentionScoreGrad")
+    if not _sdpa_flash_valid_layout(k, B, H, Sk, D):
+        raise ValueError("unsupported key layout for FlashAttentionScoreGrad")
+    if not _sdpa_flash_valid_layout(v, B, H, Sk, D):
+        raise ValueError("unsupported value layout for FlashAttentionScoreGrad")
+    if not _sdpa_flash_valid_grad_layout(g, B, H, Sq, D):
+        raise ValueError("unsupported grad layout for FlashAttentionScoreGrad")
+
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef int64_t q_numel = q._c_numel
+    cdef int64_t kv_numel = k._c_numel
+    cdef int64_t q_alloc = q_numel * isize
+    cdef int64_t kv_alloc = kv_numel * isize
+    cdef object dq_ptr
+    cdef object dk_ptr
+    cdef object dv_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        dq_ptr = _fast_allocator_dev0.malloc_large_cached(q_alloc, stream_obj)
+        dk_ptr = _fast_allocator_dev0.malloc_large_cached(kv_alloc, stream_obj)
+        dv_ptr = _fast_allocator_dev0.malloc_large_cached(kv_alloc, stream_obj)
+    else:
+        dq_ptr = _get_allocator_fn_ref(dev_idx).malloc(q_alloc, stream=stream_obj)
+        dk_ptr = _get_allocator_fn_ref(dev_idx).malloc(kv_alloc, stream=stream_obj)
+        dv_ptr = _get_allocator_fn_ref(dev_idx).malloc(kv_alloc, stream=stream_obj)
+
+    cdef int64_t q_shape_buf[MAX_NDIM]
+    cdef int64_t q_stride_buf[MAX_NDIM]
+    cdef int64_t kv_shape_buf[MAX_NDIM]
+    cdef int64_t kv_stride_buf[MAX_NDIM]
+    cdef int64_t softmax_empty_shape_buf[1]
+    cdef int64_t softmax_empty_stride_buf[1]
+    q_shape_buf[0] = B; q_shape_buf[1] = H; q_shape_buf[2] = Sq; q_shape_buf[3] = D
+    c_contiguous_stride(q_shape_buf, 4, q_stride_buf)
+    kv_shape_buf[0] = B; kv_shape_buf[1] = H; kv_shape_buf[2] = Sk; kv_shape_buf[3] = D
+    c_contiguous_stride(kv_shape_buf, 4, kv_stride_buf)
+    softmax_empty_shape_buf[0] = 0
+    softmax_empty_stride_buf[0] = 1
+    cdef tuple q_shape = _shape_tuple_from_buf(q_shape_buf, 4)
+    cdef tuple q_stride = _shape_tuple_from_buf(q_stride_buf, 4)
+    cdef tuple kv_shape = _shape_tuple_from_buf(kv_shape_buf, 4)
+    cdef tuple kv_stride = _shape_tuple_from_buf(kv_stride_buf, 4)
+
+    cdef uintptr_t g_ptr = <uintptr_t>g._storage._untyped._device_ptr + <uintptr_t>(g._c_offset * isize)
+    cdef uintptr_t q_ptr = <uintptr_t>q._storage._untyped._device_ptr + <uintptr_t>(q._c_offset * isize)
+    cdef uintptr_t k_ptr = <uintptr_t>k._storage._untyped._device_ptr + <uintptr_t>(k._c_offset * isize)
+    cdef uintptr_t v_ptr = <uintptr_t>v._storage._untyped._device_ptr + <uintptr_t>(v._c_offset * isize)
+    cdef uintptr_t o_ptr = <uintptr_t>o._storage._untyped._device_ptr + <uintptr_t>(o._c_offset * isize)
+    cdef uintptr_t sm_max_ptr = <uintptr_t>sm_max._storage._untyped._device_ptr + <uintptr_t>(sm_max._c_offset * sm_max._itemsize)
+    cdef uintptr_t sm_sum_ptr = <uintptr_t>sm_sum._storage._untyped._device_ptr + <uintptr_t>(sm_sum._c_offset * sm_sum._itemsize)
+    cdef uintptr_t dq_raw = <uintptr_t>int(dq_ptr)
+    cdef uintptr_t dk_raw = <uintptr_t>int(dk_ptr)
+    cdef uintptr_t dv_raw = <uintptr_t>int(dv_ptr)
+    cdef uintptr_t flash_grad_getws_raw
+    cdef uintptr_t flash_grad_exec_raw
+    cdef bint use_grad_v2 = _use_sdpa_flash_grad_v2 and _sdpa_flash_grad_v2_getws_ptr is not None
+    cdef int64_t pse_type = 1
+    if use_grad_v2:
+        flash_grad_getws_raw = <uintptr_t>int(_sdpa_flash_grad_v2_getws_ptr)
+        flash_grad_exec_raw = <uintptr_t>int(_sdpa_flash_grad_v2_exec_ptr)
+    else:
+        flash_grad_getws_raw = <uintptr_t>int(_sdpa_flash_grad_getws_ptr)
+        flash_grad_exec_raw = <uintptr_t>int(_sdpa_flash_grad_exec_ptr)
+
+    cdef void* q_t = NULL
+    cdef void* k_t = NULL
+    cdef void* v_t = NULL
+    cdef void* g_t = NULL
+    cdef void* o_t = NULL
+    cdef void* softmax_max_t = NULL
+    cdef void* softmax_sum_t = NULL
+    cdef void* softmax_in_t = NULL
+    cdef void* dq_t = NULL
+    cdef void* dk_t = NULL
+    cdef void* dv_t = NULL
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef bint pta_active = False
+    cdef uint64_t pta_ws_size = 0
+    cdef uintptr_t pta_executor = 0
+    cdef int pta_lookup = 0
+    cdef object workspace_ptr
+    cdef object ret_obj
+    cdef int ret_i
+    cdef int32_t ret
+    cdef object runtime = None
+    cdef char layout[5]
+    layout[0] = 66; layout[1] = 78; layout[2] = 83; layout[3] = 68; layout[4] = 0
+    if _use_sdpa_flash_grad_pta_cache and _pta_cache_end_fn is not None:
+        if use_grad_v2:
+            pta_lookup = _ffi_pta_begin_sdpa_flash_grad_v2_cache_lookup_raw(
+                q._shape_tuple, q._stride_tuple,
+                k._shape_tuple, k._stride_tuple,
+                v._shape_tuple, v._stride_tuple,
+                g._shape_tuple, g._stride_tuple,
+                o._shape_tuple, o._stride_tuple,
+                sm_max._shape_tuple, sm_max._stride_tuple,
+                q_shape, q_stride,
+                kv_shape, kv_stride,
+                kv_shape, kv_stride,
+                dtype_code,
+                q_ptr, k_ptr, v_ptr, g_ptr, o_ptr, sm_max_ptr, sm_sum_ptr,
+                dq_raw, dk_raw, dv_raw,
+                scale_value, 1.0, 2147483647, 2147483647, H, 0, 0, pse_type,
+                stream_raw,
+                &pta_active,
+                &pta_ws_size,
+                &pta_executor)
+        else:
+            pta_lookup = _ffi_pta_begin_sdpa_flash_grad_cache_lookup_raw(
+                q._shape_tuple, q._stride_tuple,
+                k._shape_tuple, k._stride_tuple,
+                v._shape_tuple, v._stride_tuple,
+                g._shape_tuple, g._stride_tuple,
+                o._shape_tuple, o._stride_tuple,
+                sm_max._shape_tuple, sm_max._stride_tuple,
+                q_shape, q_stride,
+                kv_shape, kv_stride,
+                kv_shape, kv_stride,
+                dtype_code,
+                q_ptr, k_ptr, v_ptr, g_ptr, o_ptr, sm_max_ptr, sm_sum_ptr,
+                dq_raw, dk_raw, dv_raw,
+                scale_value, 1.0, 2147483647, 2147483647, H, 0, 0,
+                stream_raw,
+                &pta_active,
+                &pta_ws_size,
+                &pta_executor)
+        if pta_lookup and pta_executor != 0:
+            try:
+                runtime = _run_executor(
+                    flash_grad_exec_raw, pta_ws_size, pta_executor,
+                    stream_raw, dev_idx, runtime, "FlashAttentionScoreGrad")
+                return _make_npu_tensor_fast_large(dq_raw, q_numel, q_dtype, q_dev, q_shape, q_stride, isize, dev_idx, q._dtype_code), _make_npu_tensor_fast_large(dk_raw, kv_numel, q_dtype, q_dev, kv_shape, kv_stride, isize, dev_idx, q._dtype_code), _make_npu_tensor_fast_large(dv_raw, kv_numel, q_dtype, q_dev, kv_shape, kv_stride, isize, dev_idx, q._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    with nogil:
+        q_t = _ffi_create_tensor_raw(q._c_shape, q._c_stride, <uint64_t>4, dtype_code, 2, <void*>q_ptr)
+        k_t = _ffi_create_tensor_raw(k._c_shape, k._c_stride, <uint64_t>4, dtype_code, 2, <void*>k_ptr)
+        v_t = _ffi_create_tensor_raw(v._c_shape, v._c_stride, <uint64_t>4, dtype_code, 2, <void*>v_ptr)
+        g_t = _ffi_create_tensor_raw(g._c_shape, g._c_stride, <uint64_t>4, dtype_code, 2, <void*>g_ptr)
+        o_t = _ffi_create_tensor_raw(o._c_shape, o._c_stride, <uint64_t>4, dtype_code, 2, <void*>o_ptr)
+        softmax_max_t = _ffi_create_tensor_raw(sm_max._c_shape, sm_max._c_stride, <uint64_t>4, 0, 2, <void*>sm_max_ptr)
+        softmax_sum_t = _ffi_create_tensor_raw(sm_sum._c_shape, sm_sum._c_stride, <uint64_t>4, 0, 2, <void*>sm_sum_ptr)
+        if use_grad_v2:
+            softmax_in_t = _ffi_create_tensor_raw(softmax_empty_shape_buf, softmax_empty_stride_buf, <uint64_t>1, dtype_code, 2, <void*>q_ptr)
+        dq_t = _ffi_create_tensor_raw(q_shape_buf, q_stride_buf, <uint64_t>4, dtype_code, 2, <void*>dq_raw)
+        dk_t = _ffi_create_tensor_raw(kv_shape_buf, kv_stride_buf, <uint64_t>4, dtype_code, 2, <void*>dk_raw)
+        dv_t = _ffi_create_tensor_raw(kv_shape_buf, kv_stride_buf, <uint64_t>4, dtype_code, 2, <void*>dv_raw)
+    if q_t == NULL or k_t == NULL or v_t == NULL or g_t == NULL or o_t == NULL or softmax_max_t == NULL or softmax_sum_t == NULL or dq_t == NULL or dk_t == NULL or dv_t == NULL or (use_grad_v2 and softmax_in_t == NULL):
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+            pta_active = False
+        raise RuntimeError("aclCreateTensor returned null")
+    try:
+        with nogil:
+            if use_grad_v2:
+                ret = (<FlashAttentionScoreGradV2GetWorkspaceSize_t>flash_grad_getws_raw)(
+                    q_t, k_t, v_t, g_t, NULL, NULL, NULL, NULL,
+                    softmax_max_t, softmax_sum_t, softmax_in_t, o_t, NULL, NULL, NULL,
+                    scale_value, 1.0, 2147483647, 2147483647, H, layout, 0, 0, pse_type,
+                    dq_t, dk_t, dv_t, NULL, &ws_size, &executor)
+            else:
+                ret = (<FlashAttentionScoreGradGetWorkspaceSize_t>flash_grad_getws_raw)(
+                    q_t, k_t, v_t, g_t, NULL, NULL, NULL, NULL,
+                    softmax_max_t, softmax_sum_t, NULL, o_t, NULL,
+                    scale_value, 1.0, 2147483647, 2147483647, H, layout, 0, 0,
+                    dq_t, dk_t, dv_t, NULL, &ws_size, &executor)
+        if ret != 0:
+            raise RuntimeError(f"FlashAttentionScoreGrad GetWorkspaceSize failed: {ret}")
+        runtime = _run_executor(flash_grad_exec_raw, ws_size, <uintptr_t>executor, stream_raw, dev_idx, runtime, "FlashAttentionScoreGrad")
+        _defer_executor_handle(<uintptr_t>executor)
+        executor = NULL
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+        if executor != NULL:
+            _ffi_ref.destroy_executor(<uintptr_t>executor)
+        with nogil:
+            if q_t != NULL: _ffi_destroy_tensor_raw(q_t)
+            if k_t != NULL: _ffi_destroy_tensor_raw(k_t)
+            if v_t != NULL: _ffi_destroy_tensor_raw(v_t)
+            if g_t != NULL: _ffi_destroy_tensor_raw(g_t)
+            if o_t != NULL: _ffi_destroy_tensor_raw(o_t)
+            if softmax_max_t != NULL: _ffi_destroy_tensor_raw(softmax_max_t)
+            if softmax_sum_t != NULL: _ffi_destroy_tensor_raw(softmax_sum_t)
+            if softmax_in_t != NULL: _ffi_destroy_tensor_raw(softmax_in_t)
+            if dq_t != NULL: _ffi_destroy_tensor_raw(dq_t)
+            if dk_t != NULL: _ffi_destroy_tensor_raw(dk_t)
+            if dv_t != NULL: _ffi_destroy_tensor_raw(dv_t)
+
+    cdef object dq = _make_npu_tensor_fast_large(dq_raw, q_numel, q_dtype, q_dev, q_shape, q_stride, isize, dev_idx, q._dtype_code)
+    cdef object dk = _make_npu_tensor_fast_large(dk_raw, kv_numel, q_dtype, q_dev, kv_shape, kv_stride, isize, dev_idx, q._dtype_code)
+    cdef object dv = _make_npu_tensor_fast_large(dv_raw, kv_numel, q_dtype, q_dev, kv_shape, kv_stride, isize, dev_idx, q._dtype_code)
+    return dq, dk, dv
+
+
+cpdef object fast_packed_qkv_projection_forward(object packed, int64_t embed,
+                                                int64_t heads, bint batch_first):
+    """Split packed self-attention projection into compact BNSD Q/K/V tensors."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    if not isinstance(packed, TensorImpl):
+        return None
+    cdef TensorImpl p = <TensorImpl>packed
+    if p._device_type != 1:
+        return None
+    if p._ndim != 3:
+        raise ValueError("fast_packed_qkv_projection_forward expects rank-3 packed input")
+    if heads <= 0 or embed <= 0 or embed % heads != 0:
+        raise ValueError("invalid packed QKV embed/head metadata")
+    if p._c_shape[2] != 3 * embed:
+        raise ValueError("packed QKV last dimension must equal 3 * embed_dim")
+
+    cdef int64_t B
+    cdef int64_t S
+    cdef int64_t D = embed // heads
+    cdef int64_t raw_numel
+    cdef int64_t alloc_size
+    cdef int dev_idx = p._device_index
+    cdef int isize = p._itemsize
+    cdef int dtype_code = _tensor_dtype_to_acl_code(p)
+    cdef object p_dev = p._device_obj
+    cdef object p_dtype = p._dtype_obj
+    cdef object raw_shape
+    cdef object raw_stride
+    cdef object bnsd_shape
+    cdef object bnsd_stride
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef object q_ptr
+    cdef object k_ptr
+    cdef object v_ptr
+    cdef uintptr_t q_raw
+    cdef uintptr_t k_raw
+    cdef uintptr_t v_raw
+    cdef uintptr_t p_raw
+    cdef object split_getws_ptr
+    cdef object split_exec_ptr
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+    cdef object runtime = None
+    cdef object split_sizes
+    cdef object out_ptrs
+    cdef object out_shapes
+    cdef object out_strides
+    cdef object pta_state
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int ret_i
+
+    if batch_first:
+        B = p._c_shape[0]
+        S = p._c_shape[1]
+        raw_shape = (B, S, embed)
+        raw_stride = (S * embed, embed, 1)
+        bnsd_shape = (B, heads, S, D)
+        bnsd_stride = (S * embed, D, embed, 1)
+    else:
+        S = p._c_shape[0]
+        B = p._c_shape[1]
+        raw_shape = (S, B, embed)
+        raw_stride = (B * embed, embed, 1)
+        bnsd_shape = (B, heads, S, D)
+        bnsd_stride = (embed, D, B * embed, 1)
+
+    raw_numel = B * S * embed
+    alloc_size = raw_numel * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        q_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+        k_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+        v_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        q_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+        k_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+        v_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    q_raw = <uintptr_t>int(q_ptr)
+    k_raw = <uintptr_t>int(k_ptr)
+    v_raw = <uintptr_t>int(v_ptr)
+    p_raw = <uintptr_t>p._storage._untyped._device_ptr + <uintptr_t>(p._c_offset * isize)
+    split_getws_ptr, split_exec_ptr = _ffi_ref.resolve_op("SplitWithSize")
+    split_sizes = (embed, embed, embed)
+    out_ptrs = (q_raw, k_raw, v_raw)
+    out_shapes = (raw_shape, raw_shape, raw_shape)
+    out_strides = (raw_stride, raw_stride, raw_stride)
+    try:
+        pta_state = _ffi_pta_begin_split_with_size_cache_lookup(
+            p._shape_tuple, p._stride_tuple,
+            split_sizes,
+            out_ptrs,
+            out_shapes,
+            out_strides,
+            2,
+            dtype_code,
+            p_raw,
+            stream_raw,
+        )
+        if pta_state is not None:
+            pta_active = bool(pta_state[0])
+            ws_size_raw = <uint64_t>int(pta_state[1])
+            executor_raw = <uintptr_t>int(pta_state[2])
+            if executor_raw != 0:
+                runtime = _run_executor(
+                    <uintptr_t>int(split_exec_ptr), ws_size_raw, executor_raw,
+                    stream_raw, dev_idx, runtime, "aclnnSplitWithSize")
+                return (
+                    _make_npu_tensor_fast_large(q_raw, raw_numel, p_dtype, p_dev, bnsd_shape, bnsd_stride, isize, dev_idx, p._dtype_code),
+                    _make_npu_tensor_fast_large(k_raw, raw_numel, p_dtype, p_dev, bnsd_shape, bnsd_stride, isize, dev_idx, p._dtype_code),
+                    _make_npu_tensor_fast_large(v_raw, raw_numel, p_dtype, p_dev, bnsd_shape, bnsd_stride, isize, dev_idx, p._dtype_code),
+                )
+
+        ws_size, executor = _ffi_split_with_size_op(
+            split_getws_ptr, split_exec_ptr,
+            p._shape_tuple, p._stride_tuple,
+            split_sizes,
+            out_ptrs,
+            out_shapes,
+            out_strides,
+            2,
+            dtype_code, 2,
+            p_raw,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret_i = _ffi_execute(split_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size, executor, stream_raw)
+                if ret_i != 0:
+                    raise RuntimeError(f"aclnnSplitWithSize execute failed: {ret_i}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+    except Exception:
+        _get_allocator_fn_ref(dev_idx).free(<int64_t>q_raw, stream=stream_obj)
+        _get_allocator_fn_ref(dev_idx).free(<int64_t>k_raw, stream=stream_obj)
+        _get_allocator_fn_ref(dev_idx).free(<int64_t>v_raw, stream=stream_obj)
+        raise
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+        if executor:
+            _defer_executor_fn(executor)
+
+    return (
+        _make_npu_tensor_fast_large(q_raw, raw_numel, p_dtype, p_dev, bnsd_shape, bnsd_stride, isize, dev_idx, p._dtype_code),
+        _make_npu_tensor_fast_large(k_raw, raw_numel, p_dtype, p_dev, bnsd_shape, bnsd_stride, isize, dev_idx, p._dtype_code),
+        _make_npu_tensor_fast_large(v_raw, raw_numel, p_dtype, p_dev, bnsd_shape, bnsd_stride, isize, dev_idx, p._dtype_code),
+    )
+
+
+cpdef object fast_packed_qkv_projection_backward(object grad_q, object grad_k, object grad_v,
+                                                 object input_shape, int64_t embed,
+                                                 int64_t heads, bint batch_first):
+    """Pack native BNSD SDPA grads back into the packed QKV projection gradient."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    if not (isinstance(grad_q, TensorImpl) and isinstance(grad_k, TensorImpl) and isinstance(grad_v, TensorImpl)):
+        raise ValueError("fast_packed_qkv_projection_backward expects base TensorImpl grads")
+    cdef TensorImpl q = <TensorImpl>grad_q
+    cdef TensorImpl k = <TensorImpl>grad_k
+    cdef TensorImpl v = <TensorImpl>grad_v
+    cdef int dev_idx = q._device_index
+    cdef object q_dev = q._device_obj
+    cdef object q_dtype = q._dtype_obj
+    cdef int dtype_code = _tensor_dtype_to_acl_code(q)
+    cdef int isize = q._itemsize
+    cdef int64_t B
+    cdef int64_t H
+    cdef int64_t S
+    cdef int64_t D
+    cdef int64_t packed_width
+    cdef int64_t out_numel
+    cdef int64_t alloc_size
+    cdef tuple out_shape
+    cdef tuple out_stride
+    cdef tuple source_shape
+    cdef tuple source_stride
+    cdef tuple stack_shape
+    cdef tuple stack_stride
+    cdef object stream_obj
+    cdef uintptr_t stream_raw
+    cdef object out_ptr
+    cdef uintptr_t out_raw
+    cdef uintptr_t q_ptr
+    cdef uintptr_t k_ptr
+    cdef uintptr_t v_ptr
+    cdef object stack_getws_ptr
+    cdef object stack_exec_ptr
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object workspace_ptr
+    cdef object ret
+    cdef int ret_i
+    cdef object runtime = None
+    cdef object tensor_ptrs
+    cdef object source_shapes
+    cdef object source_strides
+    cdef object pta_state
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+
+    if q._device_type != 1 or k._device_type != 1 or v._device_type != 1:
+        raise ValueError("fast_packed_qkv_projection_backward expects NPU tensors")
+    if q._device_index != k._device_index or q._device_index != v._device_index:
+        raise ValueError("fast_packed_qkv_projection_backward requires tensors on the same device")
+    if q._dtype_code != k._dtype_code or q._dtype_code != v._dtype_code:
+        raise ValueError("fast_packed_qkv_projection_backward requires matching dtypes")
+    if q._ndim != 4 or k._ndim != 4 or v._ndim != 4:
+        raise ValueError("fast_packed_qkv_projection_backward expects rank-4 BNSD grads")
+
+    B = q._c_shape[0]
+    H = q._c_shape[1]
+    S = q._c_shape[2]
+    D = q._c_shape[3]
+    if k._c_shape[0] != B or k._c_shape[1] != H or k._c_shape[2] != S or k._c_shape[3] != D:
+        raise ValueError("fast_packed_qkv_projection_backward requires matching q/k shapes")
+    if v._c_shape[0] != B or v._c_shape[1] != H or v._c_shape[2] != S or v._c_shape[3] != D:
+        raise ValueError("fast_packed_qkv_projection_backward requires matching q/v shapes")
+    if heads != H or embed != H * D:
+        raise ValueError("fast_packed_qkv_projection_backward metadata does not match grad shape")
+    if not isinstance(input_shape, tuple) or len(input_shape) != 3:
+        raise ValueError("fast_packed_qkv_projection_backward expects packed rank-3 input shape")
+
+    packed_width = 3 * embed
+    if batch_first:
+        if input_shape[0] != B or input_shape[1] != S or input_shape[2] != packed_width:
+            raise ValueError("fast_packed_qkv_projection_backward batch-first shape mismatch")
+        source_shape = (B, S, H, D)
+        source_stride = (q._c_stride[0], q._c_stride[2], q._c_stride[1], q._c_stride[3])
+        stack_shape = (B, S, 3, H, D)
+        stack_stride = (S * 3 * H * D, 3 * H * D, H * D, D, 1)
+        out_shape = (B, S, packed_width)
+        out_stride = (S * packed_width, packed_width, 1)
+    else:
+        if input_shape[0] != S or input_shape[1] != B or input_shape[2] != packed_width:
+            raise ValueError("fast_packed_qkv_projection_backward sequence-first shape mismatch")
+        source_shape = (S, B, H, D)
+        source_stride = (q._c_stride[2], q._c_stride[0], q._c_stride[1], q._c_stride[3])
+        stack_shape = (S, B, 3, H, D)
+        stack_stride = (B * 3 * H * D, 3 * H * D, H * D, D, 1)
+        out_shape = (S, B, packed_width)
+        out_stride = (B * packed_width, packed_width, 1)
+
+    out_numel = B * S * packed_width
+    alloc_size = out_numel * isize
+    stream_obj = _get_stream_obj_fast(dev_idx)
+    stream_raw = _get_stream_raw_fast(dev_idx)
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+    out_raw = <uintptr_t>int(out_ptr)
+    q_ptr = <uintptr_t>q._storage._untyped._device_ptr + <uintptr_t>(q._c_offset * isize)
+    k_ptr = <uintptr_t>k._storage._untyped._device_ptr + <uintptr_t>(k._c_offset * isize)
+    v_ptr = <uintptr_t>v._storage._untyped._device_ptr + <uintptr_t>(v._c_offset * isize)
+    stack_getws_ptr, stack_exec_ptr = _ffi_ref.resolve_op("Stack")
+    tensor_ptrs = (q_ptr, k_ptr, v_ptr)
+    source_shapes = (source_shape, source_shape, source_shape)
+    source_strides = (source_stride, source_stride, source_stride)
+    try:
+        pta_state = _ffi_pta_begin_stack_cache_lookup(
+            tensor_ptrs,
+            source_shapes,
+            source_strides,
+            2,
+            stack_shape, stack_stride,
+            dtype_code,
+            out_raw,
+            stream_raw,
+        )
+        if pta_state is not None:
+            pta_active = bool(pta_state[0])
+            ws_size_raw = <uint64_t>int(pta_state[1])
+            executor_raw = <uintptr_t>int(pta_state[2])
+            if executor_raw != 0:
+                runtime = _run_executor(
+                    <uintptr_t>int(stack_exec_ptr), ws_size_raw, executor_raw,
+                    stream_raw, dev_idx, runtime, "aclnnStack")
+                return _make_npu_tensor_fast_large(
+                    out_raw, out_numel, q_dtype, q_dev, out_shape, out_stride,
+                    isize, dev_idx, q._dtype_code)
+
+        ws_size, executor = _ffi_ref.tensor_list_axis_op(
+            stack_getws_ptr, stack_exec_ptr,
+            tensor_ptrs,
+            source_shapes,
+            source_strides,
+            (q_dtype, q_dtype, q_dtype),
+            2,
+            stack_shape, stack_stride,
+            dtype_code, 2,
+            out_raw,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret_i = _ffi_execute(stack_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size, executor, stream_raw)
+                if ret_i != 0:
+                    raise RuntimeError(f"aclnnStack execute failed: {ret_i}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+    except Exception:
+        _get_allocator_fn_ref(dev_idx).free(<int64_t>out_raw, stream=stream_obj)
+        raise
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+        if executor:
+            _defer_executor_fn(executor)
+    return _make_npu_tensor_fast_large(out_raw, out_numel, q_dtype, q_dev, out_shape, out_stride, isize, dev_idx, q._dtype_code)
+
+
+
+cpdef object fast_sdpa_flash_attention_backward_packed_qkv(object grad_out, object query, object key, object value,
+                                                           object output, object softmax_max, object softmax_sum,
+                                                           double scale_value, object input_shape,
+                                                           int64_t embed, int64_t heads, bint batch_first):
+    """Fused NPU SDPA backward writing dq/dk/dv directly into one packed-QKV grad buffer."""
+    cdef TensorImpl g
+    cdef TensorImpl q
+    cdef TensorImpl k
+    cdef TensorImpl v
+    cdef TensorImpl o
+    cdef TensorImpl sm_max
+    cdef TensorImpl sm_sum
+    cdef int dev_idx
+    cdef object q_dev
+    cdef object q_dtype
+    cdef int dtype_code
+    cdef int isize
+    cdef int64_t B
+    cdef int64_t H
+    cdef int64_t Sq
+    cdef int64_t D
+    cdef int64_t Sk
+    cdef int64_t packed_width
+    cdef int64_t packed_numel
+    cdef int64_t packed_alloc
+    cdef object packed_shape
+    cdef object packed_stride
+    cdef object grad_shape
+    cdef object grad_stride
+    cdef object stream_obj
+    cdef uintptr_t stream_raw
+    cdef object packed_ptr
+    cdef uintptr_t packed_raw
+    cdef uintptr_t dq_raw
+    cdef uintptr_t dk_raw
+    cdef uintptr_t dv_raw
+    cdef uintptr_t g_ptr
+    cdef uintptr_t q_ptr
+    cdef uintptr_t k_ptr
+    cdef uintptr_t v_ptr
+    cdef uintptr_t o_ptr
+    cdef uintptr_t sm_max_ptr
+    cdef uintptr_t sm_sum_ptr
+    cdef uintptr_t flash_grad_getws_raw
+    cdef uintptr_t flash_grad_exec_raw
+    cdef bint use_grad_v2
+    cdef int64_t pse_type = 1
+    cdef int64_t q_shape_buf[MAX_NDIM]
+    cdef int64_t q_stride_buf[MAX_NDIM]
+    cdef int64_t packed_storage_shape_buf[3]
+    cdef int64_t softmax_empty_shape_buf[1]
+    cdef int64_t softmax_empty_stride_buf[1]
+    cdef void* q_t = NULL
+    cdef void* k_t = NULL
+    cdef void* v_t = NULL
+    cdef void* g_t = NULL
+    cdef void* o_t = NULL
+    cdef void* softmax_max_t = NULL
+    cdef void* softmax_sum_t = NULL
+    cdef void* softmax_in_t = NULL
+    cdef void* dq_t = NULL
+    cdef void* dk_t = NULL
+    cdef void* dv_t = NULL
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef bint pta_active = False
+    cdef uint64_t pta_ws_size = 0
+    cdef uintptr_t pta_executor = 0
+    cdef int pta_lookup = 0
+    cdef int32_t ret
+    cdef object runtime = None
+    cdef char layout[5]
+    cdef object packed_grad = None
+    cdef object packed_storage = None
+    cdef object grad_q = None
+    cdef object grad_k = None
+    cdef object grad_v = None
+    cdef bint packed_wrapped = False
+
+    _ensure_npu_imports()
+    _ensure_ffi_sdpa_flash()
+
+    if not (
+        isinstance(grad_out, TensorImpl)
+        and isinstance(query, TensorImpl)
+        and isinstance(key, TensorImpl)
+        and isinstance(value, TensorImpl)
+        and isinstance(output, TensorImpl)
+        and isinstance(softmax_max, TensorImpl)
+        and isinstance(softmax_sum, TensorImpl)
+    ):
+        raise ValueError("fast_sdpa_flash_attention_backward_packed_qkv expects base TensorImpl operands")
+    if not isinstance(input_shape, tuple) or len(input_shape) != 3:
+        raise ValueError("fast_sdpa_flash_attention_backward_packed_qkv expects packed rank-3 input shape")
+
+    g = <TensorImpl>grad_out
+    q = <TensorImpl>query
+    k = <TensorImpl>key
+    v = <TensorImpl>value
+    o = <TensorImpl>output
+    sm_max = <TensorImpl>softmax_max
+    sm_sum = <TensorImpl>softmax_sum
+
+    if q._device_type != 1 or k._device_type != 1 or v._device_type != 1 or g._device_type != 1:
+        raise ValueError("fast_sdpa_flash_attention_backward_packed_qkv expects NPU tensors")
+    if q._dtype_code != k._dtype_code or q._dtype_code != v._dtype_code or q._dtype_code != g._dtype_code:
+        raise ValueError("fast_sdpa_flash_attention_backward_packed_qkv requires matching q/k/v/grad dtypes")
+    if q._device_index != k._device_index or q._device_index != v._device_index or q._device_index != g._device_index:
+        raise ValueError("fast_sdpa_flash_attention_backward_packed_qkv requires tensors on the same device")
+
+    dev_idx = q._device_index
+    q_dev = q._device_obj
+    q_dtype = q._dtype_obj
+    dtype_code = _tensor_dtype_to_acl_code(q)
+    isize = q._itemsize
+    B = q._c_shape[0]
+    H = q._c_shape[1]
+    Sq = q._c_shape[2]
+    D = q._c_shape[3]
+    Sk = k._c_shape[2]
+    if heads != H or embed != H * D:
+        raise ValueError("packed QKV metadata does not match SDPA grad shape")
+    packed_width = 3 * embed
+    if batch_first:
+        if input_shape[0] != B or input_shape[1] != Sq or input_shape[2] != packed_width:
+            raise ValueError("packed QKV batch-first shape mismatch")
+        packed_shape = input_shape
+        packed_stride = (Sq * packed_width, packed_width, 1)
+        grad_stride = (Sq * packed_width, D, packed_width, 1)
+    else:
+        if input_shape[0] != Sq or input_shape[1] != B or input_shape[2] != packed_width:
+            raise ValueError("packed QKV sequence-first shape mismatch")
+        packed_shape = input_shape
+        packed_stride = (B * packed_width, packed_width, 1)
+        grad_stride = (packed_width, D, B * packed_width, 1)
+    grad_shape = (B, H, Sq, D)
+    packed_numel = B * Sq * packed_width
+    packed_alloc = packed_numel * isize
+
+    if not _sdpa_flash_valid_layout(q, B, H, Sq, D):
+        raise ValueError("unsupported query layout for packed FlashAttentionScoreGrad")
+    if not _sdpa_flash_valid_layout(k, B, H, Sk, D):
+        raise ValueError("unsupported key layout for packed FlashAttentionScoreGrad")
+    if not _sdpa_flash_valid_layout(v, B, H, Sk, D):
+        raise ValueError("unsupported value layout for packed FlashAttentionScoreGrad")
+    if Sk != Sq:
+        raise ValueError("packed QKV FlashAttentionScoreGrad requires self-attention sequence lengths")
+    if not _sdpa_flash_valid_grad_layout(g, B, H, Sq, D):
+        raise ValueError("unsupported grad layout for packed FlashAttentionScoreGrad")
+
+    stream_obj = _get_stream_obj_fast(dev_idx)
+    stream_raw = _get_stream_raw_fast(dev_idx)
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        packed_ptr = _fast_allocator_dev0.malloc_large_cached(packed_alloc, stream_obj)
+    else:
+        packed_ptr = _get_allocator_fn_ref(dev_idx).malloc(packed_alloc, stream=stream_obj)
+    packed_raw = <uintptr_t>int(packed_ptr)
+    dq_raw = packed_raw
+    dk_raw = packed_raw + <uintptr_t>(embed * isize)
+    dv_raw = packed_raw + <uintptr_t>(2 * embed * isize)
+
+    q_shape_buf[0] = B
+    q_shape_buf[1] = H
+    q_shape_buf[2] = Sq
+    q_shape_buf[3] = D
+    q_stride_buf[0] = <int64_t>grad_stride[0]
+    q_stride_buf[1] = <int64_t>grad_stride[1]
+    q_stride_buf[2] = <int64_t>grad_stride[2]
+    q_stride_buf[3] = <int64_t>grad_stride[3]
+    packed_storage_shape_buf[0] = <int64_t>packed_shape[0]
+    packed_storage_shape_buf[1] = <int64_t>packed_shape[1]
+    packed_storage_shape_buf[2] = <int64_t>packed_shape[2]
+    softmax_empty_shape_buf[0] = 0
+    softmax_empty_stride_buf[0] = 1
+
+    g_ptr = <uintptr_t>g._storage._untyped._device_ptr + <uintptr_t>(g._c_offset * isize)
+    q_ptr = <uintptr_t>q._storage._untyped._device_ptr + <uintptr_t>(q._c_offset * isize)
+    k_ptr = <uintptr_t>k._storage._untyped._device_ptr + <uintptr_t>(k._c_offset * isize)
+    v_ptr = <uintptr_t>v._storage._untyped._device_ptr + <uintptr_t>(v._c_offset * isize)
+    o_ptr = <uintptr_t>o._storage._untyped._device_ptr + <uintptr_t>(o._c_offset * isize)
+    sm_max_ptr = <uintptr_t>sm_max._storage._untyped._device_ptr + <uintptr_t>(sm_max._c_offset * sm_max._itemsize)
+    sm_sum_ptr = <uintptr_t>sm_sum._storage._untyped._device_ptr + <uintptr_t>(sm_sum._c_offset * sm_sum._itemsize)
+
+    use_grad_v2 = _use_sdpa_flash_grad_v2 and _sdpa_flash_grad_v2_getws_ptr is not None
+    if use_grad_v2:
+        flash_grad_getws_raw = <uintptr_t>int(_sdpa_flash_grad_v2_getws_ptr)
+        flash_grad_exec_raw = <uintptr_t>int(_sdpa_flash_grad_v2_exec_ptr)
+    else:
+        flash_grad_getws_raw = <uintptr_t>int(_sdpa_flash_grad_getws_ptr)
+        flash_grad_exec_raw = <uintptr_t>int(_sdpa_flash_grad_exec_ptr)
+    layout[0] = 66
+    layout[1] = 78
+    layout[2] = 83
+    layout[3] = 68
+    layout[4] = 0
+
+    try:
+        if _use_sdpa_flash_grad_pta_cache and _pta_cache_end_fn is not None:
+            if use_grad_v2:
+                pta_lookup = _ffi_pta_begin_sdpa_flash_grad_storage_cache_lookup_raw(
+                    b"aclnnFlashAttentionScoreGradV2",
+                    q._shape_tuple, q._stride_tuple,
+                    k._shape_tuple, k._stride_tuple,
+                    v._shape_tuple, v._stride_tuple,
+                    g._shape_tuple, g._stride_tuple,
+                    o._shape_tuple, o._stride_tuple,
+                    sm_max._shape_tuple, sm_max._stride_tuple,
+                    grad_shape, grad_stride,
+                    grad_shape, grad_stride,
+                    grad_shape, grad_stride,
+                    packed_shape, packed_shape, packed_shape,
+                    0, embed, 2 * embed,
+                    dtype_code,
+                    q_ptr, k_ptr, v_ptr, g_ptr, o_ptr, sm_max_ptr, sm_sum_ptr,
+                    packed_raw, packed_raw, packed_raw,
+                    scale_value, 1.0, 2147483647, 2147483647, H, 0, 0, pse_type,
+                    stream_raw,
+                    &pta_active,
+                    &pta_ws_size,
+                    &pta_executor)
+            else:
+                pta_lookup = _ffi_pta_begin_sdpa_flash_grad_storage_cache_lookup_raw(
+                    b"aclnnFlashAttentionScoreGrad",
+                    q._shape_tuple, q._stride_tuple,
+                    k._shape_tuple, k._stride_tuple,
+                    v._shape_tuple, v._stride_tuple,
+                    g._shape_tuple, g._stride_tuple,
+                    o._shape_tuple, o._stride_tuple,
+                    sm_max._shape_tuple, sm_max._stride_tuple,
+                    grad_shape, grad_stride,
+                    grad_shape, grad_stride,
+                    grad_shape, grad_stride,
+                    packed_shape, packed_shape, packed_shape,
+                    0, embed, 2 * embed,
+                    dtype_code,
+                    q_ptr, k_ptr, v_ptr, g_ptr, o_ptr, sm_max_ptr, sm_sum_ptr,
+                    packed_raw, packed_raw, packed_raw,
+                    scale_value, 1.0, 2147483647, 2147483647, H, 0, 0, 0,
+                    stream_raw,
+                    &pta_active,
+                    &pta_ws_size,
+                    &pta_executor)
+            if pta_lookup and pta_executor != 0:
+                try:
+                    runtime = _run_executor(
+                        flash_grad_exec_raw, pta_ws_size, pta_executor,
+                        stream_raw, dev_idx, runtime, "FlashAttentionScoreGrad")
+                    packed_grad = _make_npu_tensor_fast_large(
+                        packed_raw, packed_numel, q_dtype, q_dev, packed_shape, packed_stride,
+                        isize, dev_idx, q._dtype_code)
+                    packed_wrapped = True
+                    packed_storage = (<TensorImpl>packed_grad)._storage
+                    grad_q = cy_make_tensor_from_storage_trusted(packed_storage, grad_shape, grad_stride, 0, q_dev, 1, dev_idx, q_dtype, q._dtype_code, isize)
+                    grad_k = cy_make_tensor_from_storage_trusted(packed_storage, grad_shape, grad_stride, embed, q_dev, 1, dev_idx, q_dtype, q._dtype_code, isize)
+                    grad_v = cy_make_tensor_from_storage_trusted(packed_storage, grad_shape, grad_stride, 2 * embed, q_dev, 1, dev_idx, q_dtype, q._dtype_code, isize)
+                    return grad_q, grad_k, grad_v, packed_grad
+                finally:
+                    if pta_active:
+                        _ffi_pta_end_cache_lookup()
+                        pta_active = False
+
+        with nogil:
+            q_t = _ffi_create_tensor_raw(q._c_shape, q._c_stride, <uint64_t>4, dtype_code, 2, <void*>q_ptr)
+            k_t = _ffi_create_tensor_raw(k._c_shape, k._c_stride, <uint64_t>4, dtype_code, 2, <void*>k_ptr)
+            v_t = _ffi_create_tensor_raw(v._c_shape, v._c_stride, <uint64_t>4, dtype_code, 2, <void*>v_ptr)
+            g_t = _ffi_create_tensor_raw(g._c_shape, g._c_stride, <uint64_t>4, dtype_code, 2, <void*>g_ptr)
+            o_t = _ffi_create_tensor_raw(o._c_shape, o._c_stride, <uint64_t>4, dtype_code, 2, <void*>o_ptr)
+            softmax_max_t = _ffi_create_tensor_raw(sm_max._c_shape, sm_max._c_stride, <uint64_t>4, 0, 2, <void*>sm_max_ptr)
+            softmax_sum_t = _ffi_create_tensor_raw(sm_sum._c_shape, sm_sum._c_stride, <uint64_t>4, 0, 2, <void*>sm_sum_ptr)
+            if use_grad_v2:
+                softmax_in_t = _ffi_create_tensor_raw(softmax_empty_shape_buf, softmax_empty_stride_buf, <uint64_t>1, dtype_code, 2, <void*>q_ptr)
+            dq_t = _ffi_create_tensor_raw_with_storage(q_shape_buf, q_stride_buf, <uint64_t>4, packed_storage_shape_buf, <uint64_t>3, 0, dtype_code, 2, <void*>packed_raw)
+            dk_t = _ffi_create_tensor_raw_with_storage(q_shape_buf, q_stride_buf, <uint64_t>4, packed_storage_shape_buf, <uint64_t>3, embed, dtype_code, 2, <void*>packed_raw)
+            dv_t = _ffi_create_tensor_raw_with_storage(q_shape_buf, q_stride_buf, <uint64_t>4, packed_storage_shape_buf, <uint64_t>3, 2 * embed, dtype_code, 2, <void*>packed_raw)
+        if q_t == NULL or k_t == NULL or v_t == NULL or g_t == NULL or o_t == NULL or softmax_max_t == NULL or softmax_sum_t == NULL or dq_t == NULL or dk_t == NULL or dv_t == NULL or (use_grad_v2 and softmax_in_t == NULL):
+            if pta_active:
+                _ffi_pta_end_cache_lookup()
+                pta_active = False
+            raise RuntimeError("aclCreateTensor returned null")
+        try:
+            with nogil:
+                if use_grad_v2:
+                    ret = (<FlashAttentionScoreGradV2GetWorkspaceSize_t>flash_grad_getws_raw)(
+                        q_t, k_t, v_t, g_t, NULL, NULL, NULL, NULL,
+                        softmax_max_t, softmax_sum_t, softmax_in_t, o_t, NULL, NULL, NULL,
+                        scale_value, 1.0, 2147483647, 2147483647, H, layout, 0, 0, pse_type,
+                        dq_t, dk_t, dv_t, NULL, &ws_size, &executor)
+                else:
+                    ret = (<FlashAttentionScoreGradGetWorkspaceSize_t>flash_grad_getws_raw)(
+                        q_t, k_t, v_t, g_t, NULL, NULL, NULL, NULL,
+                        softmax_max_t, softmax_sum_t, NULL, o_t, NULL,
+                        scale_value, 1.0, 2147483647, 2147483647, H, layout, 0, 0,
+                        dq_t, dk_t, dv_t, NULL, &ws_size, &executor)
+            if ret != 0:
+                raise RuntimeError(f"FlashAttentionScoreGrad GetWorkspaceSize failed: {ret}")
+            runtime = _run_executor(flash_grad_exec_raw, ws_size, <uintptr_t>executor, stream_raw, dev_idx, runtime, "FlashAttentionScoreGrad")
+            _defer_executor_handle(<uintptr_t>executor)
+            executor = NULL
+        finally:
+            if pta_active:
+                _ffi_pta_end_cache_lookup()
+            if executor != NULL:
+                _ffi_ref.destroy_executor(<uintptr_t>executor)
+            with nogil:
+                if q_t != NULL: _ffi_destroy_tensor_raw(q_t)
+                if k_t != NULL: _ffi_destroy_tensor_raw(k_t)
+                if v_t != NULL: _ffi_destroy_tensor_raw(v_t)
+                if g_t != NULL: _ffi_destroy_tensor_raw(g_t)
+                if o_t != NULL: _ffi_destroy_tensor_raw(o_t)
+                if softmax_max_t != NULL: _ffi_destroy_tensor_raw(softmax_max_t)
+                if softmax_sum_t != NULL: _ffi_destroy_tensor_raw(softmax_sum_t)
+                if softmax_in_t != NULL: _ffi_destroy_tensor_raw(softmax_in_t)
+                if dq_t != NULL: _ffi_destroy_tensor_raw(dq_t)
+                if dk_t != NULL: _ffi_destroy_tensor_raw(dk_t)
+                if dv_t != NULL: _ffi_destroy_tensor_raw(dv_t)
+
+        packed_grad = _make_npu_tensor_fast_large(
+            packed_raw, packed_numel, q_dtype, q_dev, packed_shape, packed_stride,
+            isize, dev_idx, q._dtype_code)
+        packed_wrapped = True
+        packed_storage = (<TensorImpl>packed_grad)._storage
+        grad_q = cy_make_tensor_from_storage_trusted(packed_storage, grad_shape, grad_stride, 0, q_dev, 1, dev_idx, q_dtype, q._dtype_code, isize)
+        grad_k = cy_make_tensor_from_storage_trusted(packed_storage, grad_shape, grad_stride, embed, q_dev, 1, dev_idx, q_dtype, q._dtype_code, isize)
+        grad_v = cy_make_tensor_from_storage_trusted(packed_storage, grad_shape, grad_stride, 2 * embed, q_dev, 1, dev_idx, q_dtype, q._dtype_code, isize)
+        return grad_q, grad_k, grad_v, packed_grad
+    except Exception:
+        if not packed_wrapped:
+            _get_allocator_fn_ref(dev_idx).free(<int64_t>packed_raw, stream=stream_obj)
+        raise
+
+
 cpdef object fast_matmul_exact(TensorImpl a, TensorImpl b):
     """2D Matmul for already-validated exact base NPU tensors."""
     _ensure_npu_imports()
@@ -1845,24 +3337,9 @@ cpdef object fast_matmul_exact(TensorImpl a, TensorImpl b):
             &executor_raw)
         if pta_lookup and executor_raw != 0:
             try:
-                if ws_size_raw:
-                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
-                    if ret != 0:
-                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
-                    try:
-                        ret_i = _ffi_execute(
-                            _matmul_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
-                            executor_raw, stream_raw)
-                        if ret_i != 0:
-                            raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
-                    finally:
-                        if runtime is None:
-                            runtime = _get_runtime_fast(dev_idx)
-                        runtime.defer_raw_free(workspace_ptr)
-                else:
-                    ret_i = _ffi_execute(_matmul_exec_ptr, 0, 0, executor_raw, stream_raw)
-                    if ret_i != 0:
-                        raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                runtime = _run_executor(
+                    <uintptr_t>int(_matmul_exec_ptr), ws_size_raw, executor_raw,
+                    stream_raw, dev_idx, runtime, "aclnnMatmul")
                 return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
             finally:
                 if pta_active:
@@ -1961,11 +3438,16 @@ cpdef object fast_sum(object a, object dim=None, bint keepdim=False):
         dims = ((d + ndim) if d < 0 else d,)
     elif isinstance(dim, (list, tuple)):
         norm_dims = []
+        seen_dims = set()
         for item in dim:
             d = <int>item
             if d < -ndim or d >= ndim:
                 raise IndexError(f"Dimension out of range (expected to be in range of [{-ndim}, {ndim - 1}], but got {d})")
-            norm_dims.append((d + ndim) if d < 0 else d)
+            d_norm = (d + ndim) if d < 0 else d
+            if d_norm in seen_dims:
+                raise RuntimeError(f"dim {d_norm} appears multiple times in the list of dims")
+            seen_dims.add(d_norm)
+            norm_dims.append(d_norm)
         dims = tuple(norm_dims)
     else:
         raise TypeError("sum dim must be int, tuple/list, or None")
@@ -2006,24 +3488,9 @@ cpdef object fast_sum(object a, object dim=None, bint keepdim=False):
             &executor_raw)
         if pta_lookup and executor_raw != 0:
             try:
-                if ws_size_raw:
-                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
-                    if ret != 0:
-                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
-                    try:
-                        ret_i = _ffi_execute(
-                            _reduce_sum_exec_ptr, int(workspace_ptr), ws_size_raw,
-                            executor_raw, stream_raw)
-                        if ret_i != 0:
-                            raise RuntimeError(f"aclnnReduceSum execute failed: {ret_i}")
-                    finally:
-                        if runtime is None:
-                            runtime = _get_runtime_fast(dev_idx)
-                        runtime.defer_raw_free(workspace_ptr)
-                else:
-                    ret_i = _ffi_execute(_reduce_sum_exec_ptr, 0, 0, executor_raw, stream_raw)
-                    if ret_i != 0:
-                        raise RuntimeError(f"aclnnReduceSum execute failed: {ret_i}")
+                runtime = _run_executor(
+                    <uintptr_t>int(_reduce_sum_exec_ptr), ws_size_raw, executor_raw,
+                    stream_raw, dev_idx, runtime, "aclnnReduceSum")
                 return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, t._dtype_code)
             finally:
                 if pta_active:
@@ -2136,22 +3603,9 @@ cpdef object fast_mm_mat1_backward(object grad, object mat2, object alpha=1):
             &executor_raw)
         if pta_lookup and executor_raw != 0:
             try:
-                if ws_size_raw:
-                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
-                    if ret != 0:
-                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
-                    try:
-                        ret_i = _ffi_execute(_matmul_exec_ptr, int(workspace_ptr), ws_size_raw, executor_raw, stream_raw)
-                        if ret_i != 0:
-                            raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
-                    finally:
-                        if runtime is None:
-                            runtime = _get_runtime_fast(dev_idx)
-                        runtime.defer_raw_free(workspace_ptr)
-                else:
-                    ret_i = _ffi_execute(_matmul_exec_ptr, 0, 0, executor_raw, stream_raw)
-                    if ret_i != 0:
-                        raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                runtime = _run_executor(
+                    <uintptr_t>int(_matmul_exec_ptr), ws_size_raw, executor_raw,
+                    stream_raw, dev_idx, runtime, "aclnnMatmul")
                 return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, g._dtype_code)
             finally:
                 if pta_active:
@@ -2262,22 +3716,9 @@ cpdef object fast_mm_mat2_backward(object grad, object mat1, object alpha=1):
             &executor_raw)
         if pta_lookup and executor_raw != 0:
             try:
-                if ws_size_raw:
-                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
-                    if ret != 0:
-                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
-                    try:
-                        ret_i = _ffi_execute(_matmul_exec_ptr, int(workspace_ptr), ws_size_raw, executor_raw, stream_raw)
-                        if ret_i != 0:
-                            raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
-                    finally:
-                        if runtime is None:
-                            runtime = _get_runtime_fast(dev_idx)
-                        runtime.defer_raw_free(workspace_ptr)
-                else:
-                    ret_i = _ffi_execute(_matmul_exec_ptr, 0, 0, executor_raw, stream_raw)
-                    if ret_i != 0:
-                        raise RuntimeError(f"aclnnMatmul execute failed: {ret_i}")
+                runtime = _run_executor(
+                    <uintptr_t>int(_matmul_exec_ptr), ws_size_raw, executor_raw,
+                    stream_raw, dev_idx, runtime, "aclnnMatmul")
                 return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, g._dtype_code)
             finally:
                 if pta_active:
@@ -2429,24 +3870,9 @@ cpdef object fast_addmm(object bias, object mat1, object mat2, object beta=1, ob
             &executor_raw)
         if pta_lookup and executor_raw != 0:
             try:
-                if ws_size_raw:
-                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
-                    if ret != 0:
-                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
-                    try:
-                        ret_i = _ffi_execute(
-                            _addmm_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
-                            executor_raw, stream_raw)
-                        if ret_i != 0:
-                            raise RuntimeError(f"aclnnAddmm execute failed: {ret_i}")
-                    finally:
-                        if runtime is None:
-                            runtime = _get_runtime_fast(dev_idx)
-                        runtime.defer_raw_free(workspace_ptr)
-                else:
-                    ret_i = _ffi_execute(_addmm_exec_ptr, 0, 0, executor_raw, stream_raw)
-                    if ret_i != 0:
-                        raise RuntimeError(f"aclnnAddmm execute failed: {ret_i}")
+                runtime = _run_executor(
+                    <uintptr_t>int(_addmm_exec_ptr), ws_size_raw, executor_raw,
+                    stream_raw, dev_idx, runtime, "aclnnAddmm")
                 return _make_npu_tensor_fast_large(out_ptr, numel, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
             finally:
                 if pta_active:
@@ -2864,6 +4290,68 @@ def fast_mul_inplace(a, b):
 
     _defer_executor_fn(executor)
     return a
+
+
+def fast_mul_scalar(a, value):
+    """NPU tensor * Python scalar via ACLNN Muls without host-to-device tensor scalar copy."""
+    _ensure_npu_imports()
+
+    cdef int dev_idx
+    cdef TensorImpl source
+    if not isinstance(a, TensorImpl) or (<TensorImpl>a)._device_type != 1:
+        raise ValueError("NPU mul scalar expects an NPU tensor")
+    dev_idx = (<TensorImpl>a)._device_index
+    if dev_idx < 0:
+        dev_idx = 0
+
+    source = <TensorImpl>a
+    py_shape = source._shape_tuple
+    cdef int ndim = len(py_shape)
+    if ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] shape_buf, stride_buf
+    _fill_shape(py_shape, shape_buf, ndim)
+    with nogil:
+        c_contiguous_stride(shape_buf, ndim, stride_buf)
+    out_stride = _to_tuple(stride_buf, ndim)
+    if source._stride_tuple != out_stride:
+        source = <TensorImpl>a.contiguous()
+
+    cdef int64_t n = source._c_numel
+    if n < 1:
+        n = 1
+    cdef int itemsize = source._itemsize
+    cdef int64_t alloc_size = n * itemsize
+    stream = _get_stream_fast(dev_idx)
+    cdef uintptr_t stream_raw = int(stream.stream)
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size, stream=stream.stream)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream.stream)
+
+    from candle._backends.npu import aclnn as _aclnn
+    runtime = _get_runtime_fast(dev_idx)
+    _aclnn.mul_scalar(
+        <uintptr_t>source._storage._untyped._device_ptr,
+        value,
+        <uintptr_t>out_ptr,
+        source._shape_tuple,
+        source._stride_tuple,
+        source.dtype,
+        runtime,
+        stream=stream_raw,
+    )
+    return _make_npu_tensor_fast(
+        <int64_t>out_ptr,
+        source._c_numel,
+        source.dtype,
+        source._device_obj,
+        source._shape_tuple,
+        out_stride,
+        itemsize,
+    )
 
 
 def fast_div_inplace(a, b):
@@ -6785,6 +8273,137 @@ def fast_copy_inplace(a, src):
     return a
 
 
+def fast_zero_stride_contiguous(a):
+    """Materialize an all-zero-stride NPU view as a dense contiguous tensor.
+
+    This is the hot leaf-grad path for full-sum backward.  It bypasses the
+    Python backend contiguous wrapper while preserving the same ACLNN
+    InplaceCopy semantics and PTA executor-cache behavior.
+    """
+    _ensure_npu_imports()
+    _ensure_ffi_inplace_copy()
+
+    cdef TensorImpl t
+    cdef int ndim
+    cdef int i
+    cdef int dev_idx
+    cdef int isize
+    cdef int dtype_code
+    cdef int64_t n
+    cdef int64_t storage_numel
+    cdef int64_t alloc_size
+    cdef int64_t[MAX_NDIM] shape_buf, out_stride_buf
+    cdef object out_shape
+    cdef object out_stride
+    cdef object out_ptr
+    cdef object stream_obj
+    cdef object runtime = None
+    cdef object workspace_ptr
+    cdef object ret
+    cdef object ws_size
+    cdef object executor = 0
+    cdef object pta_state
+    cdef uintptr_t src_ptr
+    cdef uintptr_t o_ptr
+    cdef uintptr_t stream_raw
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef bint pta_active = False
+    cdef bint executor_owned = False
+    cdef int ret_i
+
+    if not isinstance(a, TensorImpl):
+        return None
+    t = <TensorImpl>a
+    if t._device_type != 1:
+        return None
+    ndim = t._ndim
+    if ndim == 0 or ndim > MAX_NDIM:
+        return None
+    for i in range(ndim):
+        if t._c_stride[i] != 0:
+            return None
+
+    dev_idx = t._device_index
+    stream_obj = _get_stream_obj_fast(dev_idx)
+    stream_raw = _get_stream_raw_fast(dev_idx)
+    out_shape = t._shape_tuple
+    _fill_shape(out_shape, shape_buf, ndim)
+    with nogil:
+        c_contiguous_stride(shape_buf, ndim, out_stride_buf)
+    out_stride = _to_tuple(out_stride_buf, ndim)
+
+    n = t._c_numel
+    storage_numel = n if n > 0 else 1
+    isize = t._itemsize
+    alloc_size = storage_numel * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(t)
+    src_ptr = <uintptr_t>t._storage._untyped._device_ptr + <uintptr_t>(t._c_offset * t._itemsize)
+    o_ptr = <uintptr_t>int(out_ptr)
+
+    try:
+        pta_state = _ffi_pta_begin_inplace_copy_cache_lookup(
+            out_shape,
+            out_stride,
+            t._shape_tuple,
+            t._stride_tuple,
+            dtype_code,
+            dtype_code,
+            o_ptr,
+            src_ptr,
+            stream_raw,
+        )
+        if pta_state is not None:
+            pta_active = bool(pta_state[0])
+            ws_size_raw = <uint64_t>int(pta_state[1])
+            executor_raw = <uintptr_t>int(pta_state[2])
+            if executor_raw != 0:
+                runtime = _run_executor(
+                    <uintptr_t>int(_inplace_copy_exec_ptr), ws_size_raw, executor_raw,
+                    stream_raw, dev_idx, runtime, "aclnnInplaceCopy")
+                return _make_npu_tensor_fast_large(
+                    out_ptr, storage_numel, t._dtype_obj, t._device_obj,
+                    out_shape, out_stride, isize, dev_idx, t._dtype_code)
+
+        ws_size, executor = _ffi_ref.inplace_copy_op(
+            _inplace_copy_getws_ptr, _inplace_copy_exec_ptr,
+            out_shape, out_stride,
+            t._shape_tuple, t._stride_tuple,
+            dtype_code, dtype_code, 2,
+            o_ptr, src_ptr,
+            stream_raw)
+        executor_owned = True
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _inplace_copy_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnInplaceCopy execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+        return _make_npu_tensor_fast_large(
+            out_ptr, storage_numel, t._dtype_obj, t._device_obj,
+            out_shape, out_stride, isize, dev_idx, t._dtype_code)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+        if executor_owned:
+            _defer_executor_handle(<uintptr_t>int(executor))
+
+
+
 def fast_fill_inplace(a, value):
     """In-place fill_(a, value) by broadcasting a scalar tensor via InplaceCopy."""
     src = _npu_scalar_like(float(value), a)
@@ -7449,24 +9068,8 @@ cpdef object fast_gelu_exact(TensorImpl a):
             &executor_raw)
         if pta_lookup and executor_raw != 0:
             try:
-                if ws_size_raw:
-                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
-                    if ret != 0:
-                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
-                    try:
-                        ret_i = _ffi_execute(
-                            _gelu_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
-                            executor_raw, stream_raw)
-                        if ret_i != 0:
-                            raise RuntimeError(f"aclnnGelu execute failed: {ret_i}")
-                    finally:
-                        if runtime is None:
-                            runtime = _get_runtime_fast(dev_idx)
-                        runtime.defer_raw_free(workspace_ptr)
-                else:
-                    ret_i = _ffi_execute(_gelu_exec_ptr, 0, 0, executor_raw, stream_raw)
-                    if ret_i != 0:
-                        raise RuntimeError(f"aclnnGelu execute failed: {ret_i}")
+                runtime = _run_executor(_gelu_exec_ptr, ws_size_raw, executor_raw,
+                                        stream_raw, dev_idx, runtime, "aclnnGelu")
                 return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
             finally:
                 if pta_active:
@@ -7858,24 +9461,8 @@ cpdef object fast_gelu_backward(object grad, object saved_input):
             &executor_raw)
         if pta_lookup and executor_raw != 0:
             try:
-                if ws_size_raw:
-                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
-                    if ret != 0:
-                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
-                    try:
-                        ret_i = _ffi_execute(
-                            _gelu_backward_exec_ptr, int(workspace_ptr), ws_size_raw,
-                            executor_raw, stream_raw)
-                        if ret_i != 0:
-                            raise RuntimeError(f"aclnnGeluBackward execute failed: {ret_i}")
-                    finally:
-                        if runtime is None:
-                            runtime = _get_runtime_fast(dev_idx)
-                        runtime.defer_raw_free(workspace_ptr)
-                else:
-                    ret_i = _ffi_execute(_gelu_backward_exec_ptr, 0, 0, executor_raw, stream_raw)
-                    if ret_i != 0:
-                        raise RuntimeError(f"aclnnGeluBackward execute failed: {ret_i}")
+                runtime = _run_executor(_gelu_backward_exec_ptr, ws_size_raw, executor_raw,
+                                        stream_raw, dev_idx, runtime, "aclnnGeluBackward")
                 return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, grad_t._dtype_code)
             finally:
                 if pta_active:

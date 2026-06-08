@@ -40,6 +40,19 @@ except ImportError:
     _HAS_FAST_INVERSE = False
 
 
+def _is_row_major_except_last_two(tensor):
+    """Return True when only the matrix dimensions are non-row-major."""
+    ndim = tensor.dim()
+    if ndim < 3:
+        return True
+    expected = int(tensor.shape[-2]) * int(tensor.shape[-1])
+    for dim in range(ndim - 3, -1, -1):
+        if int(tensor.stride[dim]) != expected:
+            return False
+        expected *= int(tensor.shape[dim])
+    return True
+
+
 def matmul(a, b, out=None):
     user_out = out
 
@@ -75,13 +88,13 @@ def matmul(a, b, out=None):
         except (TypeError, ValueError):
             pass
 
-    # aclnnMatmul rejects batched inputs with non-row-major strides
-    # (GetWorkspaceSize 561103). Match torch_npu by materialising a contiguous
-    # copy on-device before dispatching. 2-D operands tolerate transposed
-    # strides natively, so only contiguify when at least 3-D.
-    if a.dim() >= 3 and not a.is_contiguous():
+    # aclnnMatmul rejects batched inputs with non-row-major batch strides
+    # (GetWorkspaceSize 561103). Attention layouts often transpose only the
+    # last two matrix dimensions (e.g. K.transpose(-2, -1)); ACLNN BatchMatMul
+    # accepts those strides, so preserve them to avoid an on-device copy.
+    if a.dim() >= 3 and not a.is_contiguous() and not _is_row_major_except_last_two(a):
         a = contiguous(a)
-    if b.dim() >= 3 and not b.is_contiguous():
+    if b.dim() >= 3 and not b.is_contiguous() and not _is_row_major_except_last_two(b):
         b = contiguous(b)
 
     # aclnnBatchMatMul has substantial per-call host overhead (~1 ms on

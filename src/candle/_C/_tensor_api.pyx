@@ -73,6 +73,8 @@ cdef object _npu_get_runtime_fast_fn = None
 cdef object _npu_current_stream_fast_fn = None
 cdef object _npu_get_allocator_fn = None
 cdef object _npu_typed_storage_from_ptr_fn = None
+cdef object _dispatch_op_enter_fn = None
+cdef object _dispatch_op_exit_fn = None
 cdef object _is_functionalize_fn = None
 cdef object _is_autocast_enabled_fn = None
 
@@ -199,14 +201,16 @@ cdef inline void _ensure_grad_mode_ref():
 
 
 cdef inline void _ensure_clone_fast_refs():
-    global _to_device_fn, _is_profiler_enabled_fn
+    global _to_device_fn, _is_profiler_enabled_fn, _dispatch_op_enter_fn, _dispatch_op_exit_fn
     global _npu_get_runtime_fast_fn, _npu_current_stream_fast_fn
     global _npu_get_allocator_fn, _npu_typed_storage_from_ptr_fn
     if _to_device_fn is None:
         from candle._backends.common.convert import to_device
-        from candle.profiler.profiler import is_profiler_enabled
+        from candle.profiler.profiler import is_profiler_enabled, dispatch_op_enter, dispatch_op_exit
         _to_device_fn = to_device
         _is_profiler_enabled_fn = is_profiler_enabled
+        _dispatch_op_enter_fn = dispatch_op_enter
+        _dispatch_op_exit_fn = dispatch_op_exit
     if _npu_get_runtime_fast_fn is None:
         from candle._backends.npu.runtime import get_runtime_fast
         from candle._backends.npu.state import current_stream_fast
@@ -346,6 +350,31 @@ cdef inline object _annotate_transpose_view(object source, object view):
         "creation_kind": creation_kind,
     }
     return view
+
+
+cdef inline object _annotate_reshape_view(object source, object view, object shape):
+    cdef object source_view_meta
+    cdef object creation_mode
+    cdef object creation_kind
+
+    source_view_meta = getattr(source, "_view_meta", None) or {}
+    from candle.autograd.grad_mode import current_creation_mode
+    creation_mode = current_creation_mode() or source_view_meta.get("creation_mode")
+    creation_kind = source_view_meta.get("creation_kind")
+    if creation_mode is not None:
+        if source._is_view():
+            creation_kind = "view_of_view"
+        else:
+            creation_kind = "view"
+    view._view_meta = {
+        "op": "reshape",
+        "shape": tuple(shape),
+        "stride": tuple(view.stride),
+        "offset": int(view.offset),
+        "creation_mode": creation_mode,
+        "creation_kind": creation_kind,
+    }
+    return _propagate_npu_owned_backward_grad(source, view)
 
 
 def tensor_add(self, other):
@@ -553,6 +582,7 @@ def tensor_clone(self, *, memory_format=None):
     cdef object runtime
     cdef object stream
     cdef object storage
+    cdef object token
     cdef uintptr_t src_ptr
     cdef uintptr_t dst_ptr
     cdef uint64_t nbytes
@@ -567,25 +597,31 @@ def tensor_clone(self, *, memory_format=None):
         src_impl = <TensorImpl>self
         if src_impl._device_type == 1:
             _ensure_clone_fast_refs()
-            if (not _is_profiler_enabled_fn()
-                    and not _is_channels_last_stride_tuple(src_impl._shape_tuple, src_impl._stride_tuple)):
-                runtime = _npu_get_runtime_fast_fn(src_impl._device_index)
-                stream = _npu_current_stream_fast_fn(src_impl._device_index)
-                nbytes = <uint64_t>(src_impl._c_numel * src_impl._itemsize)
-                dst_ptr = <uintptr_t>_npu_get_allocator_fn(src_impl._device_index).malloc(
-                    nbytes, stream=stream.stream)
-                src_ptr = <uintptr_t>src_impl._storage._untyped._device_ptr
-                _cy_memcpy_d2d(dst_ptr, nbytes, src_ptr, <uintptr_t>int(stream.stream), True)
-                storage = _npu_typed_storage_from_ptr_fn(
-                    dst_ptr, src_impl._c_numel, src_impl._dtype_obj, device=src_impl._device_obj)
-                _ensure_tensor_factory_ref()
-                return _cy_make_tensor_from_storage_fn(
-                    storage,
-                    src_impl._shape_tuple,
-                    src_impl._stride_tuple,
-                    src_impl._c_offset,
-                    src_impl.requires_grad,
-                )
+            if not _is_channels_last_stride_tuple(src_impl._shape_tuple, src_impl._stride_tuple):
+                token = None
+                if _is_profiler_enabled_fn():
+                    token = _dispatch_op_enter_fn("clone", src_impl._device_obj, (self,), {})
+                try:
+                    runtime = _npu_get_runtime_fast_fn(src_impl._device_index)
+                    stream = _npu_current_stream_fast_fn(src_impl._device_index)
+                    nbytes = <uint64_t>(src_impl._c_numel * src_impl._itemsize)
+                    dst_ptr = <uintptr_t>_npu_get_allocator_fn(src_impl._device_index).malloc(
+                        nbytes, stream=stream.stream)
+                    src_ptr = <uintptr_t>src_impl._storage._untyped._device_ptr
+                    _cy_memcpy_d2d(dst_ptr, nbytes, src_ptr, <uintptr_t>int(stream.stream), True)
+                    storage = _npu_typed_storage_from_ptr_fn(
+                        dst_ptr, src_impl._c_numel, src_impl._dtype_obj, device=src_impl._device_obj)
+                    _ensure_tensor_factory_ref()
+                    return _cy_make_tensor_from_storage_fn(
+                        storage,
+                        src_impl._shape_tuple,
+                        src_impl._stride_tuple,
+                        src_impl._c_offset,
+                        src_impl.requires_grad,
+                    )
+                finally:
+                    if token is not None:
+                        _dispatch_op_exit_fn(token)
 
     memory_format = _normalize_memory_format(memory_format)
     fmt_name = _memory_format_name(memory_format)
@@ -800,6 +836,61 @@ cdef inline object _mark_npu_owned_backward_grad(object grad):
     return grad
 
 
+cdef inline object _propagate_npu_owned_backward_grad(object source, object result):
+    if result is not None and getattr(source, "_candle_npu_owned_backward_grad", False):
+        try:
+            result._candle_npu_owned_backward_grad = True
+        except Exception:
+            pass
+    return result
+
+
+cdef class _NpuReshapeBackward(_CyAutogradNode):
+    cdef public object _self_shape
+
+    cdef void _init_fast(self, object self_, object self_shape):
+        self.inputs = (self_,)
+        self._saved_tensors_list = []
+        self._saved_fields = {}
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "ReshapeBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = None
+        self._self_shape = self_shape
+
+    def __init__(self, self_, self_shape):
+        self._init_fast(self_, self_shape)
+
+    def backward(self, grad):
+        cdef object result
+        try:
+            from candle._C._autograd_engine import is_create_graph_enabled
+            if is_create_graph_enabled():
+                _ensure_dispatch_ref()
+                return (_dispatch_fn("reshape", grad.device.type, grad, self._self_shape),)
+        except ImportError:
+            pass
+        if grad.is_contiguous():
+            result = grad.cy_view(tuple(self._self_shape))
+            result = _annotate_reshape_view(grad, result, tuple(self._self_shape))
+            return (result,)
+        _ensure_dispatch_ref()
+        result = _dispatch_fn("reshape", grad.device.type, grad, self._self_shape)
+        return (_propagate_npu_owned_backward_grad(grad, result),)
+
+
+cdef inline object _attach_reshape_grad(object result, object self_):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuReshapeBackward grad_fn = _NpuReshapeBackward.__new__(_NpuReshapeBackward)
+    grad_fn._init_fast(self_, tuple(self_.shape))
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
 cdef class _NpuTransposeIntBackward(_CyAutogradNode):
     cdef public object _self
     cdef public object _dim0
@@ -848,11 +939,39 @@ cdef inline object _attach_transpose_int_grad(object result, object self_, objec
 
 
 def tensor_reshape(self, *shape):
+    cdef object v
+    cdef object shape_list
+    cdef object infer_idx
+    cdef object known_size
+    cdef object size
+    cdef object dim
+    cdef object idx
     if not shape:
         raise TypeError("reshape() missing shape arguments")
     if len(shape) == 1 and isinstance(shape[0], (tuple, list)):
         shape = tuple(shape[0])
     if self.requires_grad:
+        if _is_tensor_without_torch_function_override(self) and (<TensorImpl>self)._device_type == 1 and self.is_contiguous():
+            shape = tuple(shape)
+            infer_idx = None
+            known_size = 1
+            size = self.numel()
+            shape_list = list(shape)
+            for idx, dim in enumerate(shape_list):
+                if dim == -1:
+                    if infer_idx is not None:
+                        raise RuntimeError("only one dimension can be inferred")
+                    infer_idx = idx
+                else:
+                    known_size *= dim
+            if infer_idx is not None:
+                if known_size == 0 or size % known_size != 0:
+                    raise RuntimeError(f"shape '{list(shape)}' is invalid for input of size {size}")
+                shape_list[infer_idx] = size // known_size
+            shape = tuple(shape_list)
+            v = self.cy_view(shape)
+            v = _annotate_reshape_view(self, v, shape)
+            return _attach_reshape_grad(v, self)
         _ensure_dispatch_ref()
         return _dispatch_fn("reshape", self.device.type, self, shape)
     _ensure_functional_refs()

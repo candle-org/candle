@@ -2720,7 +2720,8 @@ def _repeat_interleave_backward(grad, _a, saved_a, keyset, args, kwargs):
                     r = int(reps[i])
                     result[i] = grad_np[idx:idx + r].sum()
                     idx += r
-            return (_from_numpy(result.reshape(saved_a.shape), saved_a.dtype, saved_a.device),)
+            result = np.ascontiguousarray(result.reshape(saved_a.shape))
+            return (_from_numpy(result, saved_a.dtype, saved_a.device),)
         else:
             d = dim if dim >= 0 else dim + len(saved_a.shape)
             n = saved_a.shape[d]
@@ -2744,6 +2745,7 @@ def _repeat_interleave_backward(grad, _a, saved_a, keyset, args, kwargs):
                     result_moved[i] = grad_moved[idx:idx + r].sum(axis=0)
                     idx += r
                 result = np.transpose(result_moved, inv_perm)
+            result = np.ascontiguousarray(result)
             return (_from_numpy(result, saved_a.dtype, saved_a.device),)
 
 

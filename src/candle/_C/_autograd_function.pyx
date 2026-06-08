@@ -165,41 +165,44 @@ def _function_apply(cls, args, kwargs):
                 differentiable_outputs.append(o)
 
         differentiable_count = len(differentiable_outputs)
-        for diff_index, o in enumerate(differentiable_outputs):
+        if differentiable_count:
             node_holder = {}
 
-            def _backward(grad, _output=o, _diff_index=diff_index, _diff_outputs=tuple(differentiable_outputs), _node_holder=node_holder):
+            def _backward(grads, _diff_outputs=tuple(differentiable_outputs), _node_holder=node_holder):
+                cdef list incoming
                 cdef list backward_grads
                 cdef int i
+                cdef object _out
+                cdef object _grad
                 cdef object _node
-                if materialize and grad is None:
-                    from candle._functional import zeros_like
-                    grad = zeros_like(_output)
+                if isinstance(grads, (tuple, list)):
+                    incoming = list(grads)
+                else:
+                    incoming = [grads]
                 backward_grads = []
                 for i, _out in enumerate(_diff_outputs):
-                    if i == _diff_index:
-                        backward_grads.append(grad)
-                    elif materialize:
+                    _grad = incoming[i] if i < len(incoming) else None
+                    if materialize and _grad is None:
                         from candle._functional import zeros_like
-                        backward_grads.append(zeros_like(_out))
-                    else:
-                        backward_grads.append(None)
+                        _grad = zeros_like(_out)
+                    backward_grads.append(_grad)
                 if ctx._to_save is not None:
                     _node = _node_holder["node"]
                     ctx._saved_tensors = _node._saved_tensors_list
                 return cls.backward(ctx, *backward_grads)
 
             node = Node(_backward, input_tensors, name=f"{cls.__name__}Backward")
+            node._candle_multi_output_backward_count = differentiable_count
             annotate_node_creation(node)
             node._input_metadata = [InputMetadata(t) for t in input_tensors]
 
             if ctx._to_save is not None:
                 node.save_for_backward(*ctx._to_save)
-                if first_saved_list is None:
-                    first_saved_list = node._saved_tensors_list
+                first_saved_list = node._saved_tensors_list
 
             node_holder["node"] = weakref.proxy(node)
-            _mark_output(o, non_diff, node, Tensor, diff_index)
+            for diff_index, o in enumerate(differentiable_outputs):
+                _mark_output(o, non_diff, node, Tensor, diff_index)
 
         for o in outputs:
             if not (isinstance(o, Tensor) and id(o) not in non_diff):

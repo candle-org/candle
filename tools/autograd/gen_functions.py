@@ -97,9 +97,18 @@ def _softplus_backward_helper(grad, input_, beta, threshold, keyset):
     return redispatch("mul", keyset, grad, redispatch("sigmoid", keyset, redispatch("mul", keyset, input_, beta_t)))
 
 
+def _mark_npu_owned_backward_grad(grad):
+    if grad is not None and getattr(getattr(grad, "device", None), "type", None) == "npu":
+        try:
+            grad._candle_npu_owned_backward_grad = True
+        except Exception:
+            pass
+    return grad
+
+
 def _mul_tensor_backward_helper(grad, other, dtype, keyset):
     del dtype
-    return redispatch("mul", keyset, grad, other)
+    return _mark_npu_owned_backward_grad(redispatch("mul", keyset, grad, other))
 
 
 def _div_tensor_self_backward_helper(grad, other, dtype, *extra_and_keyset):
