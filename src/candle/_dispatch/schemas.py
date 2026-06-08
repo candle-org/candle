@@ -679,6 +679,7 @@ def register_schemas():  # pylint: disable=too-many-statements
 
     # Optimizer step ops (fused per-parameter kernels)
     registry.register_schema("_sgd_step", "_sgd_step(Tensor param, Tensor grad, Any buf, float lr, float momentum, float dampening, float weight_decay, bool nesterov, bool maximize) -> Tensor")
+    registry.register_schema("_sgd_step_many", "_sgd_step_many(Tensor[] params, Tensor[] grads, float lr) -> Any")
     registry.register_schema("_adam_step", "_adam_step(Tensor param, Tensor grad, Tensor exp_avg, Tensor exp_avg_sq, Any max_exp_avg_sq, int step, float lr, float beta1, float beta2, float eps, float weight_decay, bool amsgrad, bool maximize) -> Tensor")
     registry.register_schema("_adamw_step", "_adamw_step(Tensor param, Tensor grad, Tensor exp_avg, Tensor exp_avg_sq, Any max_exp_avg_sq, int step, float lr, float beta1, float beta2, float eps, float weight_decay, bool amsgrad, bool maximize) -> Tensor")
     registry.register_schema("_adagrad_step", "_adagrad_step(Tensor param, Tensor grad, Tensor state_sum, int step, float lr, float lr_decay, float weight_decay, float eps, bool maximize) -> Tensor")

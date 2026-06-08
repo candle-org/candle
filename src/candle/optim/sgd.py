@@ -84,10 +84,21 @@ class SGD(Optimizer):
             lr = group["lr"]
             maximize = group["maximize"]
 
-            for p in group["params"]:
-                if p.grad is None:
-                    continue
+            active_params = [p for p in group["params"] if p.grad is not None]
+            if (
+                    active_params
+                    and momentum == 0
+                    and weight_decay == 0
+                    and not nesterov
+                    and not maximize
+                    and _all_same_device(active_params, "npu")):
+                dispatch(
+                    "_sgd_step_many", None,
+                    active_params, [p.grad for p in active_params], lr,
+                )
+                continue
 
+            for p in active_params:
                 param_id = id(p)
 
                 if momentum != 0:
@@ -108,3 +119,19 @@ class SGD(Optimizer):
 
         self._call_step_post_hooks()
         return loss
+
+
+def _all_same_device(params, device_type):
+    if not params:
+        return False
+    first_device = params[0].device
+    if getattr(first_device, "type", None) != device_type:
+        return False
+    first_index = getattr(first_device, "index", None)
+    for param in params[1:]:
+        device = param.device
+        if getattr(device, "type", None) != device_type:
+            return False
+        if getattr(device, "index", None) != first_index:
+            return False
+    return True

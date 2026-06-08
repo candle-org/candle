@@ -385,6 +385,7 @@ from .ops import (
     adaptive_max_pool1d_op,
     # Phase 4: optimizer composites
     _sgd_step_op,
+    _sgd_step_many_op,
     _adagrad_step_op,
     _rmsprop_step_op,
     _adadelta_step_op,
@@ -914,6 +915,7 @@ registry.register("adaptive_max_pool1d", "npu", adaptive_max_pool1d_op)
 
 # Phase 4: Optimizer composites
 registry.register("_sgd_step", "npu", _sgd_step_op)
+registry.register("_sgd_step_many", "npu", _sgd_step_many_op)
 registry.register("_adagrad_step", "npu", _adagrad_step_op)
 registry.register("_rmsprop_step", "npu", _rmsprop_step_op)
 registry.register("_adadelta_step", "npu", _adadelta_step_op)

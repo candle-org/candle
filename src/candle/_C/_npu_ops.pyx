@@ -4228,6 +4228,102 @@ def fast_sub_inplace(a, b):
     return a
 
 
+def fast_sgd_step(a, grad, lr):
+    """In-place SGD update: a -= lr * grad using aclnnSub alpha scalar."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+    _ensure_ffi_scalar_helpers()
+
+    cdef int dev_idx
+    _validate_npu_binary(a, grad, "sgd_step", &dev_idx)
+
+    a_dtype = a.dtype
+    runtime = _get_runtime_fast(dev_idx)
+    stream = _get_stream_fast(dev_idx)
+
+    py_a_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
+    py_g_shape = (<TensorImpl>grad)._shape_tuple if isinstance(grad, TensorImpl) else grad.shape
+    py_a_stride = (<TensorImpl>a)._stride_tuple if isinstance(a, TensorImpl) else a.stride
+    py_g_stride = (<TensorImpl>grad)._stride_tuple if isinstance(grad, TensorImpl) else grad.stride
+    cdef int a_ndim = len(py_a_shape)
+    cdef int g_ndim = len(py_g_shape)
+    if a_ndim > MAX_NDIM or g_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] a_shape_buf, g_shape_buf, out_shape_buf
+    _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+    _fill_shape(py_g_shape, g_shape_buf, g_ndim)
+    cdef int out_ndim
+    with nogil:
+        out_ndim = c_broadcast_shape(
+            a_shape_buf, a_ndim, g_shape_buf, g_ndim, out_shape_buf)
+    if out_ndim != a_ndim:
+        raise ValueError("NPU sgd_step requires grad broadcastable to param shape")
+    cdef int i
+    for i in range(out_ndim):
+        if out_shape_buf[i] != a_shape_buf[i]:
+            raise ValueError("NPU sgd_step requires grad broadcastable to param shape")
+
+    cdef int dtype_code = _dtype_to_acl_code(a_dtype)
+    cdef uintptr_t a_ptr
+    cdef uintptr_t g_ptr
+    if isinstance(a, TensorImpl):
+        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
+    else:
+        a_ptr = <uintptr_t>a.storage().data_ptr()
+    if isinstance(grad, TensorImpl):
+        g_ptr = <uintptr_t>(<TensorImpl>grad)._storage._untyped._device_ptr
+    else:
+        g_ptr = <uintptr_t>grad.storage().data_ptr()
+
+    cdef object scalar_handle_obj = _create_scalar_fn(_scalar_bytes_fn(float(lr), a_dtype), dtype_code)
+    cdef uintptr_t alpha_scalar = <uintptr_t>scalar_handle_obj
+    cdef uintptr_t stream_raw = int(stream.stream)
+    cdef object ws_size = 0
+    cdef object executor = 0
+    try:
+        ws_size, executor = _ffi_binary_op_with_alpha(
+            _sub_getws_ptr, _sub_exec_ptr,
+            py_a_shape, py_a_stride,
+            py_g_shape, py_g_stride,
+            py_a_shape, py_a_stride,
+            dtype_code, 2,
+            a_ptr, g_ptr, a_ptr,
+            alpha_scalar,
+            stream_raw)
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _sub_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnSub execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_fn(executor)
+    finally:
+        _destroy_scalar_fn(int(alpha_scalar))
+    return a
+
+
+
+def fast_sgd_step_many(params, grads, lr):
+    """Batch in-place SGD updates for a parameter group."""
+    cdef Py_ssize_t n = len(params)
+    if n != len(grads):
+        raise ValueError("params and grads must have the same length")
+    cdef Py_ssize_t i
+    for i in range(n):
+        fast_sgd_step(params[i], grads[i], lr)
+    return None
+
+
+
 def fast_mul_inplace(a, b):
     """In-place mul_(a, b) that calls _ffi.binary_op_no_alpha with output aliased to a."""
     _ensure_npu_imports()

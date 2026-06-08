@@ -11,11 +11,17 @@ from .reduce import maximum, minimum
 try:
     from candle._C._npu_ops import (
         fast_adam_step as _fast_adam_step_impl,
+        fast_sgd_step as _fast_sgd_step_impl,
+        fast_sgd_step_many as _fast_sgd_step_many_impl,
     )  # pylint: disable=import-error,no-name-in-module
     _HAS_FAST_ADAM_STEP = True
+    _HAS_FAST_SGD_STEP = True
 except ImportError:
     _fast_adam_step_impl = None  # type: ignore[assignment]
+    _fast_sgd_step_impl = None  # type: ignore[assignment]
+    _fast_sgd_step_many_impl = None  # type: ignore[assignment]
     _HAS_FAST_ADAM_STEP = False
+    _HAS_FAST_SGD_STEP = False
 
 
 def _adam_step_op(param, grad, exp_avg, exp_avg_sq, max_exp_avg_sq,
@@ -40,22 +46,30 @@ def _sgd_step_op(param, grad, buf, lr, momentum, dampening, weight_decay,
     """SGD step as composite of NPU arithmetic ops."""
     g = neg(grad) if maximize else grad
     if weight_decay != 0:
-        wd_t = _scalar_to_npu_tensor(weight_decay, param)
-        g = add(g, mul(wd_t, param))
+        g = add(g, mul(param, weight_decay))
     if momentum != 0:
-        mom_t = _scalar_to_npu_tensor(momentum, buf)
-        damp_t = _scalar_to_npu_tensor(1.0 - dampening, buf)
         # buf = momentum * buf + (1-dampening) * g
-        new_buf = add(mul(mom_t, buf), mul(damp_t, g))
+        new_buf = add(mul(buf, momentum), mul(g, 1.0 - dampening))
         copy_(buf, new_buf)
         if nesterov:
-            g = add(g, mul(mom_t, buf))
+            g = add(g, mul(buf, momentum))
         else:
             g = buf
-    lr_t = _scalar_to_npu_tensor(lr, param)
-    new_param = sub(param, mul(lr_t, g))
-    copy_(param, new_param)
+    if _HAS_FAST_SGD_STEP:
+        return _fast_sgd_step_impl(param, g, float(lr))
+    update = mul(g, lr)
+    copy_(param, sub(param, update))
     return param
+
+
+def _sgd_step_many_op(params, grads, lr):
+    """Batched no-momentum SGD step for NPU parameter groups."""
+    if _fast_sgd_step_many_impl is not None:
+        _fast_sgd_step_many_impl(params, grads, float(lr))
+        return None
+    for param, grad in zip(params, grads):
+        _sgd_step_op(param, grad, None, lr, 0.0, 0.0, 0.0, False, False)
+    return None
 
 
 def _adagrad_step_op(param, grad, state_sum, step, lr, lr_decay,

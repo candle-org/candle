@@ -290,7 +290,7 @@ class DTensor(Tensor):
 
     # Optimizer step ops that should operate directly on local shards
     _SHARD_PASSTHROUGH_OPS = frozenset({
-        "_sgd_step", "_adam_step", "_adamw_step",
+        "_sgd_step", "_sgd_step_many", "_adam_step", "_adamw_step",
     })
 
     @classmethod

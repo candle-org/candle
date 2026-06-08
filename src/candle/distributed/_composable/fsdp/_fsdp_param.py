@@ -3,6 +3,7 @@ from enum import Enum, auto
 from ....distributed.tensor.dtensor import DTensor
 from ....distributed.tensor.placement import Shard
 from .... import distributed as dist
+from . import _profile
 
 try:
     from ....distributed._fsdp_fastpath import (
@@ -112,7 +113,8 @@ class FSDPParam:
                 device=local_tensor.device,
             )
             pg = self._mesh_info.shard_process_group
-            dist.all_gather_into_tensor(output, local_tensor, group=pg)
+            with _profile.record("fsdp.all_gather"):
+                dist.all_gather_into_tensor(output, local_tensor, group=pg)
             # Strip padding to restore original shape
             if self._padded_dim_size > 0:
                 from ...._functional import narrow
@@ -212,7 +214,8 @@ class FSDPParam:
             *shard_shape, dtype=grad.dtype, device=grad.device
         )
         pg = self._mesh_info.shard_process_group
-        dist.reduce_scatter_tensor(reduced_grad, grad, group=pg)
+        with _profile.record("fsdp.reduce_scatter_collective"):
+            dist.reduce_scatter_tensor(reduced_grad, grad, group=pg)
         # Cast reduced gradient back to param storage dtype for optimizer
         shard_dtype = self._sharded_param.to_local().dtype
         if reduced_grad.dtype != shard_dtype:
