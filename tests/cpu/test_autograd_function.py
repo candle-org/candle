@@ -110,6 +110,28 @@ class _DuplicateOutput(Function):
         return (grad_output_a + grad_output_b,)
 
 
+class _TupleBackwardCounter(Function):
+    calls = 0
+    seen_missing = None
+
+    @staticmethod
+    def forward(ctx, x):
+        ctx.set_materialize_grads(False)
+        return torch.mul(x, torch.tensor([2.0])), torch.mul(x, torch.tensor([3.0]))
+
+    @staticmethod
+    def backward(ctx, grad_output_a, grad_output_b):
+        _TupleBackwardCounter.calls += 1
+        _TupleBackwardCounter.seen_missing = (grad_output_a is None, grad_output_b is None)
+        grad_x = None
+        if grad_output_a is not None:
+            grad_x = torch.mul(grad_output_a, torch.tensor([2.0]))
+        if grad_output_b is not None:
+            grad_b = torch.mul(grad_output_b, torch.tensor([3.0]))
+            grad_x = grad_b if grad_x is None else grad_x + grad_b
+        return (grad_x,)
+
+
 
 # ---------------------------------------------------------------------------
 # 2. New-style Function (no ctx in forward)
@@ -143,15 +165,30 @@ def test_new_style_function():
 # 3. No-grad path — inputs without requires_grad
 # ---------------------------------------------------------------------------
 
+
 def test_no_grad_path():
     x = torch.tensor([3.0])  # requires_grad=False by default
     y = _DoubleOldStyle.apply(x)
     assert y.grad_fn is None
 
 
+def test_tuple_custom_function_accumulates_grads_before_backward_when_not_materializing():
+    _TupleBackwardCounter.calls = 0
+    _TupleBackwardCounter.seen_missing = None
+    x = torch.tensor([4.0], requires_grad=True)
+    a, b = _TupleBackwardCounter.apply(x)
+
+    backward((a + b).sum())
+
+    assert _TupleBackwardCounter.calls == 1
+    assert _TupleBackwardCounter.seen_missing == (False, False)
+    assert _allclose(x.grad, [5.0])
+
+
 # ---------------------------------------------------------------------------
 # 4. mark_non_differentiable
 # ---------------------------------------------------------------------------
+
 
 class _NonDiffFunc(Function):
     @staticmethod

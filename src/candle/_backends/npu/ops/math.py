@@ -65,6 +65,7 @@ try:
         fast_log2_inplace as _fast_log2_inplace_impl,
         fast_floor_divide as _fast_floor_divide_impl,
         fast_mul as _fast_mul_impl,
+        fast_mul_scalar as _fast_mul_scalar_impl,
         fast_mul_inplace as _fast_mul_inplace_impl,
         fast_neg as _fast_neg_impl,
         fast_neg_inplace as _fast_neg_inplace_impl,
@@ -201,6 +202,7 @@ except ImportError:
     _fast_asin_impl = None  # type: ignore[assignment]
     _fast_acos_impl = None  # type: ignore[assignment]
     _fast_mul_impl = None  # type: ignore[assignment]
+    _fast_mul_scalar_impl = None  # type: ignore[assignment]
     _HAS_FAST_ADD = False
     _HAS_FAST_ABS = False
     _HAS_FAST_NEG = False
@@ -302,7 +304,9 @@ def add(a, b):
 
 def mul(a, b):
     if isinstance(b, (int, float)):
-        b = _scalar_to_npu_tensor(b, a)
+        if _HAS_FAST_MUL and _fast_mul_scalar_impl is not None:
+            return _fast_mul_scalar_impl(a, b)
+        raise RuntimeError("Cython NPU scalar mul implementation is unavailable")
     if _HAS_FAST_MUL:
         return _fast_mul_impl(a, b)
     raise RuntimeError("Cython NPU mul implementation is unavailable")

@@ -187,6 +187,10 @@ def _ensure_initialized():
         init()
 
 
+def _is_in_graph_capture():
+    return _GRAPH_CAPTURE_DEPTH > 0
+
+
 def mem_get_info(device=None):
     _set_initialized()
     dev = _normalize_npu_device(device)

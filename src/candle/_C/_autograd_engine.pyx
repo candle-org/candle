@@ -10,9 +10,118 @@ import warnings
 import weakref
 
 from candle.autograd.grad_mode import no_grad
+from candle._C._npu_ops cimport fast_add as _cy_fast_npu_add
 
 
 cdef dict _implicit_scalar_grad_cache = {}
+cdef object _dispatch_fn = None
+cdef object _npu_zero_stride_contiguous_fn = None
+
+
+cdef inline void _ensure_dispatch_ref():
+    global _dispatch_fn
+    if _dispatch_fn is None:
+        from candle._dispatch import dispatch
+        _dispatch_fn = dispatch
+
+
+cdef inline void _ensure_npu_zero_stride_contiguous_ref():
+    global _npu_zero_stride_contiguous_fn
+    if _npu_zero_stride_contiguous_fn is None:
+        from candle._C._npu_ops import fast_zero_stride_contiguous
+        _npu_zero_stride_contiguous_fn = fast_zero_stride_contiguous
+
+
+cdef inline object _merge_backward_grads(object lhs, object rhs, bint create_graph):
+    cdef object result
+    if (
+        not create_graph
+        and getattr(getattr(lhs, "device", None), "type", None) == "npu"
+        and getattr(getattr(rhs, "device", None), "type", None) == "npu"
+    ):
+        try:
+            result = _cy_fast_npu_add(lhs, rhs)
+        except (RuntimeError, TypeError, ValueError):
+            result = None
+        if result is not None:
+            return _mark_fresh_npu_owned_backward_grad(result)
+    from candle._functional import add
+    result = add(lhs, rhs)
+    if not create_graph:
+        _mark_fresh_npu_owned_backward_grad(result)
+    return result
+
+
+cdef inline object _materialize_npu_zero_stride_backward_grad(object grad):
+    """Materialize an NPU scalar-broadcast grad through the Cython copy path."""
+    cdef object result
+    _ensure_npu_zero_stride_contiguous_ref()
+    result = _npu_zero_stride_contiguous_fn(grad)
+    if result is not None:
+        return result
+    _ensure_dispatch_ref()
+    return _dispatch_fn("contiguous", grad.device.type, grad)
+
+
+cdef inline object _mark_fresh_npu_owned_backward_grad(object grad):
+    """Mark a fresh NPU backward grad that leaf accumulation may steal."""
+    cdef object device
+    if grad is None:
+        return grad
+    device = getattr(grad, "device", None)
+    if getattr(device, "type", None) != "npu":
+        return grad
+    try:
+        grad._candle_npu_owned_backward_grad = True
+    except Exception:
+        pass
+    return grad
+
+
+cdef inline bint _is_npu_zero_stride_backward_grad(object grad):
+    """Return whether grad is an NPU broadcast view that consumers read-only."""
+    cdef object device
+    cdef object stride_attr
+    cdef object stride_tuple
+    cdef object item
+    if grad is None:
+        return False
+    device = getattr(grad, "device", None)
+    if getattr(device, "type", None) != "npu":
+        return False
+    try:
+        stride_attr = getattr(grad, "stride", None)
+        stride_tuple = stride_attr() if callable(stride_attr) else stride_attr
+    except Exception:
+        return False
+    if stride_tuple is None or len(stride_tuple) == 0:
+        return False
+    for item in stride_tuple:
+        if int(item) != 0:
+            return False
+    return True
+
+
+cdef inline bint _can_share_duplicate_npu_grad_with_consumer(object grad, object next_fn):
+    """Return whether an NPU duplicate grad can be shared with a read-only consumer."""
+    cdef object device
+    cdef object cls
+    cdef str module_name
+    if grad is None or next_fn is None:
+        return False
+    device = getattr(grad, "device", None)
+    if getattr(device, "type", None) != "npu":
+        return False
+    if getattr(next_fn, "_hooks", None) or getattr(next_fn, "_prehooks", None):
+        return False
+    cls = type(next_fn)
+    module_name = getattr(cls, "__module__", "")
+    return (
+        module_name == "candle._generated._functions_cy"
+        or module_name == "candle._generated.functions"
+        or module_name == "candle._C._functional_ops"
+        or module_name == "candle._C._tensor_api"
+    )
 
 
 def _implicit_scalar_grad(tensor):
@@ -281,6 +390,7 @@ cdef class _GraphTask:
     cdef public bint create_graph
     cdef public bint accumulate_grad
     cdef public dict grads_map
+    cdef public dict pending_zero_stride_leaf_grads
     cdef public object inputs
     cdef public object input_ids
     cdef public bint anomaly_enabled
@@ -304,6 +414,7 @@ cdef class _GraphTask:
         self.create_graph = bool(create_graph)
         self.accumulate_grad = bool(accumulate_grad)
         self.grads_map = grads_map if grads_map is not None else {}
+        self.pending_zero_stride_leaf_grads = {}
         self.inputs = None if inputs is None else tuple(inputs)
         self.input_ids = None if inputs is None else {id(t) for t in inputs}
         self.anomaly_enabled = is_anomaly_enabled()
@@ -322,6 +433,8 @@ cdef class _GraphTask:
         cdef object stored_grad
         cdef object base
         cdef object rev_func
+        cdef object pending_grad
+        cdef bint can_defer_zero_stride_leaf
 
         should_touch_leaf = (
             self.inputs is None or tensor.grad_fn is not None or id(tensor) in self.input_ids
@@ -381,7 +494,49 @@ cdef class _GraphTask:
             if tensor.grad_fn is None or getattr(tensor, "_retain_grad", False):
                 if tensor.grad is None:
                     if tensor.grad_fn is None:
-                        if (
+                        pending_grad = self.pending_zero_stride_leaf_grads.pop(tensor, None)
+                        if pending_grad is not None:
+                            if (
+                                not self.create_graph
+                                and getattr(grad, "_candle_npu_owned_backward_grad", False)
+                                and getattr(getattr(grad, "device", None), "type", None) == "npu"
+                            ):
+                                with self._grad_accum_context():
+                                    if _is_npu_zero_stride_backward_grad(pending_grad):
+                                        grad = _merge_backward_grads(grad, pending_grad, self.create_graph)
+                                    else:
+                                        grad += pending_grad
+                                _mark_fresh_npu_owned_backward_grad(grad)
+                            elif (
+                                not self.create_graph
+                                and getattr(pending_grad, "_candle_npu_owned_backward_grad", False)
+                                and getattr(getattr(pending_grad, "device", None), "type", None) == "npu"
+                            ):
+                                with self._grad_accum_context():
+                                    pending_grad += grad
+                                grad = pending_grad
+                                _mark_fresh_npu_owned_backward_grad(grad)
+                            else:
+                                with self._grad_accum_context():
+                                    grad = _merge_backward_grads(grad, pending_grad, self.create_graph)
+                        can_defer_zero_stride_leaf = (
+                            pending_grad is None
+                            and not self.create_graph
+                            and _is_npu_zero_stride_backward_grad(grad)
+                            and not getattr(tensor, "_retain_grad", False)
+                            and not getattr(tensor, "_backward_hooks", None)
+                            and (
+                                acc_node is None
+                                or (
+                                    not getattr(acc_node, "_hooks", None)
+                                    and not getattr(acc_node, "_prehooks", None)
+                                )
+                            )
+                        )
+                        if can_defer_zero_stride_leaf:
+                            self.pending_zero_stride_leaf_grads[tensor] = grad
+                            tensor.grad = None
+                        elif (
                             not self.create_graph
                             and getattr(grad, "_candle_npu_owned_backward_grad", False)
                             and not getattr(tensor, "_backward_hooks", None)
@@ -400,7 +555,9 @@ cdef class _GraphTask:
                             grad.requires_grad = False
                             tensor.grad = grad
                         else:
-                            if grad.is_contiguous():
+                            if _is_npu_zero_stride_backward_grad(grad):
+                                stored_grad = _materialize_npu_zero_stride_backward_grad(grad)
+                            elif grad.is_contiguous():
                                 stored_grad = grad.clone()
                             else:
                                 stored_grad = grad.contiguous()
@@ -409,13 +566,34 @@ cdef class _GraphTask:
                     else:
                         tensor.grad = grad
                 else:
+                    pending_grad = self.pending_zero_stride_leaf_grads.pop(tensor, None)
+                    if pending_grad is not None:
+                        if (
+                            not self.create_graph
+                            and getattr(grad, "_candle_npu_owned_backward_grad", False)
+                            and getattr(getattr(grad, "device", None), "type", None) == "npu"
+                        ):
+                            with self._grad_accum_context():
+                                grad += pending_grad
+                            _mark_fresh_npu_owned_backward_grad(grad)
+                        elif (
+                            not self.create_graph
+                            and getattr(pending_grad, "_candle_npu_owned_backward_grad", False)
+                            and getattr(getattr(pending_grad, "device", None), "type", None) == "npu"
+                        ):
+                            with self._grad_accum_context():
+                                pending_grad += grad
+                            grad = pending_grad
+                            _mark_fresh_npu_owned_backward_grad(grad)
+                        else:
+                            with self._grad_accum_context():
+                                grad = _merge_backward_grads(grad, pending_grad, self.create_graph)
                     preserve_reference = not self.create_graph
                     if getattr(tensor.grad, "is_sparse", False) and not getattr(grad, "is_sparse", False):
                         preserve_reference = False
                     if self.create_graph or not preserve_reference:
-                        from candle._functional import add
                         with self._grad_accum_context():
-                            new_grad = add(tensor.grad, grad)
+                            new_grad = _merge_backward_grads(tensor.grad, grad, self.create_graph)
                         if getattr(tensor.grad, "is_sparse", False) and getattr(grad, "is_sparse", False):
                             new_grad._is_sparse = True
                             new_grad.layout = tensor.grad.layout
@@ -423,24 +601,31 @@ cdef class _GraphTask:
                     else:
                         with self._grad_accum_context():
                             tensor.grad += grad
+                            if getattr(tensor.grad, "_candle_npu_owned_backward_grad", False):
+                                try:
+                                    delattr(tensor.grad, "_candle_npu_owned_backward_grad")
+                                except Exception:
+                                    pass
                 if acc_node is not None:
                     acc_node.apply_posthooks(tensor.grad)
-        else:
+        elif self.inputs is not None and id(tensor) in self.input_ids:
             prev = self.grads_map.get(tensor)
             if prev is None:
                 self.grads_map[tensor] = grad
             else:
-                from candle._functional import add
                 with self._grad_accum_context():
-                    self.grads_map[tensor] = add(prev, grad)
+                    self.grads_map[tensor] = _merge_backward_grads(prev, grad, self.create_graph)
         return grad
 
-    def _accumulate_node_grad(self, node, grad):
+    def _accumulate_node_grad(self, node, grad, output_nr=0):
         cdef object bucket = self.node_grads.get(node)
         if bucket is None:
             bucket = []
             self.node_grads[node] = bucket
-        bucket.append(grad)
+        if output_nr is None:
+            bucket.extend(grad)
+        else:
+            bucket.append((output_nr, grad))
         self.received[node] = self.received.get(node, 0) + 1
         if self.received[node] >= self.dependencies.get(node, 0):
             self.ready.append(node)
@@ -451,24 +636,47 @@ cdef class _GraphTask:
         cdef object grad
         cdef object extra
         cdef object grad_counts
+        cdef object duplicate_zero_stride_leaf_cache
+        cdef object duplicate_grad_key
+        cdef object cached_duplicate_grad
         cdef object g
         cdef object t
         cdef object next_fn
         cdef object _output_nr
+        cdef object pending_tensor
+        cdef object pending_grad
+        cdef object pending_items
+        cdef object base
+        cdef object rev_func
         cdef bint should_visit
         cdef bint defer_duplicate_leaf_clone
+        cdef bint can_skip_tensor_accum
 
         while self.ready:
             node = self.ready.popleft()
             grads = self.node_grads.pop(node, None)
             if not grads:
                 continue
-            grad = grads[0]
-            if len(grads) > 1:
-                from candle._functional import add
+            if getattr(node, "_candle_multi_output_backward_count", 0):
+                slot_grads = [None] * int(node._candle_multi_output_backward_count)
                 with self._grad_accum_context():
-                    for extra in grads[1:]:
-                        grad = add(grad, extra)
+                    for _output_nr, extra in grads:
+                        if extra is None:
+                            continue
+                        slot_idx = int(_output_nr)
+                        if slot_idx < 0 or slot_idx >= len(slot_grads):
+                            continue
+                        if slot_grads[slot_idx] is None:
+                            slot_grads[slot_idx] = extra
+                        else:
+                            slot_grads[slot_idx] = _merge_backward_grads(slot_grads[slot_idx], extra, self.create_graph)
+                grad = tuple(slot_grads)
+            else:
+                grad = grads[0][1]
+                if len(grads) > 1:
+                    with self._grad_accum_context():
+                        for extra in grads[1:]:
+                            grad = _merge_backward_grads(grad, extra[1], self.create_graph)
             if self.anomaly_enabled:
                 push_evaluating_node(node)
                 try:
@@ -486,6 +694,7 @@ cdef class _GraphTask:
                 grads = (grads,)
             _check_anomaly_nan(node, grads, self.anomaly_check_nan)
             grad_counts = None
+            duplicate_zero_stride_leaf_cache = None
             if grads:
                 from candle._tensor import Tensor
                 grad_counts = {}
@@ -501,15 +710,20 @@ cdef class _GraphTask:
             for (t, g), (next_fn, _output_nr) in zip(zip(node.inputs, grads), _engine_next_functions(node)):
                 if g is None:
                     continue
+                should_visit = (
+                    self.inputs is None or next_fn is not None or id(t) in self.input_ids
+                )
+                if not should_visit:
+                    continue
                 if grad_counts is not None and grad_counts.get(id(g), 0) > 1:
                     # A node that returns the SAME grad object for multiple inputs
-                    # (e.g. AddBackward → (grad, grad)) needs each consumer to own
-                    # its grad so downstream in-place accumulation can't corrupt a
-                    # sibling. But a plain leaf (no grad_fn, no retain_grad) is
-                    # about to store ``grad.clone()`` into ``.grad`` itself and
-                    # never mutates the shared object, so the eager clone here is
-                    # redundant work — defer it to the leaf store. This halves the
-                    # device copies for add/mul-style backward on NPU/CUDA.
+                    # (e.g. AddBackward → (grad, grad)) needs each mutating consumer
+                    # to own its grad. Downstream backward formulas in Candle read
+                    # their incoming grads and return fresh tensors; leaf stores also
+                    # copy/steal at the leaf boundary. Avoid cloning zero-stride NPU
+                    # broadcast grads here, because those residual/sum grads are hot
+                    # in Transformer backward and the branch consumers do not mutate
+                    # them before producing independent outputs.
                     defer_duplicate_leaf_clone = (
                         (next_fn is None or next_fn not in self.dependencies)
                         and isinstance(t, Tensor)
@@ -525,22 +739,62 @@ cdef class _GraphTask:
                         )
                         and (self.inputs is None or id(t) in self.input_ids)
                     )
-                    if not defer_duplicate_leaf_clone:
+                    if defer_duplicate_leaf_clone and _is_npu_zero_stride_backward_grad(g):
+                        # Let leaf accumulation defer scalar-expanded NPU grads.
+                        # A later dense contribution can fold this pending grad into
+                        # one on-device add; pending-only leaves are materialized at
+                        # graph end to preserve public dense, non-aliased .grad.
+                        if (
+                            not self.create_graph
+                            and getattr(t, "grad", None) is None
+                            and t not in self.pending_zero_stride_leaf_grads
+                        ):
+                            self.pending_zero_stride_leaf_grads[t] = g
+                            continue
+                        g = g
+                    elif (
+                        not defer_duplicate_leaf_clone
+                        and not _is_npu_zero_stride_backward_grad(g)
+                        and not _can_share_duplicate_npu_grad_with_consumer(g, next_fn)
+                    ):
                         g = g.clone()
-                should_visit = (
-                    self.inputs is None or next_fn is not None or id(t) in self.input_ids
-                )
-                if not should_visit:
-                    continue
                 if not isinstance(t, Tensor):
                     if next_fn is not None and next_fn in self.dependencies:
-                        self._accumulate_node_grad(next_fn, g)
+                        self._accumulate_node_grad(next_fn, g, _output_nr)
                     continue
+                can_skip_tensor_accum = (
+                    not self.create_graph
+                    and self.inputs is None
+                    and next_fn is not None
+                    and next_fn in self.dependencies
+                    and t.grad_fn is not None
+                    and not getattr(t, "_retain_grad", False)
+                    and not getattr(t, "_backward_hooks", None)
+                    and getattr(t, "_accumulate_grad_node", None) is None
+                )
+                if can_skip_tensor_accum:
+                    base = getattr(t, "_base", None)
+                    rev_func = getattr(t, "_rev_view_func", None)
+                    if base is None or rev_func is None or t.grad_fn is not getattr(base, "grad_fn", None):
+                        self._accumulate_node_grad(next_fn, g, _output_nr)
+                        continue
                 g = self._accumulate_tensor_grad(t, g)
                 if next_fn is not None and next_fn in self.dependencies:
-                    self._accumulate_node_grad(next_fn, g)
+                    self._accumulate_node_grad(next_fn, g, _output_nr)
             if not self.retain_graph:
                 node.release_saved_tensors()
+        if self.pending_zero_stride_leaf_grads:
+            pending_items = tuple(self.pending_zero_stride_leaf_grads.items())
+            self.pending_zero_stride_leaf_grads.clear()
+            for pending_tensor, pending_grad in pending_items:
+                if getattr(pending_tensor, "grad", None) is None:
+                    stored_grad = _materialize_npu_zero_stride_backward_grad(pending_grad)
+                    stored_grad.requires_grad = False
+                    pending_tensor.grad = stored_grad
+                else:
+                    from candle._functional import add
+                    with self._grad_accum_context():
+                        pending_tensor.grad += pending_grad
         if not self.retain_graph:
             for node in self.dependencies:
                 node.release_saved_tensors()
@@ -653,8 +907,9 @@ def _run_backward(
                     apply_hooks=False,
                 )
             else:
-                task._accumulate_node_grad(out.grad_fn, grad)
-        task.run()
+                task._accumulate_node_grad(out.grad_fn, grad, getattr(out, "output_nr", 0))
+        if task.ready:
+            task.run()
     finally:
         stack.pop()
 

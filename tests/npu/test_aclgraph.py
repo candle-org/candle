@@ -61,13 +61,32 @@ def test_npu_graph_api_symbols_exist():
     assert hasattr(torch.npu, "is_current_stream_capturing")
 
 
+def test_npu_private_graph_capture_depth_helper_is_acl_probe_free(fake_graph_env, monkeypatch):
+    import candle._C._aclrt_ffi as aclrt_ffi
+
+    monkeypatch.setattr(
+        aclrt_ffi,
+        "capture_get_info",
+        lambda handle: (_ for _ in ()).throw(AssertionError("should not query ACL capture state")),
+    )
+
+    assert torch.npu._is_in_graph_capture() is False  # pylint: disable=protected-access
+    g = torch.npu.NPUGraph()
+    with torch.npu.graph(g):
+        assert torch.npu._is_in_graph_capture() is True  # pylint: disable=protected-access
+    assert torch.npu._is_in_graph_capture() is False  # pylint: disable=protected-access
+
+
 def test_npu_graph_capture_begin_uses_current_stream(fake_graph_env):
     fake_stream, _ = fake_graph_env
     g = torch.npu.NPUGraph()
 
-    g.capture_begin(capture_error_mode="thread_local")
-
-    assert g._impl.calls == [("capture_begin", fake_stream._handle, 1)]
+    try:
+        g.capture_begin(capture_error_mode="thread_local")
+        assert g._impl.calls == [("capture_begin", fake_stream._handle, 1)]
+    finally:
+        if torch.npu._is_in_graph_capture():  # pylint: disable=protected-access
+            g.capture_end()
 
 
 def test_npu_graph_replay_uses_capture_stream(fake_graph_env):

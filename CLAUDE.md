@@ -284,6 +284,71 @@ source ~/miniconda3/etc/profile.d/conda.sh && conda run -n candle \
 - Compositing small ops incurs kernel launch overhead and prevents hardware-level fusion
 - Check `_backends/npu/aclnn.py` before implementing any NPU op as a composite
 
+### NPU Transformer / SDPA Performance Playbook
+
+Use this checklist for Transformer and attention performance work. It captures the lessons from the NPU MLP optimization batches and is mandatory for SDPA-related development.
+
+#### Goal and acceptance bar
+
+- Target API: PyTorch-compatible `torch.nn.functional.scaled_dot_product_attention` (SDPA), plus any generic functional/module paths that route through it.
+- Functional requirement: support autograd for train-mode Transformer workloads; inference-only speedups are insufficient.
+- Performance requirement: end-to-end Transformer forward, backward, and total step time on NPU must be **at parity with or faster than `torch_npu`** for the benchmarked shapes and dtype.
+- Implementation must remain generic Candle behavior: no Transformer-shape hacks, no benchmark-only branches, no model-specific fusion.
+
+#### Required development order
+
+1. **Benchmark first**
+   - Add or reuse a Transformer/SDPA benchmark that reports forward, backward, total, and profiler top rows for both Candle and `torch_npu`.
+   - Use identical shapes, dtype, dropout mode, mask/causal settings, and synchronization boundaries for both frameworks.
+   - Always set `PYTHONPATH=<your-worktree>/src` in `candle311`; otherwise benchmarks may import the wrong editable install.
+2. **Profile before optimizing**
+   - Identify whether the gap is in SDPA kernels, matmul/bmm, softmax/dropout/mask ops, autograd graph overhead, tensor views/transposes, allocator/runtime/deferred cleanup, or CPU-visible dispatch overhead.
+   - Do not guess. Record the hot rows before choosing an implementation path.
+3. **Write RED tests before production code**
+   - Correctness tests must compare against PyTorch in tests only.
+   - Routing tests should prove hot paths avoid Python wrappers/redispatch where that is the intended performance property.
+   - Autograd tests must verify query/key/value gradients stay on NPU and match tolerances.
+   - Include mask/causal/dropout/scale combinations supported by the implementation; unsupported cases must fall back through normal generic dispatch, not silently return wrong results.
+4. **Prefer native fused kernels**
+   - For NPU SDPA, first check ACLNN/Ascend availability for fused attention forward/backward kernels.
+   - If native fused forward/backward is usable, bind it in `_C`/Cython and keep Python-side API matching PyTorch.
+   - If native fused kernels are absent or incorrect, use an on-device composite of generic ops only as a temporary generic fallback. Never move NPU tensors to CPU.
+5. **Keep autograd fused/generic**
+   - SDPA forward fast paths must attach a tested autograd node or route through generated autograd without losing graph semantics.
+   - Backward should prefer native fused SDPA backward; otherwise implement a generic on-device backward composite.
+   - Preserve `create_graph`, saved tensor hooks, public `next_functions`, retain-grad, and leaf `.grad` semantics. Internal fast caches may defer public metadata creation only if public introspection still materializes PyTorch-compatible state.
+6. **Use proven NPU hot-path techniques**
+   - Use exact base `TensorImpl` guards before bypassing dispatch.
+   - Read cached shape/stride/device/dtype fields directly in Cython.
+   - Use cached stream/runtime/allocator helpers and fast large-pool tensor wrappers for fresh outputs.
+   - Add PTA executor-cache keys for stable native kernels. Keys must include all semantic attributes: op name, tensor descriptors, dtype(s), scale, dropout probability, causal flag, mask type/shape/stride, output descriptor, alias bits where relevant, and stream.
+   - Keep descriptor/workspace/executor lifetimes valid until deferred execution cleanup.
+7. **Validate broadly before PR**
+   - For any `src/candle/` change: rebuild Cython, run affected NPU tests, full NPU suite, CPU + contract tests, pylint, and repeated Transformer benchmarks.
+   - Do not claim parity from one noisy run. Use enough repeats to distinguish improvement from `torch_npu` run-to-run variance.
+   - If eager op-level optimization cannot reach parity, move to a generic graph/capture/fused-backend plan rather than adding application-specific fusion.
+
+#### Useful validation commands
+
+```bash
+# Rebuild Cython extensions
+source /home/jenkins/anaconda3/etc/profile.d/conda.sh && conda activate candle311 && \
+PYTHONPATH=<your-worktree>/src python setup.py build_ext --inplace
+
+# NPU focused/full tests
+source /usr/local/Ascend/ascend-toolkit/set_env.sh && \
+source /home/jenkins/anaconda3/etc/profile.d/conda.sh && conda activate candle311 && \
+PYTHONPATH=<your-worktree>/src python -m pytest tests/npu/ -v --tb=short
+
+# CPU + contract tests
+source /home/jenkins/anaconda3/etc/profile.d/conda.sh && conda activate candle311 && \
+PYTHONPATH=<your-worktree>/src python -m pytest tests/cpu/ tests/contract/ -v --tb=short
+
+# Pylint gate
+source /home/jenkins/anaconda3/etc/profile.d/conda.sh && conda activate candle311 && \
+PYTHONPATH=<your-worktree>/src python -m pylint src/candle/ --rcfile=.github/pylint.conf
+```
+
 ---
 
 ## Troubleshooting

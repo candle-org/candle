@@ -15,6 +15,17 @@ def test_view_reshape_transpose_share_storage():
     assert x.stride != z.stride
 
 
+def test_reshape_zero_stride_expand_can_remain_view():
+    base = torch.tensor([1.0], requires_grad=True)
+    expanded = base.expand(2, 3)
+
+    y = expanded.reshape(3, 2)
+
+    assert y.storage() is base.storage()
+    assert y.stride == (0, 0)
+    assert y.tolist() == [[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]]
+
+
 def test_tensor_reshape_bypasses_python_common_view_backend(monkeypatch):
     import candle._backends.common.view as view_backend
 

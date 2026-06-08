@@ -424,6 +424,25 @@ cdef inline void _pta_buf_append_tensor(
     _fn_add_tensor_addr(data_ptr)
 
 
+cdef inline void _pta_buf_append_tensor_with_storage(
+    uint8_t* buf, int* offset,
+    const int64_t* shape, const int64_t* stride, int ndim,
+    const int64_t* storage_shape, int storage_ndim,
+    int32_t dtype_code, int64_t storage_offset,
+    void* data_ptr) noexcept nogil:
+    cdef char sep = b','
+    cdef int64_t storage_dim
+
+    _pta_buf_append(buf, offset, shape, ndim * sizeof(int64_t))
+    _pta_buf_append(buf, offset, &dtype_code, sizeof(int32_t))
+    _pta_buf_append(buf, offset, &sep, 1)
+    _pta_buf_append(buf, offset, stride, ndim * sizeof(int64_t))
+    _pta_buf_append(buf, offset, &storage_offset, sizeof(int64_t))
+    storage_dim = _pta_numel(storage_shape, storage_ndim)
+    _pta_buf_append(buf, offset, &storage_dim, sizeof(int64_t))
+    _fn_add_tensor_addr(data_ptr)
+
+
 cdef inline void _pta_buf_append_scalar(
     uint8_t* buf, int* offset,
     const void* scalar_data, int scalar_nbytes, int32_t scalar_dtype_code) noexcept nogil:
@@ -470,6 +489,9 @@ cpdef object pta_begin_add_cache_lookup(
     cdef void* executor = NULL
     cdef const uint8_t* alpha_data = <const uint8_t*>alpha_scalar_bytes
     cdef int alpha_nbytes = len(alpha_scalar_bytes)
+
+    if self_ndim > MAX_NDIM or other_ndim > MAX_NDIM or out_ndim > MAX_NDIM:
+        return None
 
     for i in range(self_ndim):
         s_shape[i] = self_shape[i]
@@ -543,6 +565,9 @@ cdef int pta_begin_add_cache_lookup_raw(
     cdef const uint8_t* alpha_data = <const uint8_t*>alpha_scalar_bytes
     cdef int alpha_nbytes = len(alpha_scalar_bytes)
 
+    if self_ndim > MAX_NDIM or other_ndim > MAX_NDIM or out_ndim > MAX_NDIM:
+        return 0
+
     for i in range(self_ndim):
         s_shape[i] = self_shape[i]
         s_stride[i] = self_stride[i]
@@ -580,6 +605,212 @@ cpdef void pta_end_cache_lookup():
         return
     with nogil:
         _fn_uninit_pta_cache()
+
+
+cpdef object pta_begin_inplace_copy_cache_lookup(
+        object dst_shape, object dst_stride,
+        object src_shape, object src_stride,
+        int32_t dst_dtype_code, int32_t src_dtype_code,
+        uintptr_t dst_ptr, uintptr_t src_ptr,
+        uintptr_t stream):
+    """torch_npu-style PTA cache context for aclnnInplaceCopy.
+
+    Returns (pta_active, workspace_size, executor_ptr) or None when PTA is
+    unavailable / not usable.  A nonzero executor is a cache hit and can be
+    executed directly; zero means the caller must run GetWorkspaceSize while
+    the PTA context remains active, then call pta_end_cache_lookup().
+    """
+    if not _pta_cache_available:
+        return None
+
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(b"aclnnInplaceCopy")
+    if not can_use:
+        return None
+
+    cdef int dst_ndim = len(dst_shape)
+    cdef int src_ndim = len(src_shape)
+    cdef int i
+    cdef int64_t[MAX_NDIM] d_shape, d_stride
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef bint tensors_alias = dst_ptr == src_ptr
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+
+    for i in range(dst_ndim):
+        d_shape[i] = dst_shape[i]
+        d_stride[i] = dst_stride[i]
+    for i in range(src_ndim):
+        s_shape[i] = src_shape[i]
+        s_stride[i] = src_stride[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"aclnnInplaceCopy")
+        _pta_buf_append(hash_buf, &hash_offset, &tensors_alias, sizeof(bint))
+        _pta_buf_append_tensor(hash_buf, &hash_offset, d_shape, d_stride, dst_ndim, dst_dtype_code, 0, <void*>dst_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, s_shape, s_stride, src_ndim, src_dtype_code, 0, <void*>src_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    return (True, ws_size, <uintptr_t>executor)
+
+
+cpdef object pta_begin_split_with_size_cache_lookup(
+        object self_shape, object self_stride,
+        object split_sizes,
+        object out_ptrs, object out_shapes, object out_strides,
+        int64_t dim,
+        int32_t dtype_code,
+        uintptr_t self_ptr,
+        uintptr_t stream):
+    """torch_npu-style PTA cache context for aclnnSplitWithSize."""
+    if not _pta_cache_available:
+        return None
+
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(b"aclnnSplitWithSize")
+    if not can_use:
+        return None
+
+    cdef int self_ndim = len(self_shape)
+    cdef int out_count = len(out_ptrs)
+    cdef int sizes_count = len(split_sizes)
+    cdef int i
+    cdef int j
+    cdef int out_ndim
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int64_t[64] sizes_buf
+    cdef int64_t[64][MAX_NDIM] o_shapes
+    cdef int64_t[64][MAX_NDIM] o_strides
+    cdef int o_ndims[64]
+    cdef uintptr_t o_ptrs[64]
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+
+    if self_ndim > MAX_NDIM or out_count <= 0 or out_count > 64 or sizes_count != out_count:
+        return None
+
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(out_count):
+        sizes_buf[i] = split_sizes[i]
+        o_ptrs[i] = <uintptr_t>out_ptrs[i]
+        out_ndim = len(out_shapes[i])
+        if out_ndim > MAX_NDIM:
+            return None
+        o_ndims[i] = out_ndim
+        for j in range(out_ndim):
+            o_shapes[i][j] = out_shapes[i][j]
+            o_strides[i][j] = out_strides[i][j]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"aclnnSplitWithSize")
+        _pta_buf_append_tensor(hash_buf, &hash_offset, s_shape, s_stride, self_ndim, dtype_code, 0, <void*>self_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, sizes_buf, out_count * sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &out_count, sizeof(int))
+        _pta_buf_append(hash_buf, &hash_offset, &dim, sizeof(int64_t))
+        for i in range(out_count):
+            _pta_buf_append_tensor(hash_buf, &hash_offset, o_shapes[i], o_strides[i], o_ndims[i], dtype_code, 0, <void*>o_ptrs[i])
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    return (True, ws_size, <uintptr_t>executor)
+
+
+cpdef object pta_begin_stack_cache_lookup(
+        object tensor_ptrs, object shapes, object strides,
+        int64_t dim,
+        object out_shape, object out_stride,
+        int32_t dtype_code,
+        uintptr_t out_ptr,
+        uintptr_t stream):
+    """torch_npu-style PTA cache context for aclnnStack."""
+    if not _pta_cache_available:
+        return None
+
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(b"aclnnStack")
+    if not can_use:
+        return None
+
+    cdef int n = len(tensor_ptrs)
+    cdef int out_ndim = len(out_shape)
+    cdef int i
+    cdef int j
+    cdef int ndim
+    cdef int32_t dtype_code_i = dtype_code
+    cdef int64_t[64][MAX_NDIM] t_shapes
+    cdef int64_t[64][MAX_NDIM] t_strides
+    cdef int t_ndims[64]
+    cdef uintptr_t t_ptrs[64]
+    cdef int64_t[MAX_NDIM] o_shape, o_stride
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+
+    if n <= 0 or n > 64 or out_ndim > MAX_NDIM:
+        return None
+
+    for i in range(n):
+        t_ptrs[i] = <uintptr_t>tensor_ptrs[i]
+        ndim = len(shapes[i])
+        if ndim > MAX_NDIM:
+            return None
+        t_ndims[i] = ndim
+        for j in range(ndim):
+            t_shapes[i][j] = shapes[i][j]
+            t_strides[i][j] = strides[i][j]
+    for i in range(out_ndim):
+        o_shape[i] = out_shape[i]
+        o_stride[i] = out_stride[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"aclnnStack")
+        _pta_buf_append(hash_buf, &hash_offset, &n, sizeof(int))
+        _pta_buf_append(hash_buf, &hash_offset, &dim, sizeof(int64_t))
+        for i in range(n):
+            _pta_buf_append_tensor(hash_buf, &hash_offset, t_shapes[i], t_strides[i], t_ndims[i], dtype_code_i, 0, <void*>t_ptrs[i])
+        _pta_buf_append_tensor(hash_buf, &hash_offset, o_shape, o_stride, out_ndim, dtype_code_i, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    return (True, ws_size, <uintptr_t>executor)
 
 
 cpdef object pta_begin_binary_cache_lookup(
@@ -657,6 +888,9 @@ cdef int pta_begin_binary_cache_lookup_raw(
     cdef uint64_t ws_size = 0
     cdef void* executor = NULL
     cdef bint inputs_alias = self_ptr == other_ptr
+
+    if self_ndim > MAX_NDIM or other_ndim > MAX_NDIM or out_ndim > MAX_NDIM:
+        return 0
 
     for i in range(self_ndim):
         s_shape[i] = self_shape[i]
@@ -747,6 +981,9 @@ cdef int pta_begin_addmm_cache_lookup_raw(
     cdef bint input_mat1_alias = input_ptr == mat1_ptr
     cdef bint input_mat2_alias = input_ptr == mat2_ptr
     cdef bint mat1_mat2_alias = mat1_ptr == mat2_ptr
+
+    if input_ndim > MAX_NDIM or mat1_ndim > MAX_NDIM or mat2_ndim > MAX_NDIM or out_ndim > MAX_NDIM:
+        return 0
 
     for i in range(input_ndim):
         input_shape_buf[i] = input_shape[i]
@@ -856,6 +1093,9 @@ cdef int pta_begin_unary_cache_lookup_raw(
     cdef uint64_t ws_size = 0
     cdef void* executor = NULL
 
+    if self_ndim > MAX_NDIM or out_ndim > MAX_NDIM:
+        return 0
+
     for i in range(self_ndim):
         s_shape[i] = self_shape[i]
         s_stride[i] = self_stride[i]
@@ -949,6 +1189,30 @@ def destroy_tensor(uintptr_t handle):
     with nogil:
         ret = _fast_destroy_tensor(<void*>handle)
     return ret
+
+cdef void* create_tensor_raw(
+    const int64_t* shape, const int64_t* stride, uint64_t ndim,
+    int32_t dtype_code, int32_t fmt, void* data_ptr,
+) noexcept nogil:
+    return _fast_create_tensor(shape, stride, ndim, dtype_code, fmt, data_ptr)
+
+
+cdef void* create_tensor_raw_with_storage(
+    const int64_t* shape, const int64_t* stride, uint64_t ndim,
+    const int64_t* storage_dims, uint64_t storage_ndim,
+    int64_t storage_offset,
+    int32_t dtype_code, int32_t fmt, void* data_ptr,
+) noexcept nogil:
+    return _fast_create_tensor_ex(
+        shape, stride, ndim, dtype_code, fmt,
+        storage_dims, storage_ndim,
+        storage_offset,
+        data_ptr)
+
+
+cdef int32_t destroy_tensor_raw(void* handle) noexcept nogil:
+    return _fast_destroy_tensor(handle)
+
 
 # ---------------------------------------------------------------------------
 # Scalar creation / destruction
@@ -1660,6 +1924,9 @@ cdef int pta_begin_reduce_sum_cache_lookup_raw(
     cdef uint64_t ws_size = 0
     cdef void* executor = NULL
 
+    if self_ndim > MAX_NDIM or out_ndim > MAX_NDIM or dims_ndim > MAX_NDIM:
+        return 0
+
     for i in range(self_ndim):
         s_shape[i] = self_shape[i]
         s_stride[i] = self_stride[i]
@@ -1678,6 +1945,504 @@ cdef int pta_begin_reduce_sum_cache_lookup_raw(
         _pta_buf_append(hash_buf, &hash_offset, dims_buf, dims_ndim * sizeof(int64_t))
         _pta_buf_append(hash_buf, &hash_offset, &keepdim, sizeof(bint))
         _pta_buf_append_tensor(hash_buf, &hash_offset, r_shape, r_stride, out_ndim, dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    pta_active_out[0] = True
+    ws_size_out[0] = ws_size
+    executor_out[0] = <uintptr_t>executor
+    return 1
+
+
+cdef int pta_begin_sdpa_flash_cache_lookup_raw(
+        object q_shape, object q_stride,
+        object k_shape, object k_stride,
+        object v_shape, object v_stride,
+        object out_shape, object out_stride,
+        object aux_shape, object aux_stride,
+        int32_t dtype_code,
+        uintptr_t q_ptr, uintptr_t k_ptr, uintptr_t v_ptr,
+        uintptr_t out_ptr, uintptr_t softmax_max_ptr, uintptr_t softmax_sum_ptr,
+        double scale_value, double keep_prob,
+        int64_t pre_tokens, int64_t next_tokens, int64_t head_num,
+        int64_t sparse_mode, int64_t inner_precise,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    """Tuple-less PTA lookup for aclnnFlashAttentionScore."""
+    pta_active_out[0] = False
+    ws_size_out[0] = 0
+    executor_out[0] = 0
+    if not _pta_cache_available:
+        return 0
+
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(b"aclnnFlashAttentionScore")
+    if not can_use:
+        return 0
+
+    cdef int q_ndim = len(q_shape)
+    cdef int k_ndim = len(k_shape)
+    cdef int v_ndim = len(v_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int aux_ndim = len(aux_shape)
+    cdef int i
+    cdef int64_t[MAX_NDIM] q_shape_buf, q_stride_buf
+    cdef int64_t[MAX_NDIM] k_shape_buf, k_stride_buf
+    cdef int64_t[MAX_NDIM] v_shape_buf, v_stride_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+    cdef int64_t[MAX_NDIM] aux_shape_buf, aux_stride_buf
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef bint qk_alias = q_ptr == k_ptr
+    cdef bint qv_alias = q_ptr == v_ptr
+    cdef bint kv_alias = k_ptr == v_ptr
+
+    if q_ndim > MAX_NDIM or k_ndim > MAX_NDIM or v_ndim > MAX_NDIM or out_ndim > MAX_NDIM or aux_ndim > MAX_NDIM:
+        return 0
+
+    for i in range(q_ndim):
+        q_shape_buf[i] = q_shape[i]
+        q_stride_buf[i] = q_stride[i]
+    for i in range(k_ndim):
+        k_shape_buf[i] = k_shape[i]
+        k_stride_buf[i] = k_stride[i]
+    for i in range(v_ndim):
+        v_shape_buf[i] = v_shape[i]
+        v_stride_buf[i] = v_stride[i]
+    for i in range(out_ndim):
+        out_shape_buf[i] = out_shape[i]
+        out_stride_buf[i] = out_stride[i]
+    for i in range(aux_ndim):
+        aux_shape_buf[i] = aux_shape[i]
+        aux_stride_buf[i] = aux_stride[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"aclnnFlashAttentionScore")
+        _pta_buf_append(hash_buf, &hash_offset, &qk_alias, sizeof(bint))
+        _pta_buf_append(hash_buf, &hash_offset, &qv_alias, sizeof(bint))
+        _pta_buf_append(hash_buf, &hash_offset, &kv_alias, sizeof(bint))
+        _pta_buf_append_tensor(hash_buf, &hash_offset, q_shape_buf, q_stride_buf, q_ndim, dtype_code, 0, <void*>q_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, k_shape_buf, k_stride_buf, k_ndim, dtype_code, 0, <void*>k_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, v_shape_buf, v_stride_buf, v_ndim, dtype_code, 0, <void*>v_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &scale_value, sizeof(double))
+        _pta_buf_append(hash_buf, &hash_offset, &keep_prob, sizeof(double))
+        _pta_buf_append(hash_buf, &hash_offset, &pre_tokens, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &next_tokens, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &head_num, sizeof(int64_t))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"BNSD")
+        _pta_buf_append(hash_buf, &hash_offset, &sparse_mode, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &inner_precise, sizeof(int64_t))
+        _pta_buf_append_tensor(hash_buf, &hash_offset, aux_shape_buf, aux_stride_buf, aux_ndim, 0, 0, <void*>softmax_max_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, aux_shape_buf, aux_stride_buf, aux_ndim, 0, 0, <void*>softmax_sum_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, out_shape_buf, out_stride_buf, out_ndim, dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    pta_active_out[0] = True
+    ws_size_out[0] = ws_size
+    executor_out[0] = <uintptr_t>executor
+    return 1
+
+
+cdef int _pta_begin_sdpa_flash_grad_cache_lookup_impl(
+        const char* op_name,
+        object q_shape, object q_stride,
+        object k_shape, object k_stride,
+        object v_shape, object v_stride,
+        object grad_shape, object grad_stride,
+        object out_shape, object out_stride,
+        object aux_shape, object aux_stride,
+        object dq_shape, object dq_stride,
+        object dk_shape, object dk_stride,
+        object dv_shape, object dv_stride,
+        int32_t dtype_code,
+        uintptr_t q_ptr, uintptr_t k_ptr, uintptr_t v_ptr,
+        uintptr_t grad_ptr, uintptr_t out_ptr,
+        uintptr_t softmax_max_ptr, uintptr_t softmax_sum_ptr,
+        uintptr_t dq_ptr, uintptr_t dk_ptr, uintptr_t dv_ptr,
+        double scale_value, double keep_prob,
+        int64_t pre_tokens, int64_t next_tokens, int64_t head_num,
+        int64_t sparse_mode, int64_t inner_precise, int64_t pse_type,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    """Tuple-less PTA lookup for aclnnFlashAttentionScoreGrad variants."""
+    pta_active_out[0] = False
+    ws_size_out[0] = 0
+    executor_out[0] = 0
+    if not _pta_cache_available:
+        return 0
+
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(op_name)
+    if not can_use:
+        return 0
+
+    cdef int q_ndim = len(q_shape)
+    cdef int k_ndim = len(k_shape)
+    cdef int v_ndim = len(v_shape)
+    cdef int grad_ndim = len(grad_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int aux_ndim = len(aux_shape)
+    cdef int dq_ndim = len(dq_shape)
+    cdef int dk_ndim = len(dk_shape)
+    cdef int dv_ndim = len(dv_shape)
+    cdef int i
+    cdef int64_t[MAX_NDIM] q_shape_buf, q_stride_buf
+    cdef int64_t[MAX_NDIM] k_shape_buf, k_stride_buf
+    cdef int64_t[MAX_NDIM] v_shape_buf, v_stride_buf
+    cdef int64_t[MAX_NDIM] grad_shape_buf, grad_stride_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+    cdef int64_t[MAX_NDIM] aux_shape_buf, aux_stride_buf
+    cdef int64_t[MAX_NDIM] dq_shape_buf, dq_stride_buf
+    cdef int64_t[MAX_NDIM] dk_shape_buf, dk_stride_buf
+    cdef int64_t[MAX_NDIM] dv_shape_buf, dv_stride_buf
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef bint qk_alias = q_ptr == k_ptr
+    cdef bint qv_alias = q_ptr == v_ptr
+    cdef bint kv_alias = k_ptr == v_ptr
+
+    if (
+        q_ndim > MAX_NDIM or k_ndim > MAX_NDIM or v_ndim > MAX_NDIM
+        or grad_ndim > MAX_NDIM or out_ndim > MAX_NDIM or aux_ndim > MAX_NDIM
+        or dq_ndim > MAX_NDIM or dk_ndim > MAX_NDIM or dv_ndim > MAX_NDIM
+    ):
+        return 0
+
+    for i in range(q_ndim):
+        q_shape_buf[i] = q_shape[i]
+        q_stride_buf[i] = q_stride[i]
+    for i in range(k_ndim):
+        k_shape_buf[i] = k_shape[i]
+        k_stride_buf[i] = k_stride[i]
+    for i in range(v_ndim):
+        v_shape_buf[i] = v_shape[i]
+        v_stride_buf[i] = v_stride[i]
+    for i in range(grad_ndim):
+        grad_shape_buf[i] = grad_shape[i]
+        grad_stride_buf[i] = grad_stride[i]
+    for i in range(out_ndim):
+        out_shape_buf[i] = out_shape[i]
+        out_stride_buf[i] = out_stride[i]
+    for i in range(aux_ndim):
+        aux_shape_buf[i] = aux_shape[i]
+        aux_stride_buf[i] = aux_stride[i]
+    for i in range(dq_ndim):
+        dq_shape_buf[i] = dq_shape[i]
+        dq_stride_buf[i] = dq_stride[i]
+    for i in range(dk_ndim):
+        dk_shape_buf[i] = dk_shape[i]
+        dk_stride_buf[i] = dk_stride[i]
+    for i in range(dv_ndim):
+        dv_shape_buf[i] = dv_shape[i]
+        dv_stride_buf[i] = dv_stride[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, op_name)
+        _pta_buf_append(hash_buf, &hash_offset, &qk_alias, sizeof(bint))
+        _pta_buf_append(hash_buf, &hash_offset, &qv_alias, sizeof(bint))
+        _pta_buf_append(hash_buf, &hash_offset, &kv_alias, sizeof(bint))
+        _pta_buf_append_tensor(hash_buf, &hash_offset, q_shape_buf, q_stride_buf, q_ndim, dtype_code, 0, <void*>q_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, k_shape_buf, k_stride_buf, k_ndim, dtype_code, 0, <void*>k_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, v_shape_buf, v_stride_buf, v_ndim, dtype_code, 0, <void*>v_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, grad_shape_buf, grad_stride_buf, grad_ndim, dtype_code, 0, <void*>grad_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, aux_shape_buf, aux_stride_buf, aux_ndim, 0, 0, <void*>softmax_max_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, aux_shape_buf, aux_stride_buf, aux_ndim, 0, 0, <void*>softmax_sum_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, out_shape_buf, out_stride_buf, out_ndim, dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &scale_value, sizeof(double))
+        _pta_buf_append(hash_buf, &hash_offset, &keep_prob, sizeof(double))
+        _pta_buf_append(hash_buf, &hash_offset, &pre_tokens, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &next_tokens, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &head_num, sizeof(int64_t))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"BNSD")
+        _pta_buf_append(hash_buf, &hash_offset, &sparse_mode, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &inner_precise, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &pse_type, sizeof(int64_t))
+        _pta_buf_append_tensor(hash_buf, &hash_offset, dq_shape_buf, dq_stride_buf, dq_ndim, dtype_code, 0, <void*>dq_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, dk_shape_buf, dk_stride_buf, dk_ndim, dtype_code, 0, <void*>dk_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, dv_shape_buf, dv_stride_buf, dv_ndim, dtype_code, 0, <void*>dv_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    pta_active_out[0] = True
+    ws_size_out[0] = ws_size
+    executor_out[0] = <uintptr_t>executor
+    return 1
+
+
+cdef int pta_begin_sdpa_flash_grad_cache_lookup_raw(
+        object q_shape, object q_stride,
+        object k_shape, object k_stride,
+        object v_shape, object v_stride,
+        object grad_shape, object grad_stride,
+        object out_shape, object out_stride,
+        object aux_shape, object aux_stride,
+        object dq_shape, object dq_stride,
+        object dk_shape, object dk_stride,
+        object dv_shape, object dv_stride,
+        int32_t dtype_code,
+        uintptr_t q_ptr, uintptr_t k_ptr, uintptr_t v_ptr,
+        uintptr_t grad_ptr, uintptr_t out_ptr,
+        uintptr_t softmax_max_ptr, uintptr_t softmax_sum_ptr,
+        uintptr_t dq_ptr, uintptr_t dk_ptr, uintptr_t dv_ptr,
+        double scale_value, double keep_prob,
+        int64_t pre_tokens, int64_t next_tokens, int64_t head_num,
+        int64_t sparse_mode, int64_t inner_precise,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    return _pta_begin_sdpa_flash_grad_cache_lookup_impl(
+        b"aclnnFlashAttentionScoreGrad",
+        q_shape, q_stride,
+        k_shape, k_stride,
+        v_shape, v_stride,
+        grad_shape, grad_stride,
+        out_shape, out_stride,
+        aux_shape, aux_stride,
+        dq_shape, dq_stride,
+        dk_shape, dk_stride,
+        dv_shape, dv_stride,
+        dtype_code,
+        q_ptr, k_ptr, v_ptr,
+        grad_ptr, out_ptr,
+        softmax_max_ptr, softmax_sum_ptr,
+        dq_ptr, dk_ptr, dv_ptr,
+        scale_value, keep_prob,
+        pre_tokens, next_tokens, head_num,
+        sparse_mode, inner_precise, 0,
+        stream,
+        pta_active_out,
+        ws_size_out,
+        executor_out)
+
+
+cdef int pta_begin_sdpa_flash_grad_v2_cache_lookup_raw(
+        object q_shape, object q_stride,
+        object k_shape, object k_stride,
+        object v_shape, object v_stride,
+        object grad_shape, object grad_stride,
+        object out_shape, object out_stride,
+        object aux_shape, object aux_stride,
+        object dq_shape, object dq_stride,
+        object dk_shape, object dk_stride,
+        object dv_shape, object dv_stride,
+        int32_t dtype_code,
+        uintptr_t q_ptr, uintptr_t k_ptr, uintptr_t v_ptr,
+        uintptr_t grad_ptr, uintptr_t out_ptr,
+        uintptr_t softmax_max_ptr, uintptr_t softmax_sum_ptr,
+        uintptr_t dq_ptr, uintptr_t dk_ptr, uintptr_t dv_ptr,
+        double scale_value, double keep_prob,
+        int64_t pre_tokens, int64_t next_tokens, int64_t head_num,
+        int64_t sparse_mode, int64_t inner_precise, int64_t pse_type,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    return _pta_begin_sdpa_flash_grad_cache_lookup_impl(
+        b"aclnnFlashAttentionScoreGradV2",
+        q_shape, q_stride,
+        k_shape, k_stride,
+        v_shape, v_stride,
+        grad_shape, grad_stride,
+        out_shape, out_stride,
+        aux_shape, aux_stride,
+        dq_shape, dq_stride,
+        dk_shape, dk_stride,
+        dv_shape, dv_stride,
+        dtype_code,
+        q_ptr, k_ptr, v_ptr,
+        grad_ptr, out_ptr,
+        softmax_max_ptr, softmax_sum_ptr,
+        dq_ptr, dk_ptr, dv_ptr,
+        scale_value, keep_prob,
+        pre_tokens, next_tokens, head_num,
+        sparse_mode, inner_precise, pse_type,
+        stream,
+        pta_active_out,
+        ws_size_out,
+        executor_out)
+
+
+cdef int pta_begin_sdpa_flash_grad_storage_cache_lookup_raw(
+        bytes op_name,
+        object q_shape, object q_stride,
+        object k_shape, object k_stride,
+        object v_shape, object v_stride,
+        object grad_shape, object grad_stride,
+        object out_shape, object out_stride,
+        object aux_shape, object aux_stride,
+        object dq_shape, object dq_stride,
+        object dk_shape, object dk_stride,
+        object dv_shape, object dv_stride,
+        object dq_storage_shape, object dk_storage_shape, object dv_storage_shape,
+        int64_t dq_storage_offset, int64_t dk_storage_offset, int64_t dv_storage_offset,
+        int32_t dtype_code,
+        uintptr_t q_ptr, uintptr_t k_ptr, uintptr_t v_ptr,
+        uintptr_t grad_ptr, uintptr_t out_ptr,
+        uintptr_t softmax_max_ptr, uintptr_t softmax_sum_ptr,
+        uintptr_t dq_storage_ptr, uintptr_t dk_storage_ptr, uintptr_t dv_storage_ptr,
+        double scale_value, double keep_prob,
+        int64_t pre_tokens, int64_t next_tokens, int64_t head_num,
+        int64_t sparse_mode, int64_t inner_precise, int64_t pse_type,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    """PTA lookup for SDPA grad outputs whose descriptors have explicit storage metadata."""
+    pta_active_out[0] = False
+    ws_size_out[0] = 0
+    executor_out[0] = 0
+    if not _pta_cache_available:
+        return 0
+
+    cdef int can_use
+    cdef const char* op_cstr = op_name
+    with nogil:
+        can_use = _fn_can_use_pta_cache(op_cstr)
+    if not can_use:
+        return 0
+
+    cdef int q_ndim = len(q_shape)
+    cdef int k_ndim = len(k_shape)
+    cdef int v_ndim = len(v_shape)
+    cdef int grad_ndim = len(grad_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int aux_ndim = len(aux_shape)
+    cdef int dq_ndim = len(dq_shape)
+    cdef int dk_ndim = len(dk_shape)
+    cdef int dv_ndim = len(dv_shape)
+    cdef int dq_storage_ndim = len(dq_storage_shape)
+    cdef int dk_storage_ndim = len(dk_storage_shape)
+    cdef int dv_storage_ndim = len(dv_storage_shape)
+    cdef int i
+    cdef int64_t[MAX_NDIM] q_shape_buf, q_stride_buf
+    cdef int64_t[MAX_NDIM] k_shape_buf, k_stride_buf
+    cdef int64_t[MAX_NDIM] v_shape_buf, v_stride_buf
+    cdef int64_t[MAX_NDIM] grad_shape_buf, grad_stride_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+    cdef int64_t[MAX_NDIM] aux_shape_buf, aux_stride_buf
+    cdef int64_t[MAX_NDIM] dq_shape_buf, dq_stride_buf
+    cdef int64_t[MAX_NDIM] dk_shape_buf, dk_stride_buf
+    cdef int64_t[MAX_NDIM] dv_shape_buf, dv_stride_buf
+    cdef int64_t[MAX_NDIM] dq_storage_shape_buf, dk_storage_shape_buf, dv_storage_shape_buf
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef bint qk_alias = q_ptr == k_ptr
+    cdef bint qv_alias = q_ptr == v_ptr
+    cdef bint kv_alias = k_ptr == v_ptr
+
+    if (
+        q_ndim > MAX_NDIM or k_ndim > MAX_NDIM or v_ndim > MAX_NDIM
+        or grad_ndim > MAX_NDIM or out_ndim > MAX_NDIM or aux_ndim > MAX_NDIM
+        or dq_ndim > MAX_NDIM or dk_ndim > MAX_NDIM or dv_ndim > MAX_NDIM
+        or dq_storage_ndim > MAX_NDIM or dk_storage_ndim > MAX_NDIM or dv_storage_ndim > MAX_NDIM
+    ):
+        return 0
+
+    for i in range(q_ndim):
+        q_shape_buf[i] = q_shape[i]
+        q_stride_buf[i] = q_stride[i]
+    for i in range(k_ndim):
+        k_shape_buf[i] = k_shape[i]
+        k_stride_buf[i] = k_stride[i]
+    for i in range(v_ndim):
+        v_shape_buf[i] = v_shape[i]
+        v_stride_buf[i] = v_stride[i]
+    for i in range(grad_ndim):
+        grad_shape_buf[i] = grad_shape[i]
+        grad_stride_buf[i] = grad_stride[i]
+    for i in range(out_ndim):
+        out_shape_buf[i] = out_shape[i]
+        out_stride_buf[i] = out_stride[i]
+    for i in range(aux_ndim):
+        aux_shape_buf[i] = aux_shape[i]
+        aux_stride_buf[i] = aux_stride[i]
+    for i in range(dq_ndim):
+        dq_shape_buf[i] = dq_shape[i]
+        dq_stride_buf[i] = dq_stride[i]
+    for i in range(dk_ndim):
+        dk_shape_buf[i] = dk_shape[i]
+        dk_stride_buf[i] = dk_stride[i]
+    for i in range(dv_ndim):
+        dv_shape_buf[i] = dv_shape[i]
+        dv_stride_buf[i] = dv_stride[i]
+    for i in range(dq_storage_ndim):
+        dq_storage_shape_buf[i] = dq_storage_shape[i]
+    for i in range(dk_storage_ndim):
+        dk_storage_shape_buf[i] = dk_storage_shape[i]
+    for i in range(dv_storage_ndim):
+        dv_storage_shape_buf[i] = dv_storage_shape[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, op_cstr)
+        _pta_buf_append(hash_buf, &hash_offset, &qk_alias, sizeof(bint))
+        _pta_buf_append(hash_buf, &hash_offset, &qv_alias, sizeof(bint))
+        _pta_buf_append(hash_buf, &hash_offset, &kv_alias, sizeof(bint))
+        _pta_buf_append_tensor(hash_buf, &hash_offset, q_shape_buf, q_stride_buf, q_ndim, dtype_code, 0, <void*>q_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, k_shape_buf, k_stride_buf, k_ndim, dtype_code, 0, <void*>k_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, v_shape_buf, v_stride_buf, v_ndim, dtype_code, 0, <void*>v_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, grad_shape_buf, grad_stride_buf, grad_ndim, dtype_code, 0, <void*>grad_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, aux_shape_buf, aux_stride_buf, aux_ndim, 0, 0, <void*>softmax_max_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, aux_shape_buf, aux_stride_buf, aux_ndim, 0, 0, <void*>softmax_sum_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, out_shape_buf, out_stride_buf, out_ndim, dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &scale_value, sizeof(double))
+        _pta_buf_append(hash_buf, &hash_offset, &keep_prob, sizeof(double))
+        _pta_buf_append(hash_buf, &hash_offset, &pre_tokens, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &next_tokens, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &head_num, sizeof(int64_t))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, b"BNSD")
+        _pta_buf_append(hash_buf, &hash_offset, &sparse_mode, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &inner_precise, sizeof(int64_t))
+        _pta_buf_append(hash_buf, &hash_offset, &pse_type, sizeof(int64_t))
+        _pta_buf_append_tensor_with_storage(
+            hash_buf, &hash_offset, dq_shape_buf, dq_stride_buf, dq_ndim,
+            dq_storage_shape_buf, dq_storage_ndim, dtype_code, dq_storage_offset, <void*>dq_storage_ptr)
+        _pta_buf_append_tensor_with_storage(
+            hash_buf, &hash_offset, dk_shape_buf, dk_stride_buf, dk_ndim,
+            dk_storage_shape_buf, dk_storage_ndim, dtype_code, dk_storage_offset, <void*>dk_storage_ptr)
+        _pta_buf_append_tensor_with_storage(
+            hash_buf, &hash_offset, dv_shape_buf, dv_stride_buf, dv_ndim,
+            dv_storage_shape_buf, dv_storage_ndim, dtype_code, dv_storage_offset, <void*>dv_storage_ptr)
         _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
 
         if hash_offset == PTA_HASH_BUF_MAX_SIZE:
@@ -2543,14 +3308,14 @@ def axis_unary_op(
                 _fast_destroy_tensor(out_t)
 
 
-def layer_norm_op(
+cpdef object layer_norm_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        input_shape, input_stride,
-        out_shape, out_stride,
-        stats_shape, stats_stride,
-        weight_shape, weight_stride,
-        bias_shape, bias_stride,
-        normalized_shape, double eps,
+        object input_shape, object input_stride,
+        object out_shape, object out_stride,
+        object stats_shape, object stats_stride,
+        object weight_shape, object weight_stride,
+        object bias_shape, object bias_stride,
+        object normalized_shape, double eps,
         int32_t dtype_code, int32_t fmt,
         uintptr_t input_ptr, uintptr_t weight_ptr, uintptr_t bias_ptr,
         uintptr_t out_ptr, uintptr_t mean_ptr, uintptr_t rstd_ptr,
@@ -6348,6 +7113,120 @@ def slice_op(
                 _fast_destroy_tensor(self_t)
             if out_t != NULL:
                 _fast_destroy_tensor(out_t)
+
+
+cpdef object split_with_size_op(
+        uintptr_t getws_ptr, uintptr_t exec_ptr,
+        object self_shape, object self_stride,
+        object split_sizes,
+        object out_ptrs, object out_shapes, object out_strides,
+        int64_t dim,
+        int32_t dtype_code, int32_t fmt,
+        uintptr_t self_ptr,
+        uintptr_t stream):
+    cdef int self_ndim = len(self_shape)
+    cdef int n = len(out_ptrs)
+    cdef int sizes_ndim = len(split_sizes)
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int64_t split_buf[64]
+    cdef void* out_tensor_buf[64]
+    cdef void* created_out_tensors[64]
+    cdef int64_t out_shape_bufs[64][MAX_NDIM]
+    cdef int64_t out_stride_bufs[64][MAX_NDIM]
+    cdef int out_ndim_buf[64]
+    cdef uintptr_t out_ptr_buf[64]
+    cdef int i, j, out_ndim
+    cdef void* self_t = NULL
+    cdef void* sizes_handle = NULL
+    cdef void* tensor_list = NULL
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef int32_t ret
+    if self_ndim > MAX_NDIM:
+        raise RuntimeError("split_with_size_op input rank exceeds MAX_NDIM")
+    if n <= 0:
+        raise RuntimeError("split_with_size_op requires at least one output")
+    if n > 64:
+        raise RuntimeError("split_with_size_op supports at most 64 outputs")
+    if sizes_ndim != n:
+        raise RuntimeError("split_with_size_op split size count must match output count")
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(n):
+        split_buf[i] = split_sizes[i]
+        created_out_tensors[i] = NULL
+        out_ptr_buf[i] = <uintptr_t>out_ptrs[i]
+        out_ndim = len(out_shapes[i])
+        if out_ndim > MAX_NDIM:
+            raise RuntimeError("split_with_size_op output rank exceeds MAX_NDIM")
+        out_ndim_buf[i] = out_ndim
+        for j in range(out_ndim):
+            out_shape_bufs[i][j] = out_shapes[i][j]
+            out_stride_bufs[i][j] = out_strides[i][j]
+    with nogil:
+        self_t = _fast_create_tensor(s_shape, s_stride, <uint64_t>self_ndim, dtype_code, fmt, <void*>self_ptr)
+        sizes_handle = _fn_create_int_array(split_buf, <uint64_t>sizes_ndim)
+    if self_t == NULL or sizes_handle == NULL:
+        with nogil:
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if sizes_handle != NULL:
+                _fn_destroy_int_array(sizes_handle)
+        raise RuntimeError("aclCreateTensor or aclCreateIntArray returned null")
+    try:
+        for i in range(n):
+            with nogil:
+                created_out_tensors[i] = _fast_create_tensor(
+                    out_shape_bufs[i], out_stride_bufs[i], <uint64_t>out_ndim_buf[i],
+                    dtype_code, fmt, <void*>out_ptr_buf[i])
+            if created_out_tensors[i] == NULL:
+                raise RuntimeError("aclCreateTensor returned null")
+            out_tensor_buf[i] = created_out_tensors[i]
+        with nogil:
+            tensor_list = _fn_create_tensor_list(out_tensor_buf, <uint64_t>n)
+        if tensor_list == NULL:
+            raise RuntimeError("aclCreateTensorList failed")
+        with nogil:
+            ret = (<int32_t (*)(void*, void*, int64_t, void*, uint64_t*, void**) noexcept nogil>getws_ptr)(
+                self_t, sizes_handle, dim, tensor_list, &ws_size, &executor)
+        if ret != 0:
+            raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        # The tensor list owns its element tensors; ACLNN destroys them when the
+        # list is destroyed.  Register only self_t, the split-size int array, and
+        # the output tensor list — never the individual output tensors, or they
+        # would be double-freed and corrupt ACLNN state for later ops.
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            [('t', <uintptr_t>self_t), ('i', <uintptr_t>sizes_handle), ('l', <uintptr_t>tensor_list)],
+        )
+        self_t = NULL
+        sizes_handle = NULL
+        tensor_list = NULL
+        for i in range(n):
+            created_out_tensors[i] = NULL
+        if ws_size == 0:
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
+        return (ws_size, <uintptr_t>executor)
+    finally:
+        with nogil:
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if sizes_handle != NULL:
+                _fn_destroy_int_array(sizes_handle)
+            if tensor_list != NULL:
+                _fn_destroy_tensor_list(tensor_list)
+            for i in range(n):
+                if created_out_tensors[i] != NULL:
+                    _fast_destroy_tensor(created_out_tensors[i])
 
 
 def three_tensor_one_int_op(

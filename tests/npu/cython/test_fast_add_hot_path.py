@@ -20,6 +20,299 @@ def test_exact_base_npu_pair_guard_requires_same_device_index():
     assert "==" in body
 
 
+def test_npu_zero_stride_contiguous_reuses_inplace_copy_pta_cache(npu_device, monkeypatch):
+    """Expanded-view contiguous should reuse aclnnInplaceCopy PTA executors after warmup."""
+    import numpy as np
+    import pytest
+    import candle as torch
+    import candle._C._aclnn_ffi as ffi_mod  # pylint: disable=import-error,no-name-in-module
+
+    if not ffi_mod.is_pta_cache_available():
+        pytest.skip("PTA executor cache not available on this CANN build")
+
+    base = torch.ones((), device=npu_device, dtype=torch.float16)
+    view = base.expand((2, 128, 512))
+    torch.npu.synchronize()
+
+    warm = [view.contiguous() for _ in range(5)]
+    torch.npu.synchronize()
+    del warm
+
+    calls = {"count": 0}
+    original_inplace_copy_op = ffi_mod.inplace_copy_op
+
+    def wrapped_inplace_copy_op(*args, **kwargs):
+        calls["count"] += 1
+        return original_inplace_copy_op(*args, **kwargs)
+
+    monkeypatch.setattr(ffi_mod, "inplace_copy_op", wrapped_inplace_copy_op)
+
+    outs = [view.contiguous() for _ in range(5)]
+    torch.npu.synchronize()
+
+    assert calls["count"] == 0
+    assert outs[-1].is_contiguous()
+    assert np.allclose(outs[-1].cpu().float().numpy(), 1.0, rtol=0, atol=0)
+
+
+def test_packed_qkv_projection_forward_uses_split_with_size_pta_cache():
+    """Packed QKV split-copy should use the SplitWithSize PTA cached executor path."""
+    ffi_src = (_REPO_ROOT / "src/candle/_C/_aclnn_ffi.pyx").read_text(encoding="utf-8")
+    ops_src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    assert "pta_begin_split_with_size_cache_lookup" in ffi_src
+    assert "aclnnSplitWithSize" in ffi_src
+    packed_forward = re.search(
+        r"cpdef object fast_packed_qkv_projection_forward\(.*?\n\ncpdef object fast_packed_qkv_projection_backward",
+        ops_src,
+        flags=re.DOTALL,
+    )
+    assert packed_forward is not None
+    body = packed_forward.group(0)
+    assert "_ffi_pta_begin_split_with_size_cache_lookup" in body
+    assert "_run_executor(" in body
+    assert body.index("_ffi_pta_begin_split_with_size_cache_lookup") < body.index("_ffi_split_with_size_op")
+
+
+def test_packed_qkv_projection_python_fallback_is_generic_only():
+    """Python packed-QKV fallback should not carry an NPU-native helper path."""
+    src = (_REPO_ROOT / "src/candle/nn/functional.py").read_text(encoding="utf-8")
+    match = re.search(
+        r"class _SplitPackedQkvProjection:(?P<body>.*?)\n\ndef _split_packed_qkv_projection",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "fast_packed_qkv_projection_forward" not in body
+    assert "split(packed" in body
+
+
+def test_packed_qkv_projection_backward_uses_stack_pta_cache():
+    """Generic packed QKV backward scatter should use the Stack PTA cached executor path."""
+    ffi_src = (_REPO_ROOT / "src/candle/_C/_aclnn_ffi.pyx").read_text(encoding="utf-8")
+    ops_src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    assert "pta_begin_stack_cache_lookup" in ffi_src
+    assert "aclnnStack" in ffi_src
+    packed_backward = re.search(
+        r"cpdef object fast_packed_qkv_projection_backward\(.*?\n\n\n\ncpdef object fast_sdpa_flash_attention_backward_packed_qkv",
+        ops_src,
+        flags=re.DOTALL,
+    )
+    assert packed_backward is not None
+    body = packed_backward.group(0)
+    assert "_ffi_pta_begin_stack_cache_lookup" in body
+    assert "_run_executor(" in body
+    assert body.index("_ffi_pta_begin_stack_cache_lookup") < body.index("tensor_list_axis_op")
+
+
+def test_packed_qkv_sdpa_backward_writes_into_packed_grad_views():
+    """MHA SDPA backward should avoid a separate Stack kernel by using one packed grad buffer."""
+    ops_src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    packed_sdpa = re.search(
+        r"cpdef object fast_sdpa_flash_attention_backward_packed_qkv\(.*?\n\ncpdef object fast_matmul_exact",
+        ops_src,
+        flags=re.DOTALL,
+    )
+    assert packed_sdpa is not None
+    body = packed_sdpa.group(0)
+    assert "fast_packed_qkv_projection_backward" not in body
+    assert "packed_width = 3 * embed" in body
+    assert "grad_stride = (Sq * packed_width, D, packed_width, 1)" in body
+    assert "grad_stride = (packed_width, D, B * packed_width, 1)" in body
+    assert "dq_raw = packed_raw" in body
+    assert "dk_raw = packed_raw + <uintptr_t>(embed * isize)" in body
+    assert "dv_raw = packed_raw + <uintptr_t>(2 * embed * isize)" in body
+    assert "_ffi_create_tensor_raw_with_storage" in body
+    assert "packed_storage_shape_buf" in body
+    assert "_ffi_pta_begin_sdpa_flash_grad_storage_cache_lookup_raw" in body
+    assert "packed_shape, packed_shape, packed_shape" in body
+    assert "0, embed, 2 * embed" in body
+    assert "packed_raw, packed_raw, packed_raw" in body
+    assert "<void*>packed_raw" in body
+    assert "<void*>dq_raw" not in body
+    assert "<void*>dk_raw" not in body
+    assert "<void*>dv_raw" not in body
+    assert "<uint64_t>3, 0, dtype_code, 2, <void*>packed_raw" in body
+    assert "<uint64_t>3, embed, dtype_code, 2, <void*>packed_raw" in body
+    assert "<uint64_t>3, 2 * embed, dtype_code, 2, <void*>packed_raw" in body
+    assert "cy_make_tensor_from_storage_trusted(packed_storage, grad_shape, grad_stride, 0" in body
+    assert "cy_make_tensor_from_storage_trusted(packed_storage, grad_shape, grad_stride, embed" in body
+    assert "cy_make_tensor_from_storage_trusted(packed_storage, grad_shape, grad_stride, 2 * embed" in body
+
+
+def test_sdpa_storage_pta_hash_includes_output_storage_offsets():
+    """Packed SDPA grad PTA keys must include explicit storage metadata and offsets."""
+    src = (_REPO_ROOT / "src/candle/_C/_aclnn_ffi.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cdef int pta_begin_sdpa_flash_grad_storage_cache_lookup_raw\(.*?\) except -1:(?P<body>.*?)\n\n\ncpdef object reduce_sum_op",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    for name in ("dq", "dk", "dv"):
+        assert f"{name}_storage_shape_buf" in body
+        assert f"{name}_storage_ndim" in body
+        assert f"{name}_storage_offset" in body
+        assert f"<void*>{name}_storage_ptr" in body
+    assert body.count("_pta_buf_append_tensor_with_storage(") == 3
+    assert "dq_storage_shape_buf, dq_storage_ndim, dtype_code, dq_storage_offset" in body
+    assert "dk_storage_shape_buf, dk_storage_ndim, dtype_code, dk_storage_offset" in body
+    assert "dv_storage_shape_buf, dv_storage_ndim, dtype_code, dv_storage_offset" in body
+    assert body.index("dq_storage_offset") < body.index("_fn_pta_find_cache")
+    assert body.index("dk_storage_offset") < body.index("_fn_pta_find_cache")
+    assert body.index("dv_storage_offset") < body.index("_fn_pta_find_cache")
+
+
+def test_packed_qkv_projection_uses_cython_autograd_node():
+    """Packed QKV split should avoid the Python custom Function wrapper on NPU."""
+    functional_src = (_REPO_ROOT / "src/candle/nn/functional.py").read_text(encoding="utf-8")
+    cy_src = (_REPO_ROOT / "src/candle/_C/_functional_ops.pyx").read_text(encoding="utf-8")
+    dispatcher = re.search(
+        r"def _split_packed_qkv_projection\(.*?\n\ndef relu",
+        functional_src,
+        flags=re.DOTALL,
+    )
+    assert dispatcher is not None
+    body = dispatcher.group(0)
+    assert "split_packed_qkv_projection" in body
+    assert body.index("split_packed_qkv_projection") < body.index("_SplitPackedQkvProjection.apply")
+    assert "NPU packed QKV projection Cython path failed" in body
+    assert body.index("raise RuntimeError") < body.index("_SplitPackedQkvProjection.apply")
+    assert "cdef class _NpuSplitPackedQkvProjectionBackward" in cy_src
+    assert "_candle_multi_output_backward_count = 3" in cy_src
+    assert "_cy_fast_packed_qkv_projection_backward" in cy_src
+
+
+def test_linear_backward_zero_stride_grad_uses_metadata_view():
+    """Linear backward should not dispatch reshape for scalar-expanded grads."""
+    src = (_REPO_ROOT / "src/candle/_C/_functional_ops.pyx").read_text(encoding="utf-8")
+    backward = re.search(
+        r"cdef class _NpuLinearBackward\(_CyAutogradNode\):(?P<body>.*?)\n\n\ncdef class _NpuLayerNormBackward",
+        src,
+        flags=re.DOTALL,
+    )
+    assert backward is not None
+    body = backward.group("body")
+    eager_branch = body.split("if _npu_create_graph_fn():", 1)[1].split(
+        "if (<TensorImpl>grad)._ndim == 2:",
+        2,
+    )[2]
+    assert "_tensor_has_all_zero_stride(<TensorImpl>grad)" in eager_branch
+    assert "cy_as_strided(flat_shape, (0, 0)" in eager_branch
+    assert eager_branch.index("cy_as_strided(flat_shape, (0, 0)") < eager_branch.index("_dispatch_fn(\"reshape\"")
+
+
+def test_autograd_zero_stride_leaf_grad_uses_cython_materializer():
+    """Leaf zero-stride grad materialization should bypass backend dispatch overhead."""
+    src = (_REPO_ROOT / "src/candle/_C/_autograd_engine.pyx").read_text(encoding="utf-8")
+    assert "fast_zero_stride_contiguous" in src
+    materializer = re.search(
+        r"cdef inline object _materialize_npu_zero_stride_backward_grad\(object grad\):(?P<body>.*?)\n\n",
+        src,
+        flags=re.DOTALL,
+    )
+    assert materializer is not None
+    body = materializer.group("body")
+    assert "_npu_zero_stride_contiguous_fn(grad)" in body
+    assert body.index("_npu_zero_stride_contiguous_fn(grad)") < body.index("_dispatch_fn(\"contiguous\"")
+
+
+def test_autograd_backward_skips_unrequested_grads_map_accumulation():
+    """Tensor.backward should not merge unused non-leaf grads in grads_map."""
+    src = (_REPO_ROOT / "src/candle/_C/_autograd_engine.pyx").read_text(encoding="utf-8")
+    accumulate = re.search(
+        r"def _accumulate_tensor_grad\(self, tensor, grad, mark_create_graph=True, apply_hooks=True\):"
+        r"(?P<body>.*?)\n\n    def _accumulate_node_grad",
+        src,
+        flags=re.DOTALL,
+    )
+    assert accumulate is not None
+    body = accumulate.group("body")
+    assert "elif self.inputs is not None and id(tensor) in self.input_ids:" in body
+    grads_map_branch = body.split("elif self.inputs is not None and id(tensor) in self.input_ids:", 1)[1]
+    assert "self.grads_map[tensor]" in grads_map_branch
+
+
+def test_autograd_backward_grad_merge_uses_cython_fast_add():
+    """Common NPU backward grad merges should avoid the Python functional add wrapper."""
+    src = (_REPO_ROOT / "src/candle/_C/_autograd_engine.pyx").read_text(encoding="utf-8")
+    assert "fast_add as _cy_fast_npu_add" in src
+    assert "_npu_fast_add_fn" not in src
+    merge = re.search(
+        r"cdef inline object _merge_backward_grads\(object lhs, object rhs, bint create_graph\):"
+        r"(?P<body>.*?)\n\n",
+        src,
+        flags=re.DOTALL,
+    )
+    assert merge is not None
+    body = merge.group("body")
+    assert "_cy_fast_npu_add(lhs, rhs)" in body
+    assert body.index("_cy_fast_npu_add(lhs, rhs)") < body.index("from candle._functional import add")
+
+
+def test_npu_sum_backward_leaf_grad_avoids_zero_stride_contiguous(npu_device, monkeypatch):
+    """Full-sum backward should produce dense leaf grads without zero-stride accumulator copies."""
+    import numpy as np
+    import candle as torch
+
+    x = torch.randn(2, 128, 512, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    tensor_type = type(x)
+    original_contiguous = tensor_type.contiguous
+    calls = {"zero_stride": 0}
+
+    def counted_contiguous(self, *args, **kwargs):
+        stride = self.stride() if callable(self.stride) else self.stride
+        if self.device.type == "npu" and len(stride) > 0 and all(int(item) == 0 for item in stride):
+            calls["zero_stride"] += 1
+        return original_contiguous(self, *args, **kwargs)
+
+    monkeypatch.setattr(tensor_type, "contiguous", counted_contiguous)
+
+    out = x.sum()
+    out.backward()
+    torch.npu.synchronize()
+
+    assert calls["zero_stride"] == 0
+    assert x.grad.is_contiguous()
+    assert np.allclose(x.grad.cpu().float().numpy(), 1.0, rtol=0, atol=0)
+
+
+def test_npu_duplicate_zero_stride_leaf_grads_materialize_once(npu_device, monkeypatch):
+    """Residual add backward should materialize a shared scalar-expanded grad at most once."""
+    import numpy as np
+    import candle as torch
+
+    a = torch.randn(2, 128, 512, device=npu_device, dtype=torch.float16, requires_grad=True)
+    b = torch.randn(2, 128, 512, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    tensor_type = type(a)
+    original_contiguous = tensor_type.contiguous
+    calls = {"zero_stride": 0}
+
+    def counted_contiguous(self, *args, **kwargs):
+        stride = self.stride() if callable(self.stride) else self.stride
+        if self.device.type == "npu" and len(stride) > 0 and all(int(item) == 0 for item in stride):
+            calls["zero_stride"] += 1
+        return original_contiguous(self, *args, **kwargs)
+
+    monkeypatch.setattr(tensor_type, "contiguous", counted_contiguous)
+
+    out = torch.add(a, b).sum()
+    out.backward()
+    torch.npu.synchronize()
+
+    assert calls["zero_stride"] <= 1
+    assert a.grad is not b.grad
+    assert a.grad.is_contiguous()
+    assert b.grad.is_contiguous()
+    assert np.allclose(a.grad.cpu().float().numpy(), 1.0, rtol=0, atol=0)
+    assert np.allclose(b.grad.cpu().float().numpy(), 1.0, rtol=0, atol=0)
+
+
 def test_small_op_fast_paths_skip_python_defer_executor(npu_device, monkeypatch):
     """add/mul/silu should append raw executor handles without Python normalization."""
     import candle as torch
@@ -373,6 +666,44 @@ def test_fast_gelu_exact_defers_executor_on_error_path():
         r"finally:\n\s+if executor:\n\s+_defer_executor_handle\(executor\)",
         body,
     ) is not None
+
+
+
+def test_fast_gelu_exact_pta_hit_uses_cached_workspace_executor_helper():
+    """GELU exact PTA hits should reuse allocator-cached workspaces instead of raw acl.rt.malloc."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_gelu_exact\(TensorImpl a\):(?P<body>.*?)\n\ncpdef object fast_silu\(",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    pta_hit_start = body.index("if pta_lookup and executor_raw != 0:")
+    pta_hit_end = body.index("\n\n    try:\n        ws_size, executor = _ffi_unary_op", pta_hit_start)
+    pta_hit = body[pta_hit_start:pta_hit_end]
+    assert "_run_executor(_gelu_exec_ptr" in pta_hit
+    assert "_acl_rt_malloc_fn" not in pta_hit
+    assert "defer_raw_free" not in pta_hit
+
+
+
+def test_fast_gelu_backward_pta_hit_uses_cached_workspace_executor_helper():
+    """GELU backward PTA hits should reuse allocator-cached workspaces instead of raw acl.rt.malloc."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_gelu_backward\(object grad, object saved_input\):(?P<body>.*?)\n\ncpdef object fast_silu_backward\(",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    pta_hit_start = body.index("if pta_lookup and executor_raw != 0:")
+    pta_hit_end = body.index("\n\n    try:\n        ws_size, executor = _ffi_binary_op_no_alpha", pta_hit_start)
+    pta_hit = body[pta_hit_start:pta_hit_end]
+    assert "_run_executor(_gelu_backward_exec_ptr" in pta_hit
+    assert "_acl_rt_malloc_fn" not in pta_hit
+    assert "defer_raw_free" not in pta_hit
 
 
 
@@ -1188,6 +1519,171 @@ def test_fast_lt_skips_python_aclnn_wrapper(npu_device, monkeypatch):
     assert calls["count"] == 0
 
 
+def test_npu_mul_scalar_checks_fast_impl_before_optional_call():
+    """Scalar mul should not call the optional Cython import when the fast module is unavailable."""
+    src = (_REPO_ROOT / "src/candle/_backends/npu/ops/math.py").read_text(encoding="utf-8")
+    match = re.search(r"def mul\(a, b\):(?P<body>.*?)\n\n\ndef sub", src, flags=re.DOTALL)
+    assert match is not None
+    body = match.group("body")
+    assert "_fast_mul_scalar_impl(a, b)" in body
+    assert body.index("_HAS_FAST_MUL") < body.index("_fast_mul_scalar_impl(a, b)")
+
+
+def test_native_npu_sdpa_unsupported_layouts_fall_back_to_composite():
+    """Unsupported native NPU SDPA layouts should fall back to generic on-device composite."""
+    src = (_REPO_ROOT / "src/candle/nn/functional.py").read_text(encoding="utf-8")
+    cy_src = (_REPO_ROOT / "src/candle/_C/_functional_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"def _try_npu_sdpa_flash_attention\(.*?\):(?P<body>.*?)\n\n\ndef scaled_dot_product_attention",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "npu_flash_sdpa.apply" not in body
+    assert "_load_npu_flash_sdpa_function" not in src
+    assert "NPU FlashAttention SDPA Cython path failed" not in body
+    assert "raise RuntimeError" not in body
+    assert "return npu_flash_sdpa(query, key, value, float(scale_factor))" in body
+    sdpa_wrapper = re.search(
+        r"def npu_flash_sdpa\(.*?\):(?P<body>.*?)\n\n\ncdef class _NpuSplitPackedQkvProjectionBackward",
+        cy_src,
+        flags=re.DOTALL,
+    )
+    assert sdpa_wrapper is not None
+    wrapper_body = sdpa_wrapper.group("body")
+    assert "except (TypeError, ValueError):" in wrapper_body
+    assert "except (RuntimeError, TypeError, ValueError):" not in wrapper_body
+
+
+def test_native_npu_sdpa_capture_guard_uses_python_depth_not_acl_probe():
+    """Eager native SDPA should not pay an ACL capture-state query every call."""
+    src = (_REPO_ROOT / "src/candle/nn/functional.py").read_text(encoding="utf-8")
+    match = re.search(
+        r"def _try_npu_sdpa_flash_attention\(.*?\):(?P<body>.*?)\n\n\ndef scaled_dot_product_attention",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "_npu_in_graph_capture()" in body
+    assert "_npu_is_stream_capturing()" not in body
+
+
+def test_native_npu_sdpa_uses_cython_autograd_node_before_python_function():
+    """Default NPU SDPA should avoid the Python custom Function wrapper in eager training."""
+    functional_src = (_REPO_ROOT / "src/candle/nn/functional.py").read_text(encoding="utf-8")
+    cy_src = (_REPO_ROOT / "src/candle/_C/_functional_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"def _try_npu_sdpa_flash_attention\(.*?\):(?P<body>.*?)\n\n\ndef scaled_dot_product_attention",
+        functional_src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "npu_flash_sdpa" in body
+    assert "npu_flash_sdpa.apply" not in body
+    assert "_load_npu_flash_sdpa_function" not in functional_src
+    assert "cdef class _NpuFlashSdpaBackward" in cy_src
+    assert "_cy_fast_sdpa_flash_attention_backward_packed_qkv" in cy_src
+
+
+def test_fast_sdpa_flash_attention_uses_pta_executor_cache():
+    """FlashAttentionScore should reuse PTA executors before rebuilding workspace."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_sdpa_flash_attention\(.*?\):(?P<body>.*?)\n\n\ncpdef object fast_sdpa_flash_attention_backward",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "_ffi_pta_begin_sdpa_flash_cache_lookup_raw" in body
+    assert body.index("_ffi_pta_begin_sdpa_flash_cache_lookup_raw") < body.index(
+        "_ffi_create_tensor_raw"
+    )
+    assert body.index("_ffi_pta_begin_sdpa_flash_cache_lookup_raw") < body.index(
+        "FlashAttentionScoreGetWorkspaceSize_t"
+    )
+
+
+def test_fast_sdpa_flash_attention_backward_uses_pta_executor_cache():
+    """FlashAttentionScoreGrad should reuse PTA executors before rebuilding workspace."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_sdpa_flash_attention_backward\(.*?\):(?P<body>.*?)\n\ncpdef object fast_packed_qkv_projection_backward",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "_ffi_pta_begin_sdpa_flash_grad_cache_lookup_raw" in body
+    assert body.index("_ffi_pta_begin_sdpa_flash_grad_cache_lookup_raw") < body.index(
+        "_ffi_create_tensor_raw"
+    )
+    assert body.index("_ffi_pta_begin_sdpa_flash_grad_cache_lookup_raw") < body.index(
+        "FlashAttentionScoreGradGetWorkspaceSize_t"
+    )
+
+
+def test_fast_sdpa_flash_attention_backward_keeps_guarded_grad_v2_probe():
+    """FlashAttentionScoreGradV2 should remain probeable but guarded until CANN latency is fixed."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cpdef object fast_sdpa_flash_attention_backward\(.*?\):(?P<body>.*?)\n\ncpdef object fast_packed_qkv_projection_backward",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "FlashAttentionScoreGradV2GetWorkspaceSize_t" in src
+    assert "_use_sdpa_flash_grad_v2 = False" in src
+    assert "_ffi_pta_begin_sdpa_flash_grad_v2_cache_lookup_raw" in body
+    assert body.index("_ffi_pta_begin_sdpa_flash_grad_v2_cache_lookup_raw") < body.index(
+        "_ffi_create_tensor_raw"
+    )
+    assert "pse_type" in body and "pse_type = 1" in body
+    assert "~45MB workspace" in src
+
+
+def test_run_executor_reuses_allocator_for_large_workspaces():
+    """Large ACLNN workspaces should use the NPU caching allocator, not raw malloc/free each step."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    match = re.search(
+        r"cdef inline object _run_executor\(.*?\):(?P<body>.*?)\n\ncpdef object fast_layer_norm",
+        src,
+        flags=re.DOTALL,
+    )
+    assert match is not None
+    body = match.group("body")
+    assert "malloc_large_cached" in body
+    assert "runtime.defer_free(workspace_ptr)" in body
+    assert "defer_raw_free(workspace_ptr)" not in body
+    assert "_acl_rt_malloc_fn(ws_size" not in body
+
+
+def test_fast_sdpa_flash_attention_pta_hits_reuse_cached_workspace_allocator():
+    """SDPA PTA-cache hits should not pay raw workspace malloc/free overhead."""
+    src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
+    forward = re.search(
+        r"cpdef object fast_sdpa_flash_attention\(.*?\):(?P<body>.*?)\n\n\ncpdef object fast_sdpa_flash_attention_backward",
+        src,
+        flags=re.DOTALL,
+    )
+    backward = re.search(
+        r"cpdef object fast_sdpa_flash_attention_backward\(.*?\):(?P<body>.*?)\n\ncpdef object fast_packed_qkv_projection_backward",
+        src,
+        flags=re.DOTALL,
+    )
+    assert forward is not None and backward is not None
+    forward_body = forward.group("body")
+    backward_body = backward.group("body")
+    assert "flash_exec_raw, pta_ws_size, pta_executor" in forward_body
+    assert "flash_grad_exec_raw, pta_ws_size, pta_executor" in backward_body
+    assert "_acl_rt_malloc_fn(pta_ws_size" not in forward_body
+    assert "_acl_rt_malloc_fn(pta_ws_size" not in backward_body
+
+
 def test_fast_matmul_exact_uses_pta_executor_cache():
     """fast_matmul_exact should reuse torch_npu-style PTA executors before GetWorkspaceSize."""
     src = (_REPO_ROOT / "src/candle/_C/_npu_ops.pyx").read_text(encoding="utf-8")
@@ -1203,6 +1699,13 @@ def test_fast_matmul_exact_uses_pta_executor_cache():
     assert body.index("_ffi_pta_begin_binary_cache_lookup_raw") < body.index(
         "_ffi_binary_two_inputs_with_int8_op"
     )
+    pta_hit_start = body.index("if pta_lookup and executor_raw != 0:")
+    pta_hit_end = body.index("\n\n    try:\n        ws_size, executor = _ffi_binary_two_inputs_with_int8_op", pta_hit_start)
+    pta_hit = body[pta_hit_start:pta_hit_end]
+    assert "_run_executor(" in pta_hit
+    assert "_matmul_exec_ptr" in pta_hit
+    assert "_acl_rt_malloc_fn(ws_size_raw" not in pta_hit
+    assert "defer_raw_free" not in pta_hit
 
 
 def test_fast_mm_backward_helpers_use_pta_executor_cache():
@@ -1224,6 +1727,16 @@ def test_fast_mm_backward_helpers_use_pta_executor_cache():
         assert body.index("_ffi_pta_begin_binary_cache_lookup_raw") < body.index(
             "_ffi_binary_two_inputs_with_int8_op"
         ), name
+        pta_hit_start = body.index("if pta_lookup and executor_raw != 0:")
+        pta_hit_end = body.index(
+            "\n\n    try:\n        ws_size, executor = _ffi_binary_two_inputs_with_int8_op",
+            pta_hit_start,
+        )
+        pta_hit = body[pta_hit_start:pta_hit_end]
+        assert "_run_executor(" in pta_hit, name
+        assert "_matmul_exec_ptr" in pta_hit, name
+        assert "_acl_rt_malloc_fn(ws_size_raw" not in pta_hit, name
+        assert "defer_raw_free" not in pta_hit, name
 
 
 def test_fast_gelu_backward_uses_pta_executor_cache():
@@ -1284,6 +1797,16 @@ def test_fast_sum_uses_pta_executor_cache():
     assert body.index("_ffi_pta_begin_reduce_sum_cache_lookup_raw") < body.index(
         "_ffi_reduce_sum_op"
     )
+    pta_hit_start = body.index("if pta_lookup and executor_raw != 0:")
+    pta_hit_end = body.index(
+        "\n\n    try:\n        ws_size, executor = _ffi_reduce_sum_op",
+        pta_hit_start,
+    )
+    pta_hit = body[pta_hit_start:pta_hit_end]
+    assert "_run_executor(" in pta_hit
+    assert "_reduce_sum_exec_ptr" in pta_hit
+    assert "_acl_rt_malloc_fn(ws_size_raw" not in pta_hit
+    assert "defer_raw_free" not in pta_hit
 
 
 
@@ -1324,6 +1847,16 @@ def test_fast_addmm_uses_pta_executor_cache():
     assert body.index("_ffi_pta_begin_addmm_cache_lookup_raw") < body.index(
         "_ffi_four_tensor_two_scalars_one_int8_op"
     )
+    pta_hit_start = body.index("if pta_lookup and executor_raw != 0:")
+    pta_hit_end = body.index(
+        "\n\n    try:\n        ws_size, executor = _ffi_four_tensor_two_scalars_one_int8_op",
+        pta_hit_start,
+    )
+    pta_hit = body[pta_hit_start:pta_hit_end]
+    assert "_run_executor(" in pta_hit
+    assert "_addmm_exec_ptr" in pta_hit
+    assert "_acl_rt_malloc_fn(ws_size_raw" not in pta_hit
+    assert "defer_raw_free" not in pta_hit
 
 
 def test_addmm_ffi_helper_defers_descriptor_cleanup_until_executor_destroyed():
@@ -1341,6 +1874,85 @@ def test_addmm_ffi_helper_defers_descriptor_cleanup_until_executor_destroyed():
     for name in ("a_t", "b_t", "c_t", "out_t"):
         assert f"('t', <uintptr_t>{name})" in body
         assert f"{name} = NULL" in body
+
+
+def test_pta_raw_helpers_guard_max_ndim_before_fixed_buffer_copies():
+    """Raw PTA helpers must not overflow fixed C descriptor buffers on high-rank inputs."""
+    src = (_REPO_ROOT / "src/candle/_C/_aclnn_ffi.pyx").read_text(encoding="utf-8")
+    add_match = re.search(
+        r"cdef int pta_begin_add_cache_lookup_raw\(.*?\) except -1:(?P<body>.*?)\n\n\ncpdef void pta_end_cache_lookup",
+        src,
+        flags=re.DOTALL,
+    )
+    binary_match = re.search(
+        r"cdef int pta_begin_binary_cache_lookup_raw\(.*?\) except -1:(?P<body>.*?)\n\n\ncdef int pta_begin_addmm_cache_lookup_raw",
+        src,
+        flags=re.DOTALL,
+    )
+    addmm_match = re.search(
+        r"cdef int pta_begin_addmm_cache_lookup_raw\(.*?\) except -1:(?P<body>.*?)\n\n\ncpdef object pta_begin_unary_cache_lookup",
+        src,
+        flags=re.DOTALL,
+    )
+    unary_match = re.search(
+        r"cdef int pta_begin_unary_cache_lookup_raw\(.*?\) except -1:(?P<body>.*?)\n\n\n\n# ---------------------------------------------------------------------------",
+        src,
+        flags=re.DOTALL,
+    )
+    reduce_match = re.search(
+        r"cdef int pta_begin_reduce_sum_cache_lookup_raw\(.*?\) except -1:(?P<body>.*?)\n\n\ncdef int pta_begin_sdpa_flash_cache_lookup_raw",
+        src,
+        flags=re.DOTALL,
+    )
+    forward_match = re.search(
+        r"cdef int pta_begin_sdpa_flash_cache_lookup_raw\(.*?\) except -1:(?P<body>.*?)\n\n\ncdef int _pta_begin_sdpa_flash_grad_cache_lookup_impl",
+        src,
+        flags=re.DOTALL,
+    )
+    grad_match = re.search(
+        r"cdef int _pta_begin_sdpa_flash_grad_cache_lookup_impl\(.*?\) except -1:(?P<body>.*?)\n\n\ncdef int pta_begin_sdpa_flash_grad_cache_lookup_raw",
+        src,
+        flags=re.DOTALL,
+    )
+    storage_grad_match = re.search(
+        r"cdef int pta_begin_sdpa_flash_grad_storage_cache_lookup_raw\(.*?\) except -1:(?P<body>.*?)\n\n\ncpdef object reduce_sum_op",
+        src,
+        flags=re.DOTALL,
+    )
+    assert add_match is not None
+    assert binary_match is not None
+    assert addmm_match is not None
+    assert unary_match is not None
+    assert reduce_match is not None
+    assert forward_match is not None
+    assert grad_match is not None
+    assert storage_grad_match is not None
+    add_body = add_match.group("body")
+    binary_body = binary_match.group("body")
+    addmm_body = addmm_match.group("body")
+    unary_body = unary_match.group("body")
+    reduce_body = reduce_match.group("body")
+    forward_body = forward_match.group("body")
+    grad_body = grad_match.group("body")
+    storage_grad_body = storage_grad_match.group("body")
+    assert "self_ndim > MAX_NDIM or other_ndim > MAX_NDIM or out_ndim > MAX_NDIM" in add_body
+    assert add_body.index("out_ndim > MAX_NDIM") < add_body.index("for i in range(self_ndim):")
+    assert "self_ndim > MAX_NDIM or other_ndim > MAX_NDIM or out_ndim > MAX_NDIM" in binary_body
+    assert binary_body.index("out_ndim > MAX_NDIM") < binary_body.index("for i in range(self_ndim):")
+    assert "input_ndim > MAX_NDIM or mat1_ndim > MAX_NDIM or mat2_ndim > MAX_NDIM or out_ndim > MAX_NDIM" in addmm_body
+    assert addmm_body.index("out_ndim > MAX_NDIM") < addmm_body.index("for i in range(input_ndim):")
+    assert "self_ndim > MAX_NDIM or out_ndim > MAX_NDIM" in unary_body
+    assert unary_body.index("out_ndim > MAX_NDIM") < unary_body.index("for i in range(self_ndim):")
+    assert "self_ndim > MAX_NDIM or out_ndim > MAX_NDIM or dims_ndim > MAX_NDIM" in reduce_body
+    assert reduce_body.index("dims_ndim > MAX_NDIM") < reduce_body.index("for i in range(self_ndim):")
+    assert "q_ndim > MAX_NDIM or k_ndim > MAX_NDIM or v_ndim > MAX_NDIM" in forward_body
+    assert forward_body.index("aux_ndim > MAX_NDIM") < forward_body.index("for i in range(q_ndim):")
+    assert "grad_ndim > MAX_NDIM" in grad_body
+    assert "dq_ndim > MAX_NDIM or dk_ndim > MAX_NDIM or dv_ndim > MAX_NDIM" in grad_body
+    assert grad_body.index("dv_ndim > MAX_NDIM") < grad_body.index("for i in range(q_ndim):")
+    assert "dq_storage_ndim > MAX_NDIM or dk_storage_ndim > MAX_NDIM or dv_storage_ndim > MAX_NDIM" in storage_grad_body
+    assert storage_grad_body.index("dv_storage_ndim > MAX_NDIM") < storage_grad_body.index("for i in range(q_ndim):")
+
 
 
 def test_addmm_pta_hash_discriminates_operand_aliases():
@@ -2185,6 +2797,19 @@ def test_sum_hot_paths_skip_python_aclnn_wrapper(npu_device, monkeypatch):
     assert calls["count"] == 0
     assert np.allclose(out_all.cpu().numpy(), expected_all.cpu().numpy(), rtol=1e-2, atol=1e-2)
     assert np.allclose(out_dim0.cpu().numpy(), expected_dim0.cpu().numpy(), rtol=1e-2, atol=1e-2)
+
+
+def test_fast_sum_rejects_duplicate_dims_like_torch(npu_device):
+    """Cython NPU sum fast path must preserve duplicate-dim validation."""
+    import pytest
+    import candle as torch
+
+    x = torch.randn(2, 3, device=npu_device, dtype=torch.float16)
+    with pytest.raises(RuntimeError, match="dim 0 appears multiple times in the list of dims"):
+        x.sum(dim=(0, 0))
+    with pytest.raises(RuntimeError, match="dim 1 appears multiple times in the list of dims"):
+        x.sum(dim=(-1, 1))
+
 
 
 def test_npu_tensor_sum_backward_skips_generated_python_node(npu_device, monkeypatch):

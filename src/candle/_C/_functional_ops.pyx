@@ -10,7 +10,7 @@ import builtins as _builtins
 from libc.stdint cimport int64_t
 from candle.autograd.node import AccumulateGrad, SavedTensor, _SavedValue
 from candle._C._autograd_node cimport Node as _CyAutogradNode
-from candle._C._tensor_impl cimport TensorImpl
+from candle._C._tensor_impl cimport TensorImpl, cy_make_tensor_from_storage
 from candle._C._grad_mode_state cimport get_enabled_fast as _grad_enabled_fast
 from candle._C._npu_ops cimport (
     fast_add as _cy_fast_npu_add,
@@ -20,6 +20,8 @@ from candle._C._npu_ops cimport (
     fast_matmul as _cy_fast_npu_matmul,
     fast_matmul_exact as _cy_fast_npu_matmul_exact,
     fast_addmm as _cy_fast_npu_addmm,
+    fast_layer_norm as _cy_fast_npu_layer_norm,
+    fast_layer_norm_backward as _cy_fast_npu_layer_norm_backward,
     fast_sum as _cy_fast_npu_sum,
     fast_mm_mat1_backward as _cy_fast_npu_mm_mat1_backward,
     fast_mm_mat2_backward as _cy_fast_npu_mm_mat2_backward,
@@ -29,6 +31,11 @@ from candle._C._npu_ops cimport (
     fast_silu_exact as _cy_fast_npu_silu_exact,
     fast_gelu_backward as _cy_fast_npu_gelu_backward,
     fast_silu_backward as _cy_fast_npu_silu_backward,
+    fast_sdpa_flash_attention as _cy_fast_sdpa_flash_attention,
+    fast_sdpa_flash_attention_backward as _cy_fast_sdpa_flash_attention_backward,
+    fast_sdpa_flash_attention_backward_packed_qkv as _cy_fast_sdpa_flash_attention_backward_packed_qkv,
+    fast_packed_qkv_projection_forward as _cy_fast_packed_qkv_projection_forward,
+    fast_packed_qkv_projection_backward as _cy_fast_packed_qkv_projection_backward,
 )
 
 # Cached reference to base Tensor class
@@ -281,6 +288,41 @@ cdef inline bint _exact_base_npu_unary(object a):
     return type(a) is _BaseTensor and (<TensorImpl>a)._device_type == 1
 
 
+cdef inline bint _tensor_has_strict_contiguous_stride(TensorImpl t) noexcept:
+    cdef int i
+    cdef int j
+    cdef int64_t acc = 1
+    for j in range(t._ndim):
+        i = t._ndim - 1 - j
+        if t._c_stride[i] != acc:
+            return False
+        acc = acc * t._c_shape[i]
+    return True
+
+
+cdef inline bint _tensor_has_all_zero_stride(TensorImpl t) noexcept:
+    cdef int i
+    if t._ndim == 0:
+        return False
+    for i in range(t._ndim):
+        if t._c_stride[i] != 0:
+            return False
+    return True
+
+
+cdef inline tuple _contiguous_stride_tuple(object shape):
+    cdef Py_ssize_t ndim = len(shape)
+    cdef list strides = [1] * ndim
+    cdef int64_t acc = 1
+    cdef Py_ssize_t j
+    cdef Py_ssize_t i
+    for j in range(ndim):
+        i = ndim - 1 - j
+        strides[i] = acc
+        acc *= <int64_t>shape[i]
+    return tuple(strides)
+
+
 cdef inline int _exact_npu_addmm_hot_state(object input, object mat1, object mat2, object beta, object alpha):
     """Return 1 for inference, 2 for autograd, 0 for fallback."""
     cdef bint grad_on
@@ -342,13 +384,15 @@ cdef inline int _exact_npu_linear_hot_state(object input, object weight, object 
         return 0
     if _functionalize_active_flag or _pipeline_active_flag or _npu_autocast_active_flag:
         return 0
-    if inp._ndim != 2 or w._ndim != 2 or b._ndim != 1:
+    if inp._ndim < 2 or w._ndim != 2 or b._ndim != 1:
         return 0
-    if inp._c_shape[1] != w._c_shape[1] or b._c_shape[0] != w._c_shape[0]:
+    if inp._c_shape[inp._ndim - 1] != w._c_shape[1] or b._c_shape[0] != w._c_shape[0]:
         return 0
     if inp._device_index != w._device_index or inp._device_index != b._device_index:
         return 0
     if inp._dtype_code != w._dtype_code or inp._dtype_code != b._dtype_code:
+        return 0
+    if not _tensor_has_strict_contiguous_stride(inp):
         return 0
     grad_on = _grad_enabled_fast()
     requires_grad = inp.requires_grad or w.requires_grad or b.requires_grad
@@ -356,6 +400,70 @@ cdef inline int _exact_npu_linear_hot_state(object input, object weight, object 
         return 1
     if _npu_profiler_active_flag:
         return 0
+    return 2
+
+
+cdef inline int _exact_npu_layer_norm_hot_state(object input, object weight, object bias, object normalized_shape):
+    """Return 1 for inference, 2 for autograd, 0 for fallback."""
+    cdef bint grad_on
+    cdef bint requires_grad
+    cdef TensorImpl inp
+    cdef TensorImpl w
+    cdef TensorImpl b
+    cdef Py_ssize_t norm_ndim
+    cdef Py_ssize_t i
+    cdef Py_ssize_t lead
+    _ensure_base()
+    if not isinstance(input, _BaseTensor):
+        return 0
+    if _check_value(input):
+        return 0
+    if weight is None or bias is None:
+        return 0
+    if not isinstance(weight, _BaseTensor) or not isinstance(bias, _BaseTensor):
+        return 0
+    if _check_value(weight) or _check_value(bias):
+        return 0
+    if isinstance(normalized_shape, int):
+        normalized_shape = (normalized_shape,)
+    elif not isinstance(normalized_shape, (tuple, list)):
+        return 0
+    norm_ndim = len(normalized_shape)
+    inp = <TensorImpl>input
+    if inp._device_type != 1 or norm_ndim <= 0 or norm_ndim > inp._ndim:
+        return 0
+    if _functionalize_active_flag or _pipeline_active_flag or _npu_autocast_active_flag:
+        return 0
+    if not _tensor_has_strict_contiguous_stride(inp):
+        return 0
+    lead = inp._ndim - norm_ndim
+    for i in range(norm_ndim):
+        if inp._c_shape[lead + i] != <int64_t>normalized_shape[i]:
+            return 0
+    requires_grad = inp.requires_grad
+    if weight is not None:
+        w = <TensorImpl>weight
+        if w._device_type != 1 or w._device_index != inp._device_index or w._dtype_code != inp._dtype_code:
+            return 0
+        if w._ndim != norm_ndim:
+            return 0
+        for i in range(norm_ndim):
+            if w._c_shape[i] != <int64_t>normalized_shape[i]:
+                return 0
+        requires_grad = requires_grad or w.requires_grad
+    if bias is not None:
+        b = <TensorImpl>bias
+        if b._device_type != 1 or b._device_index != inp._device_index or b._dtype_code != inp._dtype_code:
+            return 0
+        if b._ndim != norm_ndim:
+            return 0
+        for i in range(norm_ndim):
+            if b._c_shape[i] != <int64_t>normalized_shape[i]:
+                return 0
+        requires_grad = requires_grad or b.requires_grad
+    grad_on = _grad_enabled_fast()
+    if not grad_on or not requires_grad:
+        return 1
     return 2
 
 
@@ -1178,6 +1286,7 @@ cdef class _NpuLinearBackward(_CyAutogradNode):
     cdef public object _input
     cdef public object _weight
     cdef public object _bias
+    cdef public object _input_shape
     cdef int64_t _saved_input_version
     cdef int64_t _saved_weight_version
     cdef bint _saved_input_released
@@ -1199,6 +1308,7 @@ cdef class _NpuLinearBackward(_CyAutogradNode):
         self._input = input_
         self._weight = weight
         self._bias = bias
+        self._input_shape = (<TensorImpl>input_)._shape_tuple
         self._saved_input_released = False
         self._saved_weight_released = False
         if _npu_has_saved_hooks():
@@ -1307,6 +1417,10 @@ cdef class _NpuLinearBackward(_CyAutogradNode):
         cdef object grad_input = None
         cdef object grad_weight = None
         cdef object grad_bias = None
+        cdef object grad_2d
+        cdef object input_2d
+        cdef object flat_shape
+        cdef object grad_input_shape
         if self._saved_input_obj is not None:
             input_ = self._saved_input_obj.materialize()
         else:
@@ -1321,19 +1435,177 @@ cdef class _NpuLinearBackward(_CyAutogradNode):
             _ensure_dispatch()
             if getattr(input_, "requires_grad", False):
                 grad_input = _dispatch_fn("matmul", None, grad, weight)
+            if (<TensorImpl>grad)._ndim == 2:
+                grad_2d = grad
+                input_2d = input_
+            else:
+                flat_shape = ((<TensorImpl>grad)._c_numel // (<TensorImpl>grad)._c_shape[(<TensorImpl>grad)._ndim - 1], (<TensorImpl>grad)._c_shape[(<TensorImpl>grad)._ndim - 1])
+                grad_2d = _dispatch_fn("reshape", None, grad, flat_shape)
+                input_2d = _dispatch_fn("reshape", None, input_, ((<TensorImpl>input_)._c_numel // (<TensorImpl>input_)._c_shape[(<TensorImpl>input_)._ndim - 1], (<TensorImpl>input_)._c_shape[(<TensorImpl>input_)._ndim - 1]))
             if getattr(weight, "requires_grad", False):
-                grad_t = _dispatch_fn("transpose", None, grad, 0, 1)
-                grad_weight = _dispatch_fn("matmul", None, grad_t, input_)
+                grad_t = _dispatch_fn("transpose", None, grad_2d, 0, 1)
+                grad_weight = _dispatch_fn("matmul", None, grad_t, input_2d)
             if getattr(self._bias, "requires_grad", False):
-                grad_bias = _dispatch_fn("sum", None, grad, dim=0, keepdim=False)
+                grad_bias = _dispatch_fn("sum", None, grad_2d, dim=0, keepdim=False)
             return grad_input, grad_weight, grad_bias
+        if (<TensorImpl>grad)._ndim == 2:
+            grad_2d = grad
+            input_2d = input_
+            grad_input_shape = self._input_shape
+        else:
+            flat_shape = ((<TensorImpl>grad)._c_numel // (<TensorImpl>grad)._c_shape[(<TensorImpl>grad)._ndim - 1], (<TensorImpl>grad)._c_shape[(<TensorImpl>grad)._ndim - 1])
+            if grad.is_contiguous():
+                grad_2d = (<TensorImpl>grad).cy_view(flat_shape)
+            elif _tensor_has_all_zero_stride(<TensorImpl>grad):
+                # Full-sum backward supplies a scalar-expanded grad with all
+                # strides zero.  Reshaping that view is metadata-only, but the
+                # generic Python reshape path is expensive in LinearBackward.
+                grad_2d = (<TensorImpl>grad).cy_as_strided(flat_shape, (0, 0), (<TensorImpl>grad)._c_offset)
+            else:
+                _ensure_dispatch()
+                grad_2d = _dispatch_fn("reshape", None, grad, flat_shape)
+            input_2d = (<TensorImpl>input_).cy_view(((<TensorImpl>input_)._c_numel // (<TensorImpl>input_)._c_shape[(<TensorImpl>input_)._ndim - 1], (<TensorImpl>input_)._c_shape[(<TensorImpl>input_)._ndim - 1]))
+            grad_input_shape = self._input_shape
         if getattr(input_, "requires_grad", False):
-            grad_input = _mark_npu_owned_backward_grad(_cy_fast_npu_matmul(grad, weight))
+            grad_input = _cy_fast_npu_matmul(grad_2d, weight)
+            if (<TensorImpl>grad_input)._shape_tuple != grad_input_shape:
+                grad_input = (<TensorImpl>grad_input).cy_view(grad_input_shape)
+            grad_input = _mark_npu_owned_backward_grad(grad_input)
         if getattr(weight, "requires_grad", False):
-            grad_weight = _mark_npu_owned_backward_grad(_cy_fast_npu_mm_mat2_backward(input_, grad, 1))
+            grad_weight = _mark_npu_owned_backward_grad(_cy_fast_npu_mm_mat2_backward(input_2d, grad_2d, 1))
         if getattr(self._bias, "requires_grad", False):
-            grad_bias = _mark_npu_owned_backward_grad(_cy_fast_npu_sum(grad, 0, False))
+            grad_bias = _mark_npu_owned_backward_grad(_cy_fast_npu_sum(grad_2d, 0, False))
         return grad_input, grad_weight, grad_bias
+
+
+cdef class _NpuLayerNormBackward(_CyAutogradNode):
+    cdef public object _input
+    cdef public object _weight
+    cdef public object _bias
+    cdef public object _normalized_shape
+    cdef public object _eps
+    cdef public object _backward_data
+    cdef int64_t _saved_input_version
+    cdef bint _saved_input_released
+    cdef object _saved_input_obj
+
+    cdef void _init_fast(self, object input_, object weight, object bias,
+                         object normalized_shape, object eps, object backward_data):
+        cdef object saved_input
+        self.inputs = (input_, weight, bias)
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "LayerNormBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = (_npu_edge_for(<TensorImpl>input_), _npu_edge_for(<TensorImpl>weight), _npu_edge_for(<TensorImpl>bias))
+        self._input = input_
+        self._weight = weight
+        self._bias = bias
+        self._normalized_shape = tuple(normalized_shape)
+        self._eps = eps
+        self._backward_data = backward_data
+        self._saved_input_released = False
+        if _npu_has_saved_hooks():
+            saved_input = SavedTensor(input_)
+            self._saved_input_obj = saved_input
+            self._saved_input_version = 0
+        else:
+            self._saved_input_obj = None
+            self._saved_input_version = (<TensorImpl>input_)._version_value
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+
+    def __init__(self, input_, weight, bias, normalized_shape, eps, backward_data):
+        self._init_fast(input_, weight, bias, normalized_shape, eps, backward_data)
+
+    cpdef tuple _engine_next_functions(self):
+        return self._next_functions_cache
+
+    @property
+    def next_functions(self):
+        cached = _npu_materialize_leaf_edges(self.inputs, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    cpdef object _saved_proxy_tensor_py(self, int slot):
+        return self._input
+
+    cpdef bint _saved_proxy_released_py(self, int slot):
+        return self._saved_input_released
+
+    cpdef void _saved_proxy_release_py(self, int slot):
+        self._saved_input_released = True
+
+    cpdef object _saved_proxy_materialize_py(self, int slot):
+        return _npu_materialize_tensor_version(self._input, self._saved_input_version, self._saved_input_released)
+
+    cdef object _raw_saved_input_proxy(self):
+        if self._saved_input_obj is None:
+            self._saved_input_obj = _npu_saved_tensor_proxy(self, 0)
+        return self._saved_input_obj
+
+    def saved_tensors(self):
+        if self._saved_input_obj is not None:
+            return (self._saved_input_obj.materialize(),)
+        return (self._saved_proxy_materialize_py(0),)
+
+    def release_saved_tensors(self):
+        if self._saved_input_obj is not None:
+            self._saved_input_obj.release()
+        else:
+            self._saved_input_released = True
+
+    def __getattr__(self, name):
+        if name == "_raw_saved_input":
+            return self._raw_saved_input_proxy()
+        if name == "_saved_input":
+            if self._saved_input_obj is not None:
+                return self._saved_input_obj.materialize()
+            return self._saved_proxy_materialize_py(0)
+        if name == "_raw_saved_tensors":
+            return (self._raw_saved_input_proxy(),)
+        if name == "_saved_tensors":
+            return self.saved_tensors()
+        return _CyAutogradNode.__getattr__(self, name)
+
+    def backward(self, grad):
+        cdef object input_
+        cdef object grad_input
+        cdef object grad_weight
+        cdef object grad_bias
+        if self._saved_input_obj is not None:
+            input_ = self._saved_input_obj.materialize()
+        else:
+            input_ = self._saved_proxy_materialize_py(0)
+        _ensure_npu_refs()
+        _ensure_npu_autograd_refs()
+        if _npu_create_graph_fn():
+            _ensure_dispatch()
+            from candle._backends.autograd import _layer_norm_backward as _generic_layer_norm_backward
+            return _generic_layer_norm_backward(
+                grad,
+                self._input,
+                input_,
+                _npu_fast_backward_keyset,
+                (self._normalized_shape, self._weight, self._bias, self._eps),
+                {},
+                self._backward_data,
+            )
+        grad_input, grad_weight, grad_bias = _cy_fast_npu_layer_norm_backward(
+            grad,
+            input_,
+            self._backward_data,
+            self._normalized_shape,
+            self._weight,
+            self._bias,
+        )
+        return (
+            _mark_npu_owned_backward_grad(grad_input),
+            _mark_npu_owned_backward_grad(grad_weight),
+            _mark_npu_owned_backward_grad(grad_bias),
+        )
 
 
 cdef class _NpuGeluBackward(_CyAutogradNode):
@@ -1518,6 +1790,399 @@ cdef class _NpuSiluBackward(_CyAutogradNode):
         return (_mark_npu_owned_backward_grad(_cy_fast_npu_silu_backward(grad, self_)),)
 
 
+cdef class _NpuFlashSdpaBackward(_CyAutogradNode):
+    cdef public object _query
+    cdef public object _key
+    cdef public object _value
+    cdef public object _output
+    cdef public object _softmax_max
+    cdef public object _softmax_sum
+    cdef public double _scale_factor
+    cdef int64_t _saved_query_version
+    cdef int64_t _saved_key_version
+    cdef int64_t _saved_value_version
+    cdef int64_t _saved_output_version
+    cdef int64_t _saved_softmax_max_version
+    cdef int64_t _saved_softmax_sum_version
+    cdef bint _saved_query_released
+    cdef bint _saved_key_released
+    cdef bint _saved_value_released
+    cdef bint _saved_output_released
+    cdef bint _saved_softmax_max_released
+    cdef bint _saved_softmax_sum_released
+    cdef object _saved_query_obj
+    cdef object _saved_key_obj
+    cdef object _saved_value_obj
+    cdef object _saved_output_obj
+    cdef object _saved_softmax_max_obj
+    cdef object _saved_softmax_sum_obj
+
+    cdef void _init_fast(self, object query, object key, object value,
+                         object output, object softmax_max, object softmax_sum,
+                         double scale_factor):
+        cdef object saved_query
+        cdef object saved_key
+        cdef object saved_value
+        cdef object saved_output
+        cdef object saved_softmax_max
+        cdef object saved_softmax_sum
+        self.inputs = (query, key, value)
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "_NpuFlashSdpaBackward"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._query = query
+        self._key = key
+        self._value = value
+        self._output = output
+        self._softmax_max = softmax_max
+        self._softmax_sum = softmax_sum
+        self._scale_factor = scale_factor
+        self._next_functions_cache = (
+            _npu_edge_for(<TensorImpl>query),
+            _npu_edge_for(<TensorImpl>key),
+            _npu_edge_for(<TensorImpl>value),
+        )
+        self._saved_query_released = False
+        self._saved_key_released = False
+        self._saved_value_released = False
+        self._saved_output_released = False
+        self._saved_softmax_max_released = False
+        self._saved_softmax_sum_released = False
+        if _npu_has_saved_hooks():
+            saved_query = SavedTensor(query)
+            saved_key = SavedTensor(key)
+            saved_value = SavedTensor(value)
+            saved_output = SavedTensor(output)
+            saved_softmax_max = SavedTensor(softmax_max)
+            saved_softmax_sum = SavedTensor(softmax_sum)
+            self._saved_query_obj = saved_query
+            self._saved_key_obj = saved_key
+            self._saved_value_obj = saved_value
+            self._saved_output_obj = saved_output
+            self._saved_softmax_max_obj = saved_softmax_max
+            self._saved_softmax_sum_obj = saved_softmax_sum
+            self._saved_query_version = 0
+            self._saved_key_version = 0
+            self._saved_value_version = 0
+            self._saved_output_version = 0
+            self._saved_softmax_max_version = 0
+            self._saved_softmax_sum_version = 0
+        else:
+            self._saved_query_obj = None
+            self._saved_key_obj = None
+            self._saved_value_obj = None
+            self._saved_output_obj = None
+            self._saved_softmax_max_obj = None
+            self._saved_softmax_sum_obj = None
+            self._saved_query_version = (<TensorImpl>query)._version_value
+            self._saved_key_version = (<TensorImpl>key)._version_value
+            self._saved_value_version = (<TensorImpl>value)._version_value
+            self._saved_output_version = (<TensorImpl>output)._version_value
+            self._saved_softmax_max_version = (<TensorImpl>softmax_max)._version_value
+            self._saved_softmax_sum_version = (<TensorImpl>softmax_sum)._version_value
+
+    def __init__(self, query, key, value, output, softmax_max, softmax_sum, scale_factor):
+        self._init_fast(query, key, value, output, softmax_max, softmax_sum, scale_factor)
+
+    cpdef tuple _engine_next_functions(self):
+        return self._next_functions_cache
+
+    @property
+    def next_functions(self):
+        cached = _npu_materialize_leaf_edges(self.inputs, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    cdef object _saved_at(self, int slot):
+        if slot == 0:
+            if self._saved_query_obj is not None:
+                return self._saved_query_obj.materialize()
+            return _npu_materialize_tensor_version(self._query, self._saved_query_version, self._saved_query_released)
+        if slot == 1:
+            if self._saved_key_obj is not None:
+                return self._saved_key_obj.materialize()
+            return _npu_materialize_tensor_version(self._key, self._saved_key_version, self._saved_key_released)
+        if slot == 2:
+            if self._saved_value_obj is not None:
+                return self._saved_value_obj.materialize()
+            return _npu_materialize_tensor_version(self._value, self._saved_value_version, self._saved_value_released)
+        if slot == 3:
+            if self._saved_output_obj is not None:
+                return self._saved_output_obj.materialize()
+            return _npu_materialize_tensor_version(self._output, self._saved_output_version, self._saved_output_released)
+        if slot == 4:
+            if self._saved_softmax_max_obj is not None:
+                return self._saved_softmax_max_obj.materialize()
+            return _npu_materialize_tensor_version(self._softmax_max, self._saved_softmax_max_version, self._saved_softmax_max_released)
+        if self._saved_softmax_sum_obj is not None:
+            return self._saved_softmax_sum_obj.materialize()
+        return _npu_materialize_tensor_version(self._softmax_sum, self._saved_softmax_sum_version, self._saved_softmax_sum_released)
+
+    def saved_tensors(self):
+        return (self._saved_at(0), self._saved_at(1), self._saved_at(2),
+                self._saved_at(3), self._saved_at(4), self._saved_at(5))
+
+    def release_saved_tensors(self):
+        if self._saved_query_obj is not None:
+            self._saved_query_obj.release()
+            self._saved_key_obj.release()
+            self._saved_value_obj.release()
+            self._saved_output_obj.release()
+            self._saved_softmax_max_obj.release()
+            self._saved_softmax_sum_obj.release()
+        else:
+            self._saved_query_released = True
+            self._saved_key_released = True
+            self._saved_value_released = True
+            self._saved_output_released = True
+            self._saved_softmax_max_released = True
+            self._saved_softmax_sum_released = True
+
+    def backward(self, grad_out):
+        cdef object q = self._saved_at(0)
+        cdef object k = self._saved_at(1)
+        cdef object v = self._saved_at(2)
+        cdef object out = self._saved_at(3)
+        cdef object softmax_max = self._saved_at(4)
+        cdef object softmax_sum = self._saved_at(5)
+        cdef object grad_q
+        cdef object grad_k
+        cdef object grad_v
+        cdef object packed_qkv_grad = None
+        cdef object q_meta
+        cdef object grad_shape
+        cdef object grad_stride
+        if not grad_out.is_contiguous():
+            grad_shape = tuple(grad_out.shape)
+            grad_stride = tuple(grad_out.stride())
+            if (
+                grad_shape != tuple(q.shape)
+                or len(grad_stride) != 4
+                or (grad_stride[len(grad_stride) - 1] != 1 and any(stride != 0 for stride in grad_stride))
+            ):
+                grad_out = grad_out.contiguous()
+        q_meta = getattr(q, "_candle_packed_qkv_projection_meta", None)
+        if (
+            q_meta is not None
+            and getattr(k, "_candle_packed_qkv_projection_meta", None) == q_meta[:4] + (1,)
+            and getattr(v, "_candle_packed_qkv_projection_meta", None) == q_meta[:4] + (2,)
+            and q_meta[4] == 0
+        ):
+            try:
+                grad_q, grad_k, grad_v, packed_qkv_grad = _cy_fast_sdpa_flash_attention_backward_packed_qkv(
+                    grad_out, q, k, v, out, softmax_max, softmax_sum,
+                    self._scale_factor, q_meta[0], q_meta[1], q_meta[2], q_meta[3]
+                )
+            except (AttributeError, TypeError, ValueError):
+                packed_qkv_grad = None
+        if packed_qkv_grad is None:
+            grad_q, grad_k, grad_v = _cy_fast_sdpa_flash_attention_backward(
+                grad_out, q, k, v, out, softmax_max, softmax_sum, self._scale_factor
+            )
+        for grad in (grad_q, grad_k, grad_v):
+            try:
+                grad._candle_npu_owned_backward_grad = True
+                if packed_qkv_grad is not None:
+                    grad._candle_packed_qkv_backward_grad = packed_qkv_grad
+            except (AttributeError, TypeError):
+                pass
+        return (
+            _mark_npu_owned_backward_grad(grad_q),
+            _mark_npu_owned_backward_grad(grad_k),
+            _mark_npu_owned_backward_grad(grad_v),
+        )
+
+
+cdef inline object _attach_npu_flash_sdpa_grad(object out, object q, object k, object v,
+                                               object softmax_max, object softmax_sum,
+                                               double scale_factor):
+    cdef _NpuFlashSdpaBackward grad_fn = _NpuFlashSdpaBackward.__new__(_NpuFlashSdpaBackward)
+    grad_fn._init_fast(q, k, v, out, softmax_max, softmax_sum, scale_factor)
+    (<TensorImpl>out).grad_fn = grad_fn
+    (<TensorImpl>out).requires_grad = True
+    return out
+
+
+def npu_flash_sdpa(query, key, value, scale_factor):
+    """Cython NPU FlashAttention SDPA forward with Cython autograd node."""
+    cdef object out
+    cdef object softmax_max
+    cdef object softmax_sum
+    if not isinstance(query, TensorImpl) or not isinstance(key, TensorImpl) or not isinstance(value, TensorImpl):
+        return None
+    if (<TensorImpl>query)._device_type != 1 or (<TensorImpl>key)._device_type != 1 or (<TensorImpl>value)._device_type != 1:
+        return None
+    try:
+        out, softmax_max, softmax_sum = _cy_fast_sdpa_flash_attention(query, key, value, float(scale_factor))
+    except (TypeError, ValueError):
+        return None
+    if _grad_enabled_fast() and (
+        (<TensorImpl>query).requires_grad or (<TensorImpl>key).requires_grad or (<TensorImpl>value).requires_grad
+    ):
+        return _attach_npu_flash_sdpa_grad(out, query, key, value, softmax_max, softmax_sum, float(scale_factor))
+    return out
+
+
+cdef class _NpuSplitPackedQkvProjectionBackward(_CyAutogradNode):
+    cdef public object _packed
+    cdef public object _input_shape
+    cdef public int64_t _embed
+    cdef public int64_t _heads
+    cdef public bint _batch_first
+
+    cdef void _init_fast(self, object packed, object input_shape, int64_t embed, int64_t heads, bint batch_first):
+        self.inputs = (packed,)
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "SplitPackedQkvProjectionBackward"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._packed = packed
+        self._input_shape = input_shape
+        self._embed = embed
+        self._heads = heads
+        self._batch_first = batch_first
+        self._next_functions_cache = (_npu_edge_for(<TensorImpl>packed),)
+        self._candle_multi_output_backward_count = 3
+
+    def __init__(self, packed, input_shape, embed, heads, batch_first):
+        self._init_fast(packed, input_shape, embed, heads, batch_first)
+
+    cpdef tuple _engine_next_functions(self):
+        return self._next_functions_cache
+
+    @property
+    def next_functions(self):
+        cached = _npu_materialize_leaf_edges(self.inputs, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    def backward(self, grads):
+        cdef object grad_q
+        cdef object grad_k
+        cdef object grad_v
+        cdef object packed_grad
+        cdef object ref
+        cdef object raw_shape
+        cdef object stack
+        cdef object zeros
+        cdef int64_t head_dim
+        cdef int64_t bsz
+        cdef int64_t tgt_len
+        if not isinstance(grads, (tuple, list)):
+            return (None,)
+        grad_q = grads[0] if len(grads) > 0 else None
+        grad_k = grads[1] if len(grads) > 1 else None
+        grad_v = grads[2] if len(grads) > 2 else None
+        if grad_q is not None and grad_k is not None and grad_v is not None:
+            packed_grad = getattr(grad_q, "_candle_packed_qkv_backward_grad", None)
+            if (
+                packed_grad is not None
+                and getattr(grad_k, "_candle_packed_qkv_backward_grad", None) is packed_grad
+                and getattr(grad_v, "_candle_packed_qkv_backward_grad", None) is packed_grad
+            ):
+                return (_mark_npu_owned_backward_grad(packed_grad),)
+            packed_grad = _cy_fast_packed_qkv_projection_backward(
+                grad_q, grad_k, grad_v, self._input_shape, self._embed, self._heads, self._batch_first)
+            return (_mark_npu_owned_backward_grad(packed_grad),)
+
+        ref = grad_q if grad_q is not None else grad_k if grad_k is not None else grad_v
+        if ref is None:
+            return (None,)
+        from candle._functional import stack, zeros
+        head_dim = self._embed // self._heads
+        if self._batch_first:
+            bsz = self._input_shape[0]
+            tgt_len = self._input_shape[1]
+            raw_shape = (bsz, tgt_len, self._embed)
+            if grad_q is None:
+                grad_q = zeros(raw_shape, dtype=ref.dtype, device=ref.device)
+            else:
+                grad_q = grad_q.transpose(1, 2).reshape(bsz, tgt_len, self._embed)
+            if grad_k is None:
+                grad_k = zeros(raw_shape, dtype=ref.dtype, device=ref.device)
+            else:
+                grad_k = grad_k.transpose(1, 2).reshape(bsz, tgt_len, self._embed)
+            if grad_v is None:
+                grad_v = zeros(raw_shape, dtype=ref.dtype, device=ref.device)
+            else:
+                grad_v = grad_v.transpose(1, 2).reshape(bsz, tgt_len, self._embed)
+        else:
+            tgt_len = self._input_shape[0]
+            bsz = self._input_shape[1]
+            raw_shape = (tgt_len, bsz, self._embed)
+            if grad_q is None:
+                grad_q = zeros(raw_shape, dtype=ref.dtype, device=ref.device)
+            else:
+                grad_q = grad_q.transpose(1, 2).transpose(0, 1).reshape(tgt_len, bsz, self._embed)
+            if grad_k is None:
+                grad_k = zeros(raw_shape, dtype=ref.dtype, device=ref.device)
+            else:
+                grad_k = grad_k.transpose(1, 2).transpose(0, 1).reshape(tgt_len, bsz, self._embed)
+            if grad_v is None:
+                grad_v = zeros(raw_shape, dtype=ref.dtype, device=ref.device)
+            else:
+                grad_v = grad_v.transpose(1, 2).transpose(0, 1).reshape(tgt_len, bsz, self._embed)
+        packed_grad = stack((grad_q, grad_k, grad_v), dim=-2).reshape(self._input_shape)
+        return (_mark_npu_owned_backward_grad(packed_grad),)
+
+
+cdef inline object _attach_npu_packed_qkv_projection_grad(object outputs, object packed,
+                                                          object input_shape, int64_t embed,
+                                                          int64_t heads, bint batch_first):
+    cdef _NpuSplitPackedQkvProjectionBackward grad_fn = _NpuSplitPackedQkvProjectionBackward.__new__(_NpuSplitPackedQkvProjectionBackward)
+    cdef object q = outputs[0]
+    cdef object k = outputs[1]
+    cdef object v = outputs[2]
+    cdef object meta = (input_shape, embed, heads, batch_first)
+    grad_fn._init_fast(packed, input_shape, embed, heads, batch_first)
+    (<TensorImpl>q).grad_fn = grad_fn
+    (<TensorImpl>k).grad_fn = grad_fn
+    (<TensorImpl>v).grad_fn = grad_fn
+    (<TensorImpl>q).requires_grad = True
+    (<TensorImpl>k).requires_grad = True
+    (<TensorImpl>v).requires_grad = True
+    (<TensorImpl>q)._output_nr = 0
+    (<TensorImpl>k)._output_nr = 1
+    (<TensorImpl>v)._output_nr = 2
+    try:
+        q._candle_packed_qkv_projection_meta = meta + (0,)
+        k._candle_packed_qkv_projection_meta = meta + (1,)
+        v._candle_packed_qkv_projection_meta = meta + (2,)
+    except (AttributeError, TypeError):
+        pass
+    return outputs
+
+
+def split_packed_qkv_projection(packed, embed_dim, num_heads, batch_first=False):
+    """Cython NPU fast path for packed self-attention Q/K/V projection split."""
+    cdef object outputs
+    cdef object input_shape
+    cdef int64_t embed = int(embed_dim)
+    cdef int64_t heads = int(num_heads)
+    cdef bint is_batch_first = bool(batch_first)
+    if not isinstance(packed, TensorImpl) or (<TensorImpl>packed)._device_type != 1:
+        return None
+    try:
+        outputs = _cy_fast_packed_qkv_projection_forward(packed, embed, heads, is_batch_first)
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    if outputs is None:
+        return None
+    input_shape = (<TensorImpl>packed)._shape_tuple
+    if _grad_enabled_fast() and (<TensorImpl>packed).requires_grad:
+        return _attach_npu_packed_qkv_projection_grad(outputs, packed, input_shape, embed, heads, is_batch_first)
+    return outputs
+
+
 cdef inline object _attach_npu_addmm_grad(object result, object input, object mat1, object mat2, object beta, object alpha):
     cdef TensorImpl out = <TensorImpl>result
     cdef _NpuAddmmBackward grad_fn = _NpuAddmmBackward.__new__(_NpuAddmmBackward)
@@ -1549,6 +2214,15 @@ cdef inline object _attach_npu_mul_grad(object result, object a, object b):
     cdef TensorImpl out = <TensorImpl>result
     cdef _NpuMulBackward grad_fn = _NpuMulBackward.__new__(_NpuMulBackward)
     grad_fn._init_fast(a, b)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
+cdef inline object _attach_npu_layer_norm_grad(object result, object input, object weight, object bias, object normalized_shape, object eps):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuLayerNormBackward grad_fn = _NpuLayerNormBackward.__new__(_NpuLayerNormBackward)
+    grad_fn._init_fast(input, weight, bias, normalized_shape, eps, getattr(result, "_backward_data", None))
     out.grad_fn = grad_fn
     out.requires_grad = True
     return result
@@ -1711,6 +2385,25 @@ def mul(a, b, *, out=None):
     return result
 
 
+def layer_norm(input, normalized_shape, weight=None, bias=None, eps=1e-5):
+    """Fast NPU layer_norm wrapper with Python-dispatch fallback."""
+    cdef int state
+    cdef object result
+    state = _exact_npu_layer_norm_hot_state(input, weight, bias, normalized_shape)
+    if state != 0:
+        try:
+            result = _cy_fast_npu_layer_norm(input, normalized_shape, weight, bias, eps)
+        except ValueError:
+            result = None
+        if result is not None:
+            if state == 2:
+                return _attach_npu_layer_norm_grad(result, input, weight, bias, normalized_shape, eps)
+            return result
+
+    from candle.nn import functional as _nn_functional
+    return _nn_functional._py_layer_norm(input, normalized_shape, weight=weight, bias=bias, eps=eps)
+
+
 def gelu(a, approximate='none'):
     """Fast nn.functional.gelu NPU eager route for the native GELU variant."""
     cdef int npu_state
@@ -1865,16 +2558,29 @@ def linear(input, weight, bias=None):
     """Fast linear: fuse safe NPU weight.t() + addmm glue in Cython."""
     cdef int state
     cdef object weight_t
+    cdef object mat1
     cdef object result
+    cdef object out_shape
+    cdef TensorImpl inp
+    cdef TensorImpl out
 
     state = _exact_npu_linear_hot_state(input, weight, bias)
     if state != 0:
+        inp = <TensorImpl>input
         weight_t = (<TensorImpl>weight).cy_transpose(0, 1)
+        if inp._ndim == 2:
+            mat1 = input
+            out_shape = None
+        else:
+            mat1 = inp.cy_view((inp._c_numel // inp._c_shape[inp._ndim - 1], inp._c_shape[inp._ndim - 1]))
+            out_shape = inp._shape_tuple[:inp._ndim - 1] + ((<TensorImpl>weight)._c_shape[0],)
         try:
-            result = _cy_fast_npu_addmm(bias, input, weight_t, 1, 1)
+            result = _cy_fast_npu_addmm(bias, mat1, weight_t, 1, 1)
         except ValueError:
             result = None
         if result is not None:
+            if out_shape is not None:
+                result = (<TensorImpl>result).cy_view(out_shape)
             if state == 2:
                 return _attach_npu_linear_grad(result, input, weight, bias)
             return result
@@ -2985,6 +3691,9 @@ def split(a, split_size_or_sections, dim=0):
     if not _is_base_tensor(a):
         return _dispatch_fn("split", a.device.type, a, split_size_or_sections, dim)
     if getattr(a, "requires_grad", False):
+        if not _grad_enabled_fast() and getattr(getattr(a, "device", None), "type", None) == "npu":
+            from candle._backends.npu.ops.shape import split as _npu_split
+            return _npu_split(a, split_size_or_sections, dim)
         return _dispatch_fn("split", a.device.type, a, split_size_or_sections, dim)
 
     ndim = len(a.shape)

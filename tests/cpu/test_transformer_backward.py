@@ -1,5 +1,6 @@
 """Backward tests for composite ops used in transformer training."""
 import numpy as np
+import pytest
 import candle as torch
 import candle.nn.functional as F
 
@@ -95,7 +96,112 @@ def test_nll_loss_backward_ignore_index():
     np.testing.assert_allclose(x_c.grad.numpy(), x_t.grad.numpy(), atol=1e-5)
 
 
+def _assert_sdpa_matches_torch(q_np, k_np, v_np, *, attn_mask_np=None, atol=1e-4, **kwargs):
+    """Compare Candle SDPA output and q/k/v gradients against PyTorch math SDPA."""
+    import torch as real_torch
+
+    q_c = torch.tensor(q_np, device='cpu'); q_c.requires_grad = True
+    k_c = torch.tensor(k_np, device='cpu'); k_c.requires_grad = True
+    v_c = torch.tensor(v_np, device='cpu'); v_c.requires_grad = True
+    attn_mask_c = None if attn_mask_np is None else torch.tensor(attn_mask_np, device='cpu')
+    out_c = F.scaled_dot_product_attention(q_c, k_c, v_c, attn_mask=attn_mask_c, **kwargs)
+    out_c.sum().backward()
+
+    with real_torch.nn.attention.sdpa_kernel(real_torch.nn.attention.SDPBackend.MATH):
+        q_t = real_torch.tensor(q_np, requires_grad=True)
+        k_t = real_torch.tensor(k_np, requires_grad=True)
+        v_t = real_torch.tensor(v_np, requires_grad=True)
+        attn_mask_t = None if attn_mask_np is None else real_torch.tensor(attn_mask_np)
+        out_t = real_torch.nn.functional.scaled_dot_product_attention(
+            q_t, k_t, v_t, attn_mask=attn_mask_t, **kwargs
+        )
+        out_t.sum().backward()
+
+    np.testing.assert_allclose(out_c.detach().numpy(), out_t.detach().numpy(), atol=atol)
+    np.testing.assert_allclose(q_c.grad.numpy(), q_t.grad.numpy(), atol=atol)
+    np.testing.assert_allclose(k_c.grad.numpy(), k_t.grad.numpy(), atol=atol)
+    np.testing.assert_allclose(v_c.grad.numpy(), v_t.grad.numpy(), atol=atol)
+
+
 # ---- SDPA backward ----
+
+
+def test_sdpa_scale_is_keyword_only_like_torch():
+    """PyTorch allows only 6 positional SDPA args; scale is keyword-only."""
+    q = torch.randn(1, 1, 2, 4, device='cpu')
+    k = torch.randn(1, 1, 2, 4, device='cpu')
+    v = torch.randn(1, 1, 2, 4, device='cpu')
+
+    with pytest.raises(TypeError):
+        F.scaled_dot_product_attention(q, k, v, None, 0.0, False, 0.5)
+
+
+def test_sdpa_backward_with_explicit_scale_vs_torch():
+    """Explicit keyword scale should match PyTorch output and gradients."""
+    np.random.seed(123)
+    B, H, L, D = 2, 2, 4, 8
+    q_np = np.random.randn(B, H, L, D).astype(np.float32)
+    k_np = np.random.randn(B, H, L, D).astype(np.float32)
+    v_np = np.random.randn(B, H, L, D).astype(np.float32)
+
+    _assert_sdpa_matches_torch(q_np, k_np, v_np, scale=0.125)
+
+
+def test_sdpa_backward_with_bool_mask_vs_torch():
+    """Boolean masks should use PyTorch SDPA semantics: True keeps, False masks."""
+    np.random.seed(124)
+    B, H, L, D = 2, 2, 5, 8
+    q_np = np.random.randn(B, H, L, D).astype(np.float32)
+    k_np = np.random.randn(B, H, L, D).astype(np.float32)
+    v_np = np.random.randn(B, H, L, D).astype(np.float32)
+    mask_np = np.array(
+        [
+            [True, True, False, True, False],
+            [True, False, True, True, False],
+            [False, True, True, False, True],
+            [True, True, True, True, False],
+            [False, False, True, True, True],
+        ],
+        dtype=np.bool_,
+    )
+
+    _assert_sdpa_matches_torch(q_np, k_np, v_np, attn_mask_np=mask_np)
+
+
+def test_sdpa_backward_with_float_mask_vs_torch():
+    """Float masks should be additive attention bias like PyTorch."""
+    np.random.seed(125)
+    B, H, L, D = 2, 2, 5, 8
+    q_np = np.random.randn(B, H, L, D).astype(np.float32)
+    k_np = np.random.randn(B, H, L, D).astype(np.float32)
+    v_np = np.random.randn(B, H, L, D).astype(np.float32)
+    mask_np = np.zeros((L, L), dtype=np.float32)
+    mask_np[:, -1] = -3.0
+    mask_np[0, 2] = -7.0
+
+    _assert_sdpa_matches_torch(q_np, k_np, v_np, attn_mask_np=mask_np)
+
+
+def test_sdpa_backward_with_causal_mask_vs_torch():
+    """Causal SDPA should match PyTorch output and gradients."""
+    np.random.seed(126)
+    B, H, L, D = 2, 2, 6, 8
+    q_np = np.random.randn(B, H, L, D).astype(np.float32)
+    k_np = np.random.randn(B, H, L, D).astype(np.float32)
+    v_np = np.random.randn(B, H, L, D).astype(np.float32)
+
+    _assert_sdpa_matches_torch(q_np, k_np, v_np, is_causal=True)
+
+
+def test_sdpa_backward_with_enable_gqa_vs_torch():
+    """The Python SDPA interface must expose PyTorch's enable_gqa keyword."""
+    np.random.seed(127)
+    B, Hq, Hkv, L, D = 2, 4, 2, 5, 8
+    q_np = np.random.randn(B, Hq, L, D).astype(np.float32)
+    k_np = np.random.randn(B, Hkv, L, D).astype(np.float32)
+    v_np = np.random.randn(B, Hkv, L, D).astype(np.float32)
+
+    _assert_sdpa_matches_torch(q_np, k_np, v_np, enable_gqa=True)
 
 
 def test_sdpa_backward_basic():
@@ -257,6 +363,127 @@ def test_mha_need_weights_true():
     assert attn_weights.shape == (2, 4, 4)  # (N, L, S) when averaged over heads
     out.sum().backward()
     assert x.grad is not None
+
+
+def test_mha_need_weights_false_routes_through_sdpa(monkeypatch):
+    """MHA should use SDPA when attention weights are not requested."""
+    calls = []
+    original_sdpa = F.scaled_dot_product_attention
+
+    def track_sdpa(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original_sdpa(*args, **kwargs)
+
+    monkeypatch.setattr(F, "scaled_dot_product_attention", track_sdpa)
+    torch.manual_seed(42)
+    embed_dim, num_heads = 8, 2
+    mha = torch.nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+    x = torch.randn(2, 4, embed_dim, device='cpu')
+    x.requires_grad = True
+
+    out, attn_weights = mha(x, x, x, need_weights=False)
+    assert attn_weights is None
+    out.sum().backward()
+
+    assert len(calls) == 1
+    assert x.grad is not None
+
+
+def test_mha_self_attention_uses_packed_qkv_projection(monkeypatch):
+    """Self-attention should project Q/K/V with one packed linear plus output projection."""
+    calls = []
+    linear_inputs = []
+    sdpa_calls = []
+    original_linear = F.linear
+    original_sdpa = F.scaled_dot_product_attention
+
+    def track_linear(*args, **kwargs):
+        inp = args[0]
+        weight = args[1]
+        linear_inputs.append((tuple(inp.shape), inp.is_contiguous()))
+        calls.append(tuple(weight.shape))
+        return original_linear(*args, **kwargs)
+
+    def track_sdpa(*args, **kwargs):
+        sdpa_calls.append((args, kwargs))
+        return original_sdpa(*args, **kwargs)
+
+    monkeypatch.setattr(F, "linear", track_linear)
+    monkeypatch.setattr(F, "scaled_dot_product_attention", track_sdpa)
+    torch.manual_seed(42)
+    embed_dim, num_heads = 8, 2
+    mha = torch.nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+    x = torch.randn(2, 4, embed_dim, device='cpu')
+    x.requires_grad = True
+
+    out, attn_weights = mha(x, x, x, need_weights=False)
+    assert attn_weights is None
+    out.sum().backward()
+
+    assert calls == [(3 * embed_dim, embed_dim), (embed_dim, embed_dim)]
+    assert linear_inputs[0] == ((2, 4, embed_dim), True)
+    assert linear_inputs[1] == ((2, 4, embed_dim), True)
+    assert len(sdpa_calls) == 1
+    q, k, v = sdpa_calls[0][0][:3]
+    for tensor in (q, k, v):
+        assert tensor.grad_fn.name() == "_SplitPackedQkvProjectionBackward"
+        assert all(
+            fn is None or fn.name() != "SplitBackward0"
+            for fn, _ in tensor.grad_fn.next_functions
+        )
+    assert q.shape == k.shape == v.shape == (2, num_heads, 4, embed_dim // num_heads)
+    assert not q.is_contiguous() and not k.is_contiguous() and not v.is_contiguous()
+    assert q.stride() == k.stride() == v.stride() == (4 * embed_dim, embed_dim // num_heads, embed_dim, 1)
+    assert x.grad is not None
+    assert mha.in_proj_weight.grad is not None
+    assert mha.in_proj_bias.grad is not None
+
+
+def test_transformer_encoder_layer_routes_self_attention_through_sdpa(monkeypatch):
+    """Transformer encoder internals should use SDPA when they do not return weights."""
+    calls = []
+    original_sdpa = F.scaled_dot_product_attention
+
+    def track_sdpa(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original_sdpa(*args, **kwargs)
+
+    monkeypatch.setattr(F, "scaled_dot_product_attention", track_sdpa)
+    torch.manual_seed(42)
+    layer = torch.nn.TransformerEncoderLayer(8, 2, dim_feedforward=16, dropout=0.0, batch_first=True)
+    x = torch.randn(2, 4, 8, device='cpu')
+    x.requires_grad = True
+
+    out = layer(x)
+    out.sum().backward()
+
+    assert calls, "TransformerEncoderLayer should route self-attention through SDPA"
+    assert x.grad is not None
+
+
+def test_transformer_decoder_layer_routes_attention_through_sdpa(monkeypatch):
+    """Transformer decoder self and cross attention should use SDPA when weights are not returned."""
+    calls = []
+    original_sdpa = F.scaled_dot_product_attention
+
+    def track_sdpa(*args, **kwargs):
+        calls.append((args, kwargs))
+        return original_sdpa(*args, **kwargs)
+
+    monkeypatch.setattr(F, "scaled_dot_product_attention", track_sdpa)
+    torch.manual_seed(42)
+    layer = torch.nn.TransformerDecoderLayer(8, 2, dim_feedforward=16, dropout=0.0, batch_first=True)
+    tgt = torch.randn(2, 4, 8, device='cpu')
+    memory = torch.randn(2, 5, 8, device='cpu')
+    tgt.requires_grad = True
+    memory.requires_grad = True
+
+    out = layer(tgt, memory)
+    out.sum().backward()
+
+    assert len(calls) >= 2, "TransformerDecoderLayer should route self and cross attention through SDPA"
+    assert tgt.grad is not None
+    assert memory.grad is not None
 
 
 # ---- End-to-end transformer training step ----
