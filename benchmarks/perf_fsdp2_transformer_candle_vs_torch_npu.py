@@ -105,6 +105,105 @@ def _iter_fsdp_transformer_modules(model):
     yield model
 
 
+def _numel(shape):
+    count = 1
+    for dim in shape:
+        count *= int(dim)
+    return count
+
+
+def _make_deterministic_tensor(torch, shape, *, start, end, device, dtype,
+                               requires_grad=False):
+    """Create identical deterministic data in Candle and torch_npu workers."""
+    data = torch.linspace(start, end, _numel(shape), device=device, dtype=dtype)
+    data = data.reshape(*shape)
+    if requires_grad:
+        data.requires_grad_(True)
+    return data
+
+
+def _reset_transformer_parameters(torch, model):
+    """Initialize Candle and torch_npu models with the same deterministic values."""
+    for idx, (name, param) in enumerate(model.named_parameters()):
+        if "norm" in name and name.endswith("weight"):
+            fill = 1.0
+        elif name.endswith("bias"):
+            fill = 0.0005 * ((idx % 5) - 2)
+        else:
+            fill = 0.001 * ((idx % 7) + 1)
+        param.data = torch.full_like(param, fill)
+
+
+def _local_tensor(tensor):
+    return tensor.to_local() if hasattr(tensor, "to_local") else tensor
+
+
+def _tensor_values(torch, tensor, limit=32):
+    tensor = _local_tensor(tensor)
+    flat = tensor.detach().reshape(-1)
+    if flat.numel() == 0:
+        return []
+    flat = flat[:min(limit, flat.numel())].to(torch.float32).to("cpu")
+    return [float(value) for value in flat.numpy().reshape(-1).tolist()]
+
+
+def _tensor_checksum(torch, tensor):
+    tensor = _local_tensor(tensor)
+    return float(tensor.detach().to(torch.float32).sum().to("cpu").item())
+
+
+def _named_tensor_checksums(torch, model, *, grads=False):
+    names = []
+    values = []
+    for name, param in model.named_parameters():
+        local = _local_tensor(param)
+        tensor = None
+        if grads:
+            tensor = getattr(local, "grad", None)
+            if tensor is None and getattr(param, "grad", None) is not None:
+                tensor = _local_tensor(param.grad)
+        else:
+            tensor = local
+        names.append(name)
+        values.append(0.0 if tensor is None else _tensor_checksum(torch, tensor))
+    return names, values
+
+
+def _run_accuracy_step(torch, dist, model, x, target, optimizer, *, sync_all):
+    """Run one deterministic train step and collect cross-framework numerics."""
+    sync_all(torch, dist)
+    out = model(x)
+    diff = out - target
+    loss = (diff * diff).mean()
+    loss.backward()
+    if hasattr(torch, "npu") and hasattr(torch.npu, "synchronize"):
+        torch.npu.synchronize()
+
+    param_names, param_grad_values = _named_tensor_checksums(torch, model, grads=True)
+    accuracy = {
+        "loss": float(loss.detach().to(torch.float32).to("cpu").item()),
+        "output_checksum": _tensor_checksum(torch, out),
+        "output_values": _tensor_values(torch, out),
+        "input_grad_checksum": _tensor_checksum(torch, x.grad),
+        "input_grad_values": _tensor_values(torch, x.grad),
+        "param_names": param_names,
+        "param_grad_checksum_values": param_grad_values,
+    }
+
+    optimizer.step()
+    if hasattr(torch, "npu") and hasattr(torch.npu, "synchronize"):
+        torch.npu.synchronize()
+    param_names, param_values = _named_tensor_checksums(torch, model, grads=False)
+    accuracy["param_names_after_step"] = param_names
+    accuracy["param_checksum_after_step_values"] = param_values
+    accuracy["param_checksum_after_step"] = sum(param_values)
+
+    optimizer.zero_grad(set_to_none=True)
+    x.grad = None
+    sync_all(torch, dist)
+    return accuracy
+
+
 def _sync_candle(torch, dist):
     if hasattr(torch, "npu") and hasattr(torch.npu, "synchronize"):
         torch.npu.synchronize()
@@ -200,18 +299,33 @@ def _run_candle_worker(args):
         torch.manual_seed(args.seed)
         dtype = getattr(torch, args.dtype)
         model = _build_transformer_model(torch, cfg).to(device).to(dtype)
+        _reset_transformer_parameters(torch, model)
         mesh = DeviceMesh("npu", (world_size,))
         for module in _iter_fsdp_transformer_modules(model):
             fully_shard(module, mesh=mesh)
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
-        x = torch.randn(
-            cfg.batch_per_rank,
-            cfg.seq,
-            cfg.hidden,
+        x = _make_deterministic_tensor(
+            torch,
+            (cfg.batch_per_rank, cfg.seq, cfg.hidden),
+            start=-0.75,
+            end=0.75,
             device=device,
             dtype=dtype,
             requires_grad=True,
         )
+        target = _make_deterministic_tensor(
+            torch,
+            (cfg.batch_per_rank, cfg.seq, cfg.hidden),
+            start=0.25,
+            end=-0.25,
+            device=device,
+            dtype=dtype,
+        )
+        accuracy = None
+        if args.check_accuracy:
+            accuracy = _run_accuracy_step(
+                torch, dist, model, x, target, optimizer, sync_all=_sync_candle
+            )
         profile_reset = None
         profile_summary = None
         if args.profile_candle:
@@ -241,6 +355,8 @@ def _run_candle_worker(args):
             "config": asdict(cfg),
             **samples,
         }
+        if accuracy is not None:
+            payload["accuracy"] = accuracy
         _write_worker_result(args.out_dir, rank, payload)
         dist.destroy_process_group()
     except Exception as exc:  # pragma: no cover - diagnostics for benchmark workers
@@ -276,18 +392,33 @@ def _run_torch_npu_worker(args):
         device = torch.device(f"npu:{local_rank}")
         dtype = getattr(torch, args.dtype)
         model = _build_transformer_model(torch, cfg).to(device=device, dtype=dtype)
+        _reset_transformer_parameters(torch, model)
         mesh = init_device_mesh("npu", (world_size,))
         for module in _iter_fsdp_transformer_modules(model):
             fully_shard(module, mesh=mesh)
         optimizer = torch.optim.SGD(model.parameters(), lr=args.lr)
-        x = torch.randn(
-            cfg.batch_per_rank,
-            cfg.seq,
-            cfg.hidden,
+        x = _make_deterministic_tensor(
+            torch,
+            (cfg.batch_per_rank, cfg.seq, cfg.hidden),
+            start=-0.75,
+            end=0.75,
             device=device,
             dtype=dtype,
             requires_grad=True,
         )
+        target = _make_deterministic_tensor(
+            torch,
+            (cfg.batch_per_rank, cfg.seq, cfg.hidden),
+            start=0.25,
+            end=-0.25,
+            device=device,
+            dtype=dtype,
+        )
+        accuracy = None
+        if args.check_accuracy:
+            accuracy = _run_accuracy_step(
+                torch, dist, model, x, target, optimizer, sync_all=_sync_torch_npu
+            )
         samples = _run_timed_steps(
             torch,
             dist,
@@ -309,6 +440,8 @@ def _run_torch_npu_worker(args):
             "config": asdict(cfg),
             **samples,
         }
+        if accuracy is not None:
+            payload["accuracy"] = accuracy
         _write_worker_result(args.out_dir, rank, payload)
         dist.destroy_process_group()
     except Exception as exc:  # pragma: no cover - diagnostics for benchmark workers
@@ -435,6 +568,8 @@ def _base_worker_args(args, framework, case, out_dir):
     ]
     if framework == "candle" and getattr(args, "profile_candle", False):
         worker_args.append("--profile-candle")
+    if getattr(args, "check_accuracy", False):
+        worker_args.append("--check-accuracy")
     return worker_args
 
 
@@ -591,6 +726,127 @@ def _annotate_ratios(results):
             candle["throughput_ratio"] = candle_tput / ref_tput
 
 
+def _max_abs_rel_diff(actual, expected):
+    max_abs = 0.0
+    max_rel = 0.0
+    for actual_value, expected_value in zip(actual, expected):
+        abs_diff = abs(float(actual_value) - float(expected_value))
+        denom = max(abs(float(expected_value)), 1e-12)
+        max_abs = max(max_abs, abs_diff)
+        max_rel = max(max_rel, abs_diff / denom)
+    return max_abs, max_rel
+
+
+def _within_tolerance(abs_diff, rel_diff, atol, rtol):
+    return abs_diff <= atol or rel_diff <= rtol
+
+
+def _accuracy_by_rank(row):
+    return {
+        rank_row.get("rank"): rank_row.get("accuracy")
+        for rank_row in row.get("rank_results", [])
+        if "accuracy" in rank_row
+    }
+
+
+def _record_accuracy_diff(summary, key, abs_diff, rel_diff):
+    abs_key = f"{key}_abs_diff_max"
+    rel_key = f"{key}_rel_diff_max"
+    max_abs_key = f"{key}_max_abs_diff"
+    max_rel_key = f"{key}_max_rel_diff"
+    summary[abs_key] = max(summary.get(abs_key, 0.0), abs_diff)
+    summary[rel_key] = max(summary.get(rel_key, 0.0), rel_diff)
+    summary[max_abs_key] = summary[abs_key]
+    summary[max_rel_key] = summary[rel_key]
+
+
+def _compare_accuracy_vector(summary, failures, case, rank, candle_acc,
+                             torch_acc, key, label, atol, rtol):
+    candle_values = candle_acc.get(key)
+    torch_values = torch_acc.get(key)
+    if candle_values is None or torch_values is None:
+        failures.append(f"{case}/rank{rank}: missing {label} accuracy values")
+        return
+    if len(candle_values) != len(torch_values):
+        failures.append(
+            f"{case}/rank{rank}: {label} length mismatch "
+            f"{len(candle_values)} != {len(torch_values)}"
+        )
+        return
+    abs_diff, rel_diff = _max_abs_rel_diff(candle_values, torch_values)
+    _record_accuracy_diff(summary, label, abs_diff, rel_diff)
+    if not _within_tolerance(abs_diff, rel_diff, atol, rtol):
+        failures.append(
+            f"{case}/rank{rank}: {label} max diff abs={abs_diff:.6g} "
+            f"rel={rel_diff:.6g} exceeds atol={atol:g}, rtol={rtol:g}"
+        )
+
+
+def _compare_accuracy_scalar(summary, failures, case, rank, candle_acc,
+                             torch_acc, key, label, atol, rtol):
+    if key not in candle_acc or key not in torch_acc:
+        failures.append(f"{case}/rank{rank}: missing {label} accuracy value")
+        return
+    abs_diff, rel_diff = _max_abs_rel_diff([candle_acc[key]], [torch_acc[key]])
+    _record_accuracy_diff(summary, label, abs_diff, rel_diff)
+    if not _within_tolerance(abs_diff, rel_diff, atol, rtol):
+        failures.append(
+            f"{case}/rank{rank}: {label} diff abs={abs_diff:.6g} "
+            f"rel={rel_diff:.6g} exceeds atol={atol:g}, rtol={rtol:g}"
+        )
+
+
+def _annotate_accuracy_checks(results, cases, *, atol, rtol):
+    """Compare Candle and torch_npu same-network numerical results."""
+    failures = []
+    by_case = _index_results(results)
+    scalar_metrics = (
+        ("loss", "loss"),
+        ("output_checksum", "output_checksum"),
+        ("input_grad_checksum", "input_grad_checksum"),
+        ("param_checksum_after_step", "param_checksum_after_step"),
+    )
+    vector_metrics = (
+        ("output_values", "output"),
+        ("input_grad_values", "input_grad"),
+        ("param_grad_checksum_values", "param_grad_checksum"),
+        ("param_checksum_after_step_values", "param_checksum_after_step"),
+    )
+    for case in cases:
+        by_framework = by_case.get(case, {})
+        candle = by_framework.get("candle")
+        torch_ref = by_framework.get("torch_npu")
+        if candle is None or torch_ref is None:
+            continue
+        if "error" in candle or "error" in torch_ref:
+            continue
+        candle_by_rank = _accuracy_by_rank(candle)
+        torch_by_rank = _accuracy_by_rank(torch_ref)
+        if not candle_by_rank or not torch_by_rank:
+            failures.append(f"{case}: missing Candle or torch_npu accuracy payload")
+            continue
+        summary = {}
+        for rank, torch_acc in sorted(torch_by_rank.items()):
+            candle_acc = candle_by_rank.get(rank)
+            if candle_acc is None:
+                failures.append(f"{case}/rank{rank}: missing Candle accuracy payload")
+                continue
+            if candle_acc.get("param_names") != torch_acc.get("param_names"):
+                failures.append(f"{case}/rank{rank}: parameter name mismatch")
+            for key, label in scalar_metrics:
+                _compare_accuracy_scalar(
+                    summary, failures, case, rank, candle_acc, torch_acc,
+                    key, label, atol, rtol,
+                )
+            for key, label in vector_metrics:
+                _compare_accuracy_vector(
+                    summary, failures, case, rank, candle_acc, torch_acc,
+                    key, label, atol, rtol,
+                )
+        candle["accuracy"] = summary
+    return failures
+
+
 def _ratio_failures(results, cases, max_total_ratio):
     failures = []
     by_case = _index_results(results)
@@ -706,6 +962,9 @@ def _build_parser():
     parser.add_argument("--torch-npu-python", default=None)
     parser.add_argument("--json-output", default=None)
     parser.add_argument("--profile-candle", action="store_true")
+    parser.add_argument("--check-accuracy", action="store_true")
+    parser.add_argument("--accuracy-atol", type=float, default=1e-2)
+    parser.add_argument("--accuracy-rtol", type=float, default=1e-2)
     parser.add_argument("--fail-on-ratio", action="store_true")
     parser.add_argument("--max-total-ratio", type=float, default=1.0)
     return parser
@@ -723,6 +982,10 @@ def main():
         parser.error("--warmup must be >= 0")
     if args.max_total_ratio <= 0:
         parser.error("--max-total-ratio must be > 0")
+    if args.accuracy_atol < 0:
+        parser.error("--accuracy-atol must be >= 0")
+    if args.accuracy_rtol < 0:
+        parser.error("--accuracy-rtol must be >= 0")
 
     if args.worker:
         if args.case not in CASES:
@@ -756,6 +1019,12 @@ def main():
 
     _annotate_ratios(results)
     failures = []
+    if args.check_accuracy:
+        failures.extend(
+            _annotate_accuracy_checks(
+                results, cases, atol=args.accuracy_atol, rtol=args.accuracy_rtol
+            )
+        )
     if args.fail_on_ratio:
         failures.extend(_ratio_failures(results, cases, args.max_total_ratio))
 
@@ -775,6 +1044,9 @@ def main():
         "dtype": args.dtype,
         "lr": args.lr,
         "max_total_ratio": args.max_total_ratio,
+        "check_accuracy": args.check_accuracy,
+        "accuracy_atol": args.accuracy_atol,
+        "accuracy_rtol": args.accuracy_rtol,
         "failures": failures,
         "results": results,
     }

@@ -40,6 +40,20 @@ class FSDPParamGroup:
         self.module = module
         self.mesh_info = mesh_info
         self._is_unsharded = False
+        self.reduce_grads = True
+        self.all_reduce_grads = True
+        self.reshard_after_backward = True
+        self.gradient_divide_factor = None
+        self.reduce_scatter_divide_factor = None
+        self.force_sum_reduction_for_comms = False
+        self.unshard_in_backward = True
+        self.allocate_memory_from_process_group_for_comm = False
+        self._all_gather_comm = None
+        self._reduce_scatter_comm = None
+        self._all_reduce_hook = None
+        self._all_reduce_hook_stream = None
+        self._post_optim_event = None
+        self._comm_ctx = object()
 
         world_size = mesh_info.shard_mesh_size
         first_device = fsdp_params[0]._sharded_param.to_local().device

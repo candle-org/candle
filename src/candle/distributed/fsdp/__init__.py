@@ -1,10 +1,19 @@
 """torch.distributed.fsdp public API for candle.
 
-Current public surface exposes composable FSDP2's fully_shard path while the
-legacy FullyShardedDataParallel wrapper remains unavailable.
+The legacy ``FullyShardedDataParallel`` wrapper remains unavailable, while the
+composable FSDP2 Python surface is re-exported for PyTorch compatibility.
 """
 
-from .._composable.fsdp import fully_shard
+from .._composable.fsdp import (
+    CPUOffloadPolicy,
+    FSDPModule,
+    MixedPrecisionPolicy,
+    OffloadPolicy,
+    UnshardHandle,
+    fully_shard,
+    register_fsdp_forward_method,
+    share_comm_ctx,
+)
 
 
 class FullyShardedDataParallel:
@@ -28,6 +37,23 @@ class ShardingStrategy:
     FULL_SHARD = 0
     SHARD_GRAD_OP = 1
     NO_SHARD = 2
+
+
+__all__ = [
+    "CPUOffloadPolicy",
+    "FSDPModule",
+    "FullOptimStateDictConfig",
+    "FullStateDictConfig",
+    "FullyShardedDataParallel",
+    "MixedPrecisionPolicy",
+    "OffloadPolicy",
+    "ShardingStrategy",
+    "StateDictType",
+    "UnshardHandle",
+    "fully_shard",
+    "register_fsdp_forward_method",
+    "share_comm_ctx",
+]
 
 
 def __getattr__(name):

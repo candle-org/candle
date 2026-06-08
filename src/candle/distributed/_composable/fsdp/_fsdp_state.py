@@ -27,6 +27,25 @@ class FSDPState:
         self._pending_grads = {}
         self._used_fsdp_params = set()
         self._sync_gradients = True  # False inside no_sync()
+        self._requires_all_reduce = True
+        self._reshard_after_backward = True
+        self._is_last_backward = True
+        self._states_to_forward_prefetch = []
+        self._states_to_backward_prefetch = []
+        self._all_gather_comm = None
+        self._reduce_scatter_comm = None
+        self._all_reduce_hook = None
+        self._all_reduce_hook_stream = None
+        self._post_optim_event = None
+        self._reduce_scatter_divide_factor = None
+        self._gradient_divide_factor = None
+        self._force_sum_reduction_for_comms = False
+        self._unshard_in_backward = True
+        self._allocate_memory_from_process_group_for_comm = False
+        self._unshard_async_op = False
+        self._comm_ctx = object()
+        if self.param_group is not None:
+            self.param_group._comm_ctx = self._comm_ctx
         if _HAVE_FASTPATH:
             _grad_flags = _cy_grad_flags(
                 [fp._sharded_param for fp in param_group.fsdp_params]
@@ -54,6 +73,11 @@ class FSDPState:
         self._pre_backward_hook_handles.clear()
         with _profile.record("fsdp.pre_forward"):
             self.param_group.pre_forward()
+        if (self._mp_policy is not None
+                and self._mp_policy.param_dtype is not None
+                and getattr(self._mp_policy, "cast_forward_inputs", True)):
+            args = _cast_forward_inputs(args, self._mp_policy.param_dtype)
+            kwargs = _cast_forward_inputs(kwargs, self._mp_policy.param_dtype)
         return args, kwargs
 
     def _post_forward(self, module, args, output):
@@ -193,3 +217,20 @@ def _cast_output(output, dtype):
     if isinstance(output, dict):
         return {k: _cast_output(v, dtype) for k, v in output.items()}
     return output
+
+
+def _cast_forward_inputs(obj, dtype):
+    """Recursively cast floating tensors in forward inputs to *dtype*."""
+    from ...._tensor import Tensor
+    if isinstance(obj, Tensor):
+        if getattr(obj.dtype, "is_floating_point", False) and obj.dtype != dtype:
+            return obj.to(dtype)
+        return obj
+    if isinstance(obj, tuple):
+        return tuple(_cast_forward_inputs(item, dtype) for item in obj)
+    if isinstance(obj, list):
+        return [_cast_forward_inputs(item, dtype) for item in obj]
+    if isinstance(obj, dict):
+        return {key: _cast_forward_inputs(value, dtype)
+                for key, value in obj.items()}
+    return obj
