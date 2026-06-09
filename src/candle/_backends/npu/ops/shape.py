@@ -884,23 +884,17 @@ def _npu_advanced_getitem(tensor, key):
             result = _npu_unsqueeze_view(result, pos)
         return result
 
-    # 910A workaround: native aclnnIndex on the x[0, idx] style path can poison
-    # later random-kernel execution.  For the common single-advanced-index case,
-    # use an on-device gather composite instead, avoiding CPU round-trips.
+    # TODO: re-enable native aclnnIndex when CANN fixes 561103 for single
+    # 1-D tensor indices mixed with basic slices, e.g. x[:, idx].  Use an
+    # on-device index_select/gather composite for the common one-index case.
     if (
-        ops_soc.current_profile() == "910a"
-        and len(adv_index_tensors) == 1
+        len(adv_index_tensors) == 1
         and len(adv_current_dims) == 1
-        and prepared.dim() == 1
-        and adv_current_dims[0] == 0
         and adv_index_tensors[0].dim() == 1
     ):
-        from .comparison import lt
-
         idx = adv_index_tensors[0]
-        neg_mask = lt(idx, _scalar_to_npu_tensor(0, idx))
-        idx = _blend_negative_indices(idx, neg_mask, prepared.shape[0])
-        result = _gather_unchecked(prepared, 0, idx)
+        dim = adv_current_dims[0]
+        result = index_select(prepared, dim, idx)
         for pos in none_positions:
             result = _npu_unsqueeze_view(result, pos)
         return result

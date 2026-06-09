@@ -768,10 +768,35 @@ def stack(tensors, dim=0, out=None):
     return result
 
 
+def _normalize_cat_rank1_empty_tensors(tensors, dim):
+    """Match PyTorch cat: reshape size-(0,) tensors to the higher-rank input."""
+    if not tensors:
+        return tensors
+    reference = next((t for t in tensors if len(getattr(t, "shape", ())) > 1), None)
+    if reference is None:
+        return tensors
+    ndim = len(reference.shape)
+    cat_dim = dim + ndim if dim < 0 else dim
+    if cat_dim < 0 or cat_dim >= ndim:
+        return tensors
+    normalized = []
+    changed = False
+    for tensor in tensors:
+        if tuple(getattr(tensor, "shape", ())) == (0,):
+            shape = list(reference.shape)
+            shape[cat_dim] = 0
+            normalized.append(tensor.reshape(tuple(shape)))
+            changed = True
+        else:
+            normalized.append(tensor)
+    return normalized if changed else tensors
+
+
 def cat(tensors, dim=0, out=None):
     r = _handle_torch_function(cat, (tensors,), {'dim': dim, 'out': out})
     if r is not NotImplemented:
         return r
+    tensors = _normalize_cat_rank1_empty_tensors(tensors, dim)
     result = dispatch("cat", tensors[0].device.type, tensors, dim=dim)
     if out is not None:
         return _finalize_out(result, out)

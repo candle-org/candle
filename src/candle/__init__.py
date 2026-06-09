@@ -194,6 +194,7 @@ from ._functional import bitwise_and, bitwise_or, bitwise_xor, bitwise_not
 from ._functional import unflatten, broadcast_to, movedim, moveaxis, diagonal
 from ._functional import unique, unique_consecutive, searchsorted, kthvalue, median
 from .nn.functional import rrelu
+from ._vmap import vmap
 # Category A: Export existing functions
 from ._functional import eq, ne, lt, le, gt, ge
 from ._functional import select, expand, masked_fill, unfold
@@ -621,6 +622,7 @@ from ._random import (
 )
 from . import _random as random
 from .serialization import save, load
+from .amp import autocast
 from .amp.state import (
     is_autocast_enabled,
     set_autocast_enabled,
@@ -687,6 +689,7 @@ __all__ = [
     "vitals_enabled",
     "set_vital",
     "read_vitals",
+    "vmap",
     # quantization stubs
     "quantize_per_tensor",
     # dtypes
@@ -899,6 +902,7 @@ __all__ = [
     "onnx",
     # amp
     "amp",
+    "autocast",
     "accelerator",
     "is_autocast_enabled",
     "set_autocast_enabled",

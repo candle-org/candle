@@ -7420,9 +7420,10 @@ def _npu_softmax_backward(grad, _a, saved_a, keyset, args, kwargs):
     return (npu_softmax_backward(grad, saved_a, dim),)
 
 def _npu_log_softmax_backward(grad, _a, saved_a, keyset, args, kwargs):
-    dim = args[0] if args else kwargs.get("dim", -1)
-    from .npu.backward import npu_log_softmax_backward
-    return (npu_log_softmax_backward(grad, saved_a, dim),)
+    # TODO: re-enable native aclnnLogSoftmaxBackward when CANN fixes the
+    # segmentation fault observed from NPU autograd backward.  Keep the native
+    # binding in .npu.backward and use the generic on-device composite here.
+    return _log_softmax_backward(grad, _a, saved_a, keyset, args, kwargs)
 
 def _npu_leaky_relu_backward(grad, _a, saved_a, keyset, args, kwargs):
     negative_slope = args[0] if args else kwargs.get("negative_slope", 0.01)

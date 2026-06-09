@@ -29,9 +29,26 @@ try:
 except ImportError:
     pass
 
+
+class Proxy:
+    """Minimal torch.fx.Proxy placeholder for import-time isinstance checks."""
+
+
+
+def wrap(fn_or_name):
+    """Mark a function as an FX leaf.
+
+    Candle does not yet implement symbolic tracing, so this is a no-op
+    compatibility hook matching torch.fx.wrap's import-time behavior.
+    """
+    return fn_or_name
+
+
 __all__ = [
     "Node",
     "Graph",
     "GraphModule",
     "Interpreter",
+    "Proxy",
+    "wrap",
 ]

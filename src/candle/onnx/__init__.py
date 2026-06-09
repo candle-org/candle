@@ -3,6 +3,11 @@ from . import symbolic_helper
 
 
 def register_custom_op_symbolic(*_args, **_kwargs):
-    raise NotImplementedError(
-        "onnx custom op registration is outside 0.1 NPU-first scope"
-    )
+    """Register an ONNX symbolic function.
+
+    Candle does not export ONNX graphs yet, but third-party libraries such as
+    torchvision call this during import to register optional symbolic handlers.
+    Match torch's import-time API shape by accepting the registration without
+    affecting eager execution.
+    """
+    return None

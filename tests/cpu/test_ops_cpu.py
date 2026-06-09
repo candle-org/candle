@@ -520,6 +520,31 @@ def test_cat_cpu():
     np.testing.assert_allclose(torch.cat([a, b], dim=0).numpy(), expected)
 
 
+def test_cat_ignores_rank1_empty_tensors_cpu():
+    empty = torch.tensor([], dtype=torch.float32)
+    values = torch.arange(24, dtype=torch.float32).reshape((1, 2, 3, 4))
+
+    out_before = torch.cat([empty, values], dim=-2)
+    out_after = torch.cat([values, empty], dim=1)
+
+    assert out_before.shape == values.shape
+    assert out_after.shape == values.shape
+    np.testing.assert_allclose(out_before.numpy(), values.numpy())
+    np.testing.assert_allclose(out_after.numpy(), values.numpy())
+
+
+def test_cat_rank1_empty_tensor_backward_cpu():
+    empty = torch.tensor([], dtype=torch.float32, requires_grad=True)
+    values = torch.ones((1, 2, 3, 4), dtype=torch.float32, requires_grad=True)
+
+    torch.cat([empty, values], dim=-2).sum().backward()
+
+    assert empty.grad is not None
+    assert empty.grad.shape == (0,)
+    assert values.grad is not None
+    np.testing.assert_allclose(values.grad.numpy(), np.ones(values.shape, dtype=np.float32))
+
+
 def test_concat_cpu():
     a = torch.tensor([[1.0, 2.0]])
     b = torch.tensor([[3.0, 4.0]])
@@ -1256,6 +1281,19 @@ def test_true_divide_dtype_promotion_matches_torch_cpu():
     ta = real_torch.tensor([2, 4, 6], dtype=real_torch.int64)
     tb = real_torch.tensor([2, 2, 2], dtype=real_torch.int32)
     tout = real_torch.true_divide(ta, tb)
+
+    assert str(out.dtype) == str(tout.dtype)
+    np.testing.assert_allclose(out.numpy(), tout.numpy())
+
+
+def test_scalar_left_true_divide_matches_torch_cpu():
+    import torch as real_torch
+
+    x = torch.tensor([2.0, 4.0, 8.0], dtype=torch.float32)
+    out = 1.0 / x
+
+    tx = real_torch.tensor([2.0, 4.0, 8.0], dtype=real_torch.float32)
+    tout = 1.0 / tx
 
     assert str(out.dtype) == str(tout.dtype)
     np.testing.assert_allclose(out.numpy(), tout.numpy())

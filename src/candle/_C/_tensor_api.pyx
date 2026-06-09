@@ -629,8 +629,12 @@ def tensor_clone(self, *, memory_format=None):
     # Determine effective format: preserve_format/None inherits source layout.
     if fmt_name == "preserve_format" or memory_format is None:
         out = _to_dispatch_fn(self, self.device, copy=True)
-        if _is_channels_last_stride_tuple(self.shape, self.stride):
-            # Source was channels_last — relayout the copy.
+        if (
+            self.device.type in ("cpu", "meta")
+            and _is_channels_last_stride_tuple(self.shape, self.stride)
+        ):
+            # Source was channels_last — relayout the copy.  Device backends
+            # without channels_last support keep the default same-device copy.
             import candle as _candle_mod
             _cl = getattr(_candle_mod, "channels_last", None)
             if _cl is not None:

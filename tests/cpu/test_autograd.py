@@ -31,6 +31,19 @@ def test_autograd_dtype_to_preserves_grad_graph():
     assert x.grad.tolist() == [1.0, 1.0, 1.0]
 
 
+def test_dtype_shorthand_float_preserves_autograd():
+    x = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64, requires_grad=True)
+
+    y = x.float()
+
+    assert y.dtype == torch.float32
+    assert y.requires_grad
+    assert y.grad_fn is not None
+
+    y.sum().backward()
+    np.testing.assert_allclose(x.grad.numpy(), np.ones(3))
+
+
 def test_reduce_grad_bfloat16_preserves_numeric_values_cpu():
     from candle.autograd.utils import reduce_grad
 

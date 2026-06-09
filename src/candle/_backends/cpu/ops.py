@@ -312,20 +312,23 @@ def mul(a, b):
 
 
 def div(a, b):
-    a_np = _to_numeric_array_for_cpu_op(a)
-    b_np = _to_numeric_array_for_cpu_op(b) if isinstance(b, Tensor) else b
+    a_is_tensor = isinstance(a, Tensor)
+    b_is_tensor = isinstance(b, Tensor)
+    a_np = _to_numeric_array_for_cpu_op(a) if a_is_tensor else a
+    b_np = _to_numeric_array_for_cpu_op(b) if b_is_tensor else b
     out_dtype = _binary_out_dtype(a, b, for_div=True)
     out_np_dtype = np.float32 if out_dtype == bfloat16_dtype else to_numpy_dtype(out_dtype)
-    if a.dtype != bfloat16_dtype and (not isinstance(b, Tensor) or b.dtype != bfloat16_dtype):
-        if isinstance(b, Tensor):
+    out_device = a.device if a_is_tensor else b.device
+    if a_is_tensor and a.dtype != bfloat16_dtype and (not b_is_tensor or b.dtype != bfloat16_dtype):
+        if b_is_tensor:
             result = _cython_binary(_ck.div_f32, _ck.div_f64, a_np, b_np, out_np_dtype)
         else:
             result = _cython_scalar_binary(_ck.div_scalar_f32, _ck.div_scalar_f64, a_np, b_np, out_np_dtype)
         if result is not None:
-            return _from_numpy(result, out_dtype, a.device)
+            return _from_numpy(result, out_dtype, out_device)
     with np.errstate(divide="ignore", invalid="ignore"):
         out = np.true_divide(a_np, b_np)
-    return _from_numeric_array_for_cpu_op(out, out_dtype, a.device)
+    return _from_numeric_array_for_cpu_op(out, out_dtype, out_device)
 
 
 def true_divide(a, b):

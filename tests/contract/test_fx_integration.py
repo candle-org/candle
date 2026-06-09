@@ -12,6 +12,23 @@ def test_fx_importable_from_candle():
     assert hasattr(candle.fx, "Interpreter")
 
 
+def test_fx_wrap_accepts_function_name_and_callable():
+    import candle.fx
+
+    assert candle.fx.wrap("drop_block2d") == "drop_block2d"
+
+    def fn(x):
+        return x
+
+    assert candle.fx.wrap(fn) is fn
+
+
+def test_fx_proxy_type_exists_for_isinstance_checks():
+    import candle.fx
+
+    assert isinstance(candle.fx.Proxy(), candle.fx.Proxy)
+
+
 def test_fx_graph_with_candle_add():
     from candle.fx import Graph, GraphModule
     g = Graph()
