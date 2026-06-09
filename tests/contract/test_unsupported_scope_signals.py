@@ -16,6 +16,7 @@ def test_jit_script_raises_with_scope_signal_when_requested():
         candle.jit.script(lambda x: x, optimize=True)
 
 
-def test_onnx_register_custom_op_symbolic_raises_scope_signal():
-    with pytest.raises(NotImplementedError, match=_MSG):
-        candle.onnx.register_custom_op_symbolic("::op", lambda *a: None, 11)
+def test_onnx_register_custom_op_symbolic_is_import_time_noop():
+    result = candle.onnx.register_custom_op_symbolic("::op", lambda *a: None, 11)
+
+    assert result is None

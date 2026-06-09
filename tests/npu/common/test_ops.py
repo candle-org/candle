@@ -14,6 +14,36 @@ def test_npu_add():
     assert z.storage().data.tolist() == [4.0, 6.0]
 
 
+def test_npu_tensor_empty_list_creates_zero_numel_tensor():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    x = torch.tensor([], device="npu", dtype=torch.float16)
+
+    assert x.device.type == "npu"
+    assert x.dtype == torch.float16
+    assert x.shape == (0,)
+    assert x.numel() == 0
+
+
+def test_npu_zero_numel_creation_and_clone():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    for factory in (torch.empty, torch.zeros, torch.ones):
+        x = factory((2, 0), device="npu", dtype=torch.float16)
+        assert x.device.type == "npu"
+        assert x.dtype == torch.float16
+        assert x.shape == (2, 0)
+        assert x.numel() == 0
+
+        cloned = x.clone()
+        assert cloned.device.type == "npu"
+        assert cloned.dtype == torch.float16
+        assert cloned.shape == (2, 0)
+        assert cloned.numel() == 0
+
+
 
 
 
@@ -961,6 +991,24 @@ def test_npu_cat_concat_across_dims():
     np.testing.assert_allclose(out1.to("cpu").numpy(), np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32))
 
 
+def test_npu_cat_ignores_rank1_empty_tensors():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    empty = torch.tensor([], device="npu", dtype=torch.float16)
+    values = torch.arange(24, device="npu", dtype=torch.float16).reshape((1, 2, 3, 4))
+
+    out_before = torch.cat([empty, values], dim=-2)
+    out_after = torch.cat([values, empty], dim=1)
+
+    assert out_before.device.type == "npu"
+    assert out_after.device.type == "npu"
+    assert out_before.shape == values.shape
+    assert out_after.shape == values.shape
+    np.testing.assert_allclose(out_before.to("cpu").numpy(), values.to("cpu").numpy())
+    np.testing.assert_allclose(out_after.to("cpu").numpy(), values.to("cpu").numpy())
+
+
 def test_npu_vstack_rowstack_columnstack_dstack_vsplit_dsplit():
     if not torch.npu.is_available():
         pytest.skip("NPU not available")
@@ -1214,6 +1262,42 @@ def test_npu_log_softmax(dtype):
     assert np.allclose(out.to("cpu").numpy().astype(np.float32), expected, atol=1e-3, rtol=1e-3)
 
 
+def test_npu_log_softmax_backward_stays_on_npu():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    data = np.array([[1.0, 2.0, 3.0], [2.0, 0.0, -1.0]], dtype=np.float32)
+    upstream = np.array([[0.5, -1.0, 2.0], [1.5, -0.5, 0.25]], dtype=np.float32)
+    x = torch.tensor(data, device="npu", dtype=torch.float16, requires_grad=True)
+    grad_out = torch.tensor(upstream, device="npu", dtype=torch.float16)
+
+    from candle.nn import functional as F
+    out = F.log_softmax(x, dim=-1)
+    (out * grad_out).sum().backward()
+
+    e_x = np.exp(data - np.max(data, axis=-1, keepdims=True))
+    softmax = e_x / np.sum(e_x, axis=-1, keepdims=True)
+    expected = upstream - softmax * np.sum(upstream, axis=-1, keepdims=True)
+
+    assert x.grad is not None
+    assert x.grad.device.type == "npu"
+    assert x.grad.shape == x.shape
+    assert np.allclose(x.grad.to("cpu").numpy().astype(np.float32), expected, atol=2e-3, rtol=2e-3)
+
+
+def test_npu_clone_default_handles_contiguous_channel_size_one():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    x = torch.randn((1, 1, 7, 16), device="npu", dtype=torch.float16)
+    assert x.is_contiguous()
+
+    cloned = x.clone()
+
+    assert cloned.device.type == "npu"
+    assert cloned.shape == x.shape
+    assert cloned.stride == x.stride
+    assert np.allclose(cloned.to("cpu").numpy(), x.to("cpu").numpy())
+
+
 @pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
 def test_npu_gelu(dtype):
     if not torch.npu.is_available():
@@ -1390,6 +1474,21 @@ def test_npu_index_select():
     bad_index = torch.tensor([[0, 1]], dtype=torch.int64, device="npu")
     with pytest.raises(ValueError):
         torch.index_select(x, dim=1, index=bad_index)
+
+
+def test_npu_getitem_slice_with_1d_tensor_column_index():
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+    x = torch.tensor([[1, 2, 3, 4], [5, 6, 7, 8]], device="npu")
+    idx = torch.arange(3, device="npu", dtype=torch.int64)
+    idx += 1
+
+    out = x[:, idx]
+
+    np.testing.assert_array_equal(
+        out.to("cpu").numpy(),
+        np.array([[2, 3, 4], [6, 7, 8]]),
+    )
 
 
 def test_npu_masked_select():

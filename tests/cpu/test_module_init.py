@@ -3,6 +3,32 @@ import numpy as np
 import candle as torch
 
 
+def test_module_has_cuda_and_npu_device_helpers():
+    module = torch.nn.Module()
+
+    assert hasattr(module, "cuda")
+    assert hasattr(module, "npu")
+
+
+def test_module_device_helpers_accept_device_objects(monkeypatch):
+    module = torch.nn.Module()
+    seen = []
+
+    def fake_to(*args, **kwargs):
+        seen.append((args, kwargs))
+        return module
+
+    monkeypatch.setattr(module, "to", fake_to)
+
+    assert module.cuda(torch.device("cuda:0")) is module
+    assert module.npu(torch.device("npu:0")) is module
+
+    assert seen == [
+        ((), {"device": torch.device("cuda:0")}),
+        ((), {"device": torch.device("npu:0")}),
+    ]
+
+
 def test_embedding_init_not_zeros():
     """Embedding weights should be initialized with normal_(0, 1), not zeros."""
     emb = torch.nn.Embedding(100, 32)

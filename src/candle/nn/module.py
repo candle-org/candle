@@ -167,6 +167,14 @@ class Module:
     def cpu(self):
         return self.to(device='cpu')
 
+    def cuda(self, device=None):
+        target = 'cuda' if device is None else f'cuda:{device}'
+        return self.to(device=target)
+
+    def npu(self, device=None):
+        target = 'npu' if device is None else f'npu:{device}'
+        return self.to(device=target)
+
     def float(self):
         from .. import float32
         return self.to(dtype=float32)

@@ -13,6 +13,25 @@ def test_autocast_sets_and_restores_state_cpu():
     assert torch.get_autocast_dtype("cpu") == prev_dtype
 
 
+def test_top_level_autocast_matches_amp_context_manager_cpu():
+    assert torch.autocast is torch.amp.autocast
+
+    assert not torch.is_autocast_enabled("cpu")
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        assert torch.is_autocast_enabled("cpu")
+        assert torch.get_autocast_dtype("cpu") == torch.bfloat16
+    assert not torch.is_autocast_enabled("cpu")
+
+    @torch.autocast("cpu", dtype=torch.bfloat16)
+    def _identity(x):
+        assert torch.is_autocast_enabled("cpu")
+        return x
+
+    x = torch.randn((2, 2), dtype=torch.float32)
+    assert _identity(x) is x
+    assert not torch.is_autocast_enabled("cpu")
+
+
 def test_autocast_nested_enabled_false_subregion_cpu():
     x = torch.randn((4, 4), dtype=torch.float32)
 

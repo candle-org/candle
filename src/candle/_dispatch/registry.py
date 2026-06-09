@@ -56,6 +56,19 @@ class OpRegistry:
         entry.kernels[key] = fn
         return entry
 
+    def register_external_kernel(self, name, key, fn):
+        """Register a kernel for an externally-defined operator.
+
+        This is used by torch.library IMPL registrations that pass an overload
+        object from torch.ops.  In PyTorch that overload object already denotes
+        an existing operator.  Candle's lightweight torch.ops compatibility
+        layer may not have the schema locally, so store the kernel without
+        weakening the normal schema-first registration path.
+        """
+        entry = self._entry(name)
+        entry.kernels[key] = fn
+        return entry
+
     def register_fallthrough(self, name, key):
         entry = self._entry(name)
         entry.fallthrough.add(key)

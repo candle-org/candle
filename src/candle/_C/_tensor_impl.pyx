@@ -389,16 +389,16 @@ cdef class TensorImpl:
     # ---------------------------------------------------------------
 
     def float(self):
-        return self._to_dtype(_dtype_mod.float32) if self.dtype != _dtype_mod.float32 else self
+        return self.to(_dtype_mod.float32) if self.dtype != _dtype_mod.float32 else self
 
     def half(self):
-        return self._to_dtype(_dtype_mod.float16) if self.dtype != _dtype_mod.float16 else self
+        return self.to(_dtype_mod.float16) if self.dtype != _dtype_mod.float16 else self
 
     def double(self):
-        return self._to_dtype(_dtype_mod.float64) if self.dtype != _dtype_mod.float64 else self
+        return self.to(_dtype_mod.float64) if self.dtype != _dtype_mod.float64 else self
 
     def bfloat16(self):
-        return self._to_dtype(_dtype_mod.bfloat16) if self.dtype != _dtype_mod.bfloat16 else self
+        return self.to(_dtype_mod.bfloat16) if self.dtype != _dtype_mod.bfloat16 else self
 
     def long(self):
         return self._to_dtype(_dtype_mod.int64) if self.dtype != _dtype_mod.int64 else self

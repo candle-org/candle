@@ -33,8 +33,12 @@ def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_for
     arr = np.array(data, dtype=npu_runtime._dtype_to_numpy(dtype))
     runtime = npu_runtime.get_runtime((device.index if hasattr(device, "index") else None) or 0)
     stream = npu_state.current_stream((device.index if hasattr(device, "index") else None) or 0)
-    ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=runtime)
-    storage = npu_typed_storage_from_ptr(ptr, arr.size, dtype, device=device)
+    if arr.size == 0:
+        ptr = npu_runtime._alloc_device(1, runtime=runtime)
+        storage = npu_typed_storage_from_ptr(ptr, 0, dtype, device=device)
+    else:
+        ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=runtime)
+        storage = npu_typed_storage_from_ptr(ptr, arr.size, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return _wrap_tensor(storage, arr.shape, stride, requires_grad)
 
@@ -511,8 +515,12 @@ def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_for
     arr = np.array(data, dtype=npu_runtime._dtype_to_numpy(dtype))
     runtime = npu_runtime.get_runtime((device.index if hasattr(device, "index") else None) or 0)
     stream = npu_state.current_stream((device.index if hasattr(device, "index") else None) or 0)
-    ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=runtime)
-    storage = npu_typed_storage_from_ptr(ptr, arr.size, dtype, device=device)
+    if arr.size == 0:
+        ptr = npu_runtime._alloc_device(1, runtime=runtime)
+        storage = npu_typed_storage_from_ptr(ptr, 0, dtype, device=device)
+    else:
+        ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=runtime)
+        storage = npu_typed_storage_from_ptr(ptr, arr.size, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return _wrap_tensor(storage, arr.shape, stride, requires_grad)
 

@@ -17,14 +17,26 @@ class Library:
               is meaningful; others are accepted for compatibility.
     """
 
-    def __init__(self, ns, kind="DEF"):
+    def __init__(self, ns, kind="DEF", dispatch_key=None):
         self._ns = ns
         self._kind = kind
+        self._dispatch_key = dispatch_key
 
     def _qualname(self, name):
-        if "::" in name:
-            return name
-        return f"{self._ns}::{name}"
+        if isinstance(name, str):
+            if "::" in name:
+                return name
+            return f"{self._ns}::{name}"
+        schema = getattr(name, "_schema", None)
+        schema_name = getattr(schema, "name", None)
+        if schema_name:
+            return schema_name
+        qualname = getattr(name, "_qualname", None)
+        if qualname:
+            return qualname
+        raise TypeError(
+            "operator name must be a string or torch.ops overload object"
+        )
 
     def define(self, schema):
         """Register an operator schema.
@@ -58,16 +70,27 @@ class Library:
             dispatch_key: Dispatch key string (e.g. "CPU", "NPU", "Meta").
         """
         qualname = self._qualname(name)
+        if self._dispatch_key is not None and dispatch_key == "CompositeImplicitAutograd":
+            dispatch_key = self._dispatch_key
         key = dispatch_key_from_string(dispatch_key)
 
+        is_overload_object = not isinstance(name, str)
+
+        def _register(func):
+            try:
+                registry.register_kernel(qualname, key, func)
+            except RuntimeError:
+                if not is_overload_object:
+                    raise
+                registry.register_external_kernel(qualname, key, func)
+            return func
+
         if fn is not None:
-            registry.register_kernel(qualname, key, fn)
-            return fn
+            return _register(fn)
 
         # Decorator form
         def decorator(func):
-            registry.register_kernel(qualname, key, func)
-            return func
+            return _register(func)
         return decorator
 
 
@@ -103,7 +126,15 @@ def register_fake(qualname):
     Equivalent to ``impl(qualname, "Meta")``.
     """
     def decorator(fn):
-        registry.register_kernel(qualname, DispatchKey.Meta, fn)
+        try:
+            registry.register_kernel(qualname, DispatchKey.Meta, fn)
+        except RuntimeError as exc:
+            namespace = qualname.split("::", 1)[0] if "::" in qualname else "aten"
+            from .ops import is_external_namespace  # pylint: disable=import-outside-toplevel
+
+            if not is_external_namespace(namespace):
+                raise RuntimeError(f"operator {qualname} does not exist") from exc
+            registry.register_external_kernel(qualname, DispatchKey.Meta, fn)
         return fn
     return decorator
 

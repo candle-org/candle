@@ -110,6 +110,13 @@ def _apply_module_stubs():
         torch._dynamo = dynamo
         sys.modules["torch._dynamo"] = dynamo
 
+    dynamo_utils = sys.modules.get("torch._dynamo.utils")
+    if dynamo_utils is None:
+        dynamo_utils = types.ModuleType("torch._dynamo.utils")
+        dynamo_utils.is_compile_supported = lambda *a, **kw: False
+        sys.modules["torch._dynamo.utils"] = dynamo_utils
+    torch._dynamo.utils = dynamo_utils
+
     # --- torch.compiler ---
     if not hasattr(torch, "compiler"):
         compiler = types.ModuleType("torch.compiler")

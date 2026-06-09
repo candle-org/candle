@@ -61,6 +61,13 @@ class TestDispatchKeyFromString:
 # ---------------------------------------------------------------------------
 
 class TestLibrary:
+    def test_accepts_optional_dispatch_key_constructor_arg(self):
+        lib = Library("torchvision", "IMPL", "Meta")
+
+        assert lib._ns == "torchvision"
+        assert lib._kind == "IMPL"
+        assert lib._dispatch_key == "Meta"
+
     def test_define_registers_schema(self):
         lib = Library("testops", "DEF")
         lib.define("my_add(Tensor x, Tensor y) -> Tensor")
@@ -91,10 +98,59 @@ class TestLibrary:
         assert DispatchKey.CPU in entry.kernels
         assert entry.kernels[DispatchKey.CPU] is my_mul_cpu
 
+    def test_impl_decorator_form_accepts_dispatch_key_as_second_positional_arg(self):
+        lib = Library("testops", "DEF")
+        lib.define("my_sub(Tensor x, Tensor y) -> Tensor")
+
+        @lib.impl("my_sub", "CPU")
+        def my_sub_cpu(x, y):
+            return torch.sub(x, y)
+
+        entry = registry.get("testops::my_sub")
+        assert DispatchKey.CPU in entry.kernels
+        assert entry.kernels[DispatchKey.CPU] is my_sub_cpu
+
+    def test_impl_overload_object_call_uses_registered_kernel(self):
+        lib = Library("torchvision", "IMPL", "CPU")
+
+        def fake_roi_align(x):
+            return x + 1
+
+        lib.impl(torch.ops.torchvision.roi_align.default, fake_roi_align)
+        x = torch.tensor([1.0, 2.0])
+
+        out = torch.ops.torchvision.roi_align.default(x)
+
+        assert out is not None
+        assert out.numpy().tolist() == [2.0, 3.0]
+
     def test_impl_before_define_raises(self):
         lib = Library("testops", "DEF")
         with pytest.raises(RuntimeError, match="schema must be registered"):
             lib.impl("nonexistent", lambda x: x, "CPU")
+
+    def test_torch_ops_overload_exposes_qualified_name(self):
+        overload = torch.ops.torchvision.roi_align.default
+
+        assert overload._qualname == "torchvision::roi_align"
+        assert overload._schema.name == "torchvision::roi_align"
+
+    def test_impl_accepts_torch_ops_overload_object(self):
+        lib = Library("torchvision", "IMPL", "Meta")
+
+        def fake_roi_align(x):
+            return x
+
+        lib.impl(torch.ops.torchvision.roi_align.default, fake_roi_align)
+        entry = registry.get("torchvision::roi_align")
+        assert entry.schema_obj is None
+        assert DispatchKey.Meta in entry.kernels
+        assert entry.kernels[DispatchKey.Meta] is fake_roi_align
+
+    def test_impl_string_still_requires_registered_operator(self):
+        lib = Library("missingns", "IMPL", "Meta")
+        with pytest.raises(RuntimeError, match="schema must be registered"):
+            lib.impl("missing_op", lambda x: x)
 
     def test_multiple_dispatch_keys(self):
         lib = Library("testops", "DEF")
@@ -140,3 +196,26 @@ class TestRegisterFake:
         entry = registry.get("testops::fake_op")
         assert DispatchKey.Meta in entry.kernels
         assert entry.kernels[DispatchKey.Meta] is fake_op_meta
+
+    def test_register_fake_for_unknown_string_op_still_raises(self):
+        with pytest.raises(RuntimeError, match="operator missingns::missing_op does not exist"):
+            register_fake("missingns::missing_op")(lambda x: x)
+
+    def test_register_fake_accepts_external_torch_ops_namespace(self):
+        # Accessing any torch.ops.torchvision overload models an external
+        # extension namespace whose schemas are not locally introspectable by
+        # Candle.  torchvision later registers fake kernels for other ops in
+        # that namespace, such as torchvision::nms.
+        _ = torch.ops.torchvision.roi_align.default
+
+        def fake_nms(boxes, scores, iou_threshold):
+            del scores, iou_threshold
+            return boxes
+
+        result = register_fake("torchvision::nms")(fake_nms)
+
+        entry = registry.get("torchvision::nms")
+        assert result is fake_nms
+        assert entry.schema_obj is None
+        assert DispatchKey.Meta in entry.kernels
+        assert entry.kernels[DispatchKey.Meta] is fake_nms

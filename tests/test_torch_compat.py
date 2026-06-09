@@ -305,6 +305,18 @@ class TestImportHook:
         out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
         assert "OK" in out
 
+    def test_from_torch_utils_model_zoo_imports_tqdm(self):
+        """torchvision.datasets.utils imports tqdm from torch.utils.model_zoo."""
+        code = textwrap.dedent("""\
+            from torch.utils.model_zoo import tqdm
+            with tqdm(total=3, unit="B", unit_scale=True) as pbar:
+                pbar.update(1)
+                pbar.update(2)
+            print("OK")
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
     def test_torch_zeros(self):
         """Functional: actually create a tensor through the redirected import."""
         code = textwrap.dedent("""\
@@ -312,6 +324,24 @@ class TestImportHook:
             t = torch.zeros(3)
             assert t.shape == (3,)
             assert str(type(t).__module__).startswith("candle")
+            print("OK")
+        """)
+        out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
+        assert "OK" in out
+
+    def test_torch_dynamo_import_time_decorators_are_noops(self):
+        code = textwrap.dedent("""\
+            import torch
+
+            def fn(x):
+                return x
+
+            assert torch._dynamo.is_compiling() is False
+            assert torch._dynamo.allow_in_graph(fn) is fn
+            assert torch._dynamo.disable(fn) is fn
+            assert torch._dynamo.optimize(fn) is fn
+            assert torch._dynamo.optimize("eager")(fn) is fn
+            assert torch._dynamo.reset() is None
             print("OK")
         """)
         out, _, _ = _run(code, env_extra={"USE_CANDLE": "1"})
