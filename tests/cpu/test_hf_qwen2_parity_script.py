@@ -29,6 +29,8 @@ def test_worker_args_forward_common_options():
         device="npu:0",
         dtype="float16",
         seed=123,
+        iters=7,
+        warmup=3,
         out_dir="/tmp/out",
         accuracy_atol=0.01,
         accuracy_rtol=0.02,
@@ -46,6 +48,8 @@ def test_worker_args_forward_common_options():
     assert "dynamic" in worker_args
     assert "--device" in worker_args
     assert "npu:0" in worker_args
+    assert worker_args[worker_args.index("--iters") + 1] == "7"
+    assert worker_args[worker_args.index("--warmup") + 1] == "3"
     assert "--local-files-only" in worker_args
 
 
@@ -91,11 +95,138 @@ def test_transformers_compat_provides_dynamo_utils_stub():
 
 
 def test_dynamic_cache_loss_uses_only_step_labels():
-    source = inspect.getsource(_qwen2._run_model)
+    source = inspect.getsource(_qwen2._make_forward_step)
 
     assert "current_tokens = 2 if args.mode in" in source
-    assert 'kwargs["input_ids"] = input_ids[:, -current_tokens:]' in source
-    assert 'kwargs["labels"] = labels[:, -current_tokens:]' in source
+    assert 'step_kwargs["input_ids"] = input_ids[:, -current_tokens:]' in source
+    assert 'step_kwargs["labels"] = labels[:, -current_tokens:]' in source
+
+
+def test_dynamic_forward_step_recomputes_past_key_values_each_call():
+    calls = []
+
+    class _Tensor:
+        def __getitem__(self, item):
+            return ("slice", item)
+
+    class _Out:
+        def __init__(self, tag):
+            self.past_key_values = ("past", tag)
+
+    class _Model:
+        def __call__(self, **kwargs):
+            calls.append(kwargs)
+            return _Out(len(calls))
+
+    args = SimpleNamespace(mode="train-step", cache_mode="dynamic")
+    forward_once = _qwen2._make_forward_step(_Model(), args, _Tensor(), _Tensor(), _Tensor())
+
+    forward_once()
+    forward_once()
+
+    prefix_calls = [call for call in calls if "past_key_values" not in call]
+    step_calls = [call for call in calls if "past_key_values" in call]
+    assert len(prefix_calls) == 2
+    assert len(step_calls) == 2
+    assert step_calls[0]["past_key_values"] == ("past", 1)
+    assert step_calls[1]["past_key_values"] == ("past", 3)
+
+
+def test_summarize_samples_reports_latency_distribution():
+    summary = _qwen2._summarize_samples([3.0, 1.0, 2.0, 5.0, 4.0])
+
+    assert summary["min_ms"] == 1.0
+    assert summary["median_ms"] == 3.0
+    assert summary["p10_ms"] == 1.0
+    assert summary["p90_ms"] == 5.0
+
+
+def test_time_iterations_runs_warmup_and_measured_steps():
+    calls = []
+    syncs = []
+    ticks = iter([10.0, 10.5, 20.0, 21.0])
+
+    timing = _qwen2._time_iterations(
+        lambda: calls.append("step"),
+        lambda: syncs.append("sync"),
+        warmup=2,
+        iters=2,
+        timer=lambda: next(ticks),
+    )
+
+    assert len(calls) == 4
+    assert len(syncs) == 5
+    assert timing["samples_ms"] == [500.0, 1000.0]
+    assert timing["median_ms"] == 750.0
+
+
+def test_time_forward_backward_iterations_reports_split_samples():
+    calls = []
+    syncs = []
+    ticks = iter([10.0, 10.25, 10.75, 20.0, 20.40, 21.00])
+
+    timing = _qwen2._time_forward_backward_iterations(
+        lambda: calls.append("forward"),
+        lambda: calls.append("backward"),
+        lambda: syncs.append("sync"),
+        warmup=1,
+        iters=2,
+        timer=lambda: next(ticks),
+    )
+
+    assert calls == ["forward", "backward", "forward", "backward", "forward", "backward"]
+    assert timing["forward"]["samples_ms"] == pytest.approx([250.0, 400.0])
+    assert timing["backward"]["samples_ms"] == pytest.approx([500.0, 600.0])
+    assert timing["total"]["samples_ms"] == pytest.approx([750.0, 1000.0])
+    assert timing["total"]["median_ms"] == pytest.approx(875.0)
+
+
+def test_run_worker_payload_includes_timing(monkeypatch, tmp_path):
+    class _Torch:
+        pass
+
+    monkeypatch.setattr(_qwen2, "_prepare_framework", lambda framework, device: _Torch)
+    monkeypatch.setattr(_qwen2, "_device_obj", lambda torch, framework, device: "device")
+    monkeypatch.setattr(_qwen2, "_build_model", lambda torch, args, device: object())
+    monkeypatch.setattr(_qwen2, "_run_model", lambda torch, model, args, device: ({"loss": 1.0}, {"step": {"median_ms": 2.0}}))
+
+    args = SimpleNamespace(
+        framework="candle",
+        mode="forward",
+        cache_mode="none",
+        device="npu:0",
+        dtype="float16",
+        out_dir=str(tmp_path),
+    )
+
+    _qwen2._run_worker(args)
+    row = _qwen2._read_worker_result(str(tmp_path), "candle")
+
+    assert row["metrics"] == {"loss": 1.0}
+    assert row["timing"] == {"step": {"median_ms": 2.0}}
+
+
+def test_timing_annotation_records_ratio_separately_from_accuracy():
+    candle = {
+        "framework": "candle",
+        "status": "ok",
+        "metrics": {"loss": 1.0},
+        "timing": {"step": {"median_ms": 4.0}},
+    }
+    torch_ref = {
+        "framework": "torch_npu",
+        "status": "ok",
+        "metrics": {"loss": 1.0},
+        "timing": {"step": {"median_ms": 2.0}},
+    }
+
+    timing_failures = _qwen2.annotate_timing([candle, torch_ref])
+    accuracy_failures = _qwen2.annotate_accuracy([candle, torch_ref], atol=0.0, rtol=0.0)
+
+    assert timing_failures == []
+    assert accuracy_failures == []
+    assert candle["timing"]["step"]["ratio"] == 2.0
+    assert "step" not in candle["accuracy"]
 
 
 def test_accuracy_comparison_records_diffs_and_passes_within_tolerance():

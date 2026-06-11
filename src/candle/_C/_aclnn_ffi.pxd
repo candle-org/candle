@@ -23,6 +23,20 @@ cdef int pta_begin_add_cache_lookup_raw(
     uintptr_t* executor_out,
 ) except -1
 
+cdef int pta_begin_binary_alpha_cache_lookup_raw(
+    bytes op_name,
+    object self_shape, object self_stride,
+    object other_shape, object other_stride,
+    object out_shape, object out_stride,
+    int32_t dtype_code,
+    uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,
+    bytes alpha_scalar_bytes, int32_t alpha_dtype_code,
+    uintptr_t stream,
+    bint* pta_active_out,
+    uint64_t* ws_size_out,
+    uintptr_t* executor_out,
+) except -1
+
 cpdef object pta_begin_binary_cache_lookup(
     bytes op_name,
     object self_shape, object self_stride,
@@ -40,6 +54,21 @@ cdef int pta_begin_binary_cache_lookup_raw(
     object out_shape, object out_stride,
     int32_t dtype_code,
     uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,
+    uintptr_t stream,
+    bint* pta_active_out,
+    uint64_t* ws_size_out,
+    uintptr_t* executor_out,
+) except -1
+
+cdef int pta_begin_tensor_scalar_cache_lookup_raw(
+    bytes op_name,
+    object self_shape, object self_stride,
+    object out_shape, object out_stride,
+    int32_t dtype_code,
+    uintptr_t self_ptr, uintptr_t out_ptr,
+    bytes scalar_bytes, int32_t scalar_dtype_code,
+    bytes alpha_scalar_bytes, int32_t alpha_dtype_code,
+    bint has_alpha,
     uintptr_t stream,
     bint* pta_active_out,
     uint64_t* ws_size_out,
@@ -184,6 +213,16 @@ cpdef object pta_begin_unary_cache_lookup(
     uintptr_t stream,
 )
 
+cdef object unary_op_with_input_storage(
+    uintptr_t getws_ptr, uintptr_t exec_ptr,
+    object self_shape, object self_stride,
+    object self_storage_shape, int64_t self_storage_offset,
+    object out_shape, object out_stride,
+    int32_t self_dtype_code, int32_t out_dtype_code, int32_t fmt,
+    uintptr_t self_storage_ptr, uintptr_t out_ptr,
+    uintptr_t stream,
+)
+
 cdef int pta_begin_unary_cache_lookup_raw(
     bytes op_name,
     object self_shape, object self_stride,
@@ -268,12 +307,59 @@ cpdef object binary_op_no_alpha(
     uintptr_t stream,
 )
 
+cpdef object tensor_scalar_op_with_alpha(
+    uintptr_t getws_ptr, uintptr_t exec_ptr,
+    object self_shape, object self_stride,
+    object out_shape, object out_stride,
+    int32_t dtype_code, int32_t fmt,
+    uintptr_t self_ptr, uintptr_t out_ptr,
+    uintptr_t scalar_handle, uintptr_t alpha_scalar,
+    uintptr_t stream,
+)
+
+cpdef object tensor_scalar_op_no_alpha(
+    uintptr_t getws_ptr, uintptr_t exec_ptr,
+    object self_shape, object self_stride,
+    object out_shape, object out_stride,
+    int32_t dtype_code, int32_t fmt,
+    uintptr_t self_ptr, uintptr_t out_ptr,
+    uintptr_t scalar_handle,
+    uintptr_t stream,
+)
+
 cpdef object unary_op(
     uintptr_t getws_ptr, uintptr_t exec_ptr,
     object self_shape, object self_stride,
     object out_shape, object out_stride,
     int32_t self_dtype_code, int32_t out_dtype_code, int32_t fmt,
     uintptr_t self_ptr, uintptr_t out_ptr,
+    uintptr_t stream,
+)
+
+cpdef object cast_op(
+    uintptr_t getws_ptr, uintptr_t exec_ptr,
+    object self_shape, object self_stride,
+    object out_shape, object out_stride,
+    int32_t src_dtype_code, int32_t dst_dtype_code, int32_t fmt,
+    uintptr_t self_ptr, uintptr_t out_ptr,
+    uintptr_t stream,
+)
+
+cpdef object inplace_tensor_scalar_op_with_alpha(
+    uintptr_t getws_ptr, uintptr_t exec_ptr,
+    object self_shape, object self_stride,
+    int32_t dtype_code, int32_t fmt,
+    uintptr_t self_ptr,
+    uintptr_t scalar_handle, uintptr_t alpha_scalar,
+    uintptr_t stream,
+)
+
+cpdef object inplace_fill_scalar_op(
+    uintptr_t getws_ptr, uintptr_t exec_ptr,
+    object shape, object stride,
+    int32_t dtype_code, int32_t fmt,
+    uintptr_t ptr,
+    uintptr_t scalar_handle,
     uintptr_t stream,
 )
 

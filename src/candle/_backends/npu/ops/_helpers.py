@@ -13,9 +13,13 @@ from .. import ops_soc
 
 try:
     from ...._C._npu_ops import fast_binary_op as _fast_binary_op  # pylint: disable=no-name-in-module
+    from ...._C._npu_ops import fast_cast as _fast_cast_impl  # pylint: disable=no-name-in-module
     _HAS_FAST_OPS = True
+    _HAS_FAST_CAST = True
 except ImportError:
     _HAS_FAST_OPS = False
+    _HAS_FAST_CAST = False
+    _fast_cast_impl = None
 
 
 def _unwrap_storage(tensor):
@@ -66,6 +70,10 @@ def _dtype_itemsize(dtype):
 def _cast_tensor_dtype(a, dst_dtype):
     if a.dtype == dst_dtype:
         return a
+    if _HAS_FAST_CAST:
+        fast_result = _fast_cast_impl(a, dst_dtype)
+        if fast_result is not None:
+            return fast_result
     if not aclnn.cast_symbols_ok():
         raise RuntimeError("aclnnCast symbols not available")
     runtime = npu_runtime.get_runtime((a.device.index or 0))

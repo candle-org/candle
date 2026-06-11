@@ -15,8 +15,14 @@ from candle._C._grad_mode_state cimport get_enabled_fast as _grad_enabled_fast
 from candle._C._npu_ops cimport (
     fast_add as _cy_fast_npu_add,
     fast_add_exact as _cy_fast_npu_add_exact,
+    fast_add_scalar_exact as _cy_fast_npu_add_scalar_exact,
+    fast_sub_exact as _cy_fast_npu_sub_exact,
+    fast_div_exact as _cy_fast_npu_div_exact,
     fast_mul as _cy_fast_npu_mul,
     fast_mul_exact as _cy_fast_npu_mul_exact,
+    fast_mul_scalar_exact as _cy_fast_npu_mul_scalar_exact,
+    fast_sub_scalar_exact as _cy_fast_npu_sub_scalar_exact,
+    fast_div_scalar_exact as _cy_fast_npu_div_scalar_exact,
     fast_matmul as _cy_fast_npu_matmul,
     fast_matmul_exact as _cy_fast_npu_matmul_exact,
     fast_addmm as _cy_fast_npu_addmm,
@@ -29,6 +35,7 @@ from candle._C._npu_ops cimport (
     fast_gelu_exact as _cy_fast_npu_gelu_exact,
     fast_silu as _cy_fast_npu_silu,
     fast_silu_exact as _cy_fast_npu_silu_exact,
+    fast_rsqrt as _cy_fast_npu_rsqrt,
     fast_gelu_backward as _cy_fast_npu_gelu_backward,
     fast_silu_backward as _cy_fast_npu_silu_backward,
     fast_sdpa_flash_attention as _cy_fast_sdpa_flash_attention,
@@ -50,6 +57,7 @@ cdef object _py_sub_fn = None
 cdef object _py_div_fn = None
 cdef object _py_relu_fn = None
 cdef object _py_neg_fn = None
+cdef object _py_rsqrt_fn = None
 
 # NPU fast-path: cached references for direct kernel calls
 cdef object _npu_add_fn = None
@@ -179,12 +187,12 @@ cdef void _collect_types(object val, object types):
 
 cdef inline void _ensure_originals():
     global _py_add_fn, _py_mul_fn, _py_matmul_fn, _py_sub_fn, _py_div_fn
-    global _py_relu_fn, _py_neg_fn
+    global _py_relu_fn, _py_neg_fn, _py_rsqrt_fn
 
     _ensure_dispatch()
 
     if _py_add_fn is None:
-        from candle._functional import _py_add, _py_mul, _py_matmul, _py_sub, _py_div, _py_relu, _py_neg
+        from candle._functional import _py_add, _py_mul, _py_matmul, _py_sub, _py_div, _py_relu, _py_neg, _py_rsqrt
         _py_add_fn = _py_add
         _py_mul_fn = _py_mul
         _py_matmul_fn = _py_matmul
@@ -192,6 +200,7 @@ cdef inline void _ensure_originals():
         _py_div_fn = _py_div
         _py_relu_fn = _py_relu
         _py_neg_fn = _py_neg
+        _py_rsqrt_fn = _py_rsqrt
 
 
 cdef inline void _ensure_npu_refs():
@@ -286,6 +295,24 @@ cdef inline bint _exact_base_npu_pair(object a, object b):
 cdef inline bint _exact_base_npu_unary(object a):
     _ensure_base()
     return type(a) is _BaseTensor and (<TensorImpl>a)._device_type == 1
+
+
+cdef inline bint _exact_base_npu_tensor_scalar(object a, object value):
+    _ensure_base()
+    return type(a) is _BaseTensor and (<TensorImpl>a)._device_type == 1 and isinstance(value, (int, float))
+
+
+cdef inline int _exact_npu_scalar_hot_state(object a):
+    """Return 1 for scalar inference, 2 for scalar autograd, 0 for fallback."""
+    cdef bint grad_on
+    if _functionalize_active_flag or _pipeline_active_flag or _npu_autocast_active_flag:
+        return 0
+    grad_on = _grad_enabled_fast()
+    if not grad_on or not (<TensorImpl>a).requires_grad:
+        return 1
+    if _npu_profiler_active_flag:
+        return 0
+    return 2
 
 
 cdef inline bint _tensor_has_strict_contiguous_stride(TensorImpl t) noexcept:
@@ -930,6 +957,82 @@ cdef inline object _mark_npu_owned_backward_grad(object grad):
         except Exception:
             pass
     return grad
+
+
+cdef class _NpuScalarPassBackward(_CyAutogradNode):
+    cdef public object _self
+
+    cdef void _init_fast(self, object self_, object name):
+        self.inputs = (self_,)
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = name
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = _npu_unary_edges_if_needed(self_)
+        self._self = self_
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+
+    def __init__(self, self_, name):
+        self._init_fast(self_, name)
+
+    @property
+    def next_functions(self):
+        cached = _npu_get_unary_edges(self._self, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    def backward(self, grad):
+        if not (<TensorImpl>self._self).requires_grad:
+            return (None,)
+        return (grad,)
+
+
+cdef class _NpuScalarScaleBackward(_CyAutogradNode):
+    cdef public object _self
+    cdef public object _value
+    cdef int _op
+
+    cdef void _init_fast(self, object self_, object value, int op, object name):
+        self.inputs = (self_,)
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = name
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = _npu_unary_edges_if_needed(self_)
+        self._self = self_
+        self._value = value
+        self._op = op
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+
+    def __init__(self, self_, value, op, name):
+        self._init_fast(self_, value, op, name)
+
+    @property
+    def next_functions(self):
+        cached = _npu_get_unary_edges(self._self, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    def backward(self, grad):
+        cdef object out
+        if not (<TensorImpl>self._self).requires_grad:
+            return (None,)
+        _ensure_npu_autograd_refs()
+        if _npu_create_graph_fn():
+            if self._op == 0:
+                return (_npu_dispatch_mul_fn("mul", None, grad, self._value),)
+            return (_npu_dispatch_mul_fn("true_divide", None, grad, self._value),)
+        if self._op == 0:
+            out = _cy_fast_npu_mul_scalar_exact(<TensorImpl>grad, self._value)
+        else:
+            out = _cy_fast_npu_div_scalar_exact(<TensorImpl>grad, self._value)
+        return (_mark_npu_owned_backward_grad(out),)
 
 
 cdef class _NpuMulBackward(_CyAutogradNode):
@@ -1790,6 +1893,115 @@ cdef class _NpuSiluBackward(_CyAutogradNode):
         return (_mark_npu_owned_backward_grad(_cy_fast_npu_silu_backward(grad, self_)),)
 
 
+cdef class _NpuRsqrtBackward(_CyAutogradNode):
+    cdef public object _self
+    cdef public object _result
+    cdef int64_t _saved_result_version
+    cdef bint _saved_result_released
+    cdef object _saved_result_obj
+
+    cdef void _init_fast(self, object self_, object result):
+        cdef object saved_result
+        self.inputs = (self_,)
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "RsqrtBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = _npu_unary_edges_if_needed(self_)
+        self._self = self_
+        self._result = result
+        self._saved_result_released = False
+        if _npu_has_saved_hooks():
+            saved_result = SavedTensor(result)
+            self._saved_result_obj = saved_result
+            self._saved_result_version = 0
+        else:
+            self._saved_result_obj = None
+            self._saved_result_version = (<TensorImpl>result)._version_value
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+
+    def __init__(self, self_, result):
+        self._init_fast(self_, result)
+
+    @property
+    def next_functions(self):
+        cached = _npu_get_unary_edges(self._self, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    cpdef object _saved_proxy_tensor_py(self, int slot):
+        return self._result
+
+    cpdef bint _saved_proxy_released_py(self, int slot):
+        return self._saved_result_released
+
+    cpdef void _saved_proxy_release_py(self, int slot):
+        self._saved_result_released = True
+
+    cpdef object _saved_proxy_materialize_py(self, int slot):
+        return _npu_materialize_tensor_version(self._result, self._saved_result_version, self._saved_result_released)
+
+    cdef object _raw_saved_result_proxy(self):
+        if self._saved_result_obj is None:
+            self._saved_result_obj = _npu_saved_tensor_proxy(self, 0)
+        return self._saved_result_obj
+
+    def saved_tensors(self):
+        if self._saved_result_obj is not None:
+            return (self._saved_result_obj.materialize(),)
+        return (self._saved_proxy_materialize_py(0),)
+
+    def release_saved_tensors(self):
+        if self._saved_result_obj is not None:
+            self._saved_result_obj.release()
+        else:
+            self._saved_result_released = True
+
+    def __getattr__(self, name):
+        if name == "_raw_saved_result":
+            return self._raw_saved_result_proxy()
+        if name == "_saved_result":
+            if self._saved_result_obj is not None:
+                return self._saved_result_obj.materialize()
+            return self._saved_proxy_materialize_py(0)
+        if name == "_raw_saved_tensors":
+            return (self._raw_saved_result_proxy(),)
+        if name == "_saved_tensors":
+            if self._saved_result_obj is not None:
+                return (self._saved_result_obj.materialize(),)
+            return (self._saved_proxy_materialize_py(0),)
+        return _CyAutogradNode.__getattr__(self, name)
+
+    def backward(self, grad):
+        # d/dx rsqrt(x) = -0.5 * result^3, so grad_self = -0.5 * grad * result^3
+        # (matches derivatives.yaml: "-0.5 * grad * result.pow(3).conj()").
+        cdef object result
+        cdef object out
+        if self._saved_result_obj is not None:
+            result = self._saved_result_obj.materialize()
+        else:
+            result = self._saved_proxy_materialize_py(0)
+        if not (<TensorImpl>self._self).requires_grad:
+            return (None,)
+        _ensure_npu_autograd_refs()
+        # Under create_graph the gradient itself must be differentiable, so
+        # route through dispatched (graph-building) ops instead of raw kernels.
+        if _npu_create_graph_fn():
+            out = _npu_dispatch_mul_fn("mul", None, grad, -0.5)
+            out = _npu_dispatch_mul_fn(
+                "mul", None, out, _npu_dispatch_mul_fn("pow", None, result, 3))
+            return (out,)
+        out = _cy_fast_npu_mul_exact(<TensorImpl>grad, <TensorImpl>result)
+        out = _cy_fast_npu_mul_exact(
+            <TensorImpl>out,
+            <TensorImpl>_cy_fast_npu_mul_exact(<TensorImpl>result, <TensorImpl>result))
+        out = _cy_fast_npu_mul_scalar_exact(<TensorImpl>out, -0.5)
+        return (_mark_npu_owned_backward_grad(out),)
+
+
 cdef class _NpuFlashSdpaBackward(_CyAutogradNode):
     cdef public object _query
     cdef public object _key
@@ -1797,6 +2009,7 @@ cdef class _NpuFlashSdpaBackward(_CyAutogradNode):
     cdef public object _output
     cdef public object _softmax_max
     cdef public object _softmax_sum
+    cdef public object _attn_mask
     cdef public double _scale_factor
     cdef int64_t _saved_query_version
     cdef int64_t _saved_key_version
@@ -1819,7 +2032,7 @@ cdef class _NpuFlashSdpaBackward(_CyAutogradNode):
 
     cdef void _init_fast(self, object query, object key, object value,
                          object output, object softmax_max, object softmax_sum,
-                         double scale_factor):
+                         double scale_factor, object attn_mask=None):
         cdef object saved_query
         cdef object saved_key
         cdef object saved_value
@@ -1841,6 +2054,7 @@ cdef class _NpuFlashSdpaBackward(_CyAutogradNode):
         self._output = output
         self._softmax_max = softmax_max
         self._softmax_sum = softmax_sum
+        self._attn_mask = attn_mask
         self._scale_factor = scale_factor
         self._next_functions_cache = (
             _npu_edge_for(<TensorImpl>query),
@@ -1886,8 +2100,8 @@ cdef class _NpuFlashSdpaBackward(_CyAutogradNode):
             self._saved_softmax_max_version = (<TensorImpl>softmax_max)._version_value
             self._saved_softmax_sum_version = (<TensorImpl>softmax_sum)._version_value
 
-    def __init__(self, query, key, value, output, softmax_max, softmax_sum, scale_factor):
-        self._init_fast(query, key, value, output, softmax_max, softmax_sum, scale_factor)
+    def __init__(self, query, key, value, output, softmax_max, softmax_sum, scale_factor, attn_mask=None):
+        self._init_fast(query, key, value, output, softmax_max, softmax_sum, scale_factor, attn_mask)
 
     cpdef tuple _engine_next_functions(self):
         return self._next_functions_cache
@@ -1968,7 +2182,8 @@ cdef class _NpuFlashSdpaBackward(_CyAutogradNode):
                 grad_out = grad_out.contiguous()
         q_meta = getattr(q, "_candle_packed_qkv_projection_meta", None)
         if (
-            q_meta is not None
+            self._attn_mask is None
+            and q_meta is not None
             and getattr(k, "_candle_packed_qkv_projection_meta", None) == q_meta[:4] + (1,)
             and getattr(v, "_candle_packed_qkv_projection_meta", None) == q_meta[:4] + (2,)
             and q_meta[4] == 0
@@ -1982,7 +2197,7 @@ cdef class _NpuFlashSdpaBackward(_CyAutogradNode):
                 packed_qkv_grad = None
         if packed_qkv_grad is None:
             grad_q, grad_k, grad_v = _cy_fast_sdpa_flash_attention_backward(
-                grad_out, q, k, v, out, softmax_max, softmax_sum, self._scale_factor
+                grad_out, q, k, v, out, softmax_max, softmax_sum, self._scale_factor, self._attn_mask
             )
         for grad in (grad_q, grad_k, grad_v):
             try:
@@ -2000,31 +2215,35 @@ cdef class _NpuFlashSdpaBackward(_CyAutogradNode):
 
 cdef inline object _attach_npu_flash_sdpa_grad(object out, object q, object k, object v,
                                                object softmax_max, object softmax_sum,
-                                               double scale_factor):
+                                               double scale_factor, object attn_mask=None):
     cdef _NpuFlashSdpaBackward grad_fn = _NpuFlashSdpaBackward.__new__(_NpuFlashSdpaBackward)
-    grad_fn._init_fast(q, k, v, out, softmax_max, softmax_sum, scale_factor)
+    grad_fn._init_fast(q, k, v, out, softmax_max, softmax_sum, scale_factor, attn_mask)
     (<TensorImpl>out).grad_fn = grad_fn
     (<TensorImpl>out).requires_grad = True
     return out
 
 
-def npu_flash_sdpa(query, key, value, scale_factor):
+def npu_flash_sdpa(query, key, value, scale_factor, attn_mask=None):
     """Cython NPU FlashAttention SDPA forward with Cython autograd node."""
     cdef object out
     cdef object softmax_max
     cdef object softmax_sum
     if not isinstance(query, TensorImpl) or not isinstance(key, TensorImpl) or not isinstance(value, TensorImpl):
         return None
+    if attn_mask is not None and not isinstance(attn_mask, TensorImpl):
+        return None
     if (<TensorImpl>query)._device_type != 1 or (<TensorImpl>key)._device_type != 1 or (<TensorImpl>value)._device_type != 1:
         return None
+    if attn_mask is not None and (<TensorImpl>attn_mask)._device_type != 1:
+        return None
     try:
-        out, softmax_max, softmax_sum = _cy_fast_sdpa_flash_attention(query, key, value, float(scale_factor))
+        out, softmax_max, softmax_sum = _cy_fast_sdpa_flash_attention(query, key, value, float(scale_factor), attn_mask)
     except (TypeError, ValueError):
         return None
     if _grad_enabled_fast() and (
         (<TensorImpl>query).requires_grad or (<TensorImpl>key).requires_grad or (<TensorImpl>value).requires_grad
     ):
-        return _attach_npu_flash_sdpa_grad(out, query, key, value, softmax_max, softmax_sum, float(scale_factor))
+        return _attach_npu_flash_sdpa_grad(out, query, key, value, softmax_max, softmax_sum, float(scale_factor), attn_mask)
     return out
 
 
@@ -2219,6 +2438,24 @@ cdef inline object _attach_npu_mul_grad(object result, object a, object b):
     return result
 
 
+cdef inline object _attach_npu_scalar_pass_grad(object result, object a, object name):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuScalarPassBackward grad_fn = _NpuScalarPassBackward.__new__(_NpuScalarPassBackward)
+    grad_fn._init_fast(a, name)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
+cdef inline object _attach_npu_scalar_scale_grad(object result, object a, object value, int op, object name):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuScalarScaleBackward grad_fn = _NpuScalarScaleBackward.__new__(_NpuScalarScaleBackward)
+    grad_fn._init_fast(a, value, op, name)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
 cdef inline object _attach_npu_layer_norm_grad(object result, object input, object weight, object bias, object normalized_shape, object eps):
     cdef TensorImpl out = <TensorImpl>result
     cdef _NpuLayerNormBackward grad_fn = _NpuLayerNormBackward.__new__(_NpuLayerNormBackward)
@@ -2241,6 +2478,15 @@ cdef inline object _attach_npu_silu_grad(object result, object a):
     cdef TensorImpl out = <TensorImpl>result
     cdef _NpuSiluBackward grad_fn = _NpuSiluBackward.__new__(_NpuSiluBackward)
     grad_fn._init_fast(a)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
+cdef inline object _attach_npu_rsqrt_grad(object result, object a):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuRsqrtBackward grad_fn = _NpuRsqrtBackward.__new__(_NpuRsqrtBackward)
+    grad_fn._init_fast(a, result)
     out.grad_fn = grad_fn
     out.requires_grad = True
     return result
@@ -2308,6 +2554,12 @@ def add(a=None, b=None, *, alpha=1, out=None):
                 return _cy_fast_npu_add_exact(<TensorImpl>a, <TensorImpl>b)
             if npu_state == 2:
                 return _attach_npu_add_grad(_cy_fast_npu_add_exact(<TensorImpl>a, <TensorImpl>b), a, b)
+        if _exact_base_npu_tensor_scalar(a, b):
+            npu_state = _exact_npu_scalar_hot_state(a)
+            if npu_state == 1 and not _npu_profiler_active_flag:
+                return _cy_fast_npu_add_scalar_exact(<TensorImpl>a, b)
+            if npu_state == 2:
+                return _attach_npu_scalar_pass_grad(_cy_fast_npu_add_scalar_exact(<TensorImpl>a, b), a, "AddBackward0")
 
     _ensure_originals()
 
@@ -2351,6 +2603,12 @@ def mul(a, b, *, out=None):
                 return _cy_fast_npu_mul_exact(<TensorImpl>a, <TensorImpl>b)
             if npu_state == 2:
                 return _attach_npu_mul_grad(_cy_fast_npu_mul_exact(<TensorImpl>a, <TensorImpl>b), a, b)
+        if _exact_base_npu_tensor_scalar(a, b):
+            npu_state = _exact_npu_scalar_hot_state(a)
+            if npu_state == 1 and not _npu_profiler_active_flag:
+                return _cy_fast_npu_mul_scalar_exact(<TensorImpl>a, b)
+            if npu_state == 2:
+                return _attach_npu_scalar_scale_grad(_cy_fast_npu_mul_scalar_exact(<TensorImpl>a, b), a, b, 0, "MulScalarBackward0")
 
     _ensure_originals()
 
@@ -2435,6 +2693,19 @@ def silu(a, inplace=False):
 def sub(a, b, *, alpha=1):
     """Fast sub: skip __torch_function__ when both args are base Tensor."""
     cdef object r
+    cdef int npu_state
+
+    if alpha == 1:
+        if _exact_base_npu_pair(a, b):
+            npu_state = _exact_npu_binary_hot_state(a, b)
+            if npu_state == 1 and not _npu_profiler_active_flag:
+                return _cy_fast_npu_sub_exact(<TensorImpl>a, <TensorImpl>b)
+        if _exact_base_npu_tensor_scalar(a, b):
+            npu_state = _exact_npu_scalar_hot_state(a)
+            if npu_state == 1 and not _npu_profiler_active_flag:
+                return _cy_fast_npu_sub_scalar_exact(<TensorImpl>a, b)
+            if npu_state == 2:
+                return _attach_npu_scalar_pass_grad(_cy_fast_npu_sub_scalar_exact(<TensorImpl>a, b), a, "SubBackward0")
 
     _ensure_originals()
 
@@ -2459,6 +2730,19 @@ def sub(a, b, *, alpha=1):
 def div(a, b, *, rounding_mode=None):
     """Fast div: skip __torch_function__ when both args are base Tensor."""
     cdef object r
+    cdef int npu_state
+
+    if rounding_mode is None:
+        if _exact_base_npu_pair(a, b):
+            npu_state = _exact_npu_binary_hot_state(a, b)
+            if npu_state == 1 and not _npu_profiler_active_flag:
+                return _cy_fast_npu_div_exact(<TensorImpl>a, <TensorImpl>b)
+        if _exact_base_npu_tensor_scalar(a, b):
+            npu_state = _exact_npu_scalar_hot_state(a)
+            if npu_state == 1 and not _npu_profiler_active_flag:
+                return _cy_fast_npu_div_scalar_exact(<TensorImpl>a, b)
+            if npu_state == 2:
+                return _attach_npu_scalar_scale_grad(_cy_fast_npu_div_scalar_exact(<TensorImpl>a, b), a, b, 1, "DivScalarBackward0")
 
     _ensure_originals()
 
@@ -2587,6 +2871,31 @@ def linear(input, weight, bias=None):
 
     from candle.nn import functional as _nn_functional
     return _nn_functional._py_linear(input, weight, bias)
+
+
+def rsqrt(a):
+    """Fast rsqrt: attach NPU Cython autograd on the exact-base hot path."""
+    cdef object r
+    cdef int npu_state
+
+    if _exact_base_npu_unary(a):
+        npu_state = _exact_npu_unary_hot_state(a)
+        if npu_state == 1 and not _npu_profiler_active_flag and not _npu_autocast_active_flag:
+            return _cy_fast_npu_rsqrt(<TensorImpl>a)
+        if npu_state == 2:
+            return _attach_npu_rsqrt_grad(_cy_fast_npu_rsqrt(<TensorImpl>a), a)
+
+    _ensure_originals()
+
+    if _is_base_tensor(a):
+        return _dispatch_fn("rsqrt", a.device.type, a)
+
+    r = _handle_torch_function(_py_rsqrt_fn, (a,), {})
+    if r is not NotImplemented:
+        return r
+
+    return _dispatch_fn("rsqrt", a.device.type, a)
+
 
 
 def relu(a):

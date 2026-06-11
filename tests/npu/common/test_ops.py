@@ -1,4 +1,9 @@
 import math
+import os
+import subprocess
+import sys
+import time
+
 import numpy as np
 import pytest
 import candle as torch
@@ -579,6 +584,455 @@ def test_npu_elementwise_batch2(dtype):
         atol=1e-3,
         rtol=1e-3,
     )
+
+
+def test_npu_pow_scalar_two_uses_mul_fast_path(monkeypatch):
+    """NPU pow(x, 2.0) should use x*x instead of slow aclnnPowTensorScalar."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops.math as npu_math
+
+    calls = {"pow_scalar": 0, "mul": 0}
+    original_pow_scalar = npu_math._fast_pow_tensor_scalar_impl
+    original_mul = npu_math._fast_mul_impl
+
+    def counted_pow_scalar(*args, **kwargs):
+        calls["pow_scalar"] += 1
+        return original_pow_scalar(*args, **kwargs)
+
+    def counted_mul(*args, **kwargs):
+        calls["mul"] += 1
+        return original_mul(*args, **kwargs)
+
+    monkeypatch.setattr(npu_math, "_fast_pow_tensor_scalar_impl", counted_pow_scalar)
+    monkeypatch.setattr(npu_math, "_fast_mul_impl", counted_mul)
+
+    x = torch.tensor([1.0, 2.0, 3.0], device="npu", dtype=torch.float32)
+    result = torch.pow(x, 2.0)
+
+    assert result.device.type == "npu"
+    assert calls == {"pow_scalar": 0, "mul": 1}
+    np.testing.assert_allclose(result.to("cpu").numpy(), np.array([1.0, 4.0, 9.0], dtype=np.float32))
+
+
+def test_npu_dtype_cast_uses_cython_fast_path(monkeypatch):
+    """Hot NPU dtype casts should bypass the Python aclnn.cast wrapper."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops._helpers as npu_helpers
+
+    calls = {"cast": 0}
+    original_cast = npu_helpers.aclnn.cast
+
+    def counted_cast(*args, **kwargs):
+        calls["cast"] += 1
+        return original_cast(*args, **kwargs)
+
+    monkeypatch.setattr(npu_helpers.aclnn, "cast", counted_cast)
+
+    x = torch.tensor([1.25, -2.5, 3.75], device="npu", dtype=torch.float16)
+    result = x.to(torch.float32)
+
+    assert result.device.type == "npu"
+    assert result.dtype == torch.float32
+    assert calls == {"cast": 0}
+    np.testing.assert_allclose(
+        result.to("cpu").numpy(),
+        np.array([1.25, -2.5, 3.75], dtype=np.float32),
+        atol=1e-3,
+        rtol=1e-3,
+    )
+
+
+@pytest.mark.parametrize(
+    "expr, expected",
+    [
+        (lambda x: x + 0.5, np.array([1.5, 2.5, 3.5], dtype=np.float32)),
+        (lambda x: x * 2.0, np.array([2.0, 4.0, 6.0], dtype=np.float32)),
+        (lambda x: x - 0.25, np.array([0.75, 1.75, 2.75], dtype=np.float32)),
+        (lambda x: x / 2.0, np.array([0.5, 1.0, 1.5], dtype=np.float32)),
+    ],
+)
+def test_npu_scalar_binary_ops_use_cython_only_path(monkeypatch, expr, expected):
+    """NPU tensor/scalar arithmetic must bypass Python backend scalar wrappers."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.aclnn as npu_aclnn
+    import candle._backends.npu.ops.math as npu_math
+
+    calls = {
+        "scalar_to_tensor": 0,
+        "add_scalar": 0,
+        "mul_scalar": 0,
+        "sub_scalar": 0,
+    }
+
+    def forbidden_scalar_to_tensor(*args, **kwargs):
+        calls["scalar_to_tensor"] += 1
+        raise AssertionError("NPU scalar binary ops must not materialize scalar tensors on device")
+
+    def forbidden_add_scalar(*args, **kwargs):
+        calls["add_scalar"] += 1
+        raise AssertionError("NPU add scalar must route through Cython _C, not Python aclnn.add_scalar")
+
+    def forbidden_mul_scalar(*args, **kwargs):
+        calls["mul_scalar"] += 1
+        raise AssertionError("NPU mul scalar must route through Cython _C, not Python aclnn.mul_scalar")
+
+    def forbidden_sub_scalar(*args, **kwargs):
+        calls["sub_scalar"] += 1
+        raise AssertionError("NPU sub scalar must route through Cython _C, not Python aclnn.sub_scalar")
+
+    monkeypatch.setattr(npu_math, "_scalar_to_npu_tensor", forbidden_scalar_to_tensor)
+    monkeypatch.setattr(npu_aclnn, "add_scalar", forbidden_add_scalar)
+    monkeypatch.setattr(npu_aclnn, "mul_scalar", forbidden_mul_scalar)
+    monkeypatch.setattr(npu_aclnn, "sub_scalar", forbidden_sub_scalar)
+
+    x = torch.tensor([1.0, 2.0, 3.0], device="npu", dtype=torch.float32)
+    result = expr(x)
+
+    assert result.device.type == "npu"
+    assert calls == {"scalar_to_tensor": 0, "add_scalar": 0, "mul_scalar": 0, "sub_scalar": 0}
+    np.testing.assert_allclose(result.to("cpu").numpy(), expected, atol=1e-6, rtol=1e-6)
+
+
+@pytest.mark.parametrize(
+    "expr, expected, expected_grad",
+    [
+        (lambda x: x + 0.5, np.array([1.5, 2.5, 3.5], dtype=np.float32), np.ones(3, dtype=np.float32)),
+        (lambda x: x * 2.0, np.array([2.0, 4.0, 6.0], dtype=np.float32), np.full(3, 2.0, dtype=np.float32)),
+        (lambda x: x - 0.25, np.array([0.75, 1.75, 2.75], dtype=np.float32), np.ones(3, dtype=np.float32)),
+        (lambda x: x / 2.0, np.array([0.5, 1.0, 1.5], dtype=np.float32), np.full(3, 0.5, dtype=np.float32)),
+    ],
+)
+def test_npu_scalar_binary_ops_with_grad_use_cython_only_path(monkeypatch, expr, expected, expected_grad):
+    """NPU tensor/scalar autograd must not fall back through Python scalar tensor materialization."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.aclnn as npu_aclnn
+    import candle._backends.npu.ops.math as npu_math
+
+    calls = {
+        "scalar_to_tensor": 0,
+        "add_scalar": 0,
+        "mul_scalar": 0,
+        "sub_scalar": 0,
+    }
+
+    def forbidden_scalar_to_tensor(*args, **kwargs):
+        calls["scalar_to_tensor"] += 1
+        raise AssertionError("NPU scalar binary autograd must not materialize scalar tensors on device")
+
+    def forbidden_add_scalar(*args, **kwargs):
+        calls["add_scalar"] += 1
+        raise AssertionError("NPU add scalar autograd must route through Cython _C, not Python aclnn.add_scalar")
+
+    def forbidden_mul_scalar(*args, **kwargs):
+        calls["mul_scalar"] += 1
+        raise AssertionError("NPU mul scalar autograd must route through Cython _C, not Python aclnn.mul_scalar")
+
+    def forbidden_sub_scalar(*args, **kwargs):
+        calls["sub_scalar"] += 1
+        raise AssertionError("NPU sub scalar autograd must route through Cython _C, not Python aclnn.sub_scalar")
+
+    monkeypatch.setattr(npu_math, "_scalar_to_npu_tensor", forbidden_scalar_to_tensor)
+    monkeypatch.setattr(npu_aclnn, "add_scalar", forbidden_add_scalar)
+    monkeypatch.setattr(npu_aclnn, "mul_scalar", forbidden_mul_scalar)
+    monkeypatch.setattr(npu_aclnn, "sub_scalar", forbidden_sub_scalar)
+
+    x = torch.tensor([1.0, 2.0, 3.0], device="npu", dtype=torch.float32, requires_grad=True)
+    result = expr(x)
+    result.sum().backward()
+
+    assert result.device.type == "npu"
+    assert x.grad is not None
+    assert x.grad.device.type == "npu"
+    assert calls == {"scalar_to_tensor": 0, "add_scalar": 0, "mul_scalar": 0, "sub_scalar": 0}
+    np.testing.assert_allclose(result.to("cpu").numpy(), expected, atol=1e-6, rtol=1e-6)
+    np.testing.assert_allclose(x.grad.to("cpu").numpy(), expected_grad, atol=1e-6, rtol=1e-6)
+
+
+def test_npu_reflected_scalar_binary_ops_use_direct_cython_path(monkeypatch):
+    """NPU scalar-left sub/div should use direct Cython tensor paths, not neg+Python dispatch."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops.math as npu_math
+
+    calls = {"neg": 0, "scalar_to_tensor": 0}
+
+    def forbidden_neg(*args, **kwargs):
+        calls["neg"] += 1
+        raise AssertionError("NPU reflected scalar subtraction must not lower to neg + add")
+
+    def forbidden_scalar_to_tensor(*args, **kwargs):
+        calls["scalar_to_tensor"] += 1
+        raise AssertionError("NPU reflected scalar ops must not use Python scalar tensor materialization")
+
+    monkeypatch.setattr(npu_math, "_fast_neg_impl", forbidden_neg)
+    monkeypatch.setattr(npu_math, "_scalar_to_npu_tensor", forbidden_scalar_to_tensor)
+
+    x = torch.tensor([1.0, 2.0, 4.0], device="npu", dtype=torch.float32)
+    out_sub = 10.0 - x
+    out_div = 8.0 / x
+    torch.npu.synchronize()
+
+    assert calls == {"neg": 0, "scalar_to_tensor": 0}
+    np.testing.assert_allclose(out_sub.to("cpu").numpy(), np.array([9.0, 8.0, 6.0], dtype=np.float32))
+    np.testing.assert_allclose(out_div.to("cpu").numpy(), np.array([8.0, 4.0, 2.0], dtype=np.float32))
+
+
+def test_npu_reflected_scalar_binary_ops_with_grad_use_direct_cython_path(monkeypatch):
+    """NPU scalar-left sub/div autograd should stay on direct Cython paths."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops.math as npu_math
+
+    calls = {"neg": 0, "scalar_to_tensor": 0}
+
+    def forbidden_neg(*args, **kwargs):
+        calls["neg"] += 1
+        raise AssertionError("NPU reflected scalar subtraction autograd must not lower to neg + add")
+
+    def forbidden_scalar_to_tensor(*args, **kwargs):
+        calls["scalar_to_tensor"] += 1
+        raise AssertionError("NPU reflected scalar autograd must not use Python scalar tensor materialization")
+
+    monkeypatch.setattr(npu_math, "_fast_neg_impl", forbidden_neg)
+    monkeypatch.setattr(npu_math, "_scalar_to_npu_tensor", forbidden_scalar_to_tensor)
+
+    x = torch.tensor([1.0, 2.0, 4.0], device="npu", dtype=torch.float32, requires_grad=True)
+    out_sub = 10.0 - x
+    out_div = 8.0 / x
+    loss = out_sub.sum() + out_div.sum()
+    loss.backward()
+
+    assert calls == {"neg": 0, "scalar_to_tensor": 0}
+    assert x.grad is not None
+    assert x.grad.device.type == "npu"
+    np.testing.assert_allclose(out_sub.to("cpu").numpy(), np.array([9.0, 8.0, 6.0], dtype=np.float32))
+    np.testing.assert_allclose(out_div.to("cpu").numpy(), np.array([8.0, 4.0, 2.0], dtype=np.float32))
+    np.testing.assert_allclose(
+        x.grad.to("cpu").numpy(),
+        np.array([-9.0, -3.0, -1.5], dtype=np.float32),
+        atol=1e-6,
+        rtol=1e-6,
+    )
+
+
+def test_npu_tensor_sub_operator_uses_direct_cython_sub_without_neg_kernel():
+    """NPU tensor subtraction operator must not lower to neg + add."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    env = os.environ.copy()
+    repo_src = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
+    env["PYTHONPATH"] = repo_src + os.pathsep + env.get("PYTHONPATH", "")
+    script = """
+import candle as torch
+import candle._backends.npu.ops.math as npu_math
+calls = {"neg": 0}
+orig = npu_math._fast_neg_impl
+
+def forbidden_neg(*args, **kwargs):
+    calls["neg"] += 1
+    raise AssertionError("NPU tensor subtraction must route through direct Cython sub, not neg+add")
+
+npu_math._fast_neg_impl = forbidden_neg
+x = torch.tensor([4.0, 5.0, 6.0], device="npu", dtype=torch.float32)
+y = torch.tensor([1.0, 2.0, 3.0], device="npu", dtype=torch.float32)
+try:
+    out = x - y
+    torch.npu.synchronize()
+finally:
+    npu_math._fast_neg_impl = orig
+assert calls == {"neg": 0}
+assert out.device.type == "npu"
+assert out.to("cpu").numpy().tolist() == [3.0, 3.0, 3.0]
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")),
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_npu_tensor_binary_operators_bypass_functional_wrappers():
+    """Hot NPU Tensor operators should route directly to Cython kernels, not Python functional wrappers."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    env = os.environ.copy()
+    repo_src = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../src"))
+    env["PYTHONPATH"] = repo_src + os.pathsep + env.get("PYTHONPATH", "")
+    script = """
+import numpy as np
+import candle as torch
+import candle._functional as functional
+
+calls = {"add": 0, "mul": 0, "sub": 0, "div": 0}
+
+def forbid(name):
+    def inner(*args, **kwargs):
+        calls[name] += 1
+        raise AssertionError(f"NPU Tensor operator must bypass candle._functional.{name}")
+    return inner
+
+functional.add = forbid("add")
+functional.mul = forbid("mul")
+functional.sub = forbid("sub")
+functional.div = forbid("div")
+
+x = torch.tensor([4.0, 5.0, 6.0], device="npu", dtype=torch.float32)
+y = torch.tensor([1.0, 2.0, 3.0], device="npu", dtype=torch.float32)
+out_add = x + y
+out_mul = x * y
+out_sub = x - y
+out_div = x / y
+torch.npu.synchronize()
+assert calls == {"add": 0, "mul": 0, "sub": 0, "div": 0}
+np.testing.assert_allclose(out_add.to("cpu").numpy(), np.array([5.0, 7.0, 9.0], dtype=np.float32))
+np.testing.assert_allclose(out_mul.to("cpu").numpy(), np.array([4.0, 10.0, 18.0], dtype=np.float32))
+np.testing.assert_allclose(out_sub.to("cpu").numpy(), np.array([3.0, 3.0, 3.0], dtype=np.float32))
+np.testing.assert_allclose(out_div.to("cpu").numpy(), np.array([4.0, 2.5, 2.0], dtype=np.float32))
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")),
+        text=True,
+        capture_output=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_npu_scalar_binary_dispatch_uses_cached_tensor_path_by_default():
+    """NPU tensor/scalar eager ops should use tensor-tensor PTA-level dispatch overhead."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    x = torch.randn(1024, device="npu", dtype=torch.float16)
+    scalar = torch.tensor(0.5, device="npu", dtype=torch.float16)
+
+    def bench(fn, iters=1200, warmup=120):
+        for _ in range(warmup):
+            fn()
+        torch.npu.synchronize()
+        start = time.perf_counter()
+        for _ in range(iters):
+            fn()
+        torch.npu.synchronize()
+        return (time.perf_counter() - start) * 1e6 / iters
+
+    scalar_us = min(bench(lambda: x + 0.5) for _ in range(3))
+    tensor_us = min(bench(lambda: x + scalar) for _ in range(3))
+
+    assert scalar_us <= max(tensor_us * 1.35, tensor_us + 8.0), (
+        f"python scalar path {scalar_us:.2f}us should stay near cached tensor path {tensor_us:.2f}us"
+    )
+
+
+def test_npu_add_scalar_inplace_captures_without_host_scalar_copy(monkeypatch):
+    """NPU add_(scalar) should be graph-capturable and avoid H2D scalar materialization."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops.math as npu_math
+
+    calls = {"scalar_to_tensor": 0}
+    original_scalar_to_tensor = npu_math._scalar_to_npu_tensor
+
+    def counted_scalar_to_tensor(*args, **kwargs):
+        calls["scalar_to_tensor"] += 1
+        return original_scalar_to_tensor(*args, **kwargs)
+
+    monkeypatch.setattr(npu_math, "_scalar_to_npu_tensor", counted_scalar_to_tensor)
+
+    x = torch.zeros((4,), device="npu", dtype=torch.int64)
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        x.add_(1)
+    graph.replay()
+    torch.npu.synchronize()
+
+    assert calls == {"scalar_to_tensor": 0}
+    np.testing.assert_array_equal(x.to("cpu").numpy(), np.full((4,), 1, dtype=np.int64))
+
+
+
+def test_npu_index_select_known_nonnegative_captures_without_host_index_read(monkeypatch):
+    """NPU x[:, idx] should capture without reading known nonnegative indices on host."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops.shape as npu_shape
+
+    calls = {"index_read": 0, "scalar_read": 0}
+
+    def forbidden_index_read(*args, **kwargs):
+        calls["index_read"] += 1
+        raise AssertionError("index_select capture path must not read indices on host")
+
+    def forbidden_scalar_read(*args, **kwargs):
+        calls["scalar_read"] += 1
+        raise AssertionError("index_select capture path must not read validation scalars on host")
+
+    monkeypatch.setattr(npu_shape, "_read_index_tensor_to_cpu", forbidden_index_read)
+    monkeypatch.setattr(npu_shape, "_read_bool_scalar", forbidden_scalar_read)
+
+    x = torch.tensor(np.arange(12, dtype=np.float32).reshape(3, 4), device="npu")
+    idx = torch.tensor([0, 2], device="npu", dtype=torch.int64)
+
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = x[:, idx]
+    graph.replay()
+    torch.npu.synchronize()
+
+    assert calls == {"index_read": 0, "scalar_read": 0}
+    np.testing.assert_allclose(out.to("cpu").numpy(), np.array([[0, 2], [4, 6], [8, 10]], dtype=np.float32))
+
+
+
+def test_npu_contiguous_size_one_expanded_view_captures_without_raw_d2d(monkeypatch):
+    """NPU contiguous() on size-1 expanded views should use ACLNN during graph capture."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops.shape as npu_shape
+
+    calls = {"memcpy_d2d": 0}
+    original_memcpy_d2d = npu_shape.npu_runtime.memcpy_d2d
+
+    def forbidden_memcpy_d2d(*args, **kwargs):
+        calls["memcpy_d2d"] += 1
+        raise AssertionError("graph-captured contiguous view copy must not use raw aclrt D2D memcpy")
+
+    base = torch.arange(0, 8, device="npu", dtype=torch.float32)
+    view = base[None, :, None].expand(1, -1, 1)
+    monkeypatch.setattr(npu_shape.npu_runtime, "memcpy_d2d", forbidden_memcpy_d2d)
+
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = view.contiguous()
+    graph.replay()
+    torch.npu.synchronize()
+    monkeypatch.setattr(npu_shape.npu_runtime, "memcpy_d2d", original_memcpy_d2d)
+
+    assert calls == {"memcpy_d2d": 0}
+    np.testing.assert_allclose(out.to("cpu").numpy(), np.arange(8, dtype=np.float32).reshape(1, 8, 1))
 
 
 def test_npu_model_dir_probe():

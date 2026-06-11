@@ -5,9 +5,24 @@ import threading
 
 _STATE = threading.local()
 
+cdef extern from *:
+    """
+    static __thread int _candle_grad_enabled = 1;
+
+    static inline int _candle_get_grad_enabled(void) {
+        return _candle_grad_enabled;
+    }
+
+    static inline void _candle_set_grad_enabled(int enabled) {
+        _candle_grad_enabled = enabled;
+    }
+    """
+    int _candle_get_grad_enabled()
+    void _candle_set_grad_enabled(int enabled)
+
 
 cpdef bint get_enabled_fast():
-    return getattr(_STATE, "enabled", True)
+    return _candle_get_grad_enabled() != 0
 
 
 def get_enabled():
@@ -15,7 +30,7 @@ def get_enabled():
 
 
 def set_enabled(value):
-    _STATE.enabled = bool(value)
+    _candle_set_grad_enabled(1 if value else 0)
 
 
 def get_creation_mode():

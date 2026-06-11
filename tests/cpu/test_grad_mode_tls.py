@@ -16,6 +16,22 @@ def test_grad_mode_state_lives_in_compiled_c_boundary():
     assert torch.inference_mode.__module__ == "candle._C._grad_mode_state"
 
 
+def test_grad_mode_default_check_is_c_thread_local_fast_path():
+    src = _grad_mode_state.__loader__.path
+    for suffix in (".cpython-311-aarch64-linux-gnu.so", ".so"):
+        if src.endswith(suffix):
+            src = src[: -len(suffix)] + ".pyx"
+            break
+    with open(src, encoding="utf-8") as handle:
+        content = handle.read()
+    # Default-on grad mode must be a C thread-local read, not a
+    # threading.local getattr that raises AttributeError on every call
+    # before the first no_grad/set_grad_enabled in a thread.
+    assert "__thread" in content
+    assert 'getattr(_STATE, "enabled", True)' not in content
+    assert "_STATE.enabled" not in content
+
+
 def test_no_grad_is_thread_local():
     parent_states = []
     child_states = []

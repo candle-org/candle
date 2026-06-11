@@ -8,6 +8,28 @@ VersionCounter is inlined as a C int64.
 """
 
 from libc.stdint cimport int64_t
+from candle._C._grad_mode_state cimport get_enabled_fast as _grad_enabled_fast
+from candle._C._npu_ops cimport (
+    fast_add_exact as _slot_fast_npu_add_exact,
+    fast_add_scalar_exact as _slot_fast_npu_add_scalar_exact,
+    fast_sub_exact as _slot_fast_npu_sub_exact,
+    fast_sub_scalar_exact as _slot_fast_npu_sub_scalar_exact,
+    fast_mul_exact as _slot_fast_npu_mul_exact,
+    fast_mul_scalar_exact as _slot_fast_npu_mul_scalar_exact,
+    fast_div_exact as _slot_fast_npu_div_exact,
+    fast_div_scalar_exact as _slot_fast_npu_div_scalar_exact,
+)
+from candle._C._tensor_api cimport (
+    _npu_functionalize_active_flag,
+    _npu_pipeline_active_flag,
+    _npu_profiler_active_flag,
+    _npu_autocast_active_flag,
+    tensor_add as _slot_tensor_add,
+    tensor_sub as _slot_tensor_sub,
+    tensor_mul as _slot_tensor_mul,
+    tensor_truediv as _slot_tensor_truediv,
+    tensor_itruediv as _slot_tensor_itruediv,
+)
 
 import candle._dtype as _dtype_mod
 
@@ -40,6 +62,8 @@ DEF _DK_ADINPLACEORVIEW = 1 << 4
 DEF _DK_AUTOGRAD = 1 << 11
 
 cdef object _StrideTuple_cls = None
+cdef object _SlotBaseTensor = None
+
 
 cdef inline object _coerce_stride_tuple(object stride):
     global _StrideTuple_cls
@@ -51,6 +75,55 @@ cdef inline object _coerce_stride_tuple(object stride):
     return _StrideTuple_cls(stride)
 
 
+cdef inline void _ensure_slot_base():
+    global _SlotBaseTensor
+    if _SlotBaseTensor is None:
+        from candle._tensor import Tensor
+        _SlotBaseTensor = Tensor
+
+
+cdef inline bint _can_use_npu_binary_slot_direct(TensorImpl a, object b_obj):
+    """True when TensorImpl numeric slots may call direct Cython NPU kernels."""
+    cdef TensorImpl b
+    _ensure_slot_base()
+    if type(a) is not _SlotBaseTensor or type(b_obj) is not _SlotBaseTensor:
+        return False
+    b = <TensorImpl>b_obj
+    if a._device_type != 1 or b._device_type != 1:
+        return False
+    if a._device_index != b._device_index:
+        return False
+    if a._dtype_code != b._dtype_code:
+        return False
+    if _npu_functionalize_active_flag or _npu_pipeline_active_flag:
+        return False
+    if _npu_profiler_active_flag or _npu_autocast_active_flag:
+        return False
+    if _grad_enabled_fast() and (a.requires_grad or b.requires_grad):
+        return False
+    return True
+
+
+cdef inline bint _can_use_npu_scalar_slot_direct(TensorImpl a, object value):
+    """True when TensorImpl scalar slots may call direct Cython NPU kernels."""
+    _ensure_slot_base()
+    if type(a) is not _SlotBaseTensor:
+        return False
+    if a._device_type != 1:
+        return False
+    if a._c_numel <= 0:
+        return False
+    if _npu_functionalize_active_flag or _npu_pipeline_active_flag:
+        return False
+    if _npu_profiler_active_flag or _npu_autocast_active_flag:
+        return False
+    if _grad_enabled_fast() and a.requires_grad:
+        return False
+    if type(value) is bool:
+        return False
+    return type(value) is int or type(value) is float
+
+
 cdef class TensorImpl:
     """Internal runtime owner for tensor metadata and cached state.
 
@@ -58,6 +131,41 @@ cdef class TensorImpl:
     that back that shell and keep hot-path metadata in Cython-managed storage.
     """
     # Field and method declarations in _tensor_impl.pxd
+
+    # ---------------------------------------------------------------
+    # Hot numeric operator slots
+    # ---------------------------------------------------------------
+
+    def __add__(self, other):
+        if _can_use_npu_binary_slot_direct(self, other):
+            return _slot_fast_npu_add_exact(self, <TensorImpl>other)
+        if _can_use_npu_scalar_slot_direct(self, other):
+            return _slot_fast_npu_add_scalar_exact(self, other)
+        return _slot_tensor_add(self, other)
+
+    def __sub__(self, other):
+        if _can_use_npu_binary_slot_direct(self, other):
+            return _slot_fast_npu_sub_exact(self, <TensorImpl>other)
+        if _can_use_npu_scalar_slot_direct(self, other):
+            return _slot_fast_npu_sub_scalar_exact(self, other)
+        return _slot_tensor_sub(self, other)
+
+    def __mul__(self, other):
+        if _can_use_npu_binary_slot_direct(self, other):
+            return _slot_fast_npu_mul_exact(self, <TensorImpl>other)
+        if _can_use_npu_scalar_slot_direct(self, other):
+            return _slot_fast_npu_mul_scalar_exact(self, other)
+        return _slot_tensor_mul(self, other)
+
+    def __truediv__(self, other):
+        if _can_use_npu_binary_slot_direct(self, other):
+            return _slot_fast_npu_div_exact(self, <TensorImpl>other)
+        if _can_use_npu_scalar_slot_direct(self, other):
+            return _slot_fast_npu_div_scalar_exact(self, other)
+        return _slot_tensor_truediv(self, other)
+
+    def __itruediv__(self, other):
+        return _slot_tensor_itruediv(self, other)
 
     # ---------------------------------------------------------------
     # Initialisation helpers

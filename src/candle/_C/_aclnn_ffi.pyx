@@ -538,15 +538,44 @@ cdef int pta_begin_add_cache_lookup_raw(
         uint64_t* ws_size_out,
         uintptr_t* executor_out) except -1:
     """Tuple-less C entry for the aclnnAdd PTA cache lookup hot path."""
+    return pta_begin_binary_alpha_cache_lookup_raw(
+        b"aclnnAdd",
+        self_shape, self_stride,
+        other_shape, other_stride,
+        out_shape, out_stride,
+        dtype_code,
+        self_ptr, other_ptr, out_ptr,
+        alpha_scalar_bytes, alpha_dtype_code,
+        stream,
+        pta_active_out,
+        ws_size_out,
+        executor_out,
+    )
+
+
+cdef int pta_begin_binary_alpha_cache_lookup_raw(
+        bytes op_name,
+        object self_shape, object self_stride,
+        object other_shape, object other_stride,
+        object out_shape, object out_stride,
+        int32_t dtype_code,
+        uintptr_t self_ptr, uintptr_t other_ptr, uintptr_t out_ptr,
+        bytes alpha_scalar_bytes, int32_t alpha_dtype_code,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    """Tuple-less C entry for two-input alpha PTA lookup (Add/Sub)."""
     pta_active_out[0] = False
     ws_size_out[0] = 0
     executor_out[0] = 0
     if not _pta_cache_available:
         return 0
 
+    cdef const char* op_cstr = op_name
     cdef int can_use
     with nogil:
-        can_use = _fn_can_use_pta_cache(b"aclnnAdd")
+        can_use = _fn_can_use_pta_cache(op_cstr)
     if not can_use:
         return 0
 
@@ -581,7 +610,7 @@ cdef int pta_begin_add_cache_lookup_raw(
     with nogil:
         _fn_init_pta_cache()
         _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
-        _pta_buf_append_cstr(hash_buf, &hash_offset, b"aclnnAdd")
+        _pta_buf_append_cstr(hash_buf, &hash_offset, op_cstr)
         _pta_buf_append_tensor(hash_buf, &hash_offset, s_shape, s_stride, self_ndim, dtype_code, 0, <void*>self_ptr)
         _pta_buf_append_tensor(hash_buf, &hash_offset, o_shape, o_stride, other_ndim, dtype_code, 0, <void*>other_ptr)
         _pta_buf_append_scalar(hash_buf, &hash_offset, alpha_data, alpha_nbytes, alpha_dtype_code)
@@ -909,6 +938,82 @@ cdef int pta_begin_binary_cache_lookup_raw(
         _pta_buf_append(hash_buf, &hash_offset, &inputs_alias, sizeof(bint))
         _pta_buf_append_tensor(hash_buf, &hash_offset, s_shape, s_stride, self_ndim, dtype_code, 0, <void*>self_ptr)
         _pta_buf_append_tensor(hash_buf, &hash_offset, o_shape, o_stride, other_ndim, dtype_code, 0, <void*>other_ptr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, r_shape, r_stride, out_ndim, dtype_code, 0, <void*>out_ptr)
+        _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
+
+        if hash_offset == PTA_HASH_BUF_MAX_SIZE:
+            _fn_set_pta_hash_key(NULL, 0)
+        else:
+            _fn_set_pta_hash_key(&hash_buf[0], <size_t>hash_offset)
+
+        executor = _fn_pta_find_cache(&hash_buf[0], <size_t>hash_offset, &ws_size)
+
+    pta_active_out[0] = True
+    ws_size_out[0] = ws_size
+    executor_out[0] = <uintptr_t>executor
+    return 1
+
+
+cdef int pta_begin_tensor_scalar_cache_lookup_raw(
+        bytes op_name,
+        object self_shape, object self_stride,
+        object out_shape, object out_stride,
+        int32_t dtype_code,
+        uintptr_t self_ptr, uintptr_t out_ptr,
+        bytes scalar_bytes, int32_t scalar_dtype_code,
+        bytes alpha_scalar_bytes, int32_t alpha_dtype_code,
+        bint has_alpha,
+        uintptr_t stream,
+        bint* pta_active_out,
+        uint64_t* ws_size_out,
+        uintptr_t* executor_out) except -1:
+    """Tuple-less C entry for tensor-scalar PTA lookup (Adds/Muls/Subs/Divs)."""
+    pta_active_out[0] = False
+    ws_size_out[0] = 0
+    executor_out[0] = 0
+    if not _pta_cache_available:
+        return 0
+
+    cdef const char* op_cstr = op_name
+    cdef int can_use
+    with nogil:
+        can_use = _fn_can_use_pta_cache(op_cstr)
+    if not can_use:
+        return 0
+
+    cdef int self_ndim = len(self_shape)
+    cdef int out_ndim = len(out_shape)
+    cdef int i
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int64_t[MAX_NDIM] r_shape, r_stride
+    cdef uint8_t[PTA_HASH_BUF_MAX_SIZE] hash_buf
+    cdef int hash_offset = 0
+    cdef bint deterministic_status = 0
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef const uint8_t* scalar_data = <const uint8_t*>scalar_bytes
+    cdef int scalar_nbytes = len(scalar_bytes)
+    cdef const uint8_t* alpha_data = <const uint8_t*>alpha_scalar_bytes
+    cdef int alpha_nbytes = len(alpha_scalar_bytes)
+
+    if self_ndim > MAX_NDIM or out_ndim > MAX_NDIM:
+        return 0
+
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(out_ndim):
+        r_shape[i] = out_shape[i]
+        r_stride[i] = out_stride[i]
+
+    with nogil:
+        _fn_init_pta_cache()
+        _pta_buf_append(hash_buf, &hash_offset, &deterministic_status, sizeof(bint))
+        _pta_buf_append_cstr(hash_buf, &hash_offset, op_cstr)
+        _pta_buf_append_tensor(hash_buf, &hash_offset, s_shape, s_stride, self_ndim, dtype_code, 0, <void*>self_ptr)
+        _pta_buf_append_scalar(hash_buf, &hash_offset, scalar_data, scalar_nbytes, scalar_dtype_code)
+        if has_alpha:
+            _pta_buf_append_scalar(hash_buf, &hash_offset, alpha_data, alpha_nbytes, alpha_dtype_code)
         _pta_buf_append_tensor(hash_buf, &hash_offset, r_shape, r_stride, out_ndim, dtype_code, 0, <void*>out_ptr)
         _pta_buf_append(hash_buf, &hash_offset, &stream, sizeof(uintptr_t))
 
@@ -1591,10 +1696,10 @@ cpdef object binary_op_no_alpha(
                 _fast_destroy_tensor(out_t)
 
 
-def tensor_scalar_op_with_alpha(
+cpdef object tensor_scalar_op_with_alpha(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        self_shape, self_stride,
-        out_shape, out_stride,
+        object self_shape, object self_stride,
+        object out_shape, object out_stride,
         int32_t dtype_code, int32_t fmt,
         uintptr_t self_ptr, uintptr_t out_ptr,
         uintptr_t scalar_handle, uintptr_t alpha_scalar,
@@ -1670,10 +1775,71 @@ def tensor_scalar_op_with_alpha(
                 _fast_destroy_tensor(out_t)
 
 
-def tensor_scalar_op_no_alpha(
+cpdef object inplace_tensor_scalar_op_with_alpha(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        self_shape, self_stride,
-        out_shape, out_stride,
+        object self_shape, object self_stride,
+        int32_t dtype_code, int32_t fmt,
+        uintptr_t self_ptr,
+        uintptr_t scalar_handle, uintptr_t alpha_scalar,
+        uintptr_t stream):
+    """In-place tensor-scalar op with alpha (InplaceAdds)."""
+    cdef int self_ndim = len(self_shape)
+    cdef int64_t[MAX_NDIM] s_shape, s_stride
+    cdef int i
+
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+
+    cdef void* self_t = NULL
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef int32_t ret
+
+    with nogil:
+        self_t = _fast_create_tensor(
+            s_shape, s_stride, <uint64_t>self_ndim,
+            dtype_code, fmt, <void*>self_ptr)
+
+    if self_t == NULL:
+        raise RuntimeError("aclCreateTensor returned null")
+
+    try:
+        with nogil:
+            ret = (<int32_t (*)(void*, void*, void*, uint64_t*, void**) noexcept nogil>getws_ptr)(
+                self_t, <void*>scalar_handle, <void*>alpha_scalar,
+                &ws_size, &executor)
+        if ret != 0:
+            raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else []),
+        )
+        self_t = NULL
+
+        if ws_size == 0:
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(
+                        NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
+
+        return (ws_size, <uintptr_t>executor)
+    finally:
+        with nogil:
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+
+
+cpdef object tensor_scalar_op_no_alpha(
+        uintptr_t getws_ptr, uintptr_t exec_ptr,
+        object self_shape, object self_stride,
+        object out_shape, object out_stride,
         int32_t dtype_code, int32_t fmt,
         uintptr_t self_ptr, uintptr_t out_ptr,
         uintptr_t scalar_handle,
@@ -1781,6 +1947,91 @@ cpdef object unary_op(
         self_t = _fast_create_tensor(
             s_shape, s_stride, <uint64_t>self_ndim,
             self_dtype_code, fmt, <void*>self_ptr)
+        out_t = _fast_create_tensor(
+            r_shape, r_stride, <uint64_t>out_ndim,
+            out_dtype_code, fmt, <void*>out_ptr)
+
+    if self_t == NULL or out_t == NULL:
+        if self_t != NULL: _fast_destroy_tensor(self_t)
+        if out_t != NULL: _fast_destroy_tensor(out_t)
+        raise RuntimeError("aclCreateTensor returned null")
+
+    try:
+        with nogil:
+            ret = (<int32_t (*)(void*, void*, uint64_t*, void**) noexcept nogil>getws_ptr)(
+                self_t, out_t, &ws_size, &executor)
+        if ret != 0:
+            raise RuntimeError(f"GetWorkspaceSize failed: {ret}")
+        _register_executor_cleanup(
+            <uintptr_t>executor,
+            ([('t', <uintptr_t>self_t)] if self_t != NULL else [])
+            + ([('t', <uintptr_t>out_t)] if out_t != NULL else []),
+        )
+        self_t = NULL
+        out_t = NULL
+
+        if ws_size == 0:
+            try:
+                with nogil:
+                    ret = (<aclnnExec_t>exec_ptr)(NULL, 0, executor, <void*>stream)
+                if ret != 0:
+                    raise RuntimeError(f"Execute failed: {ret}")
+            except Exception:
+                destroy_executor(<uintptr_t>executor)
+                executor = NULL
+                raise
+
+        return (ws_size, <uintptr_t>executor)
+    finally:
+        with nogil:
+            if self_t != NULL:
+                _fast_destroy_tensor(self_t)
+            if out_t != NULL:
+                _fast_destroy_tensor(out_t)
+
+
+cdef object unary_op_with_input_storage(
+        uintptr_t getws_ptr, uintptr_t exec_ptr,
+        object self_shape, object self_stride,
+        object self_storage_shape, int64_t self_storage_offset,
+        object out_shape, object out_stride,
+        int32_t self_dtype_code, int32_t out_dtype_code, int32_t fmt,
+        uintptr_t self_storage_ptr, uintptr_t out_ptr,
+        uintptr_t stream):
+    """Unary op helper with explicit input storage metadata for offset views."""
+    cdef int self_ndim = len(self_shape)
+    cdef int storage_ndim = len(self_storage_shape)
+    cdef int out_ndim = len(out_shape)
+
+    cdef int64_t[MAX_NDIM] s_shape, s_stride, s_storage_shape
+    cdef int64_t[MAX_NDIM] r_shape, r_stride
+    cdef int i
+
+    if self_ndim > MAX_NDIM or storage_ndim > MAX_NDIM or out_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    for i in range(self_ndim):
+        s_shape[i] = self_shape[i]
+        s_stride[i] = self_stride[i]
+    for i in range(storage_ndim):
+        s_storage_shape[i] = self_storage_shape[i]
+    for i in range(out_ndim):
+        r_shape[i] = out_shape[i]
+        r_stride[i] = out_stride[i]
+
+    cdef void* self_t = NULL
+    cdef void* out_t = NULL
+    cdef uint64_t ws_size = 0
+    cdef void* executor = NULL
+    cdef int32_t ret
+
+    with nogil:
+        self_t = _fast_create_tensor_ex(
+            s_shape, s_stride, <uint64_t>self_ndim,
+            self_dtype_code, fmt,
+            s_storage_shape, <uint64_t>storage_ndim,
+            self_storage_offset,
+            <void*>self_storage_ptr)
         out_t = _fast_create_tensor(
             r_shape, r_stride, <uint64_t>out_ndim,
             out_dtype_code, fmt, <void*>out_ptr)
@@ -2700,10 +2951,10 @@ def arg_reduce_op(
                 _fast_destroy_tensor(out_t)
 
 
-def cast_op(
+cpdef object cast_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        self_shape, self_stride,
-        out_shape, out_stride,
+        object self_shape, object self_stride,
+        object out_shape, object out_stride,
         int32_t src_dtype_code, int32_t dst_dtype_code, int32_t fmt,
         uintptr_t self_ptr, uintptr_t out_ptr,
         uintptr_t stream):
@@ -4049,9 +4300,9 @@ def inplace_uniform_op(
                 _fast_destroy_tensor(tensor)
 
 
-def inplace_fill_scalar_op(
+cpdef object inplace_fill_scalar_op(
         uintptr_t getws_ptr, uintptr_t exec_ptr,
-        shape, stride,
+        object shape, object stride,
         int32_t dtype_code, int32_t fmt,
         uintptr_t ptr,
         uintptr_t scalar_handle,

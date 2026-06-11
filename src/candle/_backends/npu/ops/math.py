@@ -10,6 +10,7 @@ from ._helpers import (
 # Arithmetic (binary)
 # ---------------------------------------------------------------------------
 
+
 try:
     from candle._C._npu_ops import (
         fast_abs as _fast_abs_impl,
@@ -20,6 +21,8 @@ try:
         fast_acosh_inplace as _fast_acosh_inplace_impl,
         fast_add as _fast_add_impl,
         fast_add_inplace as _fast_add_inplace_impl,
+        fast_add_scalar_exact as _fast_add_scalar_impl,
+        fast_add_scalar_inplace_exact as _fast_add_scalar_inplace_impl,
         fast_asin as _fast_asin_impl,
         fast_asin_inplace as _fast_asin_inplace_impl,
         fast_asinh as _fast_asinh_impl,
@@ -203,6 +206,8 @@ except ImportError:
     _fast_acos_impl = None  # type: ignore[assignment]
     _fast_mul_impl = None  # type: ignore[assignment]
     _fast_mul_scalar_impl = None  # type: ignore[assignment]
+    _fast_add_scalar_impl = None  # type: ignore[assignment]
+    _fast_add_scalar_inplace_impl = None  # type: ignore[assignment]
     _HAS_FAST_ADD = False
     _HAS_FAST_ABS = False
     _HAS_FAST_NEG = False
@@ -296,6 +301,8 @@ except ImportError:
 
 def add(a, b):
     if isinstance(b, (int, float)):
+        if _fast_add_scalar_impl is not None and a.is_contiguous():
+            return _fast_add_scalar_impl(a, b)
         b = _scalar_to_npu_tensor(b, a)
     if _HAS_FAST_ADD:
         return _fast_add_impl(a, b)
@@ -334,6 +341,8 @@ def div(a, b):
 
 def add_(a, b):
     if isinstance(b, (int, float)):
+        if _fast_add_scalar_inplace_impl is not None and a.is_contiguous():
+            return _fast_add_scalar_inplace_impl(a, b)
         b = _scalar_to_npu_tensor(b, a)
     if _HAS_FAST_ADD_INPLACE:
         return _fast_add_inplace_impl(a, b)
@@ -707,6 +716,10 @@ def pow(a, b):
         if _HAS_FAST_POW:
             return _fast_pow_impl(a, b)
         raise RuntimeError("Cython NPU pow implementation is unavailable")
+    if b == 2 or b == 2.0:
+        if _HAS_FAST_MUL:
+            return _fast_mul_impl(a, a)
+        raise RuntimeError("Cython NPU mul implementation is unavailable")
     if _HAS_FAST_POW_TENSOR_SCALAR:
         return _fast_pow_tensor_scalar_impl(a, b)
     raise RuntimeError("Cython NPU pow tensor-scalar implementation is unavailable")

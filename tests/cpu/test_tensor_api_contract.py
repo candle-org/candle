@@ -12,6 +12,7 @@ Coverage:
   6. Property stability: .grad, .shape, .device, .dtype
 """
 import builtins
+import types
 
 import pytest
 import candle as torch
@@ -39,6 +40,19 @@ def test_ones_like_bfloat16_stores_numeric_values_cpu():
 
     assert ones.dtype == torch.bfloat16
     assert ones.to(torch.float32).tolist() == [1.0, 1.0]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["__add__", "__sub__", "__mul__", "__truediv__"],
+)
+def test_tensor_binary_operator_dunders_are_c_level_descriptors(name):
+    """Hot binary operators should live on the Cython base type, like torch TensorBase."""
+    method = getattr(torch._C.TensorBase, name)
+
+    assert isinstance(method, types.MethodDescriptorType)
+    assert method.__objclass__ in torch._C.TensorBase.__mro__
+    assert getattr(torch.Tensor, name) is method
 
 
 # ===========================================================================

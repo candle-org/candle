@@ -2,6 +2,7 @@
 
 _NPU_SILU_FAST = None
 _NPU_IN_GRAPH_CAPTURE = None
+_GRAD_ENABLED = None
 _BASE_TENSOR = None
 _IS_PROFILER_ENABLED = None
 _IS_FUNCTIONALIZE_ENABLED = None
@@ -65,6 +66,14 @@ def _npu_in_graph_capture():
         from .. import npu as _npu
         _NPU_IN_GRAPH_CAPTURE = _npu._is_in_graph_capture  # pylint: disable=protected-access
     return _NPU_IN_GRAPH_CAPTURE()
+
+
+def _grad_enabled():
+    global _GRAD_ENABLED  # pylint: disable=global-statement
+    if _GRAD_ENABLED is None:
+        from ..autograd.grad_mode import is_grad_enabled
+        _GRAD_ENABLED = is_grad_enabled
+    return _GRAD_ENABLED()
 
 
 def _py_linear(input, weight, bias=None):
@@ -949,8 +958,8 @@ def upsample_bilinear(input, size=None, scale_factor=None, align_corners=False):
 
 
 def _try_npu_sdpa_flash_attention(query, key, value, attn_mask, dropout_p, is_causal, scale_factor, enable_gqa):
-    """Use native NPU FlashAttention for the PyTorch-compatible default SDPA case."""
-    if attn_mask is not None or dropout_p != 0.0 or is_causal or enable_gqa:
+    """Use native NPU FlashAttention for PyTorch-compatible SDPA fast cases."""
+    if attn_mask is not None or dropout_p != 0.0 or enable_gqa:
         return None
     if getattr(getattr(query, "device", None), "type", None) != "npu":
         return None
@@ -968,12 +977,31 @@ def _try_npu_sdpa_flash_attention(query, key, value, attn_mask, dropout_p, is_ca
         return None
     if key.shape[-2] != value.shape[-2]:
         return None
-    # TODO: re-enable native FlashAttentionScore during aclgraph capture
-    # when CANN fixes captured training replay latency for this kernel.
+    native_attn_mask = None
+    if is_causal:
+        if query.shape[-2] != key.shape[-2]:
+            return None
+        from .._creation import ones as _ones
+        from .._dtype import bool as _bool_dtype
+        native_attn_mask = _ones((query.shape[-2], key.shape[-2]), dtype=_bool_dtype, device=query.device).triu(1)
+    # TODO: re-enable native FlashAttentionScore during grad-enabled aclgraph
+    # capture when CANN fixes captured training replay latency for this kernel.
+    # Inference/no-grad capture is fast and should keep the native path.
     if _npu_in_graph_capture():
-        return None
+        if _grad_enabled():
+            return None
+        # No-grad capture records once and replays the recorded kernels, so this
+        # cold path calls the Python-visible module function instead of the
+        # cimported hot wrapper; no autograd node is needed without grad.
+        from .._C import _npu_ops as _npu_ops_mod  # pylint: disable=import-error,no-name-in-module
+        try:
+            out, _, _ = _npu_ops_mod.fast_sdpa_flash_attention(
+                query, key, value, float(scale_factor), native_attn_mask)
+        except (TypeError, ValueError):
+            return None
+        return out
     from .._C._functional_ops import npu_flash_sdpa  # pylint: disable=import-error,no-name-in-module
-    return npu_flash_sdpa(query, key, value, float(scale_factor))
+    return npu_flash_sdpa(query, key, value, float(scale_factor), native_attn_mask)
 
 
 def scaled_dot_product_attention(query, key, value, attn_mask=None, dropout_p=0.0,

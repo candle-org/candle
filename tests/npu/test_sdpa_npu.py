@@ -119,6 +119,32 @@ def test_npu_sdpa_uses_native_flash_attention_for_default_training(monkeypatch):
 
 
 @_requires_npu()
+def test_npu_sdpa_uses_native_flash_attention_for_causal_training(monkeypatch):
+    """Causal NPU SDPA should use native FlashAttention instead of eager matmul masking."""
+    import candle._functional as candle_functional
+
+    calls = {"matmul": 0}
+    original_matmul = candle_functional.matmul
+
+    def guarded_matmul(*args, **kwargs):
+        calls["matmul"] += 1
+        return original_matmul(*args, **kwargs)
+
+    monkeypatch.setattr(candle_functional, "matmul", guarded_matmul)
+
+    q, k, v = _make_qkv(shape=(1, 4, 8, 16))
+    out = torch.nn.functional.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=True, scale=0.25)
+    assert out.grad_fn.name() == "_NpuFlashSdpaBackward"
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    assert calls == {"matmul": 0}
+    _assert_npu_grad(q)
+    _assert_npu_grad(k)
+    _assert_npu_grad(v)
+
+
+@_requires_npu()
 def test_npu_sdpa_reuses_single_flash_autograd_class():
     """Native SDPA should reuse the Cython FlashAttention autograd node."""
     q, k, v = _make_qkv(shape=(1, 2, 16, 32))
@@ -242,6 +268,35 @@ def test_npu_sdpa_native_flash_attention_matches_composite_values():
 
 
 @_requires_npu()
+def test_npu_sdpa_native_flash_attention_matches_causal_composite_values():
+    """Native causal fused SDPA should match the generic on-device composite."""
+    import candle.nn.functional as functional
+
+    q, k, v = _make_qkv(shape=(1, 4, 8, 16))
+    q_ref = q.detach().clone().requires_grad_(True)
+    k_ref = k.detach().clone().requires_grad_(True)
+    v_ref = v.detach().clone().requires_grad_(True)
+
+    out = functional.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=True, scale=0.25)
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    original_fused = functional._try_npu_sdpa_flash_attention
+    functional._try_npu_sdpa_flash_attention = lambda *args, **kwargs: None
+    try:
+        ref = functional.scaled_dot_product_attention(q_ref, k_ref, v_ref, dropout_p=0.0, is_causal=True, scale=0.25)
+        ref.sum().backward()
+        torch.npu.synchronize()
+    finally:
+        functional._try_npu_sdpa_flash_attention = original_fused
+
+    np.testing.assert_allclose(out.to("cpu").numpy(), ref.to("cpu").numpy(), atol=2e-2, rtol=2e-2)
+    np.testing.assert_allclose(q.grad.to("cpu").numpy(), q_ref.grad.to("cpu").numpy(), atol=2e-2, rtol=2e-2)
+    np.testing.assert_allclose(k.grad.to("cpu").numpy(), k_ref.grad.to("cpu").numpy(), atol=2e-2, rtol=2e-2)
+    np.testing.assert_allclose(v.grad.to("cpu").numpy(), v_ref.grad.to("cpu").numpy(), atol=2e-2, rtol=2e-2)
+
+
+@_requires_npu()
 def test_npu_sdpa_graph_capture_uses_composite_not_native_flash(monkeypatch):
     """FlashAttentionScore backward is graph-hostile; capture should use on-device composite."""
     import candle.nn.functional as functional
@@ -277,6 +332,41 @@ def test_npu_sdpa_graph_capture_uses_composite_not_native_flash(monkeypatch):
     _assert_npu_grad(q)
     _assert_npu_grad(k)
     _assert_npu_grad(v)
+
+
+@_requires_npu()
+def test_npu_sdpa_no_grad_graph_capture_uses_native_flash(monkeypatch):
+    """No-grad NPU graph capture should keep the native FlashAttention inference path."""
+    import candle.nn.functional as functional
+    import candle._functional as candle_functional
+    import candle._C._npu_ops as npu_ops
+
+    calls = {"flash_fwd": 0, "matmul": 0}
+    original_fwd = npu_ops.fast_sdpa_flash_attention
+    original_matmul = candle_functional.matmul
+
+    def wrapped_fwd(*args, **kwargs):
+        calls["flash_fwd"] += 1
+        return original_fwd(*args, **kwargs)
+
+    def wrapped_matmul(*args, **kwargs):
+        calls["matmul"] += 1
+        return original_matmul(*args, **kwargs)
+
+    monkeypatch.setattr(npu_ops, "fast_sdpa_flash_attention", wrapped_fwd)
+    monkeypatch.setattr(candle_functional, "matmul", wrapped_matmul)
+
+    q, k, v = _make_qkv(shape=(1, 4, 8, 16))
+    graph = torch.npu.NPUGraph()
+    with torch.no_grad():
+        with torch.npu.graph(graph):
+            out = functional.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=True, scale=0.25)
+    torch.npu.synchronize()
+
+    assert out.device.type == "npu"
+    assert calls == {"flash_fwd": 1, "matmul": 0}
+    graph.replay()
+    torch.npu.synchronize()
 
 
 @_requires_npu()
