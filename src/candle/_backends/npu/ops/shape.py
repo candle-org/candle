@@ -2512,6 +2512,11 @@ def gather(a, dim, index):
             raise ValueError("index shape mismatch")
     if not _npu_in_graph_capture():
         _validate_index_bounds(index, a.shape[dim], allow_negative=False, name="gather")
+    # Graph capture cannot perform PyTorch-style host-synchronous bounds checks:
+    # it would require D2H reads/synchronization that aclgraph rejects. Native
+    # torch_npu/ACLNN also does not raise invalid-index errors inside capture, so
+    # captured gather preserves valid-index semantics and defers invalid-index
+    # behavior to the device kernel instead of silently moving validation to CPU.
 
     if _use_soc_fallback("gather"):
         return _gather_310b_fallback(a, dim, index)
@@ -2550,6 +2555,9 @@ def index_select(a, dim, index):
         raise ValueError("index must be 1D")
     dim_size = a.shape[dim]
     if _npu_in_graph_capture():
+        # Avoid D2H validation during graph capture. Native ACLNN gather accepts
+        # negative indices with PyTorch-compatible wraparound for index_select's
+        # expanded gather form, so valid negative-index semantics still hold.
         return _index_select_known_nonnegative(a, dim, index, validate=False)
     _validate_index_bounds(index, dim_size, allow_negative=True, name="index_select")
     norm_index = _normalize_negative_indices(index, dim_size)

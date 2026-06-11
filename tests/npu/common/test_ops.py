@@ -1032,6 +1032,38 @@ def test_npu_scalar_to_tensor_helper_captures_without_host_copy(monkeypatch):
 
 
 
+def test_npu_empty_scalar_to_tensor_helper_captures_without_zero_byte_alloc(monkeypatch):
+    """Empty NPU tensor/scalar comparison should not request a zero-byte device allocation."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops._helpers as npu_helpers
+
+    calls = {"zero_alloc": 0}
+    original_alloc_device = npu_helpers.npu_runtime._alloc_device
+
+    def checked_alloc_device(size, *args, **kwargs):
+        if int(size) == 0:
+            calls["zero_alloc"] += 1
+            raise AssertionError("empty scalar expansion must allocate at least one byte")
+        return original_alloc_device(size, *args, **kwargs)
+
+    monkeypatch.setattr(npu_helpers.npu_runtime, "_alloc_device", checked_alloc_device)
+
+    mask = torch.empty((0,), device="npu", dtype=torch.bool)
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = mask == False  # noqa: E712
+    graph.replay()
+    torch.npu.synchronize()
+    monkeypatch.setattr(npu_helpers.npu_runtime, "_alloc_device", original_alloc_device)
+
+    assert calls == {"zero_alloc": 0}
+    assert out.device.type == "npu"
+    assert out.shape == (0,)
+
+
+
 def test_npu_contiguous_setitem_captures_without_raw_d2d(monkeypatch):
     """NPU setitem into a contiguous view should be graph-capturable without raw D2D memcpy."""
     if not torch.npu.is_available():
@@ -1129,6 +1161,24 @@ def test_npu_index_select_known_nonnegative_captures_without_host_index_read(mon
 
     assert calls == {"index_read": 0, "scalar_read": 0}
     np.testing.assert_allclose(out.to("cpu").numpy(), np.array([[0, 2], [4, 6], [8, 10]], dtype=np.float32))
+
+
+
+def test_npu_index_select_negative_indices_capture_normalizes_on_device():
+    """NPU index_select should preserve negative-index semantics during graph capture."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    x = torch.tensor([10.0, 20.0, 30.0], device="npu", dtype=torch.float32)
+    idx = torch.tensor([-1, 0], device="npu", dtype=torch.int64)
+
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = torch.index_select(x, 0, idx)
+    graph.replay()
+    torch.npu.synchronize()
+
+    np.testing.assert_allclose(out.to("cpu").numpy(), np.array([30.0, 10.0], dtype=np.float32))
 
 
 

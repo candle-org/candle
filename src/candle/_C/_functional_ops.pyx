@@ -451,6 +451,8 @@ cdef inline int _exact_npu_linear_no_bias_hot_state(object input, object weight)
         return 0
     if inp._c_shape[inp._ndim - 1] != w._c_shape[1]:
         return 0
+    if inp._c_shape[inp._ndim - 1] == 0:
+        return 0
     if inp._device_index != w._device_index:
         return 0
     if inp._dtype_code != w._dtype_code:

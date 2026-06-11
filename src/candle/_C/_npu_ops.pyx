@@ -868,7 +868,11 @@ def fast_binary_op(a, b, fn, str name):
     if name == "eq" or name == "ne" or name == "lt" or name == "le" or name == "gt" or name == "ge":
         from candle._dtype import bool as _bool_dtype
         out_dtype = _bool_dtype
-    cdef int64_t alloc_size = n * c_dtype_itemsize(out_dtype)
+    cdef int64_t alloc_elems = n
+    cdef int64_t alloc_size
+    if alloc_elems == 0:
+        alloc_elems = 1
+    alloc_size = alloc_elems * c_dtype_itemsize(out_dtype)
     if dev_idx == 0:
         _ensure_allocator_dev0()
         out_ptr = _fast_allocator_dev0.malloc(alloc_size, stream=stream.stream)
@@ -876,6 +880,9 @@ def fast_binary_op(a, b, fn, str name):
         # Multi-device fallback: still avoids the two lazy imports inside
         # _alloc_device by going directly to get_allocator().
         out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream.stream)
+
+    if n == 0:
+        return _cy_make_npu_tensor(out_ptr, alloc_elems, out_dtype, _device_obj_fast(a), out_shape, out_stride)
 
     # 7. Get data pointers without Python storage() calls on the hot path
     cdef uintptr_t a_ptr

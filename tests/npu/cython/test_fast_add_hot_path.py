@@ -2579,6 +2579,24 @@ def test_npu_linear_without_bias_skips_generated_matmul_backward(npu_device, mon
 
 
 
+def test_npu_linear_without_bias_zero_in_features_does_not_divide_by_zero(npu_device):
+    """Zero-width biasless NPU linear should fall through instead of dividing by input.shape[-1]."""
+    import numpy as np
+    import candle as torch
+    import candle.nn.functional as F
+
+    x = torch.empty((2, 3, 0), device=npu_device, dtype=torch.float16)
+    weight = torch.empty((4, 0), device=npu_device, dtype=torch.float16)
+
+    out = F.linear(x, weight, None)
+    torch.npu.synchronize()
+
+    assert out.device.type == "npu"
+    assert out.shape == (2, 3, 4)
+    np.testing.assert_allclose(out.to("cpu").numpy(), np.zeros((2, 3, 4), dtype=np.float16))
+
+
+
 def test_npu_addmm_autograd_skips_python_dispatch(npu_device, monkeypatch):
     """NPU addmm training hot path should attach autograd without Python dispatch."""
     import candle as torch

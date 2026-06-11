@@ -378,7 +378,8 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
     out_shape = ref_tensor.shape
     out_stride = npu_runtime._contiguous_stride(out_shape)
     out_numel = _numel(out_shape)
-    out_size = out_numel * _dtype_itemsize(ref_tensor.dtype)
+    itemsize = _dtype_itemsize(ref_tensor.dtype)
+    out_size = max(out_numel * itemsize, itemsize, 1)
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
     if _npu_in_graph_capture():
         if out_numel:
@@ -391,7 +392,7 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
                 runtime,
                 stream=stream.stream,
             )
-        out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, ref_tensor.dtype, device=ref_tensor.device)
+        out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), ref_tensor.dtype, device=ref_tensor.device)
         return _wrap_tensor(out_storage, out_shape, out_stride)
     # Fill on host then memcpy H2D to avoid aclnn scalar ops.
     from .. import acl_loader
@@ -403,7 +404,6 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
         raise RuntimeError(f"acl.rt.malloc_host failed: {ret}")
     try:
         host_buf = (ctypes.c_uint8 * int(out_size)).from_address(int(host_ptr))
-        itemsize = _dtype_itemsize(ref_tensor.dtype)
         dtype_name = getattr(ref_tensor.dtype, "name", None) or str(ref_tensor.dtype).split(".")[-1]
         if dtype_name == "float16":
             from ..aclnn import _float_to_float16_bits
@@ -436,7 +436,7 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
         npu_runtime.memcpy_h2d(out_ptr, int(out_size), host_ptr, runtime=runtime)
     finally:
         acl.rt.free_host(host_ptr)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, ref_tensor.dtype, device=ref_tensor.device)
+    out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), ref_tensor.dtype, device=ref_tensor.device)
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 

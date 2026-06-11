@@ -957,9 +957,24 @@ def tensor_to(self, *args, **kwargs):
     return result
 
 
-def tensor_backward(self, gradient=None, retain_graph=False, create_graph=False, inputs=None):
+def tensor_backward(self, gradient=None, retain_graph=None, create_graph=False, inputs=None):
+    _ensure_base()
+    if not _is_tensor_without_torch_function_override(self):
+        return type(self).__torch_function__(
+            tensor_backward,
+            {type(self)},
+            (self,),
+            {
+                "gradient": gradient,
+                "retain_graph": retain_graph,
+                "create_graph": create_graph,
+                "inputs": inputs,
+            },
+        )
     _flush_pending(self)
     _ensure_backward_ref()
+    if retain_graph is None:
+        retain_graph = create_graph
     _backward_fn(
         self,
         gradient,
