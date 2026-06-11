@@ -50,8 +50,75 @@ def _mapped_size(args, in_dims):
     return size, tuple(normalized)
 
 
+def _out_dim_for_index(out_dims, index, count):
+    if isinstance(out_dims, (tuple, list)):
+        if len(out_dims) != count:
+            raise ValueError(
+                f"vmap out_dims must have one entry per output; got {len(out_dims)} "
+                f"entries for {count} outputs"
+            )
+        return out_dims[index]
+    return out_dims
+
+
+def _validate_output_structure(outputs, first):
+    for output in outputs[1:]:
+        if isinstance(first, tuple):
+            if not isinstance(output, tuple) or len(output) != len(first):
+                raise RuntimeError("vmap output structure must be the same for every mapped element")
+        elif isinstance(first, list):
+            if not isinstance(output, list) or len(output) != len(first):
+                raise RuntimeError("vmap output structure must be the same for every mapped element")
+        elif type(output) is not type(first):
+            raise RuntimeError("vmap output structure must be the same for every mapped element")
+
+
+def _empty_tensor_slice(arg, dim):
+    from ._creation import empty  # pylint: disable=import-outside-toplevel
+
+    shape = tuple(arg.shape[:dim]) + tuple(arg.shape[dim + 1:])
+    return empty(
+        shape,
+        dtype=arg.dtype,
+        device=arg.device,
+        requires_grad=getattr(arg, "requires_grad", False),
+    )
+
+
+def _empty_stacked_output(example, out_dims):
+    if isinstance(example, Tensor):
+        from ._creation import empty  # pylint: disable=import-outside-toplevel
+
+        shape = list(example.shape)
+        rank = len(shape) + 1
+        out_dim = out_dims
+        if out_dim < 0:
+            out_dim += rank
+        if out_dim < 0 or out_dim > rank:
+            raise ValueError(f"vmap out_dim {out_dims} is out of bounds for output with {rank} dims")
+        shape.insert(out_dim, 0)
+        return empty(
+            tuple(shape),
+            dtype=example.dtype,
+            device=example.device,
+            requires_grad=getattr(example, "requires_grad", False),
+        )
+    if isinstance(example, tuple):
+        return tuple(
+            _empty_stacked_output(item, _out_dim_for_index(out_dims, index, len(example)))
+            for index, item in enumerate(example)
+        )
+    if isinstance(example, list):
+        return [
+            _empty_stacked_output(item, _out_dim_for_index(out_dims, index, len(example)))
+            for index, item in enumerate(example)
+        ]
+    return []
+
+
 def _stack_outputs(outputs, out_dims):
     first = outputs[0]
+    _validate_output_structure(outputs, first)
     if isinstance(first, Tensor):
         result = stack(outputs, dim=0)
         if out_dims != 0:
@@ -59,12 +126,18 @@ def _stack_outputs(outputs, out_dims):
         return result
     if isinstance(first, tuple):
         return tuple(
-            _stack_outputs([output[index] for output in outputs], out_dims)
+            _stack_outputs(
+                [output[index] for output in outputs],
+                _out_dim_for_index(out_dims, index, len(first)),
+            )
             for index in _builtins.range(len(first))
         )
     if isinstance(first, list):
         return [
-            _stack_outputs([output[index] for output in outputs], out_dims)
+            _stack_outputs(
+                [output[index] for output in outputs],
+                _out_dim_for_index(out_dims, index, len(first)),
+            )
             for index in _builtins.range(len(first))
         ]
     return outputs
@@ -87,6 +160,14 @@ def vmap(func, in_dims=0, out_dims=0, randomness="error", *, chunk_size=None):
         dims = _normalize_in_dims(in_dims, len(args))
         size, normalized_dims = _mapped_size(args, dims)
         outputs = []
+        if size == 0:
+            sliced_args = []
+            for arg, dim in zip(args, normalized_dims):
+                if dim is None:
+                    sliced_args.append(arg)
+                else:
+                    sliced_args.append(_empty_tensor_slice(arg, dim))
+            return _empty_stacked_output(func(*sliced_args, **kwargs), out_dims)
         for index in _builtins.range(size):
             sliced_args = []
             for arg, dim in zip(args, normalized_dims):

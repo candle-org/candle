@@ -64,11 +64,20 @@ class Library:
             @lib.impl("my_add", dispatch_key="CPU")
             def my_add_cpu(x, y): ...
 
+            @lib.impl("my_add", "CPU")
+            def my_add_cpu(x, y): ...
+
         Args:
             name: Operator name (qualified or bare).
-            fn: Kernel function.  If None, returns a decorator.
+            fn: Kernel function, or dispatch key in decorator shorthand.
+                If None, returns a decorator.
             dispatch_key: Dispatch key string (e.g. "CPU", "NPU", "Meta").
         """
+        if isinstance(fn, (str, DispatchKey)):
+            if dispatch_key != "CompositeImplicitAutograd":
+                raise TypeError("dispatch key specified both positionally and by keyword")
+            dispatch_key = fn
+            fn = None
         qualname = self._qualname(name)
         if self._dispatch_key is not None and dispatch_key == "CompositeImplicitAutograd":
             dispatch_key = self._dispatch_key
