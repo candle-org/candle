@@ -8,6 +8,7 @@ while preserving the existing Python fallback behavior in ``candle._tensor``.
 
 import numpy as np
 
+cimport cython
 from libc.stdint cimport int64_t, uintptr_t, uint64_t
 from candle._C._tensor_impl cimport TensorImpl
 from candle._C._aclrt_ffi cimport memcpy_d2d as _cy_memcpy_d2d
@@ -792,6 +793,7 @@ def tensor_detach_(self):
     return self
 
 
+@cython.auto_pickle(False)
 cdef class _NpuToCopyBackward(_CyAutogradNode):
     cdef public object _src_dtype
 
@@ -1058,6 +1060,7 @@ cdef inline object _propagate_npu_owned_backward_grad(object source, object resu
     return result
 
 
+@cython.auto_pickle(False)
 cdef class _NpuReshapeBackward(_CyAutogradNode):
     cdef public object _self_shape
 
@@ -1104,6 +1107,7 @@ cdef inline object _attach_reshape_grad(object result, object self_):
     return result
 
 
+@cython.auto_pickle(False)
 cdef class _NpuTransposeIntBackward(_CyAutogradNode):
     cdef public object _self
     cdef public object _dim0
@@ -3054,6 +3058,7 @@ cdef inline bint _npu_scalar_reflected_fast_ok(object self, object other):
     return True
 
 
+@cython.auto_pickle(False)
 cdef class _NpuReflectedScalarSubBackward(_CyAutogradNode):
     cdef public object _self
 
@@ -3088,6 +3093,7 @@ cdef class _NpuReflectedScalarSubBackward(_CyAutogradNode):
         return (_mark_npu_owned_backward_grad(out),)
 
 
+@cython.auto_pickle(False)
 cdef class _NpuReflectedScalarDivBackward(_CyAutogradNode):
     cdef public object _self
     cdef public object _value
@@ -3290,6 +3296,7 @@ def tensor_xor(self, other):
 # ── reduction ops ─────────────────────────────────────────────────────────────
 
 
+@cython.auto_pickle(False)
 cdef class _NpuSumBackward(_CyAutogradNode):
     cdef public object _self
     cdef public object _self_shape
