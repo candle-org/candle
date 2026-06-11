@@ -656,7 +656,7 @@ def _npu_aclnn_slice(tensor, dim, start, stop, step):
 def _npu_assign_to_view(view, value):
     """Write *value* into a view tensor (which shares storage with the original).
 
-    For contiguous views, use D2D memcpy.  Otherwise, use aclnnInplaceCopy.
+    For contiguous views, use D2D memcpy outside graph capture. Otherwise, use aclnnInplaceCopy.
     """
     runtime = npu_runtime.get_runtime((view.device.index or 0))
     stream = npu_state.current_stream((view.device.index or 0))
@@ -679,7 +679,21 @@ def _npu_assign_to_view(view, value):
                 npu_runtime.memcpy_h2d(dst_ptr, copy_size, src_ptr, runtime=runtime)
             else:
                 src_ptr = _npu_data_ptr(value)
-                npu_runtime.memcpy_d2d(dst_ptr, copy_size, src_ptr, runtime=runtime)
+                if _npu_in_graph_capture():
+                    aclnn.inplace_copy(
+                        dst_ptr,
+                        src_ptr,
+                        view.shape,
+                        view.stride,
+                        view.dtype,
+                        value.shape,
+                        value.stride,
+                        value.dtype,
+                        runtime,
+                        stream=stream.stream,
+                    )
+                else:
+                    npu_runtime.memcpy_d2d(dst_ptr, copy_size, src_ptr, runtime=runtime)
         else:
             # Non-contiguous: use aclnnInplaceCopy
             dst_ptr = _npu_data_ptr(view)
@@ -2496,7 +2510,8 @@ def gather(a, dim, index):
     for i, size in enumerate(index.shape):
         if i != dim and size != a.shape[i]:
             raise ValueError("index shape mismatch")
-    _validate_index_bounds(index, a.shape[dim], allow_negative=False, name="gather")
+    if not _npu_in_graph_capture():
+        _validate_index_bounds(index, a.shape[dim], allow_negative=False, name="gather")
 
     if _use_soc_fallback("gather"):
         return _gather_310b_fallback(a, dim, index)

@@ -24,6 +24,25 @@ def _reject_unsupported_memory_format(memory_format):
     raise TypeError(f"unsupported memory_format {memory_format}")
 
 
+_NPU_IN_GRAPH_CAPTURE = None
+
+
+def _npu_in_graph_capture():
+    global _NPU_IN_GRAPH_CAPTURE  # pylint: disable=global-statement
+    if _NPU_IN_GRAPH_CAPTURE is None:
+        from ... import npu as _npu
+        _NPU_IN_GRAPH_CAPTURE = _npu._is_in_graph_capture  # pylint: disable=protected-access
+    return _NPU_IN_GRAPH_CAPTURE()
+
+
+def _try_graph_capture_scalar_tensor(arr, dtype, device, runtime, stream):
+    if arr.shape != () or not _npu_in_graph_capture():
+        return None
+    ptr = npu_runtime._alloc_device(max(arr.itemsize, 1), runtime=runtime)
+    aclnn.inplace_fill_scalar(ptr, arr.shape, (), dtype, arr.item(), runtime, stream=stream.stream)
+    return npu_typed_storage_from_ptr(ptr, 1, dtype, device=device)
+
+
 def _require_inplace_one_zero():
     if not aclnn.ones_zero_symbols_ok():
         raise RuntimeError("aclnnInplaceOne/Zero not available")
@@ -37,8 +56,10 @@ def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_for
         ptr = npu_runtime._alloc_device(1, runtime=runtime)
         storage = npu_typed_storage_from_ptr(ptr, 0, dtype, device=device)
     else:
-        ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=runtime)
-        storage = npu_typed_storage_from_ptr(ptr, arr.size, dtype, device=device)
+        storage = _try_graph_capture_scalar_tensor(arr, dtype, device, runtime, stream)
+        if storage is None:
+            ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=runtime)
+            storage = npu_typed_storage_from_ptr(ptr, arr.size, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return _wrap_tensor(storage, arr.shape, stride, requires_grad)
 
@@ -521,8 +542,10 @@ def tensor_create(data, dtype=None, device=None, requires_grad=False, memory_for
         ptr = npu_runtime._alloc_device(1, runtime=runtime)
         storage = npu_typed_storage_from_ptr(ptr, 0, dtype, device=device)
     else:
-        ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=runtime)
-        storage = npu_typed_storage_from_ptr(ptr, arr.size, dtype, device=device)
+        storage = _try_graph_capture_scalar_tensor(arr, dtype, device, runtime, stream)
+        if storage is None:
+            ptr, _ = npu_runtime._copy_cpu_to_npu(arr, runtime=runtime)
+            storage = npu_typed_storage_from_ptr(ptr, arr.size, dtype, device=device)
     stride = tuple(np.array(arr.strides) // arr.itemsize)
     return _wrap_tensor(storage, arr.shape, stride, requires_grad)
 

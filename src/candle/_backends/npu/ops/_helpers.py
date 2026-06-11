@@ -22,6 +22,17 @@ except ImportError:
     _fast_cast_impl = None
 
 
+_NPU_IN_GRAPH_CAPTURE = None
+
+
+def _npu_in_graph_capture():
+    global _NPU_IN_GRAPH_CAPTURE  # pylint: disable=global-statement
+    if _NPU_IN_GRAPH_CAPTURE is None:
+        from .... import npu as _npu
+        _NPU_IN_GRAPH_CAPTURE = _npu._is_in_graph_capture  # pylint: disable=protected-access
+    return _NPU_IN_GRAPH_CAPTURE()
+
+
 def _unwrap_storage(tensor):
     if tensor.storage().device.type != "npu":
         raise ValueError("Expected NPU storage for NPU op")
@@ -366,8 +377,22 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
     stream = npu_state.current_stream((ref_tensor.device.index or 0))
     out_shape = ref_tensor.shape
     out_stride = npu_runtime._contiguous_stride(out_shape)
-    out_size = _numel(out_shape) * _dtype_itemsize(ref_tensor.dtype)
+    out_numel = _numel(out_shape)
+    out_size = out_numel * _dtype_itemsize(ref_tensor.dtype)
     out_ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
+    if _npu_in_graph_capture():
+        if out_numel:
+            aclnn.inplace_fill_scalar(
+                out_ptr,
+                out_shape,
+                out_stride,
+                ref_tensor.dtype,
+                scalar,
+                runtime,
+                stream=stream.stream,
+            )
+        out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, ref_tensor.dtype, device=ref_tensor.device)
+        return _wrap_tensor(out_storage, out_shape, out_stride)
     # Fill on host then memcpy H2D to avoid aclnn scalar ops.
     from .. import acl_loader
     import ctypes
@@ -411,7 +436,7 @@ def _scalar_to_npu_tensor(scalar, ref_tensor):
         npu_runtime.memcpy_h2d(out_ptr, int(out_size), host_ptr, runtime=runtime)
     finally:
         acl.rt.free_host(host_ptr)
-    out_storage = npu_typed_storage_from_ptr(out_ptr, _numel(out_shape), ref_tensor.dtype, device=ref_tensor.device)
+    out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, ref_tensor.dtype, device=ref_tensor.device)
     return _wrap_tensor(out_storage, out_shape, out_stride)
 
 
