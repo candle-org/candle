@@ -16,10 +16,33 @@ from ...common import view as view_backend
 from ...._tensor import Tensor
 from ...._C._tensor_impl import cy_make_view_tensor  # pylint: disable=import-error,no-name-in-module
 
+try:
+    from candle._C._npu_ops import (  # pylint: disable=import-error,no-name-in-module
+        fast_cat_small_last_dim as _fast_cat_small_last_dim_impl,
+        fast_copy_small_inner_contiguous_view as _fast_copy_small_inner_contiguous_view_impl,
+        fast_last_dim_slice_view as _fast_last_dim_slice_view_impl,
+    )
+    _HAS_FAST_SMALL_D2D = True
+except ImportError:
+    _fast_cat_small_last_dim_impl = None  # type: ignore[assignment]
+    _fast_copy_small_inner_contiguous_view_impl = None  # type: ignore[assignment]
+    _fast_last_dim_slice_view_impl = None  # type: ignore[assignment]
+    _HAS_FAST_SMALL_D2D = False
+
+_NPU_IN_GRAPH_CAPTURE = None
+
 
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+
+def _npu_in_graph_capture():
+    global _NPU_IN_GRAPH_CAPTURE  # pylint: disable=global-statement
+    if _NPU_IN_GRAPH_CAPTURE is None:
+        from .... import npu as _npu
+        _NPU_IN_GRAPH_CAPTURE = _npu._is_in_graph_capture  # pylint: disable=protected-access
+    return _NPU_IN_GRAPH_CAPTURE()
 
 def _normalize_dims_tuple(dims, ndim, name):
     if isinstance(dims, int):
@@ -2089,6 +2112,10 @@ def cat(tensors, dim=0):
     itemsize = _dtype_itemsize(first.dtype)
     out_ptr = npu_runtime._alloc_device(out_numel * itemsize, runtime=runtime)
 
+    small_last_dim_cat = _npu_cat_small_last_dim(tensors, dim, out_shape, out_stride, out_ptr, first)
+    if small_last_dim_cat is not None:
+        return small_last_dim_cat
+
     # aclnnCat returns 561103 for some strided views (e.g. RoPE half slices)
     # and that failed workspace query can poison subsequent ACLNN calls in the
     # same process. Materialize those inputs on-device before calling aclnnCat.
@@ -2393,6 +2420,11 @@ def getitem(tensor, key):
     if any(isinstance(item, Tensor) and item.dtype.name == 'bool' for item in key):
         raise RuntimeError("NPU boolean mask indexing is not supported")
 
+    if _HAS_FAST_SMALL_D2D:
+        view = _fast_last_dim_slice_view_impl(tensor, key)
+        if view is not None:
+            return view
+
     if _is_basic_index_key(key):
         view = _npu_basic_getitem_view(tensor, key)
         if view is not None:
@@ -2474,7 +2506,7 @@ def gather(a, dim, index):
 
 
 
-def _index_select_known_nonnegative(a, dim, index):
+def _index_select_known_nonnegative(a, dim, index, validate=True):
     dim = _normalize_dim(dim, a.dim())
     _require_int64_indices(index, "index_select")
     if index.dim() != 1:
@@ -2489,7 +2521,9 @@ def _index_select_known_nonnegative(a, dim, index):
     for axis, size in enumerate(index_shape):
         repeats.append(1 if axis == dim else int(size))
     expanded = repeat(expanded, tuple(repeats))
-    return gather(a, dim, expanded)
+    if validate:
+        return gather(a, dim, expanded)
+    return _gather_unchecked(a, dim, expanded)
 
 
 
@@ -2500,6 +2534,8 @@ def index_select(a, dim, index):
     if index.dim() != 1:
         raise ValueError("index must be 1D")
     dim_size = a.shape[dim]
+    if _npu_in_graph_capture():
+        return _index_select_known_nonnegative(a, dim, index, validate=False)
     _validate_index_bounds(index, dim_size, allow_negative=True, name="index_select")
     norm_index = _normalize_negative_indices(index, dim_size)
     return _index_select_known_nonnegative(a, dim, norm_index)
@@ -2967,6 +3003,239 @@ def _npu_strided_linear_indices(shape, stride, offset, device):
     return flat
 
 
+_SMALL_INNER_CONTIGUOUS_COPY_MAX_BLOCKS = 1024
+_SMALL_INNER_CONTIGUOUS_COPY_MAX_BYTES = 1024 * 1024
+
+
+def _npu_copy_last_dim_slice_view(view):
+    """Materialize a step-1 last-dim slice view through native aclnnSlice.
+
+    For RoPE-style half slices, a single native slice launch is much closer to
+    torch_npu eager than issuing one D2D copy per row.  This is still a generic
+    view-materialization path: it only requires that the view is a pure step-1
+    slice of its base along the innermost dimension.
+    """
+    shape = tuple(view.shape)
+    if not shape:
+        return None
+    base = getattr(view, "_base", None)
+    if base is None or not hasattr(base, "shape"):
+        return None
+    if getattr(base, "device", None) != view.device or getattr(base, "dtype", None) != view.dtype:
+        return None
+    if len(base.shape) != len(shape):
+        return None
+    if tuple(base.stride) != tuple(view.stride):
+        return None
+    if view.stride[-1] != 1:
+        return None
+    if any(int(stride) < 0 for stride in view.stride):
+        return None
+    for axis in range(len(shape) - 1):
+        if int(shape[axis]) != int(base.shape[axis]):
+            return None
+    start = int(view.offset) - int(base.offset)
+    if start < 0:
+        return None
+    stop = start + int(shape[-1])
+    if stop > int(base.shape[-1]):
+        return None
+    return _npu_aclnn_slice(base, len(shape) - 1, start, stop, 1)
+
+
+def _npu_copy_small_inner_contiguous_view(view):
+    """Materialize a small inner-contiguous strided view with D2D row copies.
+
+    RoPE-style half-slices keep the innermost dimension contiguous but have a
+    gap between rows.  Building a gather index for those small views costs more
+    host/kernel overhead than copying the already-contiguous row fragments.
+    """
+    shape = tuple(view.shape)
+    if not shape:
+        return None
+    if view.stride[-1] != 1:
+        return None
+    if any(int(stride) < 0 for stride in view.stride):
+        return None
+
+    itemsize = _dtype_itemsize(view.dtype)
+    out_numel = _numel(shape)
+    total_bytes = out_numel * itemsize
+    inner = int(shape[-1])
+    if inner == 0:
+        return None
+
+    outer_shape = shape[:-1]
+    outer = 1
+    for size in outer_shape:
+        outer *= int(size)
+    if outer > _SMALL_INNER_CONTIGUOUS_COPY_MAX_BLOCKS:
+        return None
+    if total_bytes > _SMALL_INNER_CONTIGUOUS_COPY_MAX_BYTES:
+        return None
+
+    if _HAS_FAST_SMALL_D2D:
+        fast_result = _fast_copy_small_inner_contiguous_view_impl(view)
+        if fast_result is not None:
+            return fast_result
+
+    runtime = npu_runtime.get_runtime((view.device.index or 0))
+    stream = npu_state.current_stream((view.device.index or 0))
+    out_stride = npu_runtime._contiguous_stride(shape)
+    out_ptr = npu_runtime._alloc_device(max(total_bytes, itemsize), runtime=runtime)
+    out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), view.dtype, device=view.device)
+    if out_numel == 0:
+        return _wrap_tensor(out_storage, shape, out_stride)
+
+    src_base = _npu_data_ptr(view)
+    dst_base = int(out_ptr)
+    block_bytes = inner * itemsize
+    if not outer_shape:
+        npu_runtime.memcpy_d2d(
+            dst_base,
+            block_bytes,
+            src_base,
+            runtime=runtime,
+            stream=stream.stream,
+            non_blocking=True,
+        )
+        return _wrap_tensor(out_storage, shape, out_stride)
+
+    outer_ndim = len(outer_shape)
+    for linear_idx in range(outer):
+        rem = linear_idx
+        src_offset = 0
+        for axis in range(outer_ndim - 1, -1, -1):
+            size = int(outer_shape[axis])
+            coord = rem % size
+            rem //= size
+            src_offset += coord * int(view.stride[axis])
+        npu_runtime.memcpy_d2d(
+            dst_base + linear_idx * block_bytes,
+            block_bytes,
+            src_base + src_offset * itemsize,
+            runtime=runtime,
+            stream=stream.stream,
+            non_blocking=True,
+        )
+    return _wrap_tensor(out_storage, shape, out_stride)
+
+
+def _npu_cat_small_mixed_last_dim_native(tensors, dim, out_shape, out_stride, out_ptr, first):
+    """Use native aclnnCat when only a small number of inputs need materialization."""
+    if len(out_shape) == 0 or dim != len(out_shape) - 1:
+        return None
+    if len(tensors) > 4:
+        return None
+    if any(t.dtype != first.dtype or t.device != first.device for t in tensors):
+        return None
+    non_contiguous = [t for t in tensors if not t.is_contiguous()]
+    if not non_contiguous or len(non_contiguous) >= len(tensors):
+        return None
+    if any(t.stride[-1] != 1 for t in non_contiguous):
+        return None
+    if any(any(int(stride) < 0 for stride in t.stride) for t in non_contiguous):
+        return None
+    materialized = []
+    for t in tensors:
+        if t.is_contiguous():
+            materialized.append(t)
+        else:
+            copied = _npu_copy_small_inner_contiguous_view(t)
+            if copied is None:
+                return None
+            materialized.append(copied)
+    runtime = npu_runtime.get_runtime((first.device.index or 0))
+    stream = npu_state.current_stream((first.device.index or 0))
+    aclnn.cat(
+        [_unwrap_storage(t).data_ptr() for t in materialized],
+        [t.shape for t in materialized],
+        [t.stride for t in materialized],
+        [t.dtype for t in materialized],
+        dim,
+        out_ptr,
+        out_shape,
+        out_stride,
+        first.dtype,
+        runtime,
+        stream=stream.stream,
+    )
+    out_storage = npu_typed_storage_from_ptr(out_ptr, max(_numel(out_shape), 1), first.dtype, device=first.device)
+    return _wrap_tensor(out_storage, out_shape, out_stride)
+
+
+def _npu_cat_small_last_dim(tensors, dim, out_shape, out_stride, out_ptr, first):
+    """Concatenate tensors along last dim with low-overhead D2D copies."""
+    if len(out_shape) == 0 or dim != len(out_shape) - 1:
+        return None
+    if any(t.dtype != first.dtype or t.device != first.device for t in tensors):
+        return None
+    if any(t.stride[-1] != 1 for t in tensors):
+        return None
+    if any(any(int(stride) < 0 for stride in t.stride) for t in tensors):
+        return None
+
+    itemsize = _dtype_itemsize(first.dtype)
+    out_numel = _numel(out_shape)
+    total_bytes = out_numel * itemsize
+    if total_bytes > _SMALL_INNER_CONTIGUOUS_COPY_MAX_BYTES:
+        return None
+
+    outer_shape = out_shape[:-1]
+    outer = 1
+    for size in outer_shape:
+        outer *= int(size)
+    if outer > _SMALL_INNER_CONTIGUOUS_COPY_MAX_BLOCKS:
+        return None
+
+    if _HAS_FAST_SMALL_D2D:
+        fast_result = _fast_cat_small_last_dim_impl(tensors, dim, out_shape, out_stride, out_ptr, first)
+        if fast_result is not None:
+            return fast_result
+
+    native_mixed_cat = _npu_cat_small_mixed_last_dim_native(
+        tensors, dim, out_shape, out_stride, out_ptr, first
+    )
+    if native_mixed_cat is not None:
+        return native_mixed_cat
+
+    runtime = npu_runtime.get_runtime((first.device.index or 0))
+    out_storage = npu_typed_storage_from_ptr(out_ptr, max(out_numel, 1), first.dtype, device=first.device)
+    if out_numel == 0:
+        return _wrap_tensor(out_storage, out_shape, out_stride)
+
+    outer_ndim = len(outer_shape)
+    dst_base = int(out_ptr)
+    src_bases = [_npu_data_ptr(t) for t in tensors]
+    row_offsets = []
+    offset = 0
+    for t in tensors:
+        row_offsets.append(offset)
+        offset += int(t.shape[-1])
+
+    for linear_idx in range(outer):
+        rem = linear_idx
+        coords = [0] * outer_ndim
+        for axis in range(outer_ndim - 1, -1, -1):
+            size = int(outer_shape[axis])
+            coords[axis] = rem % size
+            rem //= size
+        for tensor_idx, t in enumerate(tensors):
+            inner = int(t.shape[-1])
+            if inner == 0:
+                continue
+            src_offset = 0
+            for axis, coord in enumerate(coords):
+                src_offset += coord * int(t.stride[axis])
+            npu_runtime.memcpy_d2d(
+                dst_base + (linear_idx * int(out_shape[-1]) + row_offsets[tensor_idx]) * itemsize,
+                inner * itemsize,
+                src_bases[tensor_idx] + src_offset * itemsize,
+                runtime=runtime,
+            )
+    return _wrap_tensor(out_storage, out_shape, out_stride)
+
+
 def _npu_copy_view_to_contiguous(view):
     """Copy a possibly non-contiguous NPU view to a new contiguous tensor.
 
@@ -2979,13 +3248,30 @@ def _npu_copy_view_to_contiguous(view):
     out_shape = tuple(view.shape)
 
     if _is_contiguous_view(view.shape, view.stride):
-        # Fast path: contiguous layout, just memcpy from the right offset
+        # Fast path: contiguous layout, just copy from the right offset. Raw
+        # aclrt D2D memcpy is low overhead in eager mode but is not graph
+        # capturable, so use aclnnInplaceCopy while capture is active.
         runtime = npu_runtime.get_runtime((view.device.index or 0))
         out_stride = npu_runtime._contiguous_stride(out_shape)
         out_numel = max(_numel(out_shape), 1)
         out_ptr = npu_runtime._alloc_device(out_numel * _dtype_itemsize(view.dtype), runtime=runtime)
-        copy_bytes = out_numel * _dtype_itemsize(view.dtype)
-        npu_runtime.memcpy_d2d(out_ptr, copy_bytes, _npu_data_ptr(view), runtime=runtime)
+        if _npu_in_graph_capture():
+            stream = npu_state.current_stream((view.device.index or 0))
+            aclnn.inplace_copy(
+                out_ptr,
+                _npu_data_ptr(view),
+                out_shape,
+                out_stride,
+                view.dtype,
+                view.shape,
+                view.stride,
+                view.dtype,
+                runtime,
+                stream=stream.stream,
+            )
+        else:
+            copy_bytes = out_numel * _dtype_itemsize(view.dtype)
+            npu_runtime.memcpy_d2d(out_ptr, copy_bytes, _npu_data_ptr(view), runtime=runtime)
         out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, view.dtype, device=view.device)
         return _wrap_tensor(out_storage, out_shape, out_stride)
 
@@ -3014,6 +3300,14 @@ def _npu_copy_view_to_contiguous(view):
         )
         out_storage = npu_typed_storage_from_ptr(out_ptr, out_numel, view.dtype, device=view.device)
         return _wrap_tensor(out_storage, out_shape, out_stride)
+
+    small_inner_copy = _npu_copy_small_inner_contiguous_view(view)
+    if small_inner_copy is not None:
+        return small_inner_copy
+
+    last_dim_slice_copy = _npu_copy_last_dim_slice_view(view)
+    if last_dim_slice_copy is not None:
+        return last_dim_slice_copy
 
     # General non-contiguous: flatten storage, compute linear indices, gather, reshape
     from ...._dispatch import dispatch

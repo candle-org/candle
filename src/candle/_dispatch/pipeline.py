@@ -18,7 +18,7 @@ def _set_functional_ops_pipeline_active(active):
     global _FUNCTIONAL_OPS_PIPELINE_SETTER  # pylint: disable=global-statement
     if _FUNCTIONAL_OPS_PIPELINE_SETTER is None:
         try:
-            from candle._C._functional_ops import cy_set_pipeline_active  # pylint: disable=import-error,no-name-in-module
+            from candle._C._tensor_api import cy_set_pipeline_active  # pylint: disable=import-error,no-name-in-module
         except ImportError:
             _FUNCTIONAL_OPS_PIPELINE_SETTER = False
             return

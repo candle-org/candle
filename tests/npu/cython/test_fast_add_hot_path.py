@@ -20,6 +20,65 @@ def test_exact_base_npu_pair_guard_requires_same_device_index():
     assert "==" in body
 
 
+def test_npu_rsqrt_uses_cython_autograd_node_source():
+    """NPU rsqrt training hot path should attach a Cython autograd node."""
+    src = (_REPO_ROOT / "src/candle/_C/_functional_ops.pyx").read_text(encoding="utf-8")
+    assert "fast_rsqrt as _cy_fast_npu_rsqrt" in src
+    assert "cdef class _NpuRsqrtBackward" in src
+    assert 'self._name = "RsqrtBackward0"' in src
+    assert "cdef inline object _attach_npu_rsqrt_grad" in src
+    assert "def rsqrt(a):" in src
+
+    node_match = re.search(
+        r"cdef class _NpuRsqrtBackward\(_CyAutogradNode\):(?P<body>.*?)\n\n\ncdef class ",
+        src,
+        flags=re.DOTALL,
+    )
+    assert node_match is not None
+    node_body = node_match.group("body")
+    assert "_rsqrt_backward_helper" not in node_body
+    assert "_cy_fast_npu_mul_scalar_exact" in node_body
+    assert "_cy_fast_npu_mul_exact" in node_body
+
+    attach_match = re.search(
+        r"def rsqrt\(a\):(?P<body>.*?)(?:\n\ndef |\n\ncdef )",
+        src,
+        flags=re.DOTALL,
+    )
+    assert attach_match is not None
+    attach_body = attach_match.group("body")
+    assert "_exact_base_npu_unary(a)" in attach_body
+    assert "_attach_npu_rsqrt_grad(_cy_fast_npu_rsqrt(<TensorImpl>a), a)" in attach_body
+
+
+def test_npu_rsqrt_autograd_skips_generated_python_helper(npu_device, monkeypatch):
+    """Default NPU rsqrt backward should bypass generated Python helper composition."""
+    import numpy as np
+    import candle as torch
+    import candle._generated.functions as functions_mod
+
+    calls = {"helper": 0}
+
+    def fail_generated_helper(*args, **kwargs):
+        calls["helper"] += 1
+        raise AssertionError("NPU rsqrt backward should use a Cython autograd node")
+
+    monkeypatch.setattr(functions_mod, "_rsqrt_backward_helper", fail_generated_helper)
+
+    values = np.array([0.25, 1.0, 4.0, 9.0], dtype=np.float32)
+    x = torch.tensor(values, device=npu_device, dtype=torch.float32, requires_grad=True)
+    out = torch.rsqrt(x)
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    assert calls["helper"] == 0
+    assert out.device.type == "npu"
+    assert x.grad is not None and x.grad.device.type == "npu"
+    expected_grad = -0.5 * np.power(values, -1.5)
+    np.testing.assert_allclose(x.grad.to("cpu").numpy(), expected_grad, atol=1e-6, rtol=1e-6)
+
+
+
 def test_npu_zero_stride_contiguous_reuses_inplace_copy_pta_cache(npu_device, monkeypatch):
     """Expanded-view contiguous should reuse aclnnInplaceCopy PTA executors after warmup."""
     import numpy as np
@@ -311,6 +370,101 @@ def test_npu_duplicate_zero_stride_leaf_grads_materialize_once(npu_device, monke
     assert b.grad.is_contiguous()
     assert np.allclose(a.grad.cpu().float().numpy(), 1.0, rtol=0, atol=0)
     assert np.allclose(b.grad.cpu().float().numpy(), 1.0, rtol=0, atol=0)
+
+
+def test_large_cached_allocator_hot_path_uses_direct_stat_updates():
+    """Small-op cached output allocation should avoid generic dict/list stat bookkeeping."""
+    src = (_REPO_ROOT / "src/candle/_C/_allocator.pyx").read_text(encoding="utf-8")
+    assert "cdef inline void _stat_delta_large_and_all" in src
+    fast = re.search(
+        r"cpdef int64_t malloc_large_cached\(.*?\n\s*cpdef void free\(",
+        src,
+        flags=re.DOTALL,
+    )
+    assert fast is not None
+    body = fast.group(0)
+    assert "_stat_delta_large_and_all" in body
+    assert "self._track_reuse" not in body
+    assert "self._bump_fast" not in body
+
+
+def test_small_cached_allocator_hot_path_uses_direct_stat_updates():
+    """1024-element fp16 binary outputs must not fall back to generic allocator stats."""
+    src = (_REPO_ROOT / "src/candle/_C/_allocator.pyx").read_text(encoding="utf-8")
+    assert "cdef inline void _stat_delta_small_and_all" in src
+    malloc_match = re.search(
+        r"cpdef int64_t malloc_large_cached\(.*?\n\s*cpdef void free\(",
+        src,
+        flags=re.DOTALL,
+    )
+    assert malloc_match is not None
+    malloc_body = malloc_match.group(0)
+    assert "return self.malloc(requested, stream)" in malloc_body
+    assert "blocks = self._cached[\"small_pool\"]" in malloc_body
+    assert "_stat_delta_small_and_all" in malloc_body
+    assert "if allocated < SMALL_POOL_THRESHOLD:\n            return self.malloc(requested, stream)" not in malloc_body
+
+    free_match = re.search(
+        r"cpdef void free_large_cached\(.*?\n\s*cpdef void free_synchronized",
+        src,
+        flags=re.DOTALL,
+    )
+    assert free_match is not None
+    free_body = free_match.group(0)
+    assert "_stat_delta_small_and_all" in free_body
+    common_free = free_body.split("self._insert_events(block)\n            return", maxsplit=1)[1]
+    assert "self._track_free" not in common_free
+    assert "self._bump_fast" not in common_free
+
+
+def test_tensorimpl_binary_slots_inline_npu_fast_path():
+    """Tensor operator slots should make the NPU fast-path decision before tensor_api fallback."""
+    src = (_REPO_ROOT / "src/candle/_C/_tensor_impl.pyx").read_text(encoding="utf-8")
+    assert "fast_add_exact as _slot_fast_npu_add_exact" in src
+    assert "fast_sub_exact as _slot_fast_npu_sub_exact" in src
+    assert "fast_mul_exact as _slot_fast_npu_mul_exact" in src
+    assert "fast_div_exact as _slot_fast_npu_div_exact" in src
+    assert "cdef inline bint _can_use_npu_binary_slot_direct" in src
+    assert "_ensure_slot_base" in src
+    assert "type(a) is not _SlotBaseTensor" in src
+    assert "type(a) is not TensorImpl" not in src
+    for name, fast_call in [
+        ("__add__", "_slot_fast_npu_add_exact"),
+        ("__sub__", "_slot_fast_npu_sub_exact"),
+        ("__mul__", "_slot_fast_npu_mul_exact"),
+        ("__truediv__", "_slot_fast_npu_div_exact"),
+    ]:
+        method = re.search(rf"def {name}\(self, other\):(?P<body>.*?)(?:\n\s*def |\n\s*# --)", src, flags=re.DOTALL)
+        assert method is not None
+        body = method.group("body")
+        assert "_can_use_npu_binary_slot_direct" in body
+        assert fast_call in body
+        assert body.index("_can_use_npu_binary_slot_direct") < body.index(fast_call)
+
+
+def test_tensorimpl_scalar_slots_inline_npu_fast_path():
+    """Tensor-scalar dunders should bypass Python functional wrappers on NPU."""
+    src = (_REPO_ROOT / "src/candle/_C/_tensor_impl.pyx").read_text(encoding="utf-8")
+    assert "fast_add_scalar_exact as _slot_fast_npu_add_scalar_exact" in src
+    assert "fast_sub_scalar_exact as _slot_fast_npu_sub_scalar_exact" in src
+    assert "fast_mul_scalar_exact as _slot_fast_npu_mul_scalar_exact" in src
+    assert "fast_div_scalar_exact as _slot_fast_npu_div_scalar_exact" in src
+    assert "cdef inline bint _can_use_npu_scalar_slot_direct" in src
+    assert "type(value) is bool" in src
+    assert "a._c_numel <= 0" in src
+    for name, fast_call in [
+        ("__add__", "_slot_fast_npu_add_scalar_exact"),
+        ("__sub__", "_slot_fast_npu_sub_scalar_exact"),
+        ("__mul__", "_slot_fast_npu_mul_scalar_exact"),
+        ("__truediv__", "_slot_fast_npu_div_scalar_exact"),
+    ]:
+        method = re.search(rf"def {name}\(self, other\):(?P<body>.*?)(?:\n\s*def |\n\s*# --)", src, flags=re.DOTALL)
+        assert method is not None
+        body = method.group("body")
+        assert "_can_use_npu_scalar_slot_direct(self, other)" in body
+        assert fast_call in body
+        assert body.index("_can_use_npu_scalar_slot_direct") < body.index(fast_call)
+
 
 
 def test_small_op_fast_paths_skip_python_defer_executor(npu_device, monkeypatch):
@@ -1544,7 +1698,9 @@ def test_native_npu_sdpa_unsupported_layouts_fall_back_to_composite():
     assert "_load_npu_flash_sdpa_function" not in src
     assert "NPU FlashAttention SDPA Cython path failed" not in body
     assert "raise RuntimeError" not in body
-    assert "return npu_flash_sdpa(query, key, value, float(scale_factor))" in body
+    assert "native_attn_mask = None" in body
+    assert "native_attn_mask = _ones" in body
+    assert "return npu_flash_sdpa(query, key, value, float(scale_factor), native_attn_mask)" in body
     sdpa_wrapper = re.search(
         r"def npu_flash_sdpa\(.*?\):(?P<body>.*?)\n\n\ncdef class _NpuSplitPackedQkvProjectionBackward",
         cy_src,

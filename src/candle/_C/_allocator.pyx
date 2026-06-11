@@ -189,6 +189,44 @@ cdef inline int64_t _round_size(int64_t size) nogil:
     return ((size + ROUNDING_BYTES - 1) // ROUNDING_BYTES) * ROUNDING_BYTES
 
 
+cdef inline void _stat_delta_one(
+    int64_t* stats,
+    int current_idx,
+    int64_t current,
+    int64_t allocated,
+    int64_t freed,
+) noexcept nogil:
+    stats[current_idx] += current
+    if current and stats[current_idx] > stats[current_idx + SLOT_PEAK]:
+        stats[current_idx + SLOT_PEAK] = stats[current_idx]
+    stats[current_idx + SLOT_ALLOCATED] += allocated
+    stats[current_idx + SLOT_FREED] += freed
+
+
+cdef inline void _stat_delta_large_and_all(
+    int64_t* stats,
+    int large_current_idx,
+    int all_current_idx,
+    int64_t current,
+    int64_t allocated,
+    int64_t freed,
+) noexcept nogil:
+    _stat_delta_one(stats, large_current_idx, current, allocated, freed)
+    _stat_delta_one(stats, all_current_idx, current, allocated, freed)
+
+
+cdef inline void _stat_delta_small_and_all(
+    int64_t* stats,
+    int small_current_idx,
+    int all_current_idx,
+    int64_t current,
+    int64_t allocated,
+    int64_t freed,
+) noexcept nogil:
+    _stat_delta_one(stats, small_current_idx, current, allocated, freed)
+    _stat_delta_one(stats, all_current_idx, current, allocated, freed)
+
+
 cdef class FastNpuAllocator:
     def __init__(self, int device_id):
         from candle._backends.npu.allocator import _load_alloc_conf, _parse_max_split_size_mb
@@ -446,11 +484,12 @@ cdef class FastNpuAllocator:
         return block.ptr
 
     cpdef int64_t malloc_large_cached(self, int64_t size, object stream=None):
-        """Hot large-pool allocation for exact NPU eager wrappers.
+        """Hot allocation for exact NPU eager wrappers.
 
-        The small-op fast paths allocate fixed large contiguous outputs. This skips
-        pending-event drain/GC/splitting checks on cached hits while preserving the
-        full malloc path for misses, OOM, small blocks, or non-default cases.
+        The small-op fast paths allocate fixed contiguous outputs. This skips
+        pending-event drain/GC/generic stat bookkeeping on exact cached hits while
+        preserving the full malloc path for misses, OOM, split-required blocks, or
+        non-default cases.
         """
         cdef int64_t requested = size
         cdef int64_t allocated = _round_size(requested)
@@ -458,15 +497,37 @@ cdef class FastNpuAllocator:
         cdef FastBlock block
         cdef Py_ssize_t idx
         if allocated < SMALL_POOL_THRESHOLD:
+            blocks = self._cached["small_pool"]
+            for idx in range(len(blocks) - 1, -1, -1):
+                block = <FastBlock>blocks[idx]
+                if block.size == allocated:
+                    blocks.pop(idx)
+                    _stat_delta_small_and_all(self._stats_arr, 88, 84, -block.size, 0, block.size)
+                    _stat_delta_small_and_all(self._stats_arr, 76, 72, -1, 0, 1)
+                    _stat_delta_small_and_all(self._stats_arr, 16, 12, block.size, block.size, 0)
+                    _stat_delta_small_and_all(self._stats_arr, 108, 104, requested, requested, 0)
+                    _stat_delta_small_and_all(self._stats_arr, 4, 0, 1, 1, 0)
+                    _stat_delta_small_and_all(self._stats_arr, 40, 36, block.size, block.size, 0)
+                    _stat_delta_small_and_all(self._stats_arr, 28, 24, 1, 1, 0)
+                    block.requested = requested
+                    block.stream = stream
+                    self._active[block.ptr] = block
+                    return block.ptr
+                if block.size > allocated:
+                    break
             return self.malloc(requested, stream)
         blocks = self._cached["large_pool"]
         for idx in range(len(blocks) - 1, -1, -1):
             block = <FastBlock>blocks[idx]
             if block.size >= allocated:
                 blocks.pop(idx)
-                self._bump_fast("inactive_split_bytes", "large_pool", -block.size, 0, block.size)
-                self._bump_fast("inactive_split", "large_pool", -1, 0, 1)
-                self._track_reuse(requested, block.size, "large_pool")
+                _stat_delta_large_and_all(self._stats_arr, 92, 84, -block.size, 0, block.size)
+                _stat_delta_large_and_all(self._stats_arr, 80, 72, -1, 0, 1)
+                _stat_delta_large_and_all(self._stats_arr, 20, 12, block.size, block.size, 0)
+                _stat_delta_large_and_all(self._stats_arr, 112, 104, requested, requested, 0)
+                _stat_delta_large_and_all(self._stats_arr, 8, 0, 1, 1, 0)
+                _stat_delta_large_and_all(self._stats_arr, 44, 36, block.size, block.size, 0)
+                _stat_delta_large_and_all(self._stats_arr, 32, 24, 1, 1, 0)
                 block.requested = requested
                 block.stream = stream
                 self._active[block.ptr] = block
@@ -504,10 +565,24 @@ cdef class FastNpuAllocator:
             self._track_free(block)
             self._insert_events(block)
             return
-        self._track_free(block)
-        self._cached[block.pool].append(block)
-        self._bump_fast("inactive_split_bytes", block.pool, block.size, block.size, 0)
-        self._bump_fast("inactive_split", block.pool, 1, 1, 0)
+        if block.pool == "small_pool":
+            _stat_delta_small_and_all(self._stats_arr, 16, 12, -block.size, 0, block.size)
+            _stat_delta_small_and_all(self._stats_arr, 108, 104, -block.requested, 0, block.requested)
+            _stat_delta_small_and_all(self._stats_arr, 4, 0, -1, 0, 1)
+            _stat_delta_small_and_all(self._stats_arr, 40, 36, -block.size, 0, block.size)
+            _stat_delta_small_and_all(self._stats_arr, 28, 24, -1, 0, 1)
+            self._cached["small_pool"].append(block)
+            _stat_delta_small_and_all(self._stats_arr, 88, 84, block.size, block.size, 0)
+            _stat_delta_small_and_all(self._stats_arr, 76, 72, 1, 1, 0)
+            return
+        _stat_delta_large_and_all(self._stats_arr, 20, 12, -block.size, 0, block.size)
+        _stat_delta_large_and_all(self._stats_arr, 112, 104, -block.requested, 0, block.requested)
+        _stat_delta_large_and_all(self._stats_arr, 8, 0, -1, 0, 1)
+        _stat_delta_large_and_all(self._stats_arr, 44, 36, -block.size, 0, block.size)
+        _stat_delta_large_and_all(self._stats_arr, 32, 24, -1, 0, 1)
+        self._cached["large_pool"].append(block)
+        _stat_delta_large_and_all(self._stats_arr, 92, 84, block.size, block.size, 0)
+        _stat_delta_large_and_all(self._stats_arr, 80, 72, 1, 1, 0)
 
     cpdef void free_synchronized(self, int64_t ptr):
         """Return an active block to the cache after device synchronization.

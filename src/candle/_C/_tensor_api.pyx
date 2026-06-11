@@ -8,12 +8,22 @@ while preserving the existing Python fallback behavior in ``candle._tensor``.
 
 import numpy as np
 
-from libc.stdint cimport uintptr_t, uint64_t
+from libc.stdint cimport int64_t, uintptr_t, uint64_t
 from candle._C._tensor_impl cimport TensorImpl
 from candle._C._aclrt_ffi cimport memcpy_d2d as _cy_memcpy_d2d
 from candle._C._autograd_node cimport Node as _CyAutogradNode
 from candle._C._grad_mode_state cimport get_enabled_fast as _grad_enabled_fast
-from candle._C._npu_ops cimport fast_sum as _cy_fast_npu_sum
+from candle._C._npu_ops cimport (
+    fast_sum as _cy_fast_npu_sum,
+    fast_add_exact as _cy_fast_npu_add_exact,
+    fast_sub_exact as _cy_fast_npu_sub_exact,
+    fast_mul_exact as _cy_fast_npu_mul_exact,
+    fast_mul_scalar_exact as _cy_fast_npu_mul_scalar_exact,
+    fast_div_exact as _cy_fast_npu_div_exact,
+    fast_rsub_scalar_exact as _cy_fast_npu_rsub_scalar_exact,
+    fast_rdiv_scalar_exact as _cy_fast_npu_rdiv_scalar_exact,
+    fast_cast as _cy_fast_npu_cast,
+)
 
 
 def _bf16_to_f32_local(arr):
@@ -37,6 +47,7 @@ cdef object _current_pipeline_fn = None
 
 cdef object _add_fn = None
 cdef object _mul_fn = None
+cdef object _div_fn = None
 cdef object _matmul_fn = None
 cdef object _relu_fn = None
 cdef object _neg_fn = None
@@ -56,6 +67,14 @@ cdef object _cy_make_view_tensor_fn = None
 cdef object _cy_make_tensor_from_storage_fn = None
 cdef object _HookHandle_cls = None
 cdef object _is_grad_enabled_fn = None
+cdef object _functional_ops_set_functionalize_flag = None
+cdef object _functional_ops_set_pipeline_flag = None
+cdef object _functional_ops_set_profiler_flag = None
+cdef object _functional_ops_set_autocast_flag = None
+cdef bint _npu_functionalize_active_flag = False
+cdef bint _npu_pipeline_active_flag = False
+cdef bint _npu_profiler_active_flag = False
+cdef bint _npu_autocast_active_flag = False
 
 cdef object _typed_storage_from_numpy_fn = None
 cdef object _meta_typed_storage_from_shape_fn = None
@@ -77,6 +96,62 @@ cdef object _dispatch_op_enter_fn = None
 cdef object _dispatch_op_exit_fn = None
 cdef object _is_functionalize_fn = None
 cdef object _is_autocast_enabled_fn = None
+
+
+def cy_set_functionalize_active(bint active):
+    """Mirror functionalization guard for Tensor method hot paths."""
+    global _npu_functionalize_active_flag, _functional_ops_set_functionalize_flag
+    _npu_functionalize_active_flag = active
+    if _functional_ops_set_functionalize_flag is None:
+        try:
+            from candle._C._functional_ops import cy_set_functionalize_active as _setter
+            _functional_ops_set_functionalize_flag = _setter
+        except ImportError:
+            _functional_ops_set_functionalize_flag = False
+    if _functional_ops_set_functionalize_flag:
+        _functional_ops_set_functionalize_flag(active)
+
+
+def cy_set_pipeline_active(bint active):
+    """Mirror pipeline guard for Tensor method hot paths."""
+    global _npu_pipeline_active_flag, _functional_ops_set_pipeline_flag
+    _npu_pipeline_active_flag = active
+    if _functional_ops_set_pipeline_flag is None:
+        try:
+            from candle._C._functional_ops import cy_set_pipeline_active as _setter
+            _functional_ops_set_pipeline_flag = _setter
+        except ImportError:
+            _functional_ops_set_pipeline_flag = False
+    if _functional_ops_set_pipeline_flag:
+        _functional_ops_set_pipeline_flag(active)
+
+
+def cy_set_npu_profiler_active(bint active):
+    """Mirror profiler guard for Tensor method hot paths."""
+    global _npu_profiler_active_flag, _functional_ops_set_profiler_flag
+    _npu_profiler_active_flag = active
+    if _functional_ops_set_profiler_flag is None:
+        try:
+            from candle._C._functional_ops import cy_set_npu_profiler_active as _setter
+            _functional_ops_set_profiler_flag = _setter
+        except ImportError:
+            _functional_ops_set_profiler_flag = False
+    if _functional_ops_set_profiler_flag:
+        _functional_ops_set_profiler_flag(active)
+
+
+def cy_set_npu_autocast_active(bint active):
+    """Mirror NPU autocast guard for Tensor method hot paths."""
+    global _npu_autocast_active_flag, _functional_ops_set_autocast_flag
+    _npu_autocast_active_flag = active
+    if _functional_ops_set_autocast_flag is None:
+        try:
+            from candle._C._functional_ops import cy_set_npu_autocast_active as _setter
+            _functional_ops_set_autocast_flag = _setter
+        except ImportError:
+            _functional_ops_set_autocast_flag = False
+    if _functional_ops_set_autocast_flag:
+        _functional_ops_set_autocast_flag(active)
 
 
 cdef inline void _ensure_base():
@@ -104,6 +179,35 @@ cdef inline bint _is_tensor_without_torch_function_override(object val):
     if type(val) is _BaseTensor:
         return True
     return not _class_overrides_torch_function(type(val))
+
+
+cdef inline bint _can_use_npu_tensor_binary_direct(object a_obj, object b_obj):
+    """True when Tensor binary operators may jump straight to Cython NPU kernels."""
+    cdef TensorImpl a
+    cdef TensorImpl b
+    _ensure_base()
+    if type(a_obj) is not _BaseTensor or type(b_obj) is not _BaseTensor:
+        return False
+    a = <TensorImpl>a_obj
+    b = <TensorImpl>b_obj
+    if a._device_type != 1 or b._device_type != 1:
+        return False
+    if a._device_index != b._device_index:
+        return False
+    if a._dtype_code != b._dtype_code:
+        return False
+    if _npu_functionalize_active_flag or _npu_pipeline_active_flag:
+        return False
+    if _npu_profiler_active_flag or _npu_autocast_active_flag:
+        return False
+    if _grad_enabled_fast() and (a.requires_grad or b.requires_grad):
+        return False
+    return True
+
+
+cdef inline bint _can_use_npu_tensor_binary_method_direct(object a_obj, object b_obj):
+    """Variant used by Tensor.add/sub/mul methods with keyword args handled by caller."""
+    return _can_use_npu_tensor_binary_direct(a_obj, b_obj)
 
 
 cdef inline void _ensure_device_ref():
@@ -261,13 +365,14 @@ cdef inline void _validate_as_strided_args(tuple size, tuple stride, Py_ssize_t 
 
 
 cdef inline void _ensure_functional_refs():
-    global _add_fn, _mul_fn, _matmul_fn, _relu_fn, _neg_fn
+    global _add_fn, _mul_fn, _div_fn, _matmul_fn, _relu_fn, _neg_fn
     global _reshape_dispatch_fn, _transpose_dispatch_fn, _view_dispatch_fn
     global _to_dispatch_fn
 
     if _add_fn is None:
         from candle._functional import (
             add as add_fn,
+            div as div_fn,
             matmul as matmul_fn,
             mul as mul_fn,
             neg as neg_fn,
@@ -279,6 +384,7 @@ cdef inline void _ensure_functional_refs():
         )
         _add_fn = add_fn
         _mul_fn = mul_fn
+        _div_fn = div_fn
         _matmul_fn = matmul_fn
         _relu_fn = relu_fn
         _neg_fn = neg_fn
@@ -377,7 +483,9 @@ cdef inline object _annotate_reshape_view(object source, object view, object sha
     return _propagate_npu_owned_backward_grad(source, view)
 
 
-def tensor_add(self, other):
+cpdef object tensor_add(object self, object other):
+    if _can_use_npu_tensor_binary_direct(self, other):
+        return _cy_fast_npu_add_exact(<TensorImpl>self, <TensorImpl>other)
     _ensure_functional_refs()
     return _add_fn(self, other)
 
@@ -503,15 +611,16 @@ def tensor_record_stream(self, stream):
 def tensor_is_pinned(self):
     return self._storage.is_pinned()
 
-def tensor_sub(self, other):
-    _ensure_base()
-    _ensure_functional_refs()
-    if isinstance(other, _BaseTensor):
-        return _add_fn(self, _neg_fn(other))
-    return _add_fn(self, -other)
+cpdef object tensor_sub(object self, object other):
+    if _can_use_npu_tensor_binary_direct(self, other):
+        return _cy_fast_npu_sub_exact(<TensorImpl>self, <TensorImpl>other)
+    _ensure_functional_add_sub_ref()
+    return _functional_sub_fn(self, other)
 
 
-def tensor_mul(self, other):
+cpdef object tensor_mul(object self, object other):
+    if _can_use_npu_tensor_binary_direct(self, other):
+        return _cy_fast_npu_mul_exact(<TensorImpl>self, <TensorImpl>other)
     _ensure_functional_refs()
     return _mul_fn(self, other)
 
@@ -539,7 +648,7 @@ def tensor_imul(self, other):
     return self
 
 
-def tensor_itruediv(self, other):
+cpdef object tensor_itruediv(object self, object other):
     self._check_inplace()
     self.div_(other)
     return self
@@ -586,6 +695,7 @@ def tensor_clone(self, *, memory_format=None):
     cdef uintptr_t src_ptr
     cdef uintptr_t dst_ptr
     cdef uint64_t nbytes
+    cdef uint64_t alloc_nbytes
 
     _ensure_functional_refs()
     _ensure_base()
@@ -605,10 +715,12 @@ def tensor_clone(self, *, memory_format=None):
                     runtime = _npu_get_runtime_fast_fn(src_impl._device_index)
                     stream = _npu_current_stream_fast_fn(src_impl._device_index)
                     nbytes = <uint64_t>(src_impl._c_numel * src_impl._itemsize)
+                    alloc_nbytes = nbytes if nbytes != 0 else 1
                     dst_ptr = <uintptr_t>_npu_get_allocator_fn(src_impl._device_index).malloc(
-                        nbytes, stream=stream.stream)
+                        alloc_nbytes, stream=stream.stream)
                     src_ptr = <uintptr_t>src_impl._storage._untyped._device_ptr
-                    _cy_memcpy_d2d(dst_ptr, nbytes, src_ptr, <uintptr_t>int(stream.stream), True)
+                    if nbytes != 0:
+                        _cy_memcpy_d2d(dst_ptr, nbytes, src_ptr, <uintptr_t>int(stream.stream), True)
                     storage = _npu_typed_storage_from_ptr_fn(
                         dst_ptr, src_impl._c_numel, src_impl._dtype_obj, device=src_impl._device_obj)
                     _ensure_tensor_factory_ref()
@@ -680,6 +792,70 @@ def tensor_detach_(self):
     return self
 
 
+cdef class _NpuToCopyBackward(_CyAutogradNode):
+    cdef public object _src_dtype
+
+    cdef void _init_fast(self, object self_, object src_dtype):
+        self.inputs = (self_,)
+        self._saved_tensors_list = []
+        self._saved_fields = {}
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "ToCopyBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = None
+        self._src_dtype = src_dtype
+
+    def __init__(self, self_, src_dtype):
+        self._init_fast(self_, src_dtype)
+
+    def backward(self, grad):
+        cdef object result
+        try:
+            from candle._C._autograd_engine import is_create_graph_enabled
+            if is_create_graph_enabled():
+                _ensure_functional_refs()
+                return (_to_dispatch_fn(grad, grad.device, dtype=self._src_dtype),)
+        except ImportError:
+            pass
+        result = None
+        try:
+            result = _cy_fast_npu_cast(grad, self._src_dtype)
+        except ValueError:
+            result = None
+        if result is None:
+            _ensure_functional_refs()
+            result = _to_dispatch_fn(grad, grad.device, dtype=self._src_dtype)
+        return (result,)
+
+
+cdef inline bint _can_use_npu_to_dtype_fast_path(object self, object dtype):
+    """True when a dtype-only Tensor.to may jump straight to the Cython NPU cast."""
+    _ensure_base()
+    if type(self) is not _BaseTensor:
+        return False
+    if (<TensorImpl>self)._device_type != 1:
+        return False
+    if not getattr(dtype, "is_floating_point", False):
+        return False
+    if _npu_functionalize_active_flag or _npu_pipeline_active_flag:
+        return False
+    if _npu_profiler_active_flag or _npu_autocast_active_flag:
+        return False
+    return True
+
+
+cdef inline object _attach_npu_to_copy_grad(object result, object self_, object src_dtype):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuToCopyBackward node = _NpuToCopyBackward.__new__(_NpuToCopyBackward)
+    node._init_fast(self_, src_dtype)
+    out.grad_fn = node
+    out.requires_grad = True
+    return result
+
+
 def tensor_to(self, *args, **kwargs):
     cdef object device = None
     cdef object dtype = None
@@ -691,6 +867,7 @@ def tensor_to(self, *args, **kwargs):
     cdef object dt
     cdef object fmt_name
     cdef object target_device
+    cdef object fast_cast_result
 
     _ensure_device_ref()
     _ensure_dtype_ref()
@@ -732,6 +909,23 @@ def tensor_to(self, *args, **kwargs):
     ):
         if target_device.type not in ("cpu", "meta"):
             raise NotImplementedError("channels_last memory_format is currently only supported on CPU and meta tensors")
+
+    if (
+        device is None
+        and memory_format is None
+        and dtype is not None
+        and dtype != self.dtype
+        and _can_use_npu_to_dtype_fast_path(self, dtype)
+    ):
+        try:
+            fast_cast_result = _cy_fast_npu_cast(self, dtype)
+        except ValueError:
+            fast_cast_result = None
+        if fast_cast_result is not None:
+            if _grad_enabled_fast() and (<TensorImpl>self).requires_grad:
+                return _attach_npu_to_copy_grad(
+                    fast_cast_result, self, (<TensorImpl>self)._dtype_obj)
+            return fast_cast_result
 
     if (dtype is not None and dtype != self.dtype) or device is not None:
         result = _to_dispatch_fn(
@@ -2818,8 +3012,155 @@ def tensor_matmul_method(self, other):
     return _dispatch_fn("matmul", self.device.type, self, other)
 
 
+cdef object _npu_capture_check_fn = None
+
+
+cdef inline bint _npu_in_graph_capture_api():
+    global _npu_capture_check_fn
+    if _npu_capture_check_fn is None:
+        try:
+            from candle import npu as _npu_mod
+            _npu_capture_check_fn = _npu_mod._is_in_graph_capture
+        except Exception:
+            _npu_capture_check_fn = False
+    if _npu_capture_check_fn is False:
+        return False
+    return bool(_npu_capture_check_fn())
+
+
+cdef inline bint _npu_scalar_reflected_fast_ok(object self, object other):
+    """True when scalar-left NPU arithmetic may use the direct Cython kernels."""
+    if not isinstance(other, (int, float)):
+        return False
+    if (<TensorImpl>self)._device_type != 1:
+        return False
+    if _npu_in_graph_capture_api():
+        return False
+    return True
+
+
+cdef class _NpuReflectedScalarSubBackward(_CyAutogradNode):
+    cdef public object _self
+
+    cdef void _init_fast(self, object self_):
+        self.inputs = (self_,)
+        self._saved_tensors_list = []
+        self._saved_fields = {}
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "RSubScalarBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = None
+        self._self = self_
+
+    def __init__(self, self_):
+        self._init_fast(self_)
+
+    def backward(self, grad):
+        cdef object out
+        if not (<TensorImpl>self._self).requires_grad:
+            return (None,)
+        _ensure_dispatch_ref()
+        try:
+            from candle._C._autograd_engine import is_create_graph_enabled
+            if is_create_graph_enabled():
+                return (_dispatch_fn("neg", grad.device.type, grad),)
+        except ImportError:
+            pass
+        out = _cy_fast_npu_mul_scalar_exact(<TensorImpl>grad, -1.0)
+        return (_mark_npu_owned_backward_grad(out),)
+
+
+cdef class _NpuReflectedScalarDivBackward(_CyAutogradNode):
+    cdef public object _self
+    cdef public object _value
+    cdef int64_t _saved_self_version
+    cdef bint _saved_self_released
+
+    cdef void _init_fast(self, object self_, object value):
+        self.inputs = (self_,)
+        self._saved_tensors_list = []
+        self._saved_fields = {}
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "RDivScalarBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = None
+        self._self = self_
+        self._value = value
+        self._saved_self_version = (<TensorImpl>self_)._version_value
+        self._saved_self_released = False
+
+    def __init__(self, self_, value):
+        self._init_fast(self_, value)
+
+    def release_saved_tensors(self):
+        self._saved_self_released = True
+
+    def backward(self, grad):
+        cdef object x
+        cdef object denom
+        cdef object ratio
+        cdef object out
+        cdef int64_t current_version
+        if not (<TensorImpl>self._self).requires_grad:
+            return (None,)
+        if self._saved_self_released:
+            raise RuntimeError(
+                "Trying to backward through the graph a second time (or directly access saved tensors after they have already been freed). "
+                "Saved intermediate values of the graph are freed when you call .backward() or autograd.grad(). "
+                "Specify retain_graph=True if you need to backward through the graph a second time or if you need to access saved tensors after calling backward."
+            )
+        current_version = (<TensorImpl>self._self)._version_value
+        if current_version != self._saved_self_version:
+            raise RuntimeError(
+                "one of the variables needed for gradient computation has been modified by an inplace operation"
+            )
+        x = self._self
+        _ensure_dispatch_ref()
+        try:
+            from candle._C._autograd_engine import is_create_graph_enabled
+            if is_create_graph_enabled():
+                denom = _dispatch_fn("mul", x.device.type, x, x)
+                ratio = _dispatch_fn("true_divide", x.device.type, grad, denom)
+                return (_dispatch_fn("mul", x.device.type, ratio, -self._value),)
+        except ImportError:
+            pass
+        denom = _cy_fast_npu_mul_exact(<TensorImpl>x, <TensorImpl>x)
+        ratio = _cy_fast_npu_div_exact(<TensorImpl>grad, <TensorImpl>denom)
+        out = _cy_fast_npu_mul_scalar_exact(<TensorImpl>ratio, -self._value)
+        return (_mark_npu_owned_backward_grad(out),)
+
+
+cdef inline object _attach_npu_reflected_scalar_sub_grad(object result, object self_):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuReflectedScalarSubBackward grad_fn = _NpuReflectedScalarSubBackward.__new__(_NpuReflectedScalarSubBackward)
+    grad_fn._init_fast(self_)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
+cdef inline object _attach_npu_reflected_scalar_div_grad(object result, object self_, object value):
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuReflectedScalarDivBackward grad_fn = _NpuReflectedScalarDivBackward.__new__(_NpuReflectedScalarDivBackward)
+    grad_fn._init_fast(self_, value)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
 def tensor_rsub(self, other):
     """other - self  (reflected sub)"""
+    if _npu_scalar_reflected_fast_ok(self, other):
+        result = _cy_fast_npu_rsub_scalar_exact(<TensorImpl>self, other)
+        if _grad_enabled_fast() and (<TensorImpl>self).requires_grad:
+            return _attach_npu_reflected_scalar_sub_grad(result, self)
+        return result
     _ensure_dispatch_ref()
     neg_self = _dispatch_fn("neg", self.device.type, self)
     return _dispatch_fn("add", self.device.type, neg_self, other)
@@ -2830,12 +3171,19 @@ def tensor_rmul(self, other):
     return _dispatch_fn("mul", self.device.type, self, other)
 
 
-def tensor_truediv(self, other):
-    _ensure_dispatch_ref()
-    return _dispatch_fn("true_divide", self.device.type, self, other)
+cpdef object tensor_truediv(object self, object other):
+    if _can_use_npu_tensor_binary_direct(self, other):
+        return _cy_fast_npu_div_exact(<TensorImpl>self, <TensorImpl>other)
+    _ensure_functional_refs()
+    return _div_fn(self, other)
 
 
 def tensor_rtruediv(self, other):
+    if _npu_scalar_reflected_fast_ok(self, other):
+        result = _cy_fast_npu_rdiv_scalar_exact(<TensorImpl>self, other)
+        if _grad_enabled_fast() and (<TensorImpl>self).requires_grad:
+            return _attach_npu_reflected_scalar_div_grad(result, self, other)
+        return result
     _ensure_dispatch_ref()
     return _dispatch_fn("true_divide", self.device.type, other, self)
 

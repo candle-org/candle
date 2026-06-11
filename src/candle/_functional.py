@@ -124,6 +124,13 @@ def _py_matmul(*args, **kwargs):
     return dispatch("matmul", None, *args, **kwargs)
 
 
+def _py_rsqrt(a):
+    r = _handle_torch_function(_py_rsqrt, (a,), {})
+    if r is not NotImplemented:
+        return r
+    return dispatch("rsqrt", a.device.type, a)
+
+
 def _py_addmm(input, mat1, mat2, *, beta=1, alpha=1):
     r = _handle_torch_function(_py_addmm, (input, mat1, mat2), {"beta": beta, "alpha": alpha})
     if r is not NotImplemented:
@@ -155,6 +162,7 @@ _py_matmul.__name__ = "matmul"
 _py_addmm.__name__ = "addmm"
 _py_relu.__name__ = "relu"
 _py_neg.__name__ = "neg"
+_py_rsqrt.__name__ = "rsqrt"
 
 # _py_sub and _py_div are defined later in the file (after their dependencies).
 _py_sub = None
@@ -170,6 +178,7 @@ _transpose_impl = _py_transpose
 _reshape_impl = _py_reshape
 _view_impl = _py_view
 _neg_impl = _py_neg
+_rsqrt_impl = _py_rsqrt
 
 try:
     from ._C._functional_ops import (
@@ -194,6 +203,7 @@ try:
         expand as _cy_expand,
         movedim as _cy_movedim,
         diagonal as _cy_diagonal,
+        rsqrt as _cy_rsqrt,
         view_as_real as _cy_view_as_real,
         view_as_complex as _cy_view_as_complex,
         unfold as _cy_unfold,
@@ -238,6 +248,7 @@ try:
     _reshape_impl = _cy_reshape
     _view_impl = _cy_view
     _neg_impl = _cy_neg
+    _rsqrt_impl = _cy_rsqrt
     # Replace Python wrapper functions with Cython directly
     add = _cy_add
     mul = _cy_mul
@@ -249,6 +260,7 @@ try:
     reshape = _cy_reshape
     view = _cy_view
     neg = _cy_neg
+    rsqrt = _cy_rsqrt
 except ImportError:
     pass
 
@@ -369,7 +381,7 @@ def exp2(a):
 
 
 def rsqrt(a):
-    return dispatch("rsqrt", a.device.type, a)
+    return _rsqrt_impl(a)
 
 
 def sign(a):

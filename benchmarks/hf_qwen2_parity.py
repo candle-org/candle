@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -98,6 +99,8 @@ def _base_worker_args(args, framework, out_dir):
         "--device", args.device,
         "--dtype", args.dtype,
         "--seed", str(args.seed),
+        "--iters", str(args.iters),
+        "--warmup", str(args.warmup),
         "--out-dir", out_dir,
         "--accuracy-atol", str(args.accuracy_atol),
         "--accuracy-rtol", str(args.accuracy_rtol),
@@ -268,6 +271,111 @@ def annotate_accuracy(results, *, atol, rtol):
     return failures
 
 
+def annotate_timing(results):
+    """Annotate Candle timing rows with Candle/torch_npu median latency ratios."""
+    by_framework = {row.get("framework"): row for row in results}
+    candle = by_framework.get("candle")
+    torch_ref = by_framework.get("torch_npu")
+    if candle is None or torch_ref is None:
+        return []
+    if candle.get("status") != "ok" or torch_ref.get("status") != "ok":
+        return []
+
+    candle_timing = candle.get("timing", {})
+    torch_timing = torch_ref.get("timing", {})
+    failures = []
+    for key in sorted(set(candle_timing) & set(torch_timing)):
+        candle_summary = candle_timing.get(key, {})
+        torch_summary = torch_timing.get(key, {})
+        candle_median = candle_summary.get("median_ms")
+        torch_median = torch_summary.get("median_ms")
+        if candle_median is None or torch_median in (None, 0):
+            failures.append(f"{key}: unable to compute timing ratio")
+            continue
+        candle_summary["ratio"] = float(candle_median) / float(torch_median)
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# Timing helpers
+# ---------------------------------------------------------------------------
+
+
+def _summarize_samples(samples):
+    """Return basic latency distribution statistics for millisecond samples."""
+    ordered = sorted(float(sample) for sample in samples)
+    if not ordered:
+        return {
+            "min_ms": None,
+            "median_ms": None,
+            "p10_ms": None,
+            "p90_ms": None,
+        }
+    mid = len(ordered) // 2
+    if len(ordered) % 2:
+        median = ordered[mid]
+    else:
+        median = (ordered[mid - 1] + ordered[mid]) / 2.0
+    p10 = ordered[int((len(ordered) - 1) * 0.10)]
+    p90 = ordered[int(math.ceil((len(ordered) - 1) * 0.90))]
+    return {
+        "min_ms": ordered[0],
+        "median_ms": median,
+        "p10_ms": p10,
+        "p90_ms": p90,
+    }
+
+
+def _time_iterations(step, synchronize, *, warmup, iters, timer=None):
+    """Run warmup and measured iterations, synchronizing around each sample."""
+    timer = timer or time.perf_counter
+    for _ in range(warmup):
+        step()
+    synchronize()
+
+    samples = []
+    for _ in range(iters):
+        synchronize()
+        start = timer()
+        step()
+        synchronize()
+        end = timer()
+        samples.append((end - start) * 1000.0)
+    summary = _summarize_samples(samples)
+    summary["samples_ms"] = samples
+    return summary
+
+
+def _time_forward_backward_iterations(forward_step, backward_step, synchronize, *, warmup, iters, timer=None):
+    """Measure split forward/backward/total latencies for train-step mode."""
+    timer = timer or time.perf_counter
+    for _ in range(warmup):
+        forward_step()
+        backward_step()
+    synchronize()
+
+    forward_samples = []
+    backward_samples = []
+    total_samples = []
+    for _ in range(iters):
+        synchronize()
+        start = timer()
+        forward_step()
+        synchronize()
+        mid = timer()
+        backward_step()
+        synchronize()
+        end = timer()
+        forward_samples.append((mid - start) * 1000.0)
+        backward_samples.append((end - mid) * 1000.0)
+        total_samples.append((end - start) * 1000.0)
+    return {
+        "forward": {**_summarize_samples(forward_samples), "samples_ms": forward_samples},
+        "backward": {**_summarize_samples(backward_samples), "samples_ms": backward_samples},
+        "total": {**_summarize_samples(total_samples), "samples_ms": total_samples},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Worker internals
 # ---------------------------------------------------------------------------
@@ -313,6 +421,17 @@ def _device_obj(torch, framework, device):
     if framework == "candle":
         return torch.Device(device)
     return torch.device(device)
+
+
+def _sync(torch):
+    if hasattr(torch, "npu") and hasattr(torch.npu, "synchronize"):
+        torch.npu.synchronize()
+
+
+def _clear_model_grads(model):
+    for param in model.parameters():
+        if getattr(param, "grad", None) is not None:
+            param.grad = None
 
 
 def _make_inputs(torch, device, *, seq_len=8):
@@ -396,8 +515,8 @@ def _build_model(torch, args, device):
     return model
 
 
-def _run_model(torch, model, args, device):
-    input_ids, labels, attention_mask = _make_inputs(torch, device)
+def _make_forward_step(model, args, input_ids, labels, attention_mask):
+    """Create a callable that runs one Qwen2 step for the selected cache mode."""
     kwargs = {
         "input_ids": input_ids,
         "attention_mask": attention_mask,
@@ -406,30 +525,43 @@ def _run_model(torch, model, args, device):
     if args.mode in ("loss", "train-step"):
         kwargs["labels"] = labels
 
+    if args.cache_mode == "none":
+        def forward_once():
+            return model(**kwargs)
+        return forward_once
     if args.cache_mode == "dynamic":
-        first_kwargs = dict(kwargs)
-        if "labels" in first_kwargs:
-            first_kwargs.pop("labels")
-        current_tokens = 2 if args.mode in ("loss", "train-step") else 1
-        first_kwargs["input_ids"] = input_ids[:, :-current_tokens]
-        first_kwargs["attention_mask"] = attention_mask[:, :-current_tokens]
-        first = model(**first_kwargs)
-        kwargs["input_ids"] = input_ids[:, -current_tokens:]
-        kwargs["attention_mask"] = attention_mask
-        if "labels" in kwargs:
-            kwargs["labels"] = labels[:, -current_tokens:]
-        kwargs["past_key_values"] = first.past_key_values
-    elif args.cache_mode == "static":
+        def forward_once():
+            first_kwargs = dict(kwargs)
+            if "labels" in first_kwargs:
+                first_kwargs.pop("labels")
+            current_tokens = 2 if args.mode in ("loss", "train-step") else 1
+            first_kwargs["input_ids"] = input_ids[:, :-current_tokens]
+            first_kwargs["attention_mask"] = attention_mask[:, :-current_tokens]
+            first = model(**first_kwargs)
+            step_kwargs = dict(kwargs)
+            step_kwargs["input_ids"] = input_ids[:, -current_tokens:]
+            step_kwargs["attention_mask"] = attention_mask
+            if "labels" in step_kwargs:
+                step_kwargs["labels"] = labels[:, -current_tokens:]
+            step_kwargs["past_key_values"] = first.past_key_values
+            return model(**step_kwargs)
+        return forward_once
+    if args.cache_mode == "static":
         raise NotImplementedError("static cache parity mode is not implemented yet")
+    raise ValueError(f"unknown cache mode: {args.cache_mode}")
 
-    out = model(**kwargs)
+
+def _run_model(torch, model, args, device):
+    input_ids, labels, attention_mask = _make_inputs(torch, device)
+    forward_once = _make_forward_step(model, args, input_ids, labels, attention_mask)
+
+    out = forward_once()
     loss = getattr(out, "loss", None)
     if args.mode == "train-step":
         if loss is None:
             loss = out.logits.to(torch.float32).sum()
         loss.backward()
-        if hasattr(torch, "npu") and hasattr(torch.npu, "synchronize"):
-            torch.npu.synchronize()
+        _sync(torch)
     metrics = {
         "logits_shape": list(out.logits.shape),
         "logits_values": _tensor_values(torch, out.logits),
@@ -443,7 +575,37 @@ def _run_model(torch, model, args, device):
         metrics["grad_values"] = grad_values
     if args.cache_mode != "none" and getattr(out, "past_key_values", None) is not None:
         metrics["cache_type"] = type(out.past_key_values).__name__
-    return metrics
+
+    _clear_model_grads(model)
+    if args.mode == "train-step":
+        timed_loss = {"value": None}
+
+        def timed_forward():
+            _clear_model_grads(model)
+            timed_out = forward_once()
+            step_loss = getattr(timed_out, "loss", None)
+            if step_loss is None:
+                step_loss = timed_out.logits.to(torch.float32).sum()
+            timed_loss["value"] = step_loss
+
+        def timed_backward():
+            timed_loss["value"].backward()
+
+        timing = _time_forward_backward_iterations(
+            timed_forward,
+            timed_backward,
+            lambda: _sync(torch),
+            warmup=args.warmup,
+            iters=args.iters,
+        )
+    else:
+        timing = {"step": _time_iterations(
+            forward_once,
+            lambda: _sync(torch),
+            warmup=args.warmup,
+            iters=args.iters,
+        )}
+    return metrics, timing
 
 
 def _run_worker(args):
@@ -452,7 +614,11 @@ def _run_worker(args):
         torch = _prepare_framework(framework, args.device)
         device = _device_obj(torch, framework, args.device)
         model = _build_model(torch, args, device)
-        metrics = _run_model(torch, model, args, device)
+        run_result = _run_model(torch, model, args, device)
+        if isinstance(run_result, tuple):
+            metrics, timing = run_result
+        else:
+            metrics, timing = run_result, {}
         payload = {
             "framework": framework,
             "status": "ok",
@@ -462,6 +628,7 @@ def _run_worker(args):
             "dtype": args.dtype,
             "diagnostics": _framework_diagnostics(torch, framework),
             "metrics": metrics,
+            "timing": timing,
         }
     except Exception as exc:  # pragma: no cover - diagnostics for subprocess workers
         payload = {
@@ -538,6 +705,7 @@ def main():
     frameworks = ["candle", "torch_npu"] if args.framework == "all" else [args.framework]
     results = [_spawn_framework(framework, args) for framework in frameworks]
     failures = annotate_accuracy(results, atol=args.accuracy_atol, rtol=args.accuracy_rtol)
+    failures.extend(annotate_timing(results))
     payload = {
         "frameworks": frameworks,
         "mode": args.mode,

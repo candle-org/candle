@@ -15,6 +15,7 @@ from candle._C._tensor_impl cimport (
     TensorImpl,
     cy_make_tensor_from_storage,
     cy_make_tensor_from_storage_trusted,
+    cy_make_view_tensor,
 )
 from candle._C._storage_impl cimport StorageImpl
 from candle._C._npu_storage cimport FastNPUStorage, FastTypedStorage
@@ -22,6 +23,10 @@ from candle._C._allocator cimport FastNpuAllocator
 from candle._C._aclnn_ffi cimport (
     binary_op_no_alpha as _ffi_binary_op_no_alpha,
     binary_op_with_alpha as _ffi_binary_op_with_alpha,
+    tensor_scalar_op_with_alpha as _ffi_tensor_scalar_op_with_alpha,
+    tensor_scalar_op_no_alpha as _ffi_tensor_scalar_op_no_alpha,
+    inplace_tensor_scalar_op_with_alpha as _ffi_inplace_tensor_scalar_op_with_alpha,
+    inplace_fill_scalar_op as _ffi_inplace_fill_scalar_op,
     binary_two_inputs_with_int8_op as _ffi_binary_two_inputs_with_int8_op,
     four_tensor_two_scalars_one_int8_op as _ffi_four_tensor_two_scalars_one_int8_op,
     reduce_sum_op as _ffi_reduce_sum_op,
@@ -38,6 +43,8 @@ from candle._C._aclnn_ffi cimport (
     pta_begin_sdpa_flash_grad_storage_cache_lookup_raw as _ffi_pta_begin_sdpa_flash_grad_storage_cache_lookup_raw,
     pta_begin_binary_cache_lookup as _ffi_pta_begin_binary_cache_lookup,
     pta_begin_binary_cache_lookup_raw as _ffi_pta_begin_binary_cache_lookup_raw,
+    pta_begin_binary_alpha_cache_lookup_raw as _ffi_pta_begin_binary_alpha_cache_lookup_raw,
+    pta_begin_tensor_scalar_cache_lookup_raw as _ffi_pta_begin_tensor_scalar_cache_lookup_raw,
     pta_begin_unary_cache_lookup as _ffi_pta_begin_unary_cache_lookup,
     pta_begin_unary_cache_lookup_raw as _ffi_pta_begin_unary_cache_lookup_raw,
     pta_begin_inplace_copy_cache_lookup as _ffi_pta_begin_inplace_copy_cache_lookup,
@@ -45,13 +52,19 @@ from candle._C._aclnn_ffi cimport (
     pta_begin_stack_cache_lookup as _ffi_pta_begin_stack_cache_lookup,
     pta_end_cache_lookup as _ffi_pta_end_cache_lookup,
     unary_op as _ffi_unary_op,
+    unary_op_with_input_storage as _ffi_unary_op_with_input_storage,
+    cast_op as _ffi_cast_op,
     create_tensor_raw as _ffi_create_tensor_raw,
     create_tensor_raw_with_storage as _ffi_create_tensor_raw_with_storage,
     destroy_tensor_raw as _ffi_destroy_tensor_raw,
 )
+from candle._C._aclrt_ffi cimport memcpy_d2d as _cy_memcpy_d2d
 import importlib
 
 DEF MAX_NDIM = 16
+DEF MAX_FAST_CAT_INPUTS = 64
+DEF SMALL_INNER_CONTIGUOUS_COPY_MAX_BLOCKS = 1024
+DEF SMALL_INNER_CONTIGUOUS_COPY_MAX_BYTES = 1048576
 
 ctypedef int32_t (*FlashAttentionScoreGetWorkspaceSize_t)(
     void*, void*, void*, void*, void*, void*, void*, void*,
@@ -326,6 +339,111 @@ cdef inline object _device_obj_fast(object t):
     return t.device
 
 
+cdef inline uintptr_t _npu_data_ptr_fast(object t, int itemsize):
+    """Return effective NPU device pointer, including TensorImpl storage offset."""
+    cdef FastTypedStorage typed
+    if isinstance(t, TensorImpl):
+        typed = <FastTypedStorage>(<TensorImpl>t)._storage
+        return <uintptr_t>typed._untyped._device_ptr + <uintptr_t>((<TensorImpl>t)._c_offset * itemsize)
+    return <uintptr_t>int(t.storage().data_ptr()) + <uintptr_t>(int(t.offset) * itemsize)
+
+
+cdef inline uintptr_t _npu_storage_base_ptr_fast(object t):
+    """Return the base storage pointer without applying TensorImpl offset."""
+    cdef FastTypedStorage typed
+    if isinstance(t, TensorImpl):
+        typed = <FastTypedStorage>(<TensorImpl>t)._storage
+        return <uintptr_t>typed._untyped._device_ptr
+    return <uintptr_t>int(t.storage().data_ptr())
+
+
+cdef inline int64_t _npu_storage_numel_fast(object t, int itemsize):
+    """Return the backing storage size in elements for ACL storage metadata."""
+    cdef FastTypedStorage typed
+    if isinstance(t, TensorImpl):
+        typed = <FastTypedStorage>(<TensorImpl>t)._storage
+        return typed._untyped._nbytes // itemsize
+    return int(t.storage().nbytes()) // itemsize
+
+
+cdef inline bint _can_use_native_offset_unary_descriptor(TensorImpl t) noexcept:
+    """True when ACLNN can describe the view by storage offset instead of copying."""
+    cdef int i
+    if t._ndim == 0 or t._c_offset == 0:
+        return False
+    for i in range(t._ndim):
+        if t._c_stride[i] < 0:
+            return False
+    return True
+
+
+cdef inline bint _is_small_inner_contiguous_view(object t) noexcept:
+    """True for small positive-stride views whose innermost dimension is contiguous."""
+    cdef TensorImpl ti
+    cdef int i
+    cdef int64_t outer = 1
+    cdef int64_t numel = 1
+    if not isinstance(t, TensorImpl):
+        return False
+    ti = <TensorImpl>t
+    if ti._ndim == 0 or _tensor_has_strict_contiguous_stride(ti):
+        return False
+    if ti._c_stride[ti._ndim - 1] != 1:
+        return False
+    if ti._c_shape[ti._ndim - 1] == 0:
+        return False
+    for i in range(ti._ndim):
+        if ti._c_stride[i] < 0:
+            return False
+        numel *= ti._c_shape[i]
+        if i < ti._ndim - 1:
+            outer *= ti._c_shape[i]
+    if outer > SMALL_INNER_CONTIGUOUS_COPY_MAX_BLOCKS:
+        return False
+    if numel * ti._itemsize > SMALL_INNER_CONTIGUOUS_COPY_MAX_BYTES:
+        return False
+    return True
+
+
+cdef inline int _copy_small_inner_contiguous_view_to_ptr(
+    TensorImpl src,
+    uintptr_t dst_base,
+    uintptr_t stream_raw,
+    int itemsize,
+) except -1:
+    """Copy a small inner-contiguous view into an already-allocated contiguous buffer."""
+    cdef int i, j
+    cdef int64_t outer = 1
+    cdef int64_t linear_idx, rem, coord, src_offset
+    cdef int64_t block_bytes = src._c_shape[src._ndim - 1] * itemsize
+    cdef FastTypedStorage typed = <FastTypedStorage>src._storage
+    cdef uintptr_t src_base = <uintptr_t>typed._untyped._device_ptr + <uintptr_t>(src._c_offset * itemsize)
+
+    for i in range(src._ndim - 1):
+        outer *= src._c_shape[i]
+
+    if src._ndim == 1:
+        _cy_memcpy_d2d(dst_base, <uint64_t>block_bytes, src_base, stream_raw, True)
+        return 0
+
+    for linear_idx in range(outer):
+        rem = linear_idx
+        src_offset = 0
+        for j in range(src._ndim - 1):
+            i = src._ndim - 2 - j
+            coord = rem % src._c_shape[i]
+            rem = rem // src._c_shape[i]
+            src_offset += coord * src._c_stride[i]
+        _cy_memcpy_d2d(
+            dst_base + <uintptr_t>(linear_idx * block_bytes),
+            <uint64_t>block_bytes,
+            src_base + <uintptr_t>(src_offset * itemsize),
+            stream_raw,
+            True,
+        )
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # fast_binary_op — drop-in replacement for _binary_op in _helpers.py
 # ---------------------------------------------------------------------------
@@ -487,6 +605,212 @@ cdef inline object _make_npu_tensor_fast_large(int64_t device_ptr, int64_t n_ele
         tensor_dtype_code,
         itemsize,
     )
+
+
+cpdef object fast_last_dim_slice_view(object tensor, object key):
+    """Fast path for Ellipsis + step-1 last-dim slices, e.g. x[..., :h]."""
+    _ensure_npu_imports()
+    if not isinstance(tensor, TensorImpl):
+        return None
+    cdef TensorImpl base = <TensorImpl>tensor
+    if base._ndim == 0:
+        return None
+    if not isinstance(key, tuple):
+        return None
+    cdef int key_len = len(key)
+    if key_len == 0 or key_len > 2:
+        return None
+
+    cdef object last
+    if key_len == 1:
+        last = key[0]
+    else:
+        if key[0] is not Ellipsis:
+            return None
+        last = key[1]
+    if not isinstance(last, slice):
+        return None
+
+    cdef Py_ssize_t start_obj, stop_obj, step_obj
+    start_obj, stop_obj, step_obj = last.indices(base._c_shape[base._ndim - 1])
+    cdef int64_t start = <int64_t>start_obj
+    cdef int64_t stop = <int64_t>stop_obj
+    cdef int64_t step = <int64_t>step_obj
+    if step != 1:
+        return None
+
+    cdef int64_t length = stop - start
+    if length < 0:
+        length = 0
+    cdef int i
+    cdef int64_t offset = base._c_offset + start * base._c_stride[base._ndim - 1]
+    cdef list shape_list = [0] * base._ndim
+    cdef list stride_list = [0] * base._ndim
+    for i in range(base._ndim):
+        if i == base._ndim - 1:
+            shape_list[i] = length
+        else:
+            shape_list[i] = base._c_shape[i]
+        stride_list[i] = base._c_stride[i]
+    return cy_make_view_tensor(base, base._storage, tuple(shape_list), tuple(stride_list), offset)
+
+
+cpdef object fast_copy_small_inner_contiguous_view(object view):
+    """Materialize a small inner-contiguous NPU view using Cython D2D copies."""
+    _ensure_npu_imports()
+
+    cdef tuple shape = (<TensorImpl>view)._shape_tuple if isinstance(view, TensorImpl) else tuple(view.shape)
+    cdef object stride_obj = (<TensorImpl>view)._stride_tuple if isinstance(view, TensorImpl) else view.stride
+    cdef int ndim = len(shape)
+    if ndim == 0:
+        return None
+    if <int64_t>stride_obj[ndim - 1] != 1:
+        return None
+
+    cdef int i, j
+    for i in range(ndim):
+        if <int64_t>stride_obj[i] < 0:
+            return None
+
+    cdef int64_t inner = <int64_t>shape[ndim - 1]
+    if inner == 0:
+        return None
+
+    cdef int64_t outer = 1
+    for i in range(ndim - 1):
+        outer *= <int64_t>shape[i]
+    if outer > SMALL_INNER_CONTIGUOUS_COPY_MAX_BLOCKS:
+        return None
+
+    cdef int dev_idx = (<TensorImpl>view)._device_index if isinstance(view, TensorImpl) else (view.device.index or 0)
+    cdef object dtype = (<TensorImpl>view)._dtype_obj if isinstance(view, TensorImpl) else view.dtype
+    cdef object device = _device_obj_fast(view)
+    cdef int itemsize = (<TensorImpl>view)._itemsize if isinstance(view, TensorImpl) else c_dtype_itemsize(dtype)
+    cdef int64_t out_numel = 1
+    for i in range(ndim):
+        out_numel *= <int64_t>shape[i]
+    cdef int64_t total_bytes = out_numel * itemsize
+    if total_bytes > SMALL_INNER_CONTIGUOUS_COPY_MAX_BYTES:
+        return None
+
+    cdef object out_stride = _contiguous_stride_tuple(shape)
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc(max(total_bytes, itemsize), stream=stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(max(total_bytes, itemsize), stream=stream_obj)
+
+    cdef uintptr_t dst_base = <uintptr_t>out_ptr
+    cdef uintptr_t src_base = _npu_data_ptr_fast(view, itemsize)
+    cdef int64_t block_bytes = inner * itemsize
+    cdef int64_t linear_idx, rem, coord, src_offset
+
+    if ndim == 1:
+        _cy_memcpy_d2d(dst_base, <uint64_t>block_bytes, src_base, stream_raw, True)
+    else:
+        for linear_idx in range(outer):
+            rem = linear_idx
+            src_offset = 0
+            for j in range(ndim - 1):
+                i = ndim - 2 - j
+                coord = rem % <int64_t>shape[i]
+                rem = rem // <int64_t>shape[i]
+                src_offset += coord * <int64_t>stride_obj[i]
+            _cy_memcpy_d2d(
+                dst_base + <uintptr_t>(linear_idx * block_bytes),
+                <uint64_t>block_bytes,
+                src_base + <uintptr_t>(src_offset * itemsize),
+                stream_raw,
+                True,
+            )
+
+    cdef int dtype_code = (<TensorImpl>view)._dtype_code if isinstance(view, TensorImpl) else _dtype_to_tensor_code(dtype)
+    return _make_npu_tensor_fast_large(<int64_t>dst_base, out_numel, dtype, device, shape, out_stride, itemsize, dev_idx, dtype_code)
+
+
+cpdef object fast_cat_small_last_dim(object tensors, int64_t dim, object out_shape,
+                                     object out_stride, int64_t out_ptr, object first):
+    """Concatenate small inner-contiguous tensors with Cython D2D row copies."""
+    _ensure_npu_imports()
+
+    cdef int ndim = len(out_shape)
+    cdef int ntensors = len(tensors)
+    if ndim == 0 or dim != ndim - 1 or ntensors <= 0 or ntensors > MAX_FAST_CAT_INPUTS:
+        return None
+
+    cdef int dev_idx = (<TensorImpl>first)._device_index if isinstance(first, TensorImpl) else (first.device.index or 0)
+    cdef object dtype = (<TensorImpl>first)._dtype_obj if isinstance(first, TensorImpl) else first.dtype
+    cdef object device = _device_obj_fast(first)
+    cdef int itemsize = (<TensorImpl>first)._itemsize if isinstance(first, TensorImpl) else c_dtype_itemsize(dtype)
+    cdef int dtype_code = (<TensorImpl>first)._dtype_code if isinstance(first, TensorImpl) else _dtype_to_tensor_code(dtype)
+    cdef int64_t out_numel = 1
+    cdef int i, j, tensor_idx
+    for i in range(ndim):
+        out_numel *= <int64_t>out_shape[i]
+    cdef int64_t total_bytes = out_numel * itemsize
+    if total_bytes > SMALL_INNER_CONTIGUOUS_COPY_MAX_BYTES:
+        return None
+
+    cdef int64_t outer = 1
+    for i in range(ndim - 1):
+        outer *= <int64_t>out_shape[i]
+    if outer > SMALL_INNER_CONTIGUOUS_COPY_MAX_BLOCKS:
+        return None
+
+    cdef uintptr_t src_bases[MAX_FAST_CAT_INPUTS]
+    cdef int64_t src_strides[MAX_FAST_CAT_INPUTS][MAX_NDIM]
+    cdef int64_t inners[MAX_FAST_CAT_INPUTS]
+    cdef int64_t row_offsets[MAX_FAST_CAT_INPUTS]
+    cdef object t, stride_obj, shape_obj
+    cdef int64_t row_offset = 0
+
+    for tensor_idx in range(ntensors):
+        t = tensors[tensor_idx]
+        if t.dtype != dtype or t.device != device:
+            return None
+        shape_obj = (<TensorImpl>t)._shape_tuple if isinstance(t, TensorImpl) else t.shape
+        stride_obj = (<TensorImpl>t)._stride_tuple if isinstance(t, TensorImpl) else t.stride
+        if len(shape_obj) != ndim or <int64_t>stride_obj[ndim - 1] != 1:
+            return None
+        for i in range(ndim):
+            if <int64_t>stride_obj[i] < 0:
+                return None
+            if i != ndim - 1 and <int64_t>shape_obj[i] != <int64_t>out_shape[i]:
+                return None
+            src_strides[tensor_idx][i] = <int64_t>stride_obj[i]
+        inners[tensor_idx] = <int64_t>shape_obj[ndim - 1]
+        row_offsets[tensor_idx] = row_offset
+        row_offset += inners[tensor_idx]
+        src_bases[tensor_idx] = _npu_data_ptr_fast(t, itemsize)
+    if row_offset != <int64_t>out_shape[ndim - 1]:
+        return None
+
+    cdef uintptr_t dst_base = <uintptr_t>out_ptr
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef int64_t linear_idx, rem, coord, src_offset, inner
+    for linear_idx in range(outer):
+        for tensor_idx in range(ntensors):
+            inner = inners[tensor_idx]
+            if inner == 0:
+                continue
+            rem = linear_idx
+            src_offset = 0
+            for j in range(ndim - 1):
+                i = ndim - 2 - j
+                coord = rem % <int64_t>out_shape[i]
+                rem = rem // <int64_t>out_shape[i]
+                src_offset += coord * src_strides[tensor_idx][i]
+            _cy_memcpy_d2d(
+                dst_base + <uintptr_t>((linear_idx * <int64_t>out_shape[ndim - 1] + row_offsets[tensor_idx]) * itemsize),
+                <uint64_t>(inner * itemsize),
+                src_bases[tensor_idx] + <uintptr_t>(src_offset * itemsize),
+                stream_raw,
+                True,
+            )
+
+    return _make_npu_tensor_fast_large(out_ptr, max(out_numel, 1), dtype, device, tuple(out_shape), out_stride, itemsize, dev_idx, dtype_code)
 
 
 def fast_binary_op(a, b, fn, str name):
@@ -883,12 +1207,24 @@ def fast_binary_op(a, b, fn, str name):
 cdef object _ffi_ref = None              # _aclnn_ffi module
 cdef object _add_getws_ptr = None        # cached Add getws pointer
 cdef object _add_exec_ptr = None         # cached Add exec pointer
+cdef object _adds_getws_ptr = None       # cached Adds getws pointer
+cdef object _adds_exec_ptr = None        # cached Adds exec pointer
+cdef object _inplace_adds_getws_ptr = None  # cached InplaceAdds getws pointer
+cdef object _inplace_adds_exec_ptr = None   # cached InplaceAdds exec pointer
 cdef object _mul_getws_ptr = None        # cached Mul getws pointer
 cdef object _mul_exec_ptr = None         # cached Mul exec pointer
+cdef object _muls_getws_ptr = None       # cached Muls getws pointer
+cdef object _muls_exec_ptr = None        # cached Muls exec pointer
 cdef object _sub_getws_ptr = None        # cached Sub getws pointer
 cdef object _sub_exec_ptr = None         # cached Sub exec pointer
+cdef object _subs_getws_ptr = None       # cached Subs getws pointer
+cdef object _subs_exec_ptr = None        # cached Subs exec pointer
 cdef object _div_getws_ptr = None        # cached Div getws pointer
 cdef object _div_exec_ptr = None         # cached Div exec pointer
+cdef object _divs_getws_ptr = None       # cached Divs getws pointer
+cdef object _divs_exec_ptr = None        # cached Divs exec pointer
+cdef object _fill_scalar_getws_ptr = None  # cached InplaceFillScalar getws pointer
+cdef object _fill_scalar_exec_ptr = None   # cached InplaceFillScalar exec pointer
 cdef object _matmul_getws_ptr = None     # cached Matmul getws pointer
 cdef object _matmul_exec_ptr = None      # cached Matmul exec pointer
 cdef object _sdpa_flash_getws_ptr = None  # cached FlashAttentionScore getws pointer
@@ -913,12 +1249,17 @@ cdef object _bitwise_xor_getws_ptr = None  # cached BitwiseXorTensor getws point
 cdef object _bitwise_xor_exec_ptr = None   # cached BitwiseXorTensor exec pointer
 cdef object _pow_getws_ptr = None          # cached PowTensorTensor getws pointer
 cdef object _pow_exec_ptr = None           # cached PowTensorTensor exec pointer
+cdef object _cast_getws_ptr = None         # cached Cast getws pointer
+cdef object _cast_exec_ptr = None          # cached Cast exec pointer
 cdef object _defer_executor_fn = None    # aclnn._defer_executor
 cdef object _deferred_executors_ref = None  # aclnn._DEFERRED_EXECUTORS
 cdef object _acl_rt_malloc_fn = None     # acl.rt.malloc
 cdef object _acl_rt_free_fn = None       # acl.rt.free (for workspace)
 cdef dict _alpha_one_handles = {}        # dtype_code -> alpha=1 scalar handle (int)
 cdef dict _alpha_one_bytes_cache = {}    # dtype_code -> (bytes, alpha_dtype_code) for PTA hash
+cdef dict _scalar_handle_cache = {}      # (dtype_code, scalar value) -> scalar handle (int)
+cdef dict _scalar_tensor_cache = {}      # (device, dtype, scalar value) -> NPU scalar tensor
+cdef object _capture_check_fn = None      # candle.npu._is_in_graph_capture
 cdef object _pta_cache_begin_fn = None   # _aclnn_ffi.pta_begin_add_cache_lookup
 cdef object _pta_binary_begin_fn = None  # _aclnn_ffi.pta_begin_binary_cache_lookup
 cdef object _pta_unary_begin_fn = None   # _aclnn_ffi.pta_begin_unary_cache_lookup
@@ -931,6 +1272,8 @@ cdef object _pta_cache_end_fn = None     # _aclnn_ffi.pta_end_cache_lookup
 # discriminator so ordinary same-shape tensor Mul still reuses cached executors
 # while square-style and non-aliased Mul entries stay separate.
 cdef bint _use_add_pta_cache = True
+cdef bint _use_sub_pta_cache = True
+cdef bint _use_div_pta_cache = True
 cdef bint _use_mul_pta_cache = True
 cdef bint _use_matmul_pta_cache = True
 cdef bint _use_addmm_pta_cache = True
@@ -942,9 +1285,11 @@ cdef bint _use_sdpa_flash_grad_pta_cache = True
 cdef bint _use_sdpa_flash_grad_v2 = False
 cdef bint _use_silu_pta_cache = True
 cdef bint _use_gelu_pta_cache = True
+cdef bint _use_cast_pta_cache = True
 cdef bint _use_silu_backward_pta_cache = True
 cdef bint _use_gelu_backward_pta_cache = True
 cdef dict _mul_pta_pointer_keys = {}
+cdef dict _div_pta_pointer_keys = {}
 cdef dict _silu_backward_pta_pointer_keys = {}
 
 
@@ -957,9 +1302,15 @@ cdef inline void _defer_executor_handle(uintptr_t executor) except *:
 
 cdef inline void _ensure_ffi_binary() except *:
     global _ffi_ref, _add_getws_ptr, _add_exec_ptr
+    global _adds_getws_ptr, _adds_exec_ptr
+    global _inplace_adds_getws_ptr, _inplace_adds_exec_ptr
     global _mul_getws_ptr, _mul_exec_ptr
+    global _muls_getws_ptr, _muls_exec_ptr
     global _sub_getws_ptr, _sub_exec_ptr
+    global _subs_getws_ptr, _subs_exec_ptr
     global _div_getws_ptr, _div_exec_ptr
+    global _divs_getws_ptr, _divs_exec_ptr
+    global _fill_scalar_getws_ptr, _fill_scalar_exec_ptr
     global _matmul_getws_ptr, _matmul_exec_ptr
     global _defer_executor_fn, _deferred_executors_ref
     global _acl_rt_malloc_fn, _acl_rt_free_fn
@@ -970,9 +1321,15 @@ cdef inline void _ensure_ffi_binary() except *:
     from candle._backends.npu import aclnn as _aclnn_mod
     _ffi_ref = _f
     _add_getws_ptr, _add_exec_ptr = _f.resolve_op("Add")
+    _adds_getws_ptr, _adds_exec_ptr = _f.resolve_op("Adds")
+    _inplace_adds_getws_ptr, _inplace_adds_exec_ptr = _f.resolve_op("InplaceAdds")
     _mul_getws_ptr, _mul_exec_ptr = _f.resolve_op("Mul")
+    _muls_getws_ptr, _muls_exec_ptr = _f.resolve_op("Muls")
     _sub_getws_ptr, _sub_exec_ptr = _f.resolve_op("Sub")
+    _subs_getws_ptr, _subs_exec_ptr = _f.resolve_op("Subs")
     _div_getws_ptr, _div_exec_ptr = _f.resolve_op("Div")
+    _divs_getws_ptr, _divs_exec_ptr = _f.resolve_op("Divs")
+    _fill_scalar_getws_ptr, _fill_scalar_exec_ptr = _f.resolve_op("InplaceFillScalar")
     _matmul_getws_ptr, _matmul_exec_ptr = _f.resolve_op("Matmul")
     _defer_executor_fn = _aclnn_mod._defer_executor
     _deferred_executors_ref = _aclnn_mod._DEFERRED_EXECUTORS
@@ -1033,6 +1390,15 @@ cdef inline void _ensure_ffi_pow() except *:
         return
     _ensure_ffi_binary()
     _pow_getws_ptr, _pow_exec_ptr = _ffi_ref.resolve_op("PowTensorTensor")
+
+
+cdef inline void _ensure_ffi_cast() except *:
+    """Resolve and cache Cast getws/exec ptrs (lazy)."""
+    global _cast_getws_ptr, _cast_exec_ptr
+    if _cast_getws_ptr is not None:
+        return
+    _ensure_ffi_binary()
+    _cast_getws_ptr, _cast_exec_ptr = _ffi_ref.resolve_op("Cast")
 
 
 cdef uintptr_t _get_alpha_one(int dtype_code) except? 0:
@@ -1102,6 +1468,360 @@ cdef object _get_alpha_one_bytes(int dtype_code):
     existing = (scalar_bytes, dtype_code)
     _alpha_one_bytes_cache[dtype_code] = existing
     return existing
+
+
+cdef object _scalar_bytes_for_dtype_code(int dtype_code, object value):
+    """Encode a Python scalar for aclCreateScalar without Python backend wrappers."""
+    import struct
+    cdef int bits
+    cdef int lsb
+    cdef int rounded
+    if dtype_code == 0:    # float32
+        return struct.pack('<f', float(value))
+    if dtype_code == 1:    # float16
+        return struct.pack('<e', float(value))
+    if dtype_code == 27:   # bfloat16
+        bits = struct.unpack('<I', struct.pack('<f', float(value)))[0]
+        lsb = (bits >> 16) & 1
+        rounded = bits + 0x7FFF + lsb
+        return int((rounded >> 16) & 0xFFFF).to_bytes(2, byteorder='little', signed=False)
+    if dtype_code == 3:    # int32
+        return int(value).to_bytes(4, byteorder='little', signed=True)
+    if dtype_code == 9:    # int64
+        return int(value).to_bytes(8, byteorder='little', signed=True)
+    if dtype_code == 11:   # float64
+        return struct.pack('<d', float(value))
+    if dtype_code == 2:    # int8
+        return int(value).to_bytes(1, byteorder='little', signed=True)
+    if dtype_code == 4:    # uint8
+        return int(value).to_bytes(1, byteorder='little', signed=False)
+    if dtype_code == 6:    # int16
+        return int(value).to_bytes(2, byteorder='little', signed=True)
+    if dtype_code == 12:   # bool
+        return (1 if bool(value) else 0).to_bytes(1, byteorder='little', signed=False)
+    return struct.pack('<f', float(value))
+
+
+cdef uintptr_t _get_cached_scalar_handle(int dtype_code, object value) except? 0:
+    global _scalar_handle_cache
+    cdef object normalized
+    cdef object key
+    cdef object existing
+    cdef object scalar_bytes
+    cdef uintptr_t handle
+    if dtype_code in (0, 1, 11, 27):
+        normalized = float(value)
+    elif dtype_code == 12:
+        normalized = bool(value)
+    else:
+        normalized = int(value)
+    key = (dtype_code, normalized)
+    existing = _scalar_handle_cache.get(key)
+    if existing is not None:
+        return <uintptr_t>existing
+    scalar_bytes = _scalar_bytes_for_dtype_code(dtype_code, normalized)
+    handle = <uintptr_t>_ffi_ref.create_scalar(scalar_bytes, dtype_code)
+    _scalar_handle_cache[key] = handle
+    return handle
+
+
+cdef inline object _normalize_scalar_cache_value(int dtype_code, object value):
+    if dtype_code in (0, 1, 11, 27):
+        return float(value)
+    if dtype_code == 12:
+        return bool(value)
+    return int(value)
+
+
+cdef inline bint _npu_in_graph_capture():
+    global _capture_check_fn
+    if _capture_check_fn is None:
+        try:
+            from candle import npu as _npu_mod
+            _capture_check_fn = _npu_mod._is_in_graph_capture
+        except Exception:
+            _capture_check_fn = False
+    if _capture_check_fn is False:
+        return False
+    return bool(_capture_check_fn())
+
+
+cdef object _get_cached_scalar_tensor(TensorImpl a, object value):
+    """Return a persistent 0-d NPU tensor for scalar eager arithmetic.
+
+    Direct ACLNN scalar kernels measure materially slower than tensor-tensor PTA
+    for Add/Mul/Sub/Div on this CANN build.  Outside graph capture, materialize
+    each (device, dtype, value) once with on-device InplaceFillScalar, then route
+    arithmetic through the normal tensor-tensor exact kernels.  During capture,
+    keep using direct scalar ACLNN so no new scalar tensor/H2D work is recorded.
+    """
+    global _scalar_tensor_cache
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dtype_code = _tensor_dtype_to_acl_code(a)
+    cdef object normalized = _normalize_scalar_cache_value(dtype_code, value)
+    cdef int dev_idx = a._device_index
+    if dev_idx < 0:
+        dev_idx = 0
+    cdef object key = (dev_idx, dtype_code, normalized)
+    cdef object cached = _scalar_tensor_cache.get(key)
+    if cached is not None:
+        return cached
+
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object out_ptr
+    cdef int isize = a._itemsize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(isize, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(isize, stream=stream_obj)
+
+    cdef object shape = ()
+    cdef object stride = ()
+    cdef uintptr_t scalar_handle = _get_cached_scalar_handle(dtype_code, normalized)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef object ws_size
+    cdef object executor
+    cdef object workspace_ptr
+    cdef object ret
+    cdef int ret_i
+    try:
+        ws_size, executor = _ffi_inplace_fill_scalar_op(
+            <uintptr_t>_fill_scalar_getws_ptr,
+            <uintptr_t>_fill_scalar_exec_ptr,
+            shape,
+            stride,
+            dtype_code,
+            2,
+            <uintptr_t>out_ptr,
+            scalar_handle,
+            stream_raw,
+        )
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret_i = _ffi_execute(<uintptr_t>_fill_scalar_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size, executor, stream_raw)
+                if ret_i != 0:
+                    raise RuntimeError(f"aclnnInplaceFillScalar execute failed: {ret_i}")
+            finally:
+                _get_runtime_fast(dev_idx).defer_raw_free(workspace_ptr)
+        _defer_executor_handle(<uintptr_t>int(executor))
+    except Exception:
+        _get_allocator_fn_ref(dev_idx).free(<int64_t>out_ptr)
+        raise
+
+    cached = _make_npu_tensor_fast_large(<int64_t>out_ptr, 1, a._dtype_obj, a._device_obj,
+                                         shape, stride, isize, dev_idx, a._dtype_code)
+    _scalar_tensor_cache[key] = cached
+    return cached
+
+
+cdef object _fast_tensor_scalar_exact(TensorImpl a, object value, object getws_ptr, object exec_ptr,
+                                      bint with_alpha, str pretty_name):
+    """Run a covered NPU tensor/scalar op entirely through Cython _C."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx = a._device_index
+    if dev_idx < 0:
+        dev_idx = 0
+    cdef object a_dev = a._device_obj
+    cdef object a_dtype = a._dtype_obj
+    cdef object py_shape = a._shape_tuple
+    cdef object py_stride = a._stride_tuple
+    cdef int ndim = a._ndim
+    if ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int64_t[MAX_NDIM] shape_buf, out_stride_buf
+    _fill_shape(py_shape, shape_buf, ndim)
+    with nogil:
+        c_contiguous_stride(shape_buf, ndim, out_stride_buf)
+    cdef object out_stride = _to_tuple(out_stride_buf, ndim)
+    cdef int64_t n = a._c_numel
+    cdef int64_t alloc_numel = n if n > 0 else 1
+    cdef int isize = a._itemsize
+    cdef int64_t alloc_size = alloc_numel * isize
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    cdef int dtype_code = _tensor_dtype_to_acl_code(a)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr + <uintptr_t>(a._c_offset * a._itemsize)
+    cdef uintptr_t o_ptr = <uintptr_t>out_ptr
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef uintptr_t scalar_handle = _get_cached_scalar_handle(dtype_code, value)
+    cdef uintptr_t alpha_handle
+    cdef object ws_size
+    cdef object executor
+    cdef object workspace_ptr
+    cdef object ret
+
+    # CANN 9.0 reports scalar ops as PTA-cacheable, but measured hit-cache lookups
+    # for Adds/Muls/Subs/Divs are slower (~100us) than the direct ACLNN scalar
+    # GetWorkspaceSize path (~40us) on this platform. Keep scalar ops on the
+    # direct Cython ACLNN path until the native PTA scalar path is proven faster.
+    try:
+        if with_alpha:
+            alpha_handle = _get_alpha_one(dtype_code)
+            ws_size, executor = _ffi_tensor_scalar_op_with_alpha(
+                <uintptr_t>getws_ptr, <uintptr_t>exec_ptr,
+                py_shape, py_stride,
+                py_shape, out_stride,
+                dtype_code, 2,
+                a_ptr, o_ptr,
+                scalar_handle, alpha_handle,
+                stream_raw,
+            )
+        else:
+            ws_size, executor = _ffi_tensor_scalar_op_no_alpha(
+                <uintptr_t>getws_ptr, <uintptr_t>exec_ptr,
+                py_shape, py_stride,
+                py_shape, out_stride,
+                dtype_code, 2,
+                a_ptr, o_ptr,
+                scalar_handle,
+                stream_raw,
+            )
+
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(<uintptr_t>exec_ptr, int(workspace_ptr), ws_size, executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"{pretty_name} execute failed: {ret}")
+            finally:
+                _get_runtime_fast(dev_idx).defer_raw_free(workspace_ptr)
+        _defer_executor_handle(<uintptr_t>int(executor))
+    finally:
+        pass
+    return _make_npu_tensor_fast_large(<int64_t>out_ptr, alloc_numel, a_dtype, a_dev,
+                                       py_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_add_scalar_exact(TensorImpl a, object value):
+    cdef object scalar_tensor
+    _ensure_ffi_binary()
+    if not _npu_in_graph_capture():
+        scalar_tensor = _get_cached_scalar_tensor(a, value)
+        return fast_add_exact(a, <TensorImpl>scalar_tensor)
+    return _fast_tensor_scalar_exact(a, value, _adds_getws_ptr, _adds_exec_ptr, True, "aclnnAdds")
+
+
+cdef object _fast_tensor_scalar_inplace_exact(TensorImpl a, object value, object getws_ptr,
+                                              object exec_ptr, str pretty_name):
+    """Run a covered NPU in-place tensor/scalar op entirely through Cython _C."""
+    cdef int dev_idx = a._device_index
+    if dev_idx < 0:
+        dev_idx = 0
+    cdef object py_shape = a._shape_tuple
+    cdef object py_stride = a._stride_tuple
+    cdef int ndim = a._ndim
+    if ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    cdef int dtype_code = _tensor_dtype_to_acl_code(a)
+    cdef uintptr_t a_ptr = a._storage._untyped._device_ptr + <uintptr_t>(a._c_offset * a._itemsize)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef uintptr_t scalar_handle = _get_cached_scalar_handle(dtype_code, value)
+    cdef uintptr_t alpha_handle = _get_alpha_one(dtype_code)
+    cdef object ws_size
+    cdef object executor
+    cdef object workspace_ptr
+    cdef object ret
+
+    ws_size, executor = _ffi_inplace_tensor_scalar_op_with_alpha(
+        <uintptr_t>getws_ptr, <uintptr_t>exec_ptr,
+        py_shape, py_stride,
+        dtype_code, 2,
+        a_ptr,
+        scalar_handle, alpha_handle,
+        stream_raw,
+    )
+    if ws_size:
+        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+        if ret != 0:
+            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+        try:
+            ret = _ffi_execute(<uintptr_t>exec_ptr, int(workspace_ptr), ws_size, executor, stream_raw)
+            if ret != 0:
+                raise RuntimeError(f"{pretty_name} execute failed: {ret}")
+        finally:
+            _get_runtime_fast(dev_idx).defer_raw_free(workspace_ptr)
+    _defer_executor_handle(<uintptr_t>int(executor))
+    return a
+
+
+cpdef object fast_add_scalar_inplace_exact(TensorImpl a, object value):
+    """In-place add_(a, scalar) entirely through Cython _C; capture-safe.
+
+    Outside graph capture, reuse the cached 0-d scalar tensor and the
+    tensor-tensor in-place Add kernel (same rationale as fast_add_scalar_exact).
+    During capture, run aclnnInplaceAdds directly so no scalar-tensor fill or
+    H2D copy is recorded into the graph.
+    """
+    cdef object scalar_tensor
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+    if not _npu_in_graph_capture():
+        scalar_tensor = _get_cached_scalar_tensor(a, value)
+        return fast_add_inplace(a, scalar_tensor)
+    return _fast_tensor_scalar_inplace_exact(a, value, _inplace_adds_getws_ptr,
+                                             _inplace_adds_exec_ptr, "aclnnInplaceAdds")
+
+
+cpdef object fast_mul_scalar_exact(TensorImpl a, object value):
+    cdef object scalar_tensor
+    _ensure_ffi_binary()
+    if not _npu_in_graph_capture():
+        scalar_tensor = _get_cached_scalar_tensor(a, value)
+        return fast_mul_exact(a, <TensorImpl>scalar_tensor)
+    return _fast_tensor_scalar_exact(a, value, _muls_getws_ptr, _muls_exec_ptr, False, "aclnnMuls")
+
+
+cpdef object fast_sub_scalar_exact(TensorImpl a, object value):
+    cdef object scalar_tensor
+    _ensure_ffi_binary()
+    if not _npu_in_graph_capture():
+        scalar_tensor = _get_cached_scalar_tensor(a, value)
+        return fast_sub_exact(a, <TensorImpl>scalar_tensor)
+    # TODO: re-enable native aclnnSubs when CANN 9.x no longer segfaults on the
+    # direct scalar-subtract GetWorkspaceSize/Execute path.  Keep the covered
+    # capture-safe path entirely in Cython/on-device by using equivalent Adds(-value).
+    return _fast_tensor_scalar_exact(a, -value, _adds_getws_ptr, _adds_exec_ptr, True, "aclnnAdds")
+
+
+cpdef object fast_div_scalar_exact(TensorImpl a, object value):
+    cdef object scalar_tensor
+    _ensure_ffi_binary()
+    if not _npu_in_graph_capture():
+        scalar_tensor = _get_cached_scalar_tensor(a, value)
+        return fast_div_exact(a, <TensorImpl>scalar_tensor)
+    return _fast_tensor_scalar_exact(a, value, _divs_getws_ptr, _divs_exec_ptr, False, "aclnnDivs")
+
+
+cpdef object fast_rsub_scalar_exact(TensorImpl a, object value):
+    cdef object scalar_tensor
+    _ensure_ffi_binary()
+    scalar_tensor = _get_cached_scalar_tensor(a, value)
+    return fast_sub_exact(<TensorImpl>scalar_tensor, a)
+
+
+cpdef object fast_rdiv_scalar_exact(TensorImpl a, object value):
+    cdef object scalar_tensor
+    _ensure_ffi_binary()
+    scalar_tensor = _get_cached_scalar_tensor(a, value)
+    return fast_div_exact(<TensorImpl>scalar_tensor, a)
 
 
 def fast_eq(a, b):
@@ -1479,6 +2199,336 @@ cpdef object fast_add_exact(TensorImpl a, TensorImpl b):
                 if runtime is None:
                     runtime = _get_runtime_fast(dev_idx)
                 runtime.defer_raw_free(workspace_ptr)
+        _defer_executor_handle(executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_sub_exact(TensorImpl a, TensorImpl b):
+    """Sub for already-validated exact base NPU tensors."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx = a._device_index
+    cdef object a_dev = a._device_obj
+    cdef object a_dtype = a._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object py_a_shape = a._shape_tuple
+    cdef object py_b_shape = b._shape_tuple
+    cdef object py_a_stride = a._stride_tuple
+    cdef object py_b_stride = b._stride_tuple
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+    cdef int out_ndim
+    cdef int64_t n
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+    cdef int isize
+    cdef int64_t alloc_size_fs
+    cdef int dtype_code
+    cdef uintptr_t a_ptr, b_ptr, o_ptr
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef uintptr_t alpha_handle
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object out_shape
+    cdef object out_stride
+    cdef object out_ptr
+    cdef bint same_contiguous_layout
+    cdef object alpha_bytes_pair
+    cdef object ws_size
+    cdef object executor
+    cdef object workspace_ptr
+    cdef object ret
+
+    if a._device_index != b._device_index:
+        raise ValueError("NPU sub requires tensors on the same device")
+    if a._dtype_code != b._dtype_code:
+        raise ValueError("NPU sub requires matching dtypes")
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    same_contiguous_layout = (
+        a._ndim == b._ndim
+        and a._c_numel == b._c_numel
+        and a._shape_tuple == b._shape_tuple
+        and _tensor_has_strict_contiguous_stride(a)
+        and _tensor_has_strict_contiguous_stride(b)
+    )
+    if same_contiguous_layout:
+        out_ndim = a_ndim
+        n = a._c_numel
+        out_shape = py_a_shape
+        out_stride = py_a_stride
+    else:
+        _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+        _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+        with nogil:
+            out_ndim = c_broadcast_shape(
+                a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+            c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+            n = c_numel(out_shape_buf, out_ndim)
+        out_shape = _to_tuple(out_shape_buf, out_ndim)
+        out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    isize = a._itemsize
+    alloc_size_fs = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size_fs, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fs, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    a_ptr = a._storage._untyped._device_ptr
+    b_ptr = b._storage._untyped._device_ptr
+    o_ptr = out_ptr
+    stream_raw = _get_stream_raw_fast(dev_idx)
+
+    if _use_sub_pta_cache and _pta_cache_end_fn is not None:
+        alpha_bytes_pair = _get_alpha_one_bytes(dtype_code)
+        pta_lookup = _ffi_pta_begin_binary_alpha_cache_lookup_raw(
+            b"aclnnSub",
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
+            out_shape, out_stride,
+            dtype_code,
+            a_ptr, b_ptr, o_ptr,
+            alpha_bytes_pair[0], alpha_bytes_pair[1],
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                if ws_size_raw:
+                    workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                    if ret != 0:
+                        raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                    try:
+                        ret_i = _ffi_execute(
+                            _sub_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                            executor_raw, stream_raw)
+                        if ret_i != 0:
+                            raise RuntimeError(f"aclnnSub execute failed: {ret_i}")
+                    finally:
+                        if runtime is None:
+                            runtime = _get_runtime_fast(dev_idx)
+                        runtime.defer_raw_free(workspace_ptr)
+                else:
+                    ret_i = _ffi_execute(_sub_exec_ptr, 0, 0, executor_raw, stream_raw)
+                    if ret_i != 0:
+                        raise RuntimeError(f"aclnnSub execute failed: {ret_i}")
+                return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        alpha_handle = _get_alpha_one(dtype_code)
+        ws_size, executor = _ffi_binary_op_with_alpha(
+            _sub_getws_ptr, _sub_exec_ptr,
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
+            out_shape, out_stride,
+            dtype_code, 2,
+            a_ptr, b_ptr, o_ptr,
+            alpha_handle,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _sub_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnSub execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+        _defer_executor_handle(executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_div_exact(TensorImpl a, TensorImpl b):
+    """Div for already-validated exact base NPU tensors."""
+    _ensure_npu_imports()
+    _ensure_ffi_binary()
+
+    cdef int dev_idx = a._device_index
+    cdef object a_dev = a._device_obj
+    cdef object a_dtype = a._dtype_obj
+    cdef object runtime = None
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object py_a_shape = a._shape_tuple
+    cdef object py_b_shape = b._shape_tuple
+    cdef object py_a_stride = a._stride_tuple
+    cdef object py_b_stride = b._stride_tuple
+    cdef int a_ndim = len(py_a_shape)
+    cdef int b_ndim = len(py_b_shape)
+    cdef int out_ndim
+    cdef int64_t n
+    cdef int64_t[MAX_NDIM] a_shape_buf, b_shape_buf
+    cdef int64_t[MAX_NDIM] out_shape_buf, out_stride_buf
+    cdef int isize
+    cdef int64_t alloc_size_fd
+    cdef int dtype_code
+    cdef uintptr_t a_ptr, b_ptr, o_ptr
+    cdef uintptr_t stream_raw
+    cdef bint pta_active = False
+    cdef bint pta_cache_miss = False
+    cdef bint pta_pointer_guard = False
+    cdef bint inputs_alias
+    cdef object pta_key = None
+    cdef object pointer_key = None
+    cdef object out_shape
+    cdef object out_stride
+    cdef object out_ptr
+    cdef bint same_contiguous_layout
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef int ret_i
+    cdef object ws_size
+    cdef object executor
+    cdef object workspace_ptr
+    cdef object ret
+
+    if a._device_index != b._device_index:
+        raise ValueError("NPU div requires tensors on the same device")
+    if a._dtype_code != b._dtype_code:
+        raise ValueError("NPU div requires matching dtypes")
+    if a_ndim > MAX_NDIM or b_ndim > MAX_NDIM:
+        raise ValueError(f"ndim exceeds MAX_NDIM ({MAX_NDIM})")
+
+    same_contiguous_layout = (
+        a._ndim == b._ndim
+        and a._c_numel == b._c_numel
+        and a._shape_tuple == b._shape_tuple
+        and _tensor_has_strict_contiguous_stride(a)
+        and _tensor_has_strict_contiguous_stride(b)
+    )
+    if same_contiguous_layout:
+        out_ndim = a_ndim
+        n = a._c_numel
+        out_shape = py_a_shape
+        out_stride = py_a_stride
+    else:
+        _fill_shape(py_a_shape, a_shape_buf, a_ndim)
+        _fill_shape(py_b_shape, b_shape_buf, b_ndim)
+        with nogil:
+            out_ndim = c_broadcast_shape(
+                a_shape_buf, a_ndim, b_shape_buf, b_ndim, out_shape_buf)
+            c_contiguous_stride(out_shape_buf, out_ndim, out_stride_buf)
+            n = c_numel(out_shape_buf, out_ndim)
+        out_shape = _to_tuple(out_shape_buf, out_ndim)
+        out_stride = _to_tuple(out_stride_buf, out_ndim)
+
+    isize = a._itemsize
+    alloc_size_fd = n * isize
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size_fd, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fd, stream=stream_obj)
+
+    dtype_code = _tensor_dtype_to_acl_code(a)
+    a_ptr = a._storage._untyped._device_ptr
+    b_ptr = b._storage._untyped._device_ptr
+    o_ptr = out_ptr
+    stream_raw = _get_stream_raw_fast(dev_idx)
+    inputs_alias = a_ptr == b_ptr
+    if inputs_alias or not same_contiguous_layout:
+        pta_pointer_guard = True
+
+    if _use_div_pta_cache and _pta_binary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_binary_cache_lookup_raw(
+            b"aclnnDiv",
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
+            out_shape, out_stride,
+            dtype_code,
+            a_ptr, b_ptr, o_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup:
+            pta_key = (py_a_shape, py_a_stride, py_b_shape, py_b_stride,
+                       out_shape, out_stride, dtype_code)
+            pointer_key = (a_ptr, b_ptr, o_ptr)
+            if executor_raw != 0:
+                if (not pta_pointer_guard) or _div_pta_pointer_keys.get(pta_key) == pointer_key:
+                    try:
+                        if ws_size_raw:
+                            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size_raw, 0)
+                            if ret != 0:
+                                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+                            try:
+                                ret_i = _ffi_execute(
+                                    _div_exec_ptr, <uintptr_t>int(workspace_ptr), ws_size_raw,
+                                    executor_raw, stream_raw)
+                                if ret_i != 0:
+                                    raise RuntimeError(f"aclnnDiv execute failed: {ret_i}")
+                            finally:
+                                if runtime is None:
+                                    runtime = _get_runtime_fast(dev_idx)
+                                runtime.defer_raw_free(workspace_ptr)
+                        else:
+                            ret_i = _ffi_execute(_div_exec_ptr, 0, 0, executor_raw, stream_raw)
+                            if ret_i != 0:
+                                raise RuntimeError(f"aclnnDiv execute failed: {ret_i}")
+                        return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+                    finally:
+                        if pta_active:
+                            _ffi_pta_end_cache_lookup()
+                            pta_active = False
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+            else:
+                pta_cache_miss = pta_active
+
+    try:
+        ws_size, executor = _ffi_binary_op_no_alpha(
+            _div_getws_ptr, _div_exec_ptr,
+            py_a_shape, py_a_stride,
+            py_b_shape, py_b_stride,
+            out_shape, out_stride,
+            dtype_code, 2,
+            a_ptr, b_ptr, o_ptr,
+            stream_raw)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _div_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnDiv execute failed: {ret}")
+            finally:
+                if runtime is None:
+                    runtime = _get_runtime_fast(dev_idx)
+                runtime.defer_raw_free(workspace_ptr)
+        if pta_pointer_guard and pta_cache_miss and pta_key is not None:
+            _div_pta_pointer_keys[pta_key] = pointer_key
         _defer_executor_handle(executor)
     finally:
         if pta_active:
@@ -2177,22 +3227,34 @@ cpdef object fast_layer_norm_backward(object grad, object saved_input, object ba
     return grad_input, grad_weight, grad_bias
 
 
-cpdef object fast_sdpa_flash_attention(object query, object key, object value, double scale_value):
+cpdef object fast_sdpa_flash_attention(object query, object key, object value, double scale_value, object attn_mask=None):
     """Fused NPU SDPA forward using ACLNN FlashAttentionScore for BNSD q/k/v."""
     _ensure_npu_imports()
     _ensure_ffi_sdpa_flash()
 
     if not (isinstance(query, TensorImpl) and isinstance(key, TensorImpl) and isinstance(value, TensorImpl)):
         raise ValueError("fast_sdpa_flash_attention expects base TensorImpl operands")
+    if attn_mask is not None and not isinstance(attn_mask, TensorImpl):
+        raise ValueError("fast_sdpa_flash_attention expects TensorImpl attention mask")
     cdef TensorImpl q = <TensorImpl>query
     cdef TensorImpl k = <TensorImpl>key
     cdef TensorImpl v = <TensorImpl>value
+    cdef TensorImpl mask
+    cdef bint has_mask = attn_mask is not None
+    if has_mask:
+        mask = <TensorImpl>attn_mask
     if q._device_type != 1 or k._device_type != 1 or v._device_type != 1:
         raise ValueError("fast_sdpa_flash_attention expects NPU tensors")
+    if has_mask and mask._device_type != 1:
+        raise ValueError("fast_sdpa_flash_attention expects an NPU attention mask")
     if q._dtype_code != k._dtype_code or q._dtype_code != v._dtype_code:
         raise ValueError("fast_sdpa_flash_attention requires matching dtypes")
+    if has_mask and mask._dtype_code != 9:
+        raise ValueError("fast_sdpa_flash_attention requires a bool attention mask")
     if q._device_index != k._device_index or q._device_index != v._device_index:
         raise ValueError("fast_sdpa_flash_attention requires tensors on the same device")
+    if has_mask and mask._device_index != q._device_index:
+        raise ValueError("fast_sdpa_flash_attention requires mask on the same device")
     if q._ndim != 4:
         raise ValueError("fast_sdpa_flash_attention expects rank-4 BNSD query")
 
@@ -2212,6 +3274,11 @@ cpdef object fast_sdpa_flash_attention(object query, object key, object value, d
         raise ValueError("unsupported key layout for FlashAttentionScore")
     if not _sdpa_flash_valid_layout(v, B, H, Sk, D):
         raise ValueError("unsupported value layout for FlashAttentionScore")
+    if has_mask:
+        if mask._ndim != 2 or mask._c_shape[0] != Sq or mask._c_shape[1] != Sk:
+            raise ValueError("unsupported attention mask shape for FlashAttentionScore")
+        if mask._c_stride[1] != 1:
+            raise ValueError("unsupported attention mask layout for FlashAttentionScore")
 
     cdef object stream_obj = _get_stream_obj_fast(dev_idx)
     cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
@@ -2260,6 +3327,9 @@ cpdef object fast_sdpa_flash_attention(object query, object key, object value, d
     cdef uintptr_t q_ptr = <uintptr_t>q._storage._untyped._device_ptr + <uintptr_t>(q._c_offset * isize)
     cdef uintptr_t k_ptr = <uintptr_t>k._storage._untyped._device_ptr + <uintptr_t>(k._c_offset * isize)
     cdef uintptr_t v_ptr = <uintptr_t>v._storage._untyped._device_ptr + <uintptr_t>(v._c_offset * isize)
+    cdef uintptr_t mask_ptr = 0
+    if has_mask:
+        mask_ptr = <uintptr_t>mask._storage._untyped._device_ptr + <uintptr_t>(mask._c_offset * mask._itemsize)
     cdef uintptr_t o_ptr = <uintptr_t>int(out_ptr)
     cdef uintptr_t sm_max_ptr = <uintptr_t>int(softmax_max_ptr)
     cdef uintptr_t sm_sum_ptr = <uintptr_t>int(softmax_sum_ptr)
@@ -2269,6 +3339,7 @@ cpdef object fast_sdpa_flash_attention(object query, object key, object value, d
     cdef void* q_t = NULL
     cdef void* k_t = NULL
     cdef void* v_t = NULL
+    cdef void* mask_t = NULL
     cdef void* out_t = NULL
     cdef void* softmax_max_t = NULL
     cdef void* softmax_sum_t = NULL
@@ -2285,7 +3356,7 @@ cpdef object fast_sdpa_flash_attention(object query, object key, object value, d
     cdef object runtime = None
     cdef char layout[5]
     layout[0] = 66; layout[1] = 78; layout[2] = 83; layout[3] = 68; layout[4] = 0
-    if _use_sdpa_flash_pta_cache and _pta_cache_end_fn is not None:
+    if (not has_mask) and _use_sdpa_flash_pta_cache and _pta_cache_end_fn is not None:
         pta_lookup = _ffi_pta_begin_sdpa_flash_cache_lookup_raw(
             q._shape_tuple, q._stride_tuple,
             k._shape_tuple, k._stride_tuple,
@@ -2314,10 +3385,12 @@ cpdef object fast_sdpa_flash_attention(object query, object key, object value, d
         q_t = _ffi_create_tensor_raw(q._c_shape, q._c_stride, <uint64_t>4, dtype_code, 2, <void*>q_ptr)
         k_t = _ffi_create_tensor_raw(k._c_shape, k._c_stride, <uint64_t>4, dtype_code, 2, <void*>k_ptr)
         v_t = _ffi_create_tensor_raw(v._c_shape, v._c_stride, <uint64_t>4, dtype_code, 2, <void*>v_ptr)
+        if has_mask:
+            mask_t = _ffi_create_tensor_raw(mask._c_shape, mask._c_stride, <uint64_t>2, 12, 2, <void*>mask_ptr)
         out_t = _ffi_create_tensor_raw(out_shape_buf, out_stride_buf, <uint64_t>4, dtype_code, 2, <void*>o_ptr)
         softmax_max_t = _ffi_create_tensor_raw(aux_shape_buf, aux_stride_buf, <uint64_t>4, 0, 2, <void*>sm_max_ptr)
         softmax_sum_t = _ffi_create_tensor_raw(aux_shape_buf, aux_stride_buf, <uint64_t>4, 0, 2, <void*>sm_sum_ptr)
-    if q_t == NULL or k_t == NULL or v_t == NULL or out_t == NULL or softmax_max_t == NULL or softmax_sum_t == NULL:
+    if q_t == NULL or k_t == NULL or v_t == NULL or (has_mask and mask_t == NULL) or out_t == NULL or softmax_max_t == NULL or softmax_sum_t == NULL:
         if pta_active:
             _ffi_pta_end_cache_lookup()
             pta_active = False
@@ -2325,7 +3398,7 @@ cpdef object fast_sdpa_flash_attention(object query, object key, object value, d
     try:
         with nogil:
             ret = (<FlashAttentionScoreGetWorkspaceSize_t>flash_getws_raw)(
-                q_t, k_t, v_t, NULL, NULL, NULL, NULL, NULL,
+                q_t, k_t, v_t, NULL, NULL, NULL, mask_t, NULL,
                 scale_value, 1.0, 2147483647, 2147483647, H, layout, 0, 0,
                 softmax_max_t, softmax_sum_t, NULL, out_t, &ws_size, &executor)
         if ret != 0:
@@ -2342,6 +3415,7 @@ cpdef object fast_sdpa_flash_attention(object query, object key, object value, d
             if q_t != NULL: _ffi_destroy_tensor_raw(q_t)
             if k_t != NULL: _ffi_destroy_tensor_raw(k_t)
             if v_t != NULL: _ffi_destroy_tensor_raw(v_t)
+            if mask_t != NULL: _ffi_destroy_tensor_raw(mask_t)
             if out_t != NULL: _ffi_destroy_tensor_raw(out_t)
             if softmax_max_t != NULL: _ffi_destroy_tensor_raw(softmax_max_t)
             if softmax_sum_t != NULL: _ffi_destroy_tensor_raw(softmax_sum_t)
@@ -2354,7 +3428,7 @@ cpdef object fast_sdpa_flash_attention(object query, object key, object value, d
 
 cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, object key, object value,
                                                 object output, object softmax_max, object softmax_sum,
-                                                double scale_value):
+                                                double scale_value, object attn_mask=None):
     """Fused NPU SDPA backward using ACLNN FlashAttentionScoreGrad."""
     _ensure_npu_imports()
     _ensure_ffi_sdpa_flash()
@@ -2369,6 +3443,8 @@ cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, o
         and isinstance(softmax_sum, TensorImpl)
     ):
         raise ValueError("fast_sdpa_flash_attention_backward expects base TensorImpl operands")
+    if attn_mask is not None and not isinstance(attn_mask, TensorImpl):
+        raise ValueError("fast_sdpa_flash_attention_backward expects TensorImpl attention mask")
     cdef TensorImpl g = <TensorImpl>grad_out
     cdef TensorImpl q = <TensorImpl>query
     cdef TensorImpl k = <TensorImpl>key
@@ -2376,13 +3452,23 @@ cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, o
     cdef TensorImpl o = <TensorImpl>output
     cdef TensorImpl sm_max = <TensorImpl>softmax_max
     cdef TensorImpl sm_sum = <TensorImpl>softmax_sum
+    cdef TensorImpl mask
+    cdef bint has_mask = attn_mask is not None
+    if has_mask:
+        mask = <TensorImpl>attn_mask
 
     if q._device_type != 1 or k._device_type != 1 or v._device_type != 1 or g._device_type != 1:
         raise ValueError("fast_sdpa_flash_attention_backward expects NPU tensors")
+    if has_mask and mask._device_type != 1:
+        raise ValueError("fast_sdpa_flash_attention_backward expects an NPU attention mask")
     if q._dtype_code != k._dtype_code or q._dtype_code != v._dtype_code or q._dtype_code != g._dtype_code:
         raise ValueError("fast_sdpa_flash_attention_backward requires matching q/k/v/grad dtypes")
+    if has_mask and mask._dtype_code != 9:
+        raise ValueError("fast_sdpa_flash_attention_backward requires a bool attention mask")
     if q._device_index != k._device_index or q._device_index != v._device_index or q._device_index != g._device_index:
         raise ValueError("fast_sdpa_flash_attention_backward requires tensors on the same device")
+    if has_mask and mask._device_index != q._device_index:
+        raise ValueError("fast_sdpa_flash_attention_backward requires mask on the same device")
     cdef int dev_idx = q._device_index
     cdef object q_dev = q._device_obj
     cdef object q_dtype = q._dtype_obj
@@ -2401,6 +3487,11 @@ cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, o
         raise ValueError("unsupported value layout for FlashAttentionScoreGrad")
     if not _sdpa_flash_valid_grad_layout(g, B, H, Sq, D):
         raise ValueError("unsupported grad layout for FlashAttentionScoreGrad")
+    if has_mask:
+        if mask._ndim != 2 or mask._c_shape[0] != Sq or mask._c_shape[1] != Sk:
+            raise ValueError("unsupported attention mask shape for FlashAttentionScoreGrad")
+        if mask._c_stride[1] != 1:
+            raise ValueError("unsupported attention mask layout for FlashAttentionScoreGrad")
 
     cdef object stream_obj = _get_stream_obj_fast(dev_idx)
     cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
@@ -2445,6 +3536,9 @@ cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, o
     cdef uintptr_t o_ptr = <uintptr_t>o._storage._untyped._device_ptr + <uintptr_t>(o._c_offset * isize)
     cdef uintptr_t sm_max_ptr = <uintptr_t>sm_max._storage._untyped._device_ptr + <uintptr_t>(sm_max._c_offset * sm_max._itemsize)
     cdef uintptr_t sm_sum_ptr = <uintptr_t>sm_sum._storage._untyped._device_ptr + <uintptr_t>(sm_sum._c_offset * sm_sum._itemsize)
+    cdef uintptr_t mask_ptr = 0
+    if has_mask:
+        mask_ptr = <uintptr_t>mask._storage._untyped._device_ptr + <uintptr_t>(mask._c_offset * mask._itemsize)
     cdef uintptr_t dq_raw = <uintptr_t>int(dq_ptr)
     cdef uintptr_t dk_raw = <uintptr_t>int(dk_ptr)
     cdef uintptr_t dv_raw = <uintptr_t>int(dv_ptr)
@@ -2467,6 +3561,7 @@ cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, o
     cdef void* softmax_max_t = NULL
     cdef void* softmax_sum_t = NULL
     cdef void* softmax_in_t = NULL
+    cdef void* mask_t = NULL
     cdef void* dq_t = NULL
     cdef void* dk_t = NULL
     cdef void* dv_t = NULL
@@ -2483,7 +3578,7 @@ cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, o
     cdef object runtime = None
     cdef char layout[5]
     layout[0] = 66; layout[1] = 78; layout[2] = 83; layout[3] = 68; layout[4] = 0
-    if _use_sdpa_flash_grad_pta_cache and _pta_cache_end_fn is not None:
+    if (not has_mask) and _use_sdpa_flash_grad_pta_cache and _pta_cache_end_fn is not None:
         if use_grad_v2:
             pta_lookup = _ffi_pta_begin_sdpa_flash_grad_v2_cache_lookup_raw(
                 q._shape_tuple, q._stride_tuple,
@@ -2541,12 +3636,14 @@ cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, o
         o_t = _ffi_create_tensor_raw(o._c_shape, o._c_stride, <uint64_t>4, dtype_code, 2, <void*>o_ptr)
         softmax_max_t = _ffi_create_tensor_raw(sm_max._c_shape, sm_max._c_stride, <uint64_t>4, 0, 2, <void*>sm_max_ptr)
         softmax_sum_t = _ffi_create_tensor_raw(sm_sum._c_shape, sm_sum._c_stride, <uint64_t>4, 0, 2, <void*>sm_sum_ptr)
+        if has_mask:
+            mask_t = _ffi_create_tensor_raw(mask._c_shape, mask._c_stride, <uint64_t>2, 12, 2, <void*>mask_ptr)
         if use_grad_v2:
             softmax_in_t = _ffi_create_tensor_raw(softmax_empty_shape_buf, softmax_empty_stride_buf, <uint64_t>1, dtype_code, 2, <void*>q_ptr)
         dq_t = _ffi_create_tensor_raw(q_shape_buf, q_stride_buf, <uint64_t>4, dtype_code, 2, <void*>dq_raw)
         dk_t = _ffi_create_tensor_raw(kv_shape_buf, kv_stride_buf, <uint64_t>4, dtype_code, 2, <void*>dk_raw)
         dv_t = _ffi_create_tensor_raw(kv_shape_buf, kv_stride_buf, <uint64_t>4, dtype_code, 2, <void*>dv_raw)
-    if q_t == NULL or k_t == NULL or v_t == NULL or g_t == NULL or o_t == NULL or softmax_max_t == NULL or softmax_sum_t == NULL or dq_t == NULL or dk_t == NULL or dv_t == NULL or (use_grad_v2 and softmax_in_t == NULL):
+    if q_t == NULL or k_t == NULL or v_t == NULL or g_t == NULL or o_t == NULL or softmax_max_t == NULL or softmax_sum_t == NULL or (has_mask and mask_t == NULL) or dq_t == NULL or dk_t == NULL or dv_t == NULL or (use_grad_v2 and softmax_in_t == NULL):
         if pta_active:
             _ffi_pta_end_cache_lookup()
             pta_active = False
@@ -2555,13 +3652,13 @@ cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, o
         with nogil:
             if use_grad_v2:
                 ret = (<FlashAttentionScoreGradV2GetWorkspaceSize_t>flash_grad_getws_raw)(
-                    q_t, k_t, v_t, g_t, NULL, NULL, NULL, NULL,
+                    q_t, k_t, v_t, g_t, NULL, NULL, NULL, mask_t,
                     softmax_max_t, softmax_sum_t, softmax_in_t, o_t, NULL, NULL, NULL,
                     scale_value, 1.0, 2147483647, 2147483647, H, layout, 0, 0, pse_type,
                     dq_t, dk_t, dv_t, NULL, &ws_size, &executor)
             else:
                 ret = (<FlashAttentionScoreGradGetWorkspaceSize_t>flash_grad_getws_raw)(
-                    q_t, k_t, v_t, g_t, NULL, NULL, NULL, NULL,
+                    q_t, k_t, v_t, g_t, NULL, NULL, NULL, mask_t,
                     softmax_max_t, softmax_sum_t, NULL, o_t, NULL,
                     scale_value, 1.0, 2147483647, 2147483647, H, layout, 0, 0,
                     dq_t, dk_t, dv_t, NULL, &ws_size, &executor)
@@ -2584,6 +3681,7 @@ cpdef object fast_sdpa_flash_attention_backward(object grad_out, object query, o
             if softmax_max_t != NULL: _ffi_destroy_tensor_raw(softmax_max_t)
             if softmax_sum_t != NULL: _ffi_destroy_tensor_raw(softmax_sum_t)
             if softmax_in_t != NULL: _ffi_destroy_tensor_raw(softmax_in_t)
+            if mask_t != NULL: _ffi_destroy_tensor_raw(mask_t)
             if dq_t != NULL: _ffi_destroy_tensor_raw(dq_t)
             if dk_t != NULL: _ffi_destroy_tensor_raw(dk_t)
             if dv_t != NULL: _ffi_destroy_tensor_raw(dv_t)
@@ -6001,6 +7099,7 @@ def fast_neg(a):
     a_dtype = a.dtype
     runtime = _get_runtime_fast(dev_idx)
     stream = _get_stream_fast(dev_idx)
+    stream_obj = stream.stream
 
     out_shape = (<TensorImpl>a)._shape_tuple if isinstance(a, TensorImpl) else a.shape
     out_stride = _npu_runtime._contiguous_stride(out_shape)
@@ -6012,68 +7111,87 @@ def fast_neg(a):
     cdef int64_t alloc_size_fneg = n * isize
     if dev_idx == 0:
         _ensure_allocator_dev0()
-        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fneg, stream=stream.stream)
+        out_ptr = _fast_allocator_dev0.malloc(alloc_size_fneg, stream=stream_obj)
     else:
-        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fneg, stream=stream.stream)
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size_fneg, stream=stream_obj)
 
     cdef int dtype_code = _dtype_to_acl_code(a_dtype)
     cdef uintptr_t a_ptr, o_ptr
-    if isinstance(a, TensorImpl):
-        a_ptr = <uintptr_t>(<TensorImpl>a)._storage._untyped._device_ptr
-    else:
-        a_ptr = <uintptr_t>a.storage().data_ptr()
     o_ptr = out_ptr
-    cdef uintptr_t stream_raw = int(stream.stream)
+    cdef uintptr_t stream_raw = int(stream_obj)
     cdef object src_for_neg = a
     cdef object src_shape = out_shape
     cdef object src_stride = a.stride
     cdef object workspace_ptr
     cdef int ret
+    cdef int64_t temp_ptr = 0
+    cdef bint temp_allocated = False
+    cdef object temp_allocator = None
 
     try:
-        ws_size, executor = _ffi_unary_op(
-            _neg_getws_ptr, _neg_exec_ptr,
-            src_shape, src_stride,
-            out_shape, out_stride,
-            dtype_code, dtype_code, 2,
-            a_ptr, o_ptr,
-            stream_raw)
-    except RuntimeError as exc:
-        if "GetWorkspaceSize failed: 561103" not in str(exc):
-            _get_allocator_fn_ref(dev_idx).free(out_ptr, stream=stream.stream)
-            raise
-        # TODO: re-enable native strided-view neg when CANN fixes aclnnNeg 561103.
-        src_for_neg = _npu_contiguous_copy(a)
-        if isinstance(src_for_neg, TensorImpl):
-            a_ptr = <uintptr_t>(<TensorImpl>src_for_neg)._storage._untyped._device_ptr
-            src_shape = (<TensorImpl>src_for_neg)._shape_tuple
-        else:
-            a_ptr = <uintptr_t>src_for_neg.storage().data_ptr()
-            src_shape = src_for_neg.shape
-        src_stride = src_for_neg.stride
-        ws_size, executor = _ffi_unary_op(
-            _neg_getws_ptr, _neg_exec_ptr,
-            src_shape, src_stride,
-            out_shape, out_stride,
-            dtype_code, dtype_code, 2,
-            a_ptr, o_ptr,
-            stream_raw)
-
-    if ws_size:
-        workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
-        if ret != 0:
-            raise RuntimeError(f"acl.rt.malloc failed: {ret}")
         try:
-            ret = _ffi_execute(
-                _neg_exec_ptr, int(workspace_ptr), ws_size,
-                executor, stream_raw)
-            if ret != 0:
-                raise RuntimeError(f"aclnnNeg execute failed: {ret}")
-        finally:
-            runtime.defer_raw_free(workspace_ptr)
+            if isinstance(a, TensorImpl) and _can_use_native_offset_unary_descriptor(<TensorImpl>a):
+                # torch_npu passes aclCreateTensor the base storage pointer plus the
+                # logical view's storage_offset/storage size.  CANN accepts that
+                # descriptor for RoPE-style half views; passing an already adjusted
+                # effective pointer with offset=0 is what triggers 561103.
+                a_ptr = _npu_storage_base_ptr_fast(a)
+                ws_size, executor = _ffi_unary_op_with_input_storage(
+                    <uintptr_t>_neg_getws_ptr, <uintptr_t>_neg_exec_ptr,
+                    src_shape, src_stride,
+                    (_npu_storage_numel_fast(a, isize),), (<TensorImpl>a)._c_offset,
+                    out_shape, out_stride,
+                    dtype_code, dtype_code, 2,
+                    a_ptr, o_ptr,
+                    stream_raw)
+            else:
+                a_ptr = _npu_data_ptr_fast(a, isize)
+                ws_size, executor = _ffi_unary_op(
+                    _neg_getws_ptr, _neg_exec_ptr,
+                    src_shape, src_stride,
+                    out_shape, out_stride,
+                    dtype_code, dtype_code, 2,
+                    a_ptr, o_ptr,
+                    stream_raw)
+        except RuntimeError as exc:
+            if "GetWorkspaceSize failed: 561103" not in str(exc):
+                _get_allocator_fn_ref(dev_idx).free(out_ptr, stream=stream_obj)
+                raise
+            # TODO: re-enable native strided-view neg when CANN fixes aclnnNeg 561103.
+            src_for_neg = _npu_contiguous_copy(a)
+            if isinstance(src_for_neg, TensorImpl):
+                a_ptr = _npu_data_ptr_fast(src_for_neg, isize)
+                src_shape = (<TensorImpl>src_for_neg)._shape_tuple
+            else:
+                a_ptr = _npu_data_ptr_fast(src_for_neg, isize)
+                src_shape = src_for_neg.shape
+            src_stride = src_for_neg.stride
+            ws_size, executor = _ffi_unary_op(
+                _neg_getws_ptr, _neg_exec_ptr,
+                src_shape, src_stride,
+                out_shape, out_stride,
+                dtype_code, dtype_code, 2,
+                a_ptr, o_ptr,
+                stream_raw)
 
-    _defer_executor_fn(executor)
-    return _cy_make_npu_tensor(out_ptr, n, a_dtype, a_dev, out_shape, out_stride)
+        if ws_size:
+            workspace_ptr, ret = _acl_rt_malloc_fn(ws_size, 0)
+            if ret != 0:
+                raise RuntimeError(f"acl.rt.malloc failed: {ret}")
+            try:
+                ret = _ffi_execute(
+                    _neg_exec_ptr, int(workspace_ptr), ws_size,
+                    executor, stream_raw)
+                if ret != 0:
+                    raise RuntimeError(f"aclnnNeg execute failed: {ret}")
+            finally:
+                runtime.defer_raw_free(workspace_ptr)
+
+        _defer_executor_fn(executor)
+        return _make_npu_tensor_fast(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize)
+    finally:
+        if temp_allocated:
+            temp_allocator.free(temp_ptr, stream=stream_obj)
 
 
 def fast_neg_inplace(a):
@@ -6969,7 +8087,7 @@ def fast_log_inplace(a):
     return a
 
 
-def fast_rsqrt(a):
+cpdef object fast_rsqrt(object a):
     """Optimized out-of-place rsqrt(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()
     _ensure_ffi_rsqrt()
@@ -9477,6 +10595,100 @@ cpdef object fast_silu_exact(TensorImpl a):
             _ffi_pta_end_cache_lookup()
 
     return _make_npu_tensor_fast_large(out_ptr, n, a_dtype, a_dev, out_shape, out_stride, isize, dev_idx, a._dtype_code)
+
+
+cpdef object fast_cast(object a, object dst_dtype):
+    """Fast contiguous NPU dtype cast via cached Cython ACLNN Cast FFI."""
+    _ensure_npu_imports()
+    _ensure_ffi_cast()
+
+    if not isinstance(a, TensorImpl):
+        return None
+    cdef TensorImpl src = <TensorImpl>a
+    if src._device_type != 1:
+        return None
+    if src._dtype_obj == dst_dtype:
+        return a
+    if not _tensor_has_strict_contiguous_stride(src):
+        return None
+
+    cdef int dev_idx = src._device_index
+    cdef object a_dev = src._device_obj
+    cdef object in_shape = src._shape_tuple
+    cdef object in_stride = src._stride_tuple
+    cdef object out_shape = in_shape
+    cdef object out_stride = in_stride
+    cdef int64_t n = src._c_numel
+    if n == 0:
+        return None
+
+    cdef int dst_itemsize = c_dtype_itemsize(dst_dtype)
+    cdef int dst_tensor_code = _dtype_to_tensor_code(dst_dtype)
+    cdef int src_acl_code = _tensor_dtype_to_acl_code(src)
+    cdef int dst_acl_code = _dtype_to_acl_code(dst_dtype)
+    cdef int64_t alloc_size = n * dst_itemsize
+    cdef object stream_obj = _get_stream_obj_fast(dev_idx)
+    cdef object out_ptr
+    if dev_idx == 0:
+        _ensure_allocator_dev0()
+        out_ptr = _fast_allocator_dev0.malloc_large_cached(alloc_size, stream_obj)
+    else:
+        out_ptr = _get_allocator_fn_ref(dev_idx).malloc(alloc_size, stream=stream_obj)
+
+    cdef uintptr_t src_ptr = _npu_data_ptr_fast(a, src._itemsize)
+    cdef uintptr_t dst_ptr = <uintptr_t>int(out_ptr)
+    cdef uintptr_t stream_raw = _get_stream_raw_fast(dev_idx)
+    cdef bint pta_active = False
+    cdef uint64_t ws_size_raw = 0
+    cdef uintptr_t executor_raw = 0
+    cdef int pta_lookup
+    cdef object runtime = None
+    cdef object ws_size
+    cdef object executor = 0
+
+    if _use_cast_pta_cache and _pta_unary_begin_fn is not None:
+        pta_lookup = _ffi_pta_begin_unary_cache_lookup_raw(
+            b"aclnnCast",
+            in_shape, in_stride,
+            out_shape, out_stride,
+            src_acl_code, dst_acl_code,
+            src_ptr, dst_ptr,
+            stream_raw,
+            &pta_active,
+            &ws_size_raw,
+            &executor_raw)
+        if pta_lookup and executor_raw != 0:
+            try:
+                runtime = _run_executor(_cast_exec_ptr, ws_size_raw, executor_raw,
+                                        stream_raw, dev_idx, runtime, "aclnnCast")
+                return _make_npu_tensor_fast_large(
+                    dst_ptr, n, dst_dtype, a_dev, out_shape, out_stride,
+                    dst_itemsize, dev_idx, dst_tensor_code)
+            finally:
+                if pta_active:
+                    _ffi_pta_end_cache_lookup()
+                    pta_active = False
+
+    try:
+        ws_size, executor = _ffi_cast_op(
+            _cast_getws_ptr, _cast_exec_ptr,
+            in_shape, in_stride,
+            out_shape, out_stride,
+            src_acl_code, dst_acl_code, 2,
+            src_ptr, dst_ptr,
+            stream_raw)
+        if ws_size:
+            runtime = _run_executor(_cast_exec_ptr, <uint64_t>ws_size, <uintptr_t>executor,
+                                    stream_raw, dev_idx, runtime, "aclnnCast")
+        if executor:
+            _defer_executor_handle(<uintptr_t>executor)
+    finally:
+        if pta_active:
+            _ffi_pta_end_cache_lookup()
+
+    return _make_npu_tensor_fast_large(
+        dst_ptr, n, dst_dtype, a_dev, out_shape, out_stride,
+        dst_itemsize, dev_idx, dst_tensor_code)
 
 
 cpdef object fast_gelu_backward(object grad, object saved_input):

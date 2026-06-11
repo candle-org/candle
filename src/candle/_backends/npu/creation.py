@@ -53,9 +53,10 @@ def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     shape = tuple(shape)
     size = int(np.prod(shape))
     out_size = size * np.dtype(npu_runtime._dtype_to_numpy(dtype)).itemsize
-    ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
+    ptr = npu_runtime._alloc_device(max(out_size, 1), runtime=runtime)
     stride = npu_runtime._contiguous_stride(shape)
-    aclnn.inplace_zero(ptr, shape, stride, dtype, runtime, stream=stream.stream)
+    if size != 0:
+        aclnn.inplace_zero(ptr, shape, stride, dtype, runtime, stream=stream.stream)
     storage = npu_typed_storage_from_ptr(ptr, size, dtype, device=device)
     return _wrap_tensor(storage, shape, stride, requires_grad)
 
@@ -70,9 +71,10 @@ def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_form
     shape = tuple(shape)
     size = int(np.prod(shape))
     out_size = size * np.dtype(npu_runtime._dtype_to_numpy(dtype)).itemsize
-    ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
+    ptr = npu_runtime._alloc_device(max(out_size, 1), runtime=runtime)
     stride = npu_runtime._contiguous_stride(shape)
-    aclnn.inplace_one(ptr, shape, stride, dtype, runtime, stream=stream.stream)
+    if size != 0:
+        aclnn.inplace_one(ptr, shape, stride, dtype, runtime, stream=stream.stream)
     storage = npu_typed_storage_from_ptr(ptr, size, dtype, device=device)
     return _wrap_tensor(storage, shape, stride, requires_grad)
 
@@ -86,7 +88,7 @@ def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     shape = tuple(shape)
     size = int(np.prod(shape))
     out_size = size * np.dtype(npu_runtime._dtype_to_numpy(dtype)).itemsize
-    ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
+    ptr = npu_runtime._alloc_device(max(out_size, 1), runtime=runtime)
     storage = npu_typed_storage_from_ptr(ptr, size, dtype, device=device)
     stride = npu_runtime._contiguous_stride(shape)
     return _wrap_tensor(storage, shape, stride, requires_grad)
@@ -535,9 +537,10 @@ def zeros_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     shape = tuple(shape)
     size = int(np.prod(shape))
     out_size = size * np.dtype(npu_runtime._dtype_to_numpy(dtype)).itemsize
-    ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
+    ptr = npu_runtime._alloc_device(max(out_size, 1), runtime=runtime)
     stride = npu_runtime._contiguous_stride(shape)
-    aclnn.inplace_zero(ptr, shape, stride, dtype, runtime, stream=stream.stream)
+    if size != 0:
+        aclnn.inplace_zero(ptr, shape, stride, dtype, runtime, stream=stream.stream)
     storage = npu_typed_storage_from_ptr(ptr, size, dtype, device=device)
     return _wrap_tensor(storage, shape, stride, requires_grad)
 
@@ -552,9 +555,10 @@ def ones_create(shape, dtype=None, device=None, requires_grad=False, memory_form
     shape = tuple(shape)
     size = int(np.prod(shape))
     out_size = size * np.dtype(npu_runtime._dtype_to_numpy(dtype)).itemsize
-    ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
+    ptr = npu_runtime._alloc_device(max(out_size, 1), runtime=runtime)
     stride = npu_runtime._contiguous_stride(shape)
-    aclnn.inplace_one(ptr, shape, stride, dtype, runtime, stream=stream.stream)
+    if size != 0:
+        aclnn.inplace_one(ptr, shape, stride, dtype, runtime, stream=stream.stream)
     storage = npu_typed_storage_from_ptr(ptr, size, dtype, device=device)
     return _wrap_tensor(storage, shape, stride, requires_grad)
 
@@ -568,7 +572,7 @@ def empty_create(shape, dtype=None, device=None, requires_grad=False, memory_for
     shape = tuple(shape)
     size = int(np.prod(shape))
     out_size = size * np.dtype(npu_runtime._dtype_to_numpy(dtype)).itemsize
-    ptr = npu_runtime._alloc_device(out_size, runtime=runtime)
+    ptr = npu_runtime._alloc_device(max(out_size, 1), runtime=runtime)
     storage = npu_typed_storage_from_ptr(ptr, size, dtype, device=device)
     stride = npu_runtime._contiguous_stride(shape)
     return _wrap_tensor(storage, shape, stride, requires_grad)

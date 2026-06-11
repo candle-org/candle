@@ -603,17 +603,13 @@ def _install_tensor_api(TensorBase):
     TensorBase.record_stream = _tensor_api_mod.tensor_record_stream
     TensorBase.is_pinned = _tensor_api_mod.tensor_is_pinned
 
-    TensorBase.__add__ = _tensor_api_mod.tensor_add
     TensorBase.__radd__ = _tensor_api_mod.tensor_radd
-    TensorBase.__sub__ = _tensor_api_mod.tensor_sub
-    TensorBase.__mul__ = _tensor_api_mod.tensor_mul
     TensorBase.__matmul__ = _tensor_api_mod.tensor_matmul
     TensorBase.__getitem__ = _tensor_api_mod.tensor_getitem
     TensorBase.__setitem__ = _tensor_api_mod.tensor_setitem
     TensorBase.__iadd__ = _tensor_api_mod.tensor_iadd
     TensorBase.__isub__ = _tensor_api_mod.tensor_isub
     TensorBase.__imul__ = _tensor_api_mod.tensor_imul
-    TensorBase.__itruediv__ = _tensor_api_mod.tensor_itruediv
     TensorBase.__neg__ = _tensor_api_mod.tensor_neg
     TensorBase.neg = _tensor_api_mod.tensor_neg
 
@@ -796,7 +792,6 @@ def _install_tensor_api(TensorBase):
     TensorBase.matmul = _tensor_api_mod.tensor_matmul_method
     TensorBase.__rsub__ = _tensor_api_mod.tensor_rsub
     TensorBase.__rmul__ = _tensor_api_mod.tensor_rmul
-    TensorBase.__truediv__ = _tensor_api_mod.tensor_truediv
     TensorBase.__rtruediv__ = _tensor_api_mod.tensor_rtruediv
     TensorBase.__pow__ = _tensor_api_mod.tensor_pow_op
     TensorBase.__rpow__ = _tensor_api_mod.tensor_rpow
