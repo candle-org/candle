@@ -11,20 +11,21 @@ import numpy as np
 cimport cython
 from libc.stdint cimport int64_t, uintptr_t, uint64_t
 from candle._C._tensor_impl cimport TensorImpl
-from candle._C._aclrt_ffi cimport memcpy_d2d as _cy_memcpy_d2d
+IF HAS_NPU_CYTHON:
+    from candle._C._aclrt_ffi cimport memcpy_d2d as _cy_memcpy_d2d
+    from candle._C._npu_ops cimport (
+        fast_sum as _cy_fast_npu_sum,
+        fast_add_exact as _cy_fast_npu_add_exact,
+        fast_sub_exact as _cy_fast_npu_sub_exact,
+        fast_mul_exact as _cy_fast_npu_mul_exact,
+        fast_mul_scalar_exact as _cy_fast_npu_mul_scalar_exact,
+        fast_div_exact as _cy_fast_npu_div_exact,
+        fast_rsub_scalar_exact as _cy_fast_npu_rsub_scalar_exact,
+        fast_rdiv_scalar_exact as _cy_fast_npu_rdiv_scalar_exact,
+        fast_cast as _cy_fast_npu_cast,
+    )
 from candle._C._autograd_node cimport Node as _CyAutogradNode
 from candle._C._grad_mode_state cimport get_enabled_fast as _grad_enabled_fast
-from candle._C._npu_ops cimport (
-    fast_sum as _cy_fast_npu_sum,
-    fast_add_exact as _cy_fast_npu_add_exact,
-    fast_sub_exact as _cy_fast_npu_sub_exact,
-    fast_mul_exact as _cy_fast_npu_mul_exact,
-    fast_mul_scalar_exact as _cy_fast_npu_mul_scalar_exact,
-    fast_div_exact as _cy_fast_npu_div_exact,
-    fast_rsub_scalar_exact as _cy_fast_npu_rsub_scalar_exact,
-    fast_rdiv_scalar_exact as _cy_fast_npu_rdiv_scalar_exact,
-    fast_cast as _cy_fast_npu_cast,
-)
 
 
 def _bf16_to_f32_local(arr):
@@ -485,8 +486,9 @@ cdef inline object _annotate_reshape_view(object source, object view, object sha
 
 
 cpdef object tensor_add(object self, object other):
-    if _can_use_npu_tensor_binary_direct(self, other):
-        return _cy_fast_npu_add_exact(<TensorImpl>self, <TensorImpl>other)
+    IF HAS_NPU_CYTHON:
+        if _can_use_npu_tensor_binary_direct(self, other):
+            return _cy_fast_npu_add_exact(<TensorImpl>self, <TensorImpl>other)
     _ensure_functional_refs()
     return _add_fn(self, other)
 
@@ -613,15 +615,17 @@ def tensor_is_pinned(self):
     return self._storage.is_pinned()
 
 cpdef object tensor_sub(object self, object other):
-    if _can_use_npu_tensor_binary_direct(self, other):
-        return _cy_fast_npu_sub_exact(<TensorImpl>self, <TensorImpl>other)
+    IF HAS_NPU_CYTHON:
+        if _can_use_npu_tensor_binary_direct(self, other):
+            return _cy_fast_npu_sub_exact(<TensorImpl>self, <TensorImpl>other)
     _ensure_functional_add_sub_ref()
     return _functional_sub_fn(self, other)
 
 
 cpdef object tensor_mul(object self, object other):
-    if _can_use_npu_tensor_binary_direct(self, other):
-        return _cy_fast_npu_mul_exact(<TensorImpl>self, <TensorImpl>other)
+    IF HAS_NPU_CYTHON:
+        if _can_use_npu_tensor_binary_direct(self, other):
+            return _cy_fast_npu_mul_exact(<TensorImpl>self, <TensorImpl>other)
     _ensure_functional_refs()
     return _mul_fn(self, other)
 
@@ -721,7 +725,10 @@ def tensor_clone(self, *, memory_format=None):
                         alloc_nbytes, stream=stream.stream)
                     src_ptr = <uintptr_t>src_impl._storage._untyped._device_ptr
                     if nbytes != 0:
-                        _cy_memcpy_d2d(dst_ptr, nbytes, src_ptr, <uintptr_t>int(stream.stream), True)
+                        IF HAS_NPU_CYTHON:
+                            _cy_memcpy_d2d(dst_ptr, nbytes, src_ptr, <uintptr_t>int(stream.stream), True)
+                        ELSE:
+                            raise RuntimeError("NPU clone fast path requires NPU Cython support")
                     storage = _npu_typed_storage_from_ptr_fn(
                         dst_ptr, src_impl._c_numel, src_impl._dtype_obj, device=src_impl._device_obj)
                     _ensure_tensor_factory_ref()
@@ -823,10 +830,11 @@ cdef class _NpuToCopyBackward(_CyAutogradNode):
         except ImportError:
             pass
         result = None
-        try:
-            result = _cy_fast_npu_cast(grad, self._src_dtype)
-        except ValueError:
-            result = None
+        IF HAS_NPU_CYTHON:
+            try:
+                result = _cy_fast_npu_cast(grad, self._src_dtype)
+            except ValueError:
+                result = None
         if result is None:
             _ensure_functional_refs()
             result = _to_dispatch_fn(grad, grad.device, dtype=self._src_dtype)
@@ -919,9 +927,12 @@ def tensor_to(self, *args, **kwargs):
         and dtype != self.dtype
         and _can_use_npu_to_dtype_fast_path(self, dtype)
     ):
-        try:
-            fast_cast_result = _cy_fast_npu_cast(self, dtype)
-        except ValueError:
+        IF HAS_NPU_CYTHON:
+            try:
+                fast_cast_result = _cy_fast_npu_cast(self, dtype)
+            except ValueError:
+                fast_cast_result = None
+        ELSE:
             fast_cast_result = None
         if fast_cast_result is not None:
             if _grad_enabled_fast() and (<TensorImpl>self).requires_grad:
@@ -3089,7 +3100,11 @@ cdef class _NpuReflectedScalarSubBackward(_CyAutogradNode):
                 return (_dispatch_fn("neg", grad.device.type, grad),)
         except ImportError:
             pass
-        out = _cy_fast_npu_mul_scalar_exact(<TensorImpl>grad, -1.0)
+        IF HAS_NPU_CYTHON:
+            out = _cy_fast_npu_mul_scalar_exact(<TensorImpl>grad, -1.0)
+            return (_mark_npu_owned_backward_grad(out),)
+        _ensure_dispatch_ref()
+        out = _dispatch_fn("neg", grad.device.type, grad)
         return (_mark_npu_owned_backward_grad(out),)
 
 
@@ -3151,9 +3166,14 @@ cdef class _NpuReflectedScalarDivBackward(_CyAutogradNode):
                 return (_dispatch_fn("mul", x.device.type, ratio, -self._value),)
         except ImportError:
             pass
-        denom = _cy_fast_npu_mul_exact(<TensorImpl>x, <TensorImpl>x)
-        ratio = _cy_fast_npu_div_exact(<TensorImpl>grad, <TensorImpl>denom)
-        out = _cy_fast_npu_mul_scalar_exact(<TensorImpl>ratio, -self._value)
+        IF HAS_NPU_CYTHON:
+            denom = _cy_fast_npu_mul_exact(<TensorImpl>x, <TensorImpl>x)
+            ratio = _cy_fast_npu_div_exact(<TensorImpl>grad, <TensorImpl>denom)
+            out = _cy_fast_npu_mul_scalar_exact(<TensorImpl>ratio, -self._value)
+            return (_mark_npu_owned_backward_grad(out),)
+        denom = _dispatch_fn("mul", x.device.type, x, x)
+        ratio = _dispatch_fn("true_divide", x.device.type, grad, denom)
+        out = _dispatch_fn("mul", x.device.type, ratio, -self._value)
         return (_mark_npu_owned_backward_grad(out),)
 
 
@@ -3177,11 +3197,12 @@ cdef inline object _attach_npu_reflected_scalar_div_grad(object result, object s
 
 def tensor_rsub(self, other):
     """other - self  (reflected sub)"""
-    if _npu_scalar_reflected_fast_ok(self, other):
-        result = _cy_fast_npu_rsub_scalar_exact(<TensorImpl>self, other)
-        if _grad_enabled_fast() and (<TensorImpl>self).requires_grad:
-            return _attach_npu_reflected_scalar_sub_grad(result, self)
-        return result
+    IF HAS_NPU_CYTHON:
+        if _npu_scalar_reflected_fast_ok(self, other):
+            result = _cy_fast_npu_rsub_scalar_exact(<TensorImpl>self, other)
+            if _grad_enabled_fast() and (<TensorImpl>self).requires_grad:
+                return _attach_npu_reflected_scalar_sub_grad(result, self)
+            return result
     _ensure_dispatch_ref()
     neg_self = _dispatch_fn("neg", self.device.type, self)
     return _dispatch_fn("add", self.device.type, neg_self, other)
@@ -3193,18 +3214,20 @@ def tensor_rmul(self, other):
 
 
 cpdef object tensor_truediv(object self, object other):
-    if _can_use_npu_tensor_binary_direct(self, other):
-        return _cy_fast_npu_div_exact(<TensorImpl>self, <TensorImpl>other)
+    IF HAS_NPU_CYTHON:
+        if _can_use_npu_tensor_binary_direct(self, other):
+            return _cy_fast_npu_div_exact(<TensorImpl>self, <TensorImpl>other)
     _ensure_functional_refs()
     return _div_fn(self, other)
 
 
 def tensor_rtruediv(self, other):
-    if _npu_scalar_reflected_fast_ok(self, other):
-        result = _cy_fast_npu_rdiv_scalar_exact(<TensorImpl>self, other)
-        if _grad_enabled_fast() and (<TensorImpl>self).requires_grad:
-            return _attach_npu_reflected_scalar_div_grad(result, self, other)
-        return result
+    IF HAS_NPU_CYTHON:
+        if _npu_scalar_reflected_fast_ok(self, other):
+            result = _cy_fast_npu_rdiv_scalar_exact(<TensorImpl>self, other)
+            if _grad_enabled_fast() and (<TensorImpl>self).requires_grad:
+                return _attach_npu_reflected_scalar_div_grad(result, self, other)
+            return result
     _ensure_dispatch_ref()
     return _dispatch_fn("true_divide", self.device.type, other, self)
 
@@ -3402,9 +3425,12 @@ cdef inline object _attach_npu_sum_grad(object result, object self_, object dim,
 def tensor_sum_method(self, dim=None, keepdim=False, *, dtype=None):
     cdef object result
     if _can_use_npu_sum_fast_path(self, dtype):
-        try:
-            result = _cy_fast_npu_sum(self, dim, keepdim)
-        except ValueError:
+        IF HAS_NPU_CYTHON:
+            try:
+                result = _cy_fast_npu_sum(self, dim, keepdim)
+            except ValueError:
+                result = None
+        ELSE:
             result = None
         if result is not None:
             if _grad_enabled_fast() and (<TensorImpl>self).requires_grad:

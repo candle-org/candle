@@ -12,38 +12,70 @@ from candle.autograd.node import AccumulateGrad, SavedTensor, _SavedValue
 from candle._C._autograd_node cimport Node as _CyAutogradNode
 from candle._C._tensor_impl cimport TensorImpl, cy_make_tensor_from_storage
 from candle._C._grad_mode_state cimport get_enabled_fast as _grad_enabled_fast
-from candle._C._npu_ops cimport (
-    fast_add as _cy_fast_npu_add,
-    fast_add_exact as _cy_fast_npu_add_exact,
-    fast_add_scalar_exact as _cy_fast_npu_add_scalar_exact,
-    fast_sub_exact as _cy_fast_npu_sub_exact,
-    fast_div_exact as _cy_fast_npu_div_exact,
-    fast_mul as _cy_fast_npu_mul,
-    fast_mul_exact as _cy_fast_npu_mul_exact,
-    fast_mul_scalar_exact as _cy_fast_npu_mul_scalar_exact,
-    fast_sub_scalar_exact as _cy_fast_npu_sub_scalar_exact,
-    fast_div_scalar_exact as _cy_fast_npu_div_scalar_exact,
-    fast_matmul as _cy_fast_npu_matmul,
-    fast_matmul_exact as _cy_fast_npu_matmul_exact,
-    fast_addmm as _cy_fast_npu_addmm,
-    fast_layer_norm as _cy_fast_npu_layer_norm,
-    fast_layer_norm_backward as _cy_fast_npu_layer_norm_backward,
-    fast_sum as _cy_fast_npu_sum,
-    fast_mm_mat1_backward as _cy_fast_npu_mm_mat1_backward,
-    fast_mm_mat2_backward as _cy_fast_npu_mm_mat2_backward,
-    fast_gelu as _cy_fast_npu_gelu,
-    fast_gelu_exact as _cy_fast_npu_gelu_exact,
-    fast_silu as _cy_fast_npu_silu,
-    fast_silu_exact as _cy_fast_npu_silu_exact,
-    fast_rsqrt as _cy_fast_npu_rsqrt,
-    fast_gelu_backward as _cy_fast_npu_gelu_backward,
-    fast_silu_backward as _cy_fast_npu_silu_backward,
-    fast_sdpa_flash_attention as _cy_fast_sdpa_flash_attention,
-    fast_sdpa_flash_attention_backward as _cy_fast_sdpa_flash_attention_backward,
-    fast_sdpa_flash_attention_backward_packed_qkv as _cy_fast_sdpa_flash_attention_backward_packed_qkv,
-    fast_packed_qkv_projection_forward as _cy_fast_packed_qkv_projection_forward,
-    fast_packed_qkv_projection_backward as _cy_fast_packed_qkv_projection_backward,
-)
+IF HAS_NPU_CYTHON:
+    from candle._C._npu_ops cimport (
+        fast_add as _cy_fast_npu_add,
+        fast_add_exact as _cy_fast_npu_add_exact,
+        fast_add_scalar_exact as _cy_fast_npu_add_scalar_exact,
+        fast_sub_exact as _cy_fast_npu_sub_exact,
+        fast_div_exact as _cy_fast_npu_div_exact,
+        fast_mul as _cy_fast_npu_mul,
+        fast_mul_exact as _cy_fast_npu_mul_exact,
+        fast_mul_scalar_exact as _cy_fast_npu_mul_scalar_exact,
+        fast_sub_scalar_exact as _cy_fast_npu_sub_scalar_exact,
+        fast_div_scalar_exact as _cy_fast_npu_div_scalar_exact,
+        fast_matmul as _cy_fast_npu_matmul,
+        fast_matmul_exact as _cy_fast_npu_matmul_exact,
+        fast_addmm as _cy_fast_npu_addmm,
+        fast_layer_norm as _cy_fast_npu_layer_norm,
+        fast_layer_norm_backward as _cy_fast_npu_layer_norm_backward,
+        fast_sum as _cy_fast_npu_sum,
+        fast_mm_mat1_backward as _cy_fast_npu_mm_mat1_backward,
+        fast_mm_mat2_backward as _cy_fast_npu_mm_mat2_backward,
+        fast_gelu as _cy_fast_npu_gelu,
+        fast_gelu_exact as _cy_fast_npu_gelu_exact,
+        fast_silu as _cy_fast_npu_silu,
+        fast_silu_exact as _cy_fast_npu_silu_exact,
+        fast_rsqrt as _cy_fast_npu_rsqrt,
+        fast_gelu_backward as _cy_fast_npu_gelu_backward,
+        fast_silu_backward as _cy_fast_npu_silu_backward,
+        fast_sdpa_flash_attention as _cy_fast_sdpa_flash_attention,
+        fast_sdpa_flash_attention_backward as _cy_fast_sdpa_flash_attention_backward,
+        fast_sdpa_flash_attention_backward_packed_qkv as _cy_fast_sdpa_flash_attention_backward_packed_qkv,
+        fast_packed_qkv_projection_forward as _cy_fast_packed_qkv_projection_forward,
+        fast_packed_qkv_projection_backward as _cy_fast_packed_qkv_projection_backward,
+    )
+ELSE:
+    cdef object _cy_fast_npu_add = None
+    cdef object _cy_fast_npu_add_exact = None
+    cdef object _cy_fast_npu_add_scalar_exact = None
+    cdef object _cy_fast_npu_sub_exact = None
+    cdef object _cy_fast_npu_div_exact = None
+    cdef object _cy_fast_npu_mul = None
+    cdef object _cy_fast_npu_mul_exact = None
+    cdef object _cy_fast_npu_mul_scalar_exact = None
+    cdef object _cy_fast_npu_sub_scalar_exact = None
+    cdef object _cy_fast_npu_div_scalar_exact = None
+    cdef object _cy_fast_npu_matmul = None
+    cdef object _cy_fast_npu_matmul_exact = None
+    cdef object _cy_fast_npu_addmm = None
+    cdef object _cy_fast_npu_layer_norm = None
+    cdef object _cy_fast_npu_layer_norm_backward = None
+    cdef object _cy_fast_npu_sum = None
+    cdef object _cy_fast_npu_mm_mat1_backward = None
+    cdef object _cy_fast_npu_mm_mat2_backward = None
+    cdef object _cy_fast_npu_gelu = None
+    cdef object _cy_fast_npu_gelu_exact = None
+    cdef object _cy_fast_npu_silu = None
+    cdef object _cy_fast_npu_silu_exact = None
+    cdef object _cy_fast_npu_rsqrt = None
+    cdef object _cy_fast_npu_gelu_backward = None
+    cdef object _cy_fast_npu_silu_backward = None
+    cdef object _cy_fast_sdpa_flash_attention = None
+    cdef object _cy_fast_sdpa_flash_attention_backward = None
+    cdef object _cy_fast_sdpa_flash_attention_backward_packed_qkv = None
+    cdef object _cy_fast_packed_qkv_projection_forward = None
+    cdef object _cy_fast_packed_qkv_projection_backward = None
 
 # Cached reference to base Tensor class
 cdef object _BaseTensor = None
@@ -282,6 +314,8 @@ cdef inline bint _profiler_active():
 
 
 cdef inline bint _exact_base_npu_pair(object a, object b):
+    IF not HAS_NPU_CYTHON:
+        return False
     _ensure_base()
     return (
         type(a) is _BaseTensor
@@ -293,11 +327,15 @@ cdef inline bint _exact_base_npu_pair(object a, object b):
 
 
 cdef inline bint _exact_base_npu_unary(object a):
+    IF not HAS_NPU_CYTHON:
+        return False
     _ensure_base()
     return type(a) is _BaseTensor and (<TensorImpl>a)._device_type == 1
 
 
 cdef inline bint _exact_base_npu_tensor_scalar(object a, object value):
+    IF not HAS_NPU_CYTHON:
+        return False
     _ensure_base()
     return type(a) is _BaseTensor and (<TensorImpl>a)._device_type == 1 and isinstance(value, (int, float))
 
@@ -352,6 +390,8 @@ cdef inline tuple _contiguous_stride_tuple(object shape):
 
 cdef inline int _exact_npu_addmm_hot_state(object input, object mat1, object mat2, object beta, object alpha):
     """Return 1 for inference, 2 for autograd, 0 for fallback."""
+    IF not HAS_NPU_CYTHON:
+        return 0
     cdef bint grad_on
     cdef bint requires_grad
     cdef TensorImpl bias
@@ -392,6 +432,8 @@ cdef inline int _exact_npu_addmm_hot_state(object input, object mat1, object mat
 
 cdef inline int _exact_npu_linear_hot_state(object input, object weight, object bias):
     """Return 1 for inference, 2 for autograd, 0 for fallback."""
+    IF not HAS_NPU_CYTHON:
+        return 0
     cdef bint grad_on
     cdef bint requires_grad
     cdef TensorImpl inp
@@ -432,6 +474,8 @@ cdef inline int _exact_npu_linear_hot_state(object input, object weight, object 
 
 cdef inline int _exact_npu_linear_no_bias_hot_state(object input, object weight):
     """Return 1 for inference, 2 for autograd, 0 for fallback."""
+    IF not HAS_NPU_CYTHON:
+        return 0
     cdef bint grad_on
     cdef bint requires_grad
     cdef TensorImpl inp
@@ -470,6 +514,8 @@ cdef inline int _exact_npu_linear_no_bias_hot_state(object input, object weight)
 
 cdef inline int _exact_npu_layer_norm_hot_state(object input, object weight, object bias, object normalized_shape):
     """Return 1 for inference, 2 for autograd, 0 for fallback."""
+    IF not HAS_NPU_CYTHON:
+        return 0
     cdef bint grad_on
     cdef bint requires_grad
     cdef TensorImpl inp
@@ -564,6 +610,8 @@ cdef inline int _exact_npu_unary_hot_state(object a):
 
 cdef inline bint _is_npu_tensor_pair(object a, object b):
     """True only when both operands are tensors on the NPU device."""
+    IF not HAS_NPU_CYTHON:
+        return False
     if isinstance(a, TensorImpl) and isinstance(b, TensorImpl):
         return (<TensorImpl>a)._device_type == 1 and (<TensorImpl>b)._device_type == 1
     cdef object a_dev = getattr(a, "device", None)
@@ -575,6 +623,8 @@ cdef inline bint _is_npu_tensor_pair(object a, object b):
 
 cdef inline bint _npu_pair_ready(object a, object b):
     """True if both operands are NPU tensors and global fast-path guards allow bypass."""
+    IF not HAS_NPU_CYTHON:
+        return False
     cdef object b_dev
     if isinstance(a, TensorImpl) and isinstance(b, TensorImpl):
         if (<TensorImpl>a)._device_type != 1 or (<TensorImpl>b)._device_type != 1:
@@ -594,6 +644,8 @@ cdef inline bint _npu_pair_ready(object a, object b):
 
 cdef inline bint _npu_unary_ready(object a):
     """True if a single tensor is NPU and global fast-path guards allow bypass."""
+    IF not HAS_NPU_CYTHON:
+        return False
     cdef object dev
     if isinstance(a, TensorImpl):
         if (<TensorImpl>a)._device_type != 1:
@@ -2453,6 +2505,8 @@ def npu_flash_sdpa(query, key, value, scale_factor, attn_mask=None):
     cdef object out
     cdef object softmax_max
     cdef object softmax_sum
+    IF not HAS_NPU_CYTHON:
+        return None
     if not isinstance(query, TensorImpl) or not isinstance(key, TensorImpl) or not isinstance(value, TensorImpl):
         return None
     if attn_mask is not None and not isinstance(attn_mask, TensorImpl):

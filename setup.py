@@ -33,6 +33,7 @@ required_extensions = [
 # Cross-platform extensions (Linux + macOS)
 # ---------------------------------------------------------------------------
 _system = platform.system()
+_has_npu_cython = _system == "Linux"
 cross_platform_extensions = []
 if _system in ("Linux", "Darwin"):
     cross_platform_extensions = [
@@ -225,6 +226,7 @@ ext_modules = cythonize(
         "boundscheck": False,
         "wraparound": False,
     },
+    compile_time_env={"HAS_NPU_CYTHON": _has_npu_cython},
     nthreads=os.cpu_count() or 1,
 )
 
