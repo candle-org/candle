@@ -96,6 +96,14 @@ cdef inline void _ensure_runtime():
     _get_dispatcher_fn = get_dispatcher
 
 
+cdef inline object _storage_untyped(object storage):
+    """Return the untyped storage for Python and Cython storage wrappers."""
+    cdef object untyped = getattr(storage, "_untyped", None)
+    if untyped is not None:
+        return untyped
+    return getattr(storage, "_untyped_storage", None)
+
+
 # ---------------------------------------------------------------------------
 # C-level guard (inlined, not exposed to Python)
 # ---------------------------------------------------------------------------
@@ -107,9 +115,9 @@ cdef inline bint _can_use_gpu_c(object t):
     if t.numel() <= 0:
         return False
     cdef object storage = t._storage
-    if not hasattr(storage, '_untyped'):
+    cdef object untyped = _storage_untyped(storage)
+    if untyped is None:
         return False
-    cdef object untyped = storage._untyped
     if not hasattr(untyped, '_metal_buffer'):
         return False
     return untyped._metal_buffer is not None
@@ -147,7 +155,7 @@ cpdef int itemsize(object dtype):
 
 cpdef object get_metal_buf(object t):
     """Return the raw Metal buffer from tensor *t*."""
-    return t._storage._untyped._metal_buffer
+    return _storage_untyped(t._storage)._metal_buffer
 
 
 cpdef object alloc_output_buf(int numel, object dtype):
@@ -177,16 +185,12 @@ cpdef object from_metal_buffer(object metal_buf_obj, object shape, object stride
         numel = 1
 
     cdef object untyped = _MPSUntypedStorage_cls(metal_buf_obj, nbytes, device=device)
-    cdef long ptr = _buffer_contents_fn(metal_buf_obj)
-    cdef object np_dtype = _NP_DTYPE.get(dtype, np.float32)
-    cdef object data = np.frombuffer(
-        (ctypes.c_uint8 * nbytes).from_address(ptr),
-        dtype=np_dtype,
-        count=numel,
+    cdef object typed_storage = _TypedStorage_cls(
+        wrap_storage=untyped,
+        dtype=dtype,
+        _internal=True,
     )
-    cdef object typed_storage = _TypedStorage_cls(untyped, dtype, numel, data=data)
-    from candle._C._tensor_impl import cy_make_tensor_from_storage
-    return cy_make_tensor_from_storage(typed_storage, shape_t, stride_t, 0, False)
+    return _Tensor_cls(typed_storage, shape_t, stride_t, 0, False)
 
 
 cdef inline object _read_scalar_c(object t):
@@ -194,7 +198,7 @@ cdef inline object _read_scalar_c(object t):
     _ensure_dtypes()
     _ensure_runtime()
     cdef int nb   = itemsize(t.dtype)
-    cdef long ptr = _buffer_contents_fn(t._storage._untyped._metal_buffer)
+    cdef long ptr = _buffer_contents_fn(_storage_untyped(t._storage)._metal_buffer)
     cdef bytes raw = bytes((ctypes.c_char * nb).from_address(ptr))
     return struct.unpack(_FMT[t.dtype], raw)[0]
 
@@ -219,7 +223,7 @@ cpdef object dispatch_unary_gpu(object a, str kernel_base):
     cdef str sfx        = _SUFFIX[a.dtype]
     cdef int numel      = a.numel()
     cdef object out_buf = alloc_output_buf(numel, a.dtype)
-    cdef object mb      = a._storage._untyped._metal_buffer
+    cdef object mb      = _storage_untyped(a._storage)._metal_buffer
 
     if a.is_contiguous():
         d.dispatch_unary(f"{kernel_base}_{sfx}", mb, out_buf, numel)
@@ -242,7 +246,7 @@ cpdef object dispatch_unary_predicate_gpu(object a, str kernel_base):
     cdef str sfx        = _SUFFIX[a.dtype]
     cdef int numel      = a.numel()
     cdef object out_buf = alloc_output_buf(numel, _bool_dtype)
-    cdef object mb      = a._storage._untyped._metal_buffer
+    cdef object mb      = _storage_untyped(a._storage)._metal_buffer
 
     if a.is_contiguous():
         d.dispatch_unary(f"{kernel_base}_{sfx}", mb, out_buf, numel)
@@ -273,7 +277,7 @@ cpdef object dispatch_binary_gpu(object a, object b, str kernel_base):
     cdef str sfx        = _SUFFIX[a.dtype]
     cdef int numel      = a.numel()
     cdef object out_buf = alloc_output_buf(numel, a.dtype)
-    cdef object mb_a    = a._storage._untyped._metal_buffer
+    cdef object mb_a    = _storage_untyped(a._storage)._metal_buffer
     cdef str fmt        = _FMT[a.dtype]
     cdef object mb_b
     cdef object raw_val
@@ -282,7 +286,7 @@ cpdef object dispatch_binary_gpu(object a, object b, str kernel_base):
     if (isinstance(b, _Tensor_cls)
             and _can_use_gpu_c(b)
             and a.shape == b.shape):
-        mb_b = b._storage._untyped._metal_buffer
+        mb_b = _storage_untyped(b._storage)._metal_buffer
         if a.is_contiguous() and b.is_contiguous():
             d.dispatch_binary(f"{kernel_base}_{sfx}", mb_a, mb_b, out_buf, numel)
         else:
