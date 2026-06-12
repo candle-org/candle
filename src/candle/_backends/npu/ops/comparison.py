@@ -66,6 +66,7 @@ except ImportError:
     _fast_bitwise_and_inplace_impl = None  # type: ignore[assignment]
     _fast_bitwise_or_inplace_impl = None  # type: ignore[assignment]
     _fast_bitwise_xor_inplace_impl = None  # type: ignore[assignment]
+    _fast_bitwise_not_inplace_impl = None  # type: ignore[assignment]
     _HAS_FAST_LOGICAL_NOT = False
     _HAS_FAST_BITWISE_NOT = False
     _HAS_FAST_ISCLOSE = False
@@ -86,6 +87,7 @@ except ImportError:
     _HAS_FAST_BITWISE_AND_INPLACE = False
     _HAS_FAST_BITWISE_OR_INPLACE = False
     _HAS_FAST_BITWISE_XOR_INPLACE = False
+    _HAS_FAST_BITWISE_NOT_INPLACE = False
 
 from ._helpers import (
     _unwrap_storage, _wrap_tensor,
