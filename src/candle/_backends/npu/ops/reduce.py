@@ -1103,17 +1103,18 @@ def cummin_op(a, dim):
 
 
 def _argsort_310b_fallback(a, dim, descending):
-    from ..creation import zeros_create
+    from ..creation import empty_create
     from . import scatter, where
     from .comparison import eq, gt, lt
     from .math import add, isnan, sub
     from .shape import _slice_along_dim
 
     dim_size = int(a.shape[dim])
-    out = zeros_create(tuple(a.shape), dtype=int64_dtype, device=a.device)
+    out = empty_create(tuple(a.shape), dtype=int64_dtype, device=a.device)
     if dim_size == 0:
         return out
 
+    out = sub(out, out)
     nan_mask = isnan(a) if a.dtype.is_floating_point else None
     nan_count = count_nonzero(nan_mask, dim=dim, keepdim=True) if nan_mask is not None else None
     cmp_op = gt if bool(descending) else lt
@@ -1127,7 +1128,7 @@ def _argsort_310b_fallback(a, dim, descending):
         if nan_mask is not None:
             prev_nan = _slice_along_dim(nan_mask, 0, i, dim) if i > 0 else None
             if prev_nan is None:
-                nan_before = zeros_create(rank.shape, dtype=int64_dtype, device=a.device)
+                nan_before = sub(rank, rank)
             else:
                 nan_before = count_nonzero(prev_nan, dim=dim, keepdim=True)
             if bool(descending):
