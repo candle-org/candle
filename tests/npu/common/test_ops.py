@@ -972,6 +972,164 @@ def test_npu_add_scalar_inplace_captures_without_host_scalar_copy(monkeypatch):
 
 
 
+def test_npu_scalar_tensor_creation_captures_without_host_copy(monkeypatch):
+    """NPU scalar tensor creation should be graph-capturable without H2D copy."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.creation as npu_creation
+
+    calls = {"h2d": 0}
+    original_copy_cpu_to_npu = npu_creation.npu_runtime._copy_cpu_to_npu
+
+    def forbidden_copy_cpu_to_npu(*args, **kwargs):
+        calls["h2d"] += 1
+        raise AssertionError("graph-captured scalar tensor creation must not use raw H2D copy")
+
+    monkeypatch.setattr(npu_creation.npu_runtime, "_copy_cpu_to_npu", forbidden_copy_cpu_to_npu)
+
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = torch.tensor(float("-inf"), device="npu", dtype=torch.float32)
+    graph.replay()
+    torch.npu.synchronize()
+    monkeypatch.setattr(npu_creation.npu_runtime, "_copy_cpu_to_npu", original_copy_cpu_to_npu)
+
+    assert calls == {"h2d": 0}
+    assert out.device.type == "npu"
+    assert out.shape == ()
+    assert np.isneginf(out.to("cpu").item())
+
+
+
+def test_npu_scalar_to_tensor_helper_captures_without_host_copy(monkeypatch):
+    """NPU tensor/scalar comparison should be graph-capturable without H2D scalar expansion."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops._helpers as npu_helpers
+
+    calls = {"h2d": 0}
+    original_memcpy_h2d = npu_helpers.npu_runtime.memcpy_h2d
+
+    def forbidden_memcpy_h2d(*args, **kwargs):
+        calls["h2d"] += 1
+        raise AssertionError("graph-captured scalar expansion must not use raw H2D copy")
+
+    monkeypatch.setattr(npu_helpers.npu_runtime, "memcpy_h2d", forbidden_memcpy_h2d)
+
+    mask = torch.ones((4, 4), device="npu", dtype=torch.bool).tril()
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = mask == False  # noqa: E712
+    graph.replay()
+    torch.npu.synchronize()
+    monkeypatch.setattr(npu_helpers.npu_runtime, "memcpy_h2d", original_memcpy_h2d)
+
+    assert calls == {"h2d": 0}
+    expected = np.triu(np.ones((4, 4), dtype=bool), k=1)
+    np.testing.assert_array_equal(out.to("cpu").numpy(), expected)
+
+
+
+def test_npu_empty_scalar_to_tensor_helper_captures_without_zero_byte_alloc(monkeypatch):
+    """Empty NPU tensor/scalar comparison should not request a zero-byte device allocation."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops._helpers as npu_helpers
+
+    calls = {"zero_alloc": 0}
+    original_alloc_device = npu_helpers.npu_runtime._alloc_device
+
+    def checked_alloc_device(size, *args, **kwargs):
+        if int(size) == 0:
+            calls["zero_alloc"] += 1
+            raise AssertionError("empty scalar expansion must allocate at least one byte")
+        return original_alloc_device(size, *args, **kwargs)
+
+    monkeypatch.setattr(npu_helpers.npu_runtime, "_alloc_device", checked_alloc_device)
+
+    mask = torch.empty((0,), device="npu", dtype=torch.bool)
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = mask == False  # noqa: E712
+    graph.replay()
+    torch.npu.synchronize()
+    monkeypatch.setattr(npu_helpers.npu_runtime, "_alloc_device", original_alloc_device)
+
+    assert calls == {"zero_alloc": 0}
+    assert out.device.type == "npu"
+    assert out.shape == (0,)
+
+
+
+def test_npu_contiguous_setitem_captures_without_raw_d2d(monkeypatch):
+    """NPU setitem into a contiguous view should be graph-capturable without raw D2D memcpy."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops.shape as npu_shape
+
+    calls = {"memcpy_d2d": 0}
+    original_memcpy_d2d = npu_shape.npu_runtime.memcpy_d2d
+
+    def forbidden_memcpy_d2d(*args, **kwargs):
+        calls["memcpy_d2d"] += 1
+        raise AssertionError("graph-captured setitem view copy must not use raw D2D memcpy")
+
+    x = torch.zeros((4,), device="npu", dtype=torch.float32)
+    value = torch.tensor(np.array([3.0, 4.0], dtype=np.float32), device="npu")
+    monkeypatch.setattr(npu_shape.npu_runtime, "memcpy_d2d", forbidden_memcpy_d2d)
+
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        x[:2] = value
+    graph.replay()
+    torch.npu.synchronize()
+    monkeypatch.setattr(npu_shape.npu_runtime, "memcpy_d2d", original_memcpy_d2d)
+
+    assert calls == {"memcpy_d2d": 0}
+    np.testing.assert_allclose(x.to("cpu").numpy(), np.array([3.0, 4.0, 0.0, 0.0], dtype=np.float32))
+
+
+
+def test_npu_gather_captures_without_host_index_bounds_read(monkeypatch):
+    """NPU gather should be graph-capturable without synchronizing index bounds to host."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    import candle._backends.npu.ops.shape as npu_shape
+
+    calls = {"index_read": 0, "scalar_read": 0}
+
+    def forbidden_index_read(*args, **kwargs):
+        calls["index_read"] += 1
+        raise AssertionError("gather capture path must not read indices on host")
+
+    def forbidden_scalar_read(*args, **kwargs):
+        calls["scalar_read"] += 1
+        raise AssertionError("gather capture path must not read validation scalars on host")
+
+    monkeypatch.setattr(npu_shape, "_read_index_tensor_to_cpu", forbidden_index_read)
+    monkeypatch.setattr(npu_shape, "_read_bool_scalar", forbidden_scalar_read)
+
+    x = torch.tensor(np.arange(12, dtype=np.float32).reshape(3, 4), device="npu")
+    index = torch.tensor([[0, 1], [2, 3], [1, 0]], device="npu", dtype=torch.int64)
+
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = torch.gather(x, dim=1, index=index)
+    graph.replay()
+    torch.npu.synchronize()
+
+    assert calls == {"index_read": 0, "scalar_read": 0}
+    expected = np.take_along_axis(np.arange(12, dtype=np.float32).reshape(3, 4),
+                                  np.array([[0, 1], [2, 3], [1, 0]], dtype=np.int64), axis=1)
+    np.testing.assert_allclose(out.to("cpu").numpy(), expected)
+
+
+
 def test_npu_index_select_known_nonnegative_captures_without_host_index_read(monkeypatch):
     """NPU x[:, idx] should capture without reading known nonnegative indices on host."""
     if not torch.npu.is_available():
@@ -1003,6 +1161,24 @@ def test_npu_index_select_known_nonnegative_captures_without_host_index_read(mon
 
     assert calls == {"index_read": 0, "scalar_read": 0}
     np.testing.assert_allclose(out.to("cpu").numpy(), np.array([[0, 2], [4, 6], [8, 10]], dtype=np.float32))
+
+
+
+def test_npu_index_select_negative_indices_capture_normalizes_on_device():
+    """NPU index_select should preserve negative-index semantics during graph capture."""
+    if not torch.npu.is_available():
+        pytest.skip("NPU not available")
+
+    x = torch.tensor([10.0, 20.0, 30.0], device="npu", dtype=torch.float32)
+    idx = torch.tensor([-1, 0], device="npu", dtype=torch.int64)
+
+    graph = torch.npu.NPUGraph()
+    with torch.npu.graph(graph):
+        out = torch.index_select(x, 0, idx)
+    graph.replay()
+    torch.npu.synchronize()
+
+    np.testing.assert_allclose(out.to("cpu").numpy(), np.array([30.0, 10.0], dtype=np.float32))
 
 
 

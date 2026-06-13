@@ -81,6 +81,12 @@ from . import _VF
 from . import _tensor_str
 from ._tensor import Tensor
 
+try:
+    from ._C import _tensor_api as _tensor_api
+    Tensor.backward = _tensor_api.tensor_backward
+except (ImportError, AttributeError):
+    pass
+
 # Torch-level numeric constants
 import builtins as _builtins
 inf = _builtins.float("inf")

@@ -18,6 +18,12 @@ class _Op:
         self._schema = _OpSchema(qualname, overload_name) if qualname else None
 
     def __call__(self, *args, **kwargs):
+        if self._qualname is not None:
+            from ._dispatch import dispatch  # pylint: disable=import-outside-toplevel
+            from ._dispatch.registry import registry  # pylint: disable=import-outside-toplevel
+
+            if registry.has(self._qualname):
+                return dispatch(self._qualname, None, *args, **kwargs)
         return self._return_value
 
     @property

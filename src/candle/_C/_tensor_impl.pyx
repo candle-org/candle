@@ -9,16 +9,17 @@ VersionCounter is inlined as a C int64.
 
 from libc.stdint cimport int64_t
 from candle._C._grad_mode_state cimport get_enabled_fast as _grad_enabled_fast
-from candle._C._npu_ops cimport (
-    fast_add_exact as _slot_fast_npu_add_exact,
-    fast_add_scalar_exact as _slot_fast_npu_add_scalar_exact,
-    fast_sub_exact as _slot_fast_npu_sub_exact,
-    fast_sub_scalar_exact as _slot_fast_npu_sub_scalar_exact,
-    fast_mul_exact as _slot_fast_npu_mul_exact,
-    fast_mul_scalar_exact as _slot_fast_npu_mul_scalar_exact,
-    fast_div_exact as _slot_fast_npu_div_exact,
-    fast_div_scalar_exact as _slot_fast_npu_div_scalar_exact,
-)
+IF HAS_NPU_CYTHON:
+    from candle._C._npu_ops cimport (
+        fast_add_exact as _slot_fast_npu_add_exact,
+        fast_add_scalar_exact as _slot_fast_npu_add_scalar_exact,
+        fast_sub_exact as _slot_fast_npu_sub_exact,
+        fast_sub_scalar_exact as _slot_fast_npu_sub_scalar_exact,
+        fast_mul_exact as _slot_fast_npu_mul_exact,
+        fast_mul_scalar_exact as _slot_fast_npu_mul_scalar_exact,
+        fast_div_exact as _slot_fast_npu_div_exact,
+        fast_div_scalar_exact as _slot_fast_npu_div_scalar_exact,
+    )
 from candle._C._tensor_api cimport (
     _npu_functionalize_active_flag,
     _npu_pipeline_active_flag,
@@ -137,31 +138,35 @@ cdef class TensorImpl:
     # ---------------------------------------------------------------
 
     def __add__(self, other):
-        if _can_use_npu_binary_slot_direct(self, other):
-            return _slot_fast_npu_add_exact(self, <TensorImpl>other)
-        if _can_use_npu_scalar_slot_direct(self, other):
-            return _slot_fast_npu_add_scalar_exact(self, other)
+        IF HAS_NPU_CYTHON:
+            if _can_use_npu_binary_slot_direct(self, other):
+                return _slot_fast_npu_add_exact(self, <TensorImpl>other)
+            if _can_use_npu_scalar_slot_direct(self, other):
+                return _slot_fast_npu_add_scalar_exact(self, other)
         return _slot_tensor_add(self, other)
 
     def __sub__(self, other):
-        if _can_use_npu_binary_slot_direct(self, other):
-            return _slot_fast_npu_sub_exact(self, <TensorImpl>other)
-        if _can_use_npu_scalar_slot_direct(self, other):
-            return _slot_fast_npu_sub_scalar_exact(self, other)
+        IF HAS_NPU_CYTHON:
+            if _can_use_npu_binary_slot_direct(self, other):
+                return _slot_fast_npu_sub_exact(self, <TensorImpl>other)
+            if _can_use_npu_scalar_slot_direct(self, other):
+                return _slot_fast_npu_sub_scalar_exact(self, other)
         return _slot_tensor_sub(self, other)
 
     def __mul__(self, other):
-        if _can_use_npu_binary_slot_direct(self, other):
-            return _slot_fast_npu_mul_exact(self, <TensorImpl>other)
-        if _can_use_npu_scalar_slot_direct(self, other):
-            return _slot_fast_npu_mul_scalar_exact(self, other)
+        IF HAS_NPU_CYTHON:
+            if _can_use_npu_binary_slot_direct(self, other):
+                return _slot_fast_npu_mul_exact(self, <TensorImpl>other)
+            if _can_use_npu_scalar_slot_direct(self, other):
+                return _slot_fast_npu_mul_scalar_exact(self, other)
         return _slot_tensor_mul(self, other)
 
     def __truediv__(self, other):
-        if _can_use_npu_binary_slot_direct(self, other):
-            return _slot_fast_npu_div_exact(self, <TensorImpl>other)
-        if _can_use_npu_scalar_slot_direct(self, other):
-            return _slot_fast_npu_div_scalar_exact(self, other)
+        IF HAS_NPU_CYTHON:
+            if _can_use_npu_binary_slot_direct(self, other):
+                return _slot_fast_npu_div_exact(self, <TensorImpl>other)
+            if _can_use_npu_scalar_slot_direct(self, other):
+                return _slot_fast_npu_div_scalar_exact(self, other)
         return _slot_tensor_truediv(self, other)
 
     def __itruediv__(self, other):

@@ -10,7 +10,8 @@ import warnings
 import weakref
 
 from candle.autograd.grad_mode import no_grad
-from candle._C._npu_ops cimport fast_add as _cy_fast_npu_add
+IF HAS_NPU_CYTHON:
+    from candle._C._npu_ops cimport fast_add as _cy_fast_npu_add
 
 
 cdef dict _implicit_scalar_grad_cache = {}
@@ -25,8 +26,15 @@ cdef inline void _ensure_dispatch_ref():
         _dispatch_fn = dispatch
 
 
+cdef object _non_npu_zero_stride_contiguous(object grad):
+    return None
+
+
 cdef inline void _ensure_npu_zero_stride_contiguous_ref():
     global _npu_zero_stride_contiguous_fn
+    IF not HAS_NPU_CYTHON:
+        _npu_zero_stride_contiguous_fn = _non_npu_zero_stride_contiguous
+        return
     if _npu_zero_stride_contiguous_fn is None:
         from candle._C._npu_ops import fast_zero_stride_contiguous
         _npu_zero_stride_contiguous_fn = fast_zero_stride_contiguous
@@ -39,12 +47,13 @@ cdef inline object _merge_backward_grads(object lhs, object rhs, bint create_gra
         and getattr(getattr(lhs, "device", None), "type", None) == "npu"
         and getattr(getattr(rhs, "device", None), "type", None) == "npu"
     ):
-        try:
-            result = _cy_fast_npu_add(lhs, rhs)
-        except (RuntimeError, TypeError, ValueError):
-            result = None
-        if result is not None:
-            return _mark_fresh_npu_owned_backward_grad(result)
+        IF HAS_NPU_CYTHON:
+            try:
+                result = _cy_fast_npu_add(lhs, rhs)
+            except (RuntimeError, TypeError, ValueError):
+                result = None
+            if result is not None:
+                return _mark_fresh_npu_owned_backward_grad(result)
     from candle._functional import add
     result = add(lhs, rhs)
     if not create_graph:

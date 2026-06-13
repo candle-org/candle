@@ -1102,26 +1102,51 @@ def cummin_op(a, dim):
     return values, indices
 
 
-def _topk_310b_fill_value(dtype, largest):
-    name = getattr(dtype, "name", None) or str(dtype).split(".")[-1]
-    if name in ("float16", "float32", "float64", "bfloat16"):
-        return -float("inf") if largest else float("inf")
-    if name == "int8":
-        return -128 if largest else 127
-    if name == "uint8":
-        return 0 if largest else 255
-    if name == "int16":
-        return -32768 if largest else 32767
-    if name == "int32":
-        return -2147483648 if largest else 2147483647
-    if name == "int64":
-        return -9223372036854775808 if largest else 9223372036854775807
-    raise RuntimeError(f"NPU topk 310B fallback does not support dtype {dtype}")
+def _argsort_310b_fallback(a, dim, descending):
+    from ..creation import empty_create
+    from . import scatter, where
+    from .comparison import eq, gt, lt
+    from .math import add, isnan, sub
+    from .shape import _slice_along_dim
+
+    dim_size = int(a.shape[dim])
+    out = empty_create(tuple(a.shape), dtype=int64_dtype, device=a.device)
+    if dim_size == 0:
+        return out
+
+    out = sub(out, out)
+    nan_mask = isnan(a) if a.dtype.is_floating_point else None
+    nan_count = count_nonzero(nan_mask, dim=dim, keepdim=True) if nan_mask is not None else None
+    cmp_op = gt if bool(descending) else lt
+    for i in range(dim_size):
+        val = _slice_along_dim(a, i, i + 1, dim)
+        rank = count_nonzero(cmp_op(a, val), dim=dim, keepdim=True)
+        if i > 0:
+            prev = _slice_along_dim(a, 0, i, dim)
+            equal_before = count_nonzero(eq(prev, val), dim=dim, keepdim=True)
+            rank = add(rank, equal_before)
+        if nan_mask is not None:
+            prev_nan = _slice_along_dim(nan_mask, 0, i, dim) if i > 0 else None
+            if prev_nan is None:
+                nan_before = sub(rank, rank)
+            else:
+                nan_before = count_nonzero(prev_nan, dim=dim, keepdim=True)
+            if bool(descending):
+                nan_rank = nan_before
+                rank = add(rank, nan_count)
+            else:
+                non_nan_count = sub(_scalar_to_npu_tensor(dim_size, nan_count), nan_count)
+                nan_rank = add(non_nan_count, nan_before)
+            rank = where(isnan(val), nan_rank, rank)
+        out = scatter(out, dim, rank, _scalar_to_npu_tensor(i, out))
+    return out
 
 
 def _topk_310b_fallback(a, k, dim, largest, sorted_flag):
+    del sorted_flag  # rank-based fallback already produces sorted values
     from ..creation import empty_create
-    from . import cat, scatter
+    from . import gather
+    from .shape import _slice_along_dim
 
     out_shape = list(a.shape)
     out_shape[dim] = int(k)
@@ -1132,31 +1157,10 @@ def _topk_310b_fallback(a, k, dim, largest, sorted_flag):
         indices = empty_create(out_shape, dtype=int64_dtype, device=a.device)
         return values, indices
 
-    work = a
-    values_parts = []
-    indices_parts = []
-    fill_value = _topk_310b_fill_value(a.dtype, largest)
-
-    for _ in range(int(k)):
-        if largest:
-            idx = argmax(work, dim=dim, keepdim=True)
-            val = amax(work, dim=dim, keepdim=True)
-        else:
-            idx = argmin(work, dim=dim, keepdim=True)
-            val = amin(work, dim=dim, keepdim=True)
-        values_parts.append(val)
-        indices_parts.append(idx)
-        work = scatter(work, dim, idx, fill_value)
-
-    if len(values_parts) == 1:
-        values = values_parts[0]
-        indices = indices_parts[0]
-    else:
-        values = cat(values_parts, dim=dim)
-        indices = cat(indices_parts, dim=dim)
-
-    if not bool(sorted_flag):
-        return values, indices
+    indices = _argsort_310b_fallback(a, dim=dim, descending=bool(largest))
+    values = gather(a, dim, indices)
+    values = _slice_along_dim(values, 0, int(k), dim)
+    indices = _slice_along_dim(indices, 0, int(k), dim)
     return values, indices
 
 
@@ -1164,8 +1168,7 @@ def argsort(a, dim=-1, descending=False, stable=False):
     dim = _normalize_dim(dim, a.dim())
 
     if _use_soc_fallback("argsort"):
-        _, indices = _topk_310b_fallback(a, k=a.shape[dim], dim=dim, largest=bool(descending), sorted_flag=True)
-        return indices
+        return _argsort_310b_fallback(a, dim=dim, descending=bool(descending))
 
     # aclnnArgsort/aclnnSort can poison subsequent topk in current runtime.
     # Use topk(k=full_dim) for stable=False to keep behavior and runtime stability.
@@ -1200,7 +1203,9 @@ def sort(a, dim=-1, descending=False, stable=False):
     dim = _normalize_dim(dim, a.dim())
 
     if _use_soc_fallback("sort"):
-        return _topk_310b_fallback(a, k=a.shape[dim], dim=dim, largest=bool(descending), sorted_flag=True)
+        from . import gather
+        indices = _argsort_310b_fallback(a, dim=dim, descending=bool(descending))
+        return gather(a, dim, indices), indices
 
     # Keep runtime stable for default unstable sort path.
     if not stable:

@@ -168,11 +168,21 @@ class Module:
         return self.to(device='cpu')
 
     def cuda(self, device=None):
-        target = 'cuda' if device is None else f'cuda:{device}'
+        if device is None:
+            target = 'cuda'
+        elif hasattr(device, 'type'):
+            target = device
+        else:
+            target = f'cuda:{device}'
         return self.to(device=target)
 
     def npu(self, device=None):
-        target = 'npu' if device is None else f'npu:{device}'
+        if device is None:
+            target = 'npu'
+        elif hasattr(device, 'type'):
+            target = device
+        else:
+            target = f'npu:{device}'
         return self.to(device=target)
 
     def float(self):

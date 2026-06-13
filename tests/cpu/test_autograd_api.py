@@ -1,5 +1,13 @@
+import inspect
+
 import pytest
 import candle as torch
+
+
+def test_tensor_backward_retain_graph_default_matches_torch_api():
+    signature = inspect.signature(torch.Tensor.backward)
+
+    assert signature.parameters["retain_graph"].default is None
 
 
 def test_backward_requires_grad_for_non_scalar():

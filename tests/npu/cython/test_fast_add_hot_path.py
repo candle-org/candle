@@ -293,6 +293,14 @@ def test_autograd_backward_skips_unrequested_grads_map_accumulation():
     assert "self.grads_map[tensor]" in grads_map_branch
 
 
+def test_public_tensor_backward_is_cython_hot_wrapper():
+    """Qwen2 eager train steps should not enter the Python Tensor.backward wrapper."""
+    import candle as torch
+    from candle._C import _tensor_api as tensor_api
+
+    assert torch.Tensor.backward is tensor_api.tensor_backward
+
+
 def test_autograd_backward_grad_merge_uses_cython_fast_add():
     """Common NPU backward grad merges should avoid the Python functional add wrapper."""
     src = (_REPO_ROOT / "src/candle/_C/_autograd_engine.pyx").read_text(encoding="utf-8")
@@ -2510,6 +2518,82 @@ def test_npu_linear_cython_hot_path_skips_python_weight_t(npu_device, monkeypatc
     assert x.grad is not None and x.grad.device.type == "npu"
     assert weight.grad is not None and weight.grad.device.type == "npu"
     assert bias.grad is not None and bias.grad.device.type == "npu"
+
+
+
+def test_npu_linear_without_bias_skips_python_linear_glue(npu_device, monkeypatch):
+    """Biasless NPU F.linear should use a Cython hot path, not Python _py_linear."""
+    import numpy as np
+    import candle as torch
+    import candle.nn.functional as F
+
+    x = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    weight = torch.randn(6, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+    x_np = x.to("cpu").numpy().astype(np.float32)
+    weight_np = weight.to("cpu").numpy().astype(np.float32)
+    expected_out = x_np @ weight_np.T
+    expected_x_grad = np.ones((4, 6), dtype=np.float32) @ weight_np
+    expected_weight_grad = np.ones((6, 4), dtype=np.float32) @ x_np
+
+    def fail_py_linear(*args, **kwargs):
+        raise AssertionError("biasless NPU F.linear should bypass Python _py_linear glue")
+
+    monkeypatch.setattr(F, "_py_linear", fail_py_linear)
+
+    out = F.linear(x, weight, None)
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    assert out.device.type == "npu"
+    assert x.grad is not None and x.grad.device.type == "npu"
+    assert weight.grad is not None and weight.grad.device.type == "npu"
+    np.testing.assert_allclose(out.to("cpu").numpy(), expected_out, rtol=2e-2, atol=2e-2)
+    np.testing.assert_allclose(x.grad.to("cpu").numpy(), expected_x_grad, rtol=2e-2, atol=2e-2)
+    np.testing.assert_allclose(weight.grad.to("cpu").numpy(), expected_weight_grad, rtol=2e-2, atol=2e-2)
+
+
+
+def test_npu_linear_without_bias_skips_generated_matmul_backward(npu_device, monkeypatch):
+    """Biasless NPU F.linear backward should attach a Cython node, not generated matmul backward."""
+    import candle as torch
+    import candle.nn.functional as F
+    import candle._generated.functions as functions_mod
+
+    x = torch.randn(4, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    weight = torch.randn(6, 8, device=npu_device, dtype=torch.float16, requires_grad=True)
+    torch.npu.synchronize()
+
+    def fail_matmul_backward(*args, **kwargs):
+        raise AssertionError("biasless NPU F.linear backward should bypass generated MatmulBackward0 helper")
+
+    monkeypatch.setattr(functions_mod, "_matmul_backward_helper", fail_matmul_backward)
+
+    out = F.linear(x, weight, None)
+    out.sum().backward()
+    torch.npu.synchronize()
+
+    assert out.device.type == "npu"
+    assert x.grad is not None and x.grad.device.type == "npu"
+    assert weight.grad is not None and weight.grad.device.type == "npu"
+
+
+
+def test_npu_linear_without_bias_zero_in_features_does_not_divide_by_zero(npu_device):
+    """Zero-width biasless NPU linear should fall through instead of dividing by input.shape[-1]."""
+    import numpy as np
+    import candle as torch
+    import candle.nn.functional as F
+
+    x = torch.empty((2, 3, 0), device=npu_device, dtype=torch.float16)
+    weight = torch.empty((4, 0), device=npu_device, dtype=torch.float16)
+
+    out = F.linear(x, weight, None)
+    torch.npu.synchronize()
+
+    assert out.device.type == "npu"
+    assert out.shape == (2, 3, 4)
+    np.testing.assert_allclose(out.to("cpu").numpy(), np.zeros((2, 3, 4), dtype=np.float16))
 
 
 

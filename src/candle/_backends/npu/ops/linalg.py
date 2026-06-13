@@ -69,6 +69,19 @@ def matmul(a, b, out=None):
     if a.dtype != b.dtype:
         raise ValueError("NPU matmul requires matching dtypes")
 
+    user_out_shape = _matmul_out_shape(tuple(a.shape), tuple(b.shape))
+    a_dim = len(a.shape)
+    b_dim = len(b.shape)
+    if a_dim == 1:
+        contract_dim = int(a.shape[0])
+    elif b_dim == 1:
+        contract_dim = int(b.shape[0])
+    else:
+        contract_dim = int(a.shape[-1])
+    if contract_dim == 0 or _numel(user_out_shape) == 0:
+        from ..creation import zeros_create
+        return _return(zeros_create(user_out_shape, dtype=a.dtype, device=a.device))
+
     # 310B aclnnMatmul only supports float16; cast float32 inputs and cast result back.
     # TODO: re-enable float32 native path when CANN fixes float32 support on 310B.
     from ...._dtype import float16 as float16_dtype
@@ -104,7 +117,6 @@ def matmul(a, b, out=None):
     #   (A) (*, M, K) @ (K, N): collapse left to 2-D.
     #   (B) (b1,...,bn, M, K) @ (b1,...,bn, K, N), ndim >= 4, contiguous
     #       and matching leading dims (no broadcast): collapse to 3-D BMM.
-    user_out_shape = _matmul_out_shape(tuple(a.shape), tuple(b.shape))
     if a.dim() >= 3 and b.dim() == 2 and a.is_contiguous():
         a = a.reshape(-1, a.shape[-1])
     elif (

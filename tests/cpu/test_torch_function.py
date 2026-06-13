@@ -83,6 +83,17 @@ def test_torch_function_blocking():
         assert "BlockingTensor" in str(e)
 
 
+def test_tensor_backward_intercepts_torch_function():
+    TrackedTensor.reset()
+    base = torch.tensor(2.0, requires_grad=True)
+    tracked = TrackedTensor(base)
+
+    tracked.backward()
+
+    assert any("backward" in name for name in TrackedTensor._ops_called)
+    assert base.grad is not None
+
+
 def test_plain_tensors_skip_torch_function():
     a = torch.randn(3)
     b = torch.randn(3)
