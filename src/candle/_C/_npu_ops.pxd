@@ -44,6 +44,7 @@ cpdef object fast_rsqrt(object a)
 cpdef object fast_cast(object a, object dst_dtype)
 cpdef object fast_gelu_backward(object grad, object saved_input)
 cpdef object fast_silu_backward(object grad, object saved_input)
+cpdef object fast_neg(object a)
 cpdef object fast_copy_small_inner_contiguous_view(object view)
 cpdef object fast_cat_small_last_dim(object tensors, int64_t dim, object out_shape, object out_stride,
                                      int64_t out_ptr, object first)
