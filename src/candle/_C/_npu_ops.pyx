@@ -7096,7 +7096,7 @@ def _npu_contiguous_copy(a):
     return contiguous(a)
 
 
-def fast_neg(a):
+cpdef object fast_neg(object a):
     """Optimized out-of-place neg(a) that calls _ffi.unary_op directly."""
     _ensure_npu_imports()
     _ensure_ffi_neg()

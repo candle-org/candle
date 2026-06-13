@@ -10,6 +10,14 @@ function boundaries on the hot path.
 
 from libc.stdint cimport int64_t, uint32_t
 from candle._C._tensor_impl cimport TensorImpl
+IF HAS_NPU_CYTHON:
+    from candle._C._npu_ops cimport (
+        fast_add_exact as _redispatch_fast_npu_add_exact,
+        fast_sub_exact as _redispatch_fast_npu_sub_exact,
+        fast_mul_exact as _redispatch_fast_npu_mul_exact,
+        fast_div_exact as _redispatch_fast_npu_div_exact,
+        fast_neg as _redispatch_fast_npu_neg,
+    )
 import os
 import inspect
 
@@ -891,9 +899,77 @@ def cy_dispatch_with_keyset_fast(str name, object keyset, object dispatch_device
     The keyset is pre-built by the caller; _dispatch_core applies TLS masks
     and skips keyset construction.
     """
+    cdef object fast_result
+    cdef object fast_keyset
     _ensure_imports()
     _ensure_dispatch_helpers()
+    if keyset is not None and not _is_profiler_enabled_fn():
+        fast_keyset = _apply_tls_masks_inline(keyset)
+        fast_result = _try_fast_npu_backward_redispatch(name, fast_keyset, args, kwargs)
+        if fast_result is not None:
+            return fast_result
     return _dispatch_core(name, dispatch_device, args, kwargs, keyset, None)
+
+
+# ---------------------------------------------------------------------------
+# NPU backward redispatch fast path
+# ---------------------------------------------------------------------------
+
+cdef inline object _try_fast_npu_backward_redispatch(str name, object keyset,
+                                                     tuple args, dict kwargs) except *:
+    """Bypass registry/schema/Python wrappers for raw exact-base NPU backward ops.
+
+    This is only entered from redispatch with a pre-stripped backend keyset. Public
+    dispatch still uses normal schema validation and autograd handling. Covered
+    cases are exact same-shape NPU Tensor operands used by backward formulas.
+    """
+    cdef unsigned int m
+    cdef int nargs
+    cdef object a
+    cdef object b
+    IF not HAS_NPU_CYTHON:
+        return None
+    if keyset is None:
+        return None
+    if kwargs:
+        return None
+    if hasattr(keyset, "mask"):
+        m = <unsigned int>int(keyset.mask)
+    else:
+        m = <unsigned int>int(keyset)
+    if m != _KEY_NPU:
+        return None
+    nargs = len(args)
+    if name == "neg":
+        if nargs != 1:
+            return None
+        a = args[0]
+        if type(a) is not _BaseTensor:
+            return None
+        if (<TensorImpl>a)._device_type != 1:
+            return None
+        return _redispatch_fast_npu_neg(a)
+    if not (name == "mul" or name == "div" or name == "true_divide" or name == "add" or name == "sub"):
+        return None
+    if nargs != 2:
+        return None
+    a = args[0]
+    b = args[1]
+    if type(a) is not _BaseTensor or type(b) is not _BaseTensor:
+        return None
+    if (<TensorImpl>a)._device_type != 1 or (<TensorImpl>b)._device_type != 1:
+        return None
+    if (<TensorImpl>a)._device_index != (<TensorImpl>b)._device_index:
+        return None
+    if (<TensorImpl>a)._shape_tuple != (<TensorImpl>b)._shape_tuple:
+        return None
+    if name == "mul":
+        return _redispatch_fast_npu_mul_exact(<TensorImpl>a, <TensorImpl>b)
+    if name == "div" or name == "true_divide":
+        return _redispatch_fast_npu_div_exact(<TensorImpl>a, <TensorImpl>b)
+    if name == "add":
+        return _redispatch_fast_npu_add_exact(<TensorImpl>a, <TensorImpl>b)
+    return _redispatch_fast_npu_sub_exact(<TensorImpl>a, <TensorImpl>b)
 
 
 # ---------------------------------------------------------------------------
