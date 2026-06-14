@@ -2708,7 +2708,8 @@ cdef inline object _attach_npu_linear_no_bias_grad(object result, object input, 
     return result
 
 
-cdef inline object _attach_npu_add_grad(object result, object a, object b):
+cpdef object attach_npu_add_grad(object result, object a, object b):
+    """Attach NPU add backward node. Exposed for training-mode forward fast paths."""
     cdef TensorImpl out = <TensorImpl>result
     cdef _NpuAddBackward grad_fn = _NpuAddBackward.__new__(_NpuAddBackward)
     grad_fn._init_fast(a, b)
@@ -2717,7 +2718,8 @@ cdef inline object _attach_npu_add_grad(object result, object a, object b):
     return result
 
 
-cdef inline object _attach_npu_mul_grad(object result, object a, object b):
+cpdef object attach_npu_mul_grad(object result, object a, object b):
+    """Attach NPU mul backward node. Exposed for training-mode forward fast paths."""
     cdef TensorImpl out = <TensorImpl>result
     cdef _NpuMulBackward grad_fn = _NpuMulBackward.__new__(_NpuMulBackward)
     grad_fn._init_fast(a, b)
@@ -2841,7 +2843,7 @@ def add(a=None, b=None, *, alpha=1, out=None):
             if npu_state == 1 and not _npu_profiler_active_flag:
                 return _cy_fast_npu_add_exact(<TensorImpl>a, <TensorImpl>b)
             if npu_state == 2:
-                return _attach_npu_add_grad(_cy_fast_npu_add_exact(<TensorImpl>a, <TensorImpl>b), a, b)
+                return attach_npu_add_grad(_cy_fast_npu_add_exact(<TensorImpl>a, <TensorImpl>b), a, b)
         if _exact_base_npu_tensor_scalar(a, b):
             npu_state = _exact_npu_scalar_hot_state(a)
             if npu_state == 1 and not _npu_profiler_active_flag:
@@ -2863,7 +2865,7 @@ def add(a=None, b=None, *, alpha=1, out=None):
             if npu_state == 1 and not _profiler_active():
                 return _cy_fast_npu_add(a, b)
             if out is None and npu_state == 2:
-                return _attach_npu_add_grad(_cy_fast_npu_add(a, b), a, b)
+                return attach_npu_add_grad(_cy_fast_npu_add(a, b), a, b)
         return _dispatch_fn("add", None, a, b)
 
     r = _handle_torch_function(_py_add_fn, (a, b), {"alpha": alpha, "out": out})
@@ -2890,7 +2892,7 @@ def mul(a, b, *, out=None):
             if npu_state == 1 and not _npu_profiler_active_flag:
                 return _cy_fast_npu_mul_exact(<TensorImpl>a, <TensorImpl>b)
             if npu_state == 2:
-                return _attach_npu_mul_grad(_cy_fast_npu_mul_exact(<TensorImpl>a, <TensorImpl>b), a, b)
+                return attach_npu_mul_grad(_cy_fast_npu_mul_exact(<TensorImpl>a, <TensorImpl>b), a, b)
         if _exact_base_npu_tensor_scalar(a, b):
             npu_state = _exact_npu_scalar_hot_state(a)
             if npu_state == 1 and not _npu_profiler_active_flag:
@@ -2910,7 +2912,7 @@ def mul(a, b, *, out=None):
                     return out
                 return result
             if out is None and npu_state == 2:
-                return _attach_npu_mul_grad(_cy_fast_npu_mul(a, b), a, b)
+                return attach_npu_mul_grad(_cy_fast_npu_mul(a, b), a, b)
         result = _dispatch_fn("mul", None, a, b)
         if out is not None:
             out.copy_(result)
