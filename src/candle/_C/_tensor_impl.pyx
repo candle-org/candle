@@ -20,6 +20,10 @@ IF HAS_NPU_CYTHON:
         fast_div_exact as _slot_fast_npu_div_exact,
         fast_div_scalar_exact as _slot_fast_npu_div_scalar_exact,
     )
+    from candle._C._functional_ops cimport (
+        attach_npu_add_grad,
+        attach_npu_mul_grad,
+    )
 from candle._C._tensor_api cimport (
     _npu_functionalize_active_flag,
     _npu_pipeline_active_flag,
@@ -125,6 +129,36 @@ cdef inline bint _can_use_npu_scalar_slot_direct(TensorImpl a, object value):
     return type(value) is int or type(value) is float
 
 
+IF HAS_NPU_CYTHON:
+    cdef inline bint _can_use_npu_binary_slot_train(TensorImpl a, object b_obj):
+        """True when TensorImpl slots may use training-mode fast path (grad-aware Cython).
+
+        Like _can_use_npu_binary_slot_direct but allows requires_grad=True.
+        Used for forward ops in training mode to stay in Cython and attach autograd nodes.
+        """
+        cdef TensorImpl b
+        _ensure_slot_base()
+        if type(a) is not _SlotBaseTensor or type(b_obj) is not _SlotBaseTensor:
+            return False
+        b = <TensorImpl>b_obj
+        if a._device_type != 1 or b._device_type != 1:
+            return False
+        if a._device_index != b._device_index:
+            return False
+        if a._dtype_code != b._dtype_code:
+            return False
+        if _npu_functionalize_active_flag or _npu_pipeline_active_flag:
+            return False
+        if _npu_profiler_active_flag or _npu_autocast_active_flag:
+            return False
+        # Key difference: allow requires_grad=True if grad is enabled
+        if not _grad_enabled_fast():
+            return True
+        # In training mode, only allow if at least one requires grad
+        # (otherwise inference path is better)
+        return a.requires_grad or b.requires_grad
+
+
 cdef class TensorImpl:
     """Internal runtime owner for tensor metadata and cached state.
 
@@ -141,6 +175,9 @@ cdef class TensorImpl:
         IF HAS_NPU_CYTHON:
             if _can_use_npu_binary_slot_direct(self, other):
                 return _slot_fast_npu_add_exact(self, <TensorImpl>other)
+            if _can_use_npu_binary_slot_train(self, other):
+                result = _slot_fast_npu_add_exact(self, <TensorImpl>other)
+                return attach_npu_add_grad(result, self, other)
             if _can_use_npu_scalar_slot_direct(self, other):
                 return _slot_fast_npu_add_scalar_exact(self, other)
         return _slot_tensor_add(self, other)
@@ -157,6 +194,9 @@ cdef class TensorImpl:
         IF HAS_NPU_CYTHON:
             if _can_use_npu_binary_slot_direct(self, other):
                 return _slot_fast_npu_mul_exact(self, <TensorImpl>other)
+            if _can_use_npu_binary_slot_train(self, other):
+                result = _slot_fast_npu_mul_exact(self, <TensorImpl>other)
+                return attach_npu_mul_grad(result, self, other)
             if _can_use_npu_scalar_slot_direct(self, other):
                 return _slot_fast_npu_mul_scalar_exact(self, other)
         return _slot_tensor_mul(self, other)
