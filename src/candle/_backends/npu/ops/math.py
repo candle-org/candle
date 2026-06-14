@@ -41,6 +41,7 @@ try:
         fast_erf as _fast_erf_impl,
         fast_erf_inplace as _fast_erf_inplace_impl,
         fast_div as _fast_div_impl,
+        fast_div_scalar_exact as _fast_div_scalar_impl,
         fast_div_inplace as _fast_div_inplace_impl,
         fast_erfc as _fast_erfc_impl,
         fast_erfc_inplace as _fast_erfc_inplace_impl,
@@ -94,6 +95,7 @@ try:
         fast_square as _fast_square_impl,
         fast_square_inplace as _fast_square_inplace_impl,
         fast_sub as _fast_sub_impl,
+        fast_sub_scalar_exact as _fast_sub_scalar_impl,
         fast_sub_inplace as _fast_sub_inplace_impl,
         fast_tan as _fast_tan_impl,
         fast_tan_inplace as _fast_tan_inplace_impl,
@@ -206,6 +208,8 @@ except ImportError:
     _fast_acos_impl = None  # type: ignore[assignment]
     _fast_mul_impl = None  # type: ignore[assignment]
     _fast_mul_scalar_impl = None  # type: ignore[assignment]
+    _fast_div_scalar_impl = None  # type: ignore[assignment]
+    _fast_sub_scalar_impl = None  # type: ignore[assignment]
     _fast_add_scalar_impl = None  # type: ignore[assignment]
     _fast_add_scalar_inplace_impl = None  # type: ignore[assignment]
     _HAS_FAST_ADD = False
@@ -321,6 +325,8 @@ def mul(a, b):
 
 def sub(a, b):
     if isinstance(b, (int, float)):
+        if _fast_sub_scalar_impl is not None:
+            return _fast_sub_scalar_impl(a, b)
         b = _scalar_to_npu_tensor(b, a)
     if _HAS_FAST_SUB:
         return _fast_sub_impl(a, b)
@@ -329,6 +335,8 @@ def sub(a, b):
 
 def div(a, b):
     if isinstance(b, (int, float)):
+        if _fast_div_scalar_impl is not None:
+            return _fast_div_scalar_impl(a, b)
         b = _scalar_to_npu_tensor(b, a)
     if _HAS_FAST_DIV:
         return _fast_div_impl(a, b)

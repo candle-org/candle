@@ -5727,6 +5727,15 @@ def fast_pow(a, b):
 
 
 def fast_pow_tensor_scalar(a, exponent):
+    # Outside graph capture, reuse the persistent cached 0-d scalar tensor (same
+    # (device, dtype, value) materialized once) and broadcast it through the
+    # tensor-tensor Pow kernel, instead of materializing a fresh full-shape
+    # scalar tensor (host malloc + byte-pack + H2D memcpy) on every call.
+    # During capture, keep the explicit per-call materialization so no new
+    # cached-fill H2D traffic is recorded into the graph.
+    if isinstance(a, TensorImpl) and (<TensorImpl>a)._device_type == 1 \
+            and not _npu_in_graph_capture():
+        return fast_pow(a, _get_cached_scalar_tensor(<TensorImpl>a, exponent))
     return fast_pow(a, _npu_scalar_like(exponent, a))
 
 
