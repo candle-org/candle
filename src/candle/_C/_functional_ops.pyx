@@ -1293,6 +1293,222 @@ cdef class _NpuMulBackward(_CyAutogradNode):
         return grad_self, grad_other
 
 
+cdef class _NpuSubBackward(_CyAutogradNode):
+    cdef public object _self
+    cdef public object _other
+
+    cdef void _init_fast(self, object self_, object other):
+        # Manual field init. Sub backward is simple: grad_self = grad, grad_other = -grad.
+        self.inputs = (self_, other)
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "SubBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = _npu_binary_edges_if_needed(self_, other)
+        self._self = self_
+        self._other = other
+
+    def __init__(self, self_, other):
+        self._init_fast(self_, other)
+
+    @property
+    def next_functions(self):
+        cached = _npu_get_binary_edges(self._self, self._other, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    def backward(self, grad):
+        grad_self = grad if (<TensorImpl>self._self).requires_grad else None
+        grad_other = None
+        if (<TensorImpl>self._other).requires_grad:
+            _ensure_npu_refs()
+            _ensure_npu_autograd_refs()
+            if _npu_create_graph_fn():
+                # Keep the gradient differentiable under create_graph.
+                grad_other = _npu_dispatch_mul_fn("mul", None, grad, -1)
+            else:
+                grad_other = _mark_npu_owned_backward_grad(_cy_fast_npu_mul_scalar_exact(<TensorImpl>grad, -1))
+        return grad_self, grad_other
+
+
+cdef class _NpuDivBackward(_CyAutogradNode):
+    cdef public object _self
+    cdef public object _other
+    cdef int64_t _saved_self_version
+    cdef int64_t _saved_other_version
+    cdef bint _saved_self_released
+    cdef bint _saved_other_released
+    cdef object _saved_self_obj
+    cdef object _saved_other_obj
+
+    cdef void _init_fast(self, object self_, object other):
+        # Div backward needs saved tensors: grad_self = grad / other, grad_other = -grad * self / (other^2).
+        cdef object saved_self
+        cdef object saved_other
+        self.inputs = (self_, other)
+        self._hooks = None
+        self._prehooks = None
+        self._metadata = None
+        self._name = "DivBackward0"
+        self._anomaly_trace = None
+        self._anomaly_parent = None
+        self._next_functions_cache = _npu_binary_edges_if_needed(self_, other)
+        self._self = self_
+        self._other = other
+        self._saved_self_released = False
+        self._saved_other_released = False
+        if _npu_has_saved_hooks():
+            saved_self = SavedTensor(self_)
+            if self_ is other:
+                saved_other = saved_self
+            else:
+                saved_other = SavedTensor(other)
+            self._saved_self_obj = saved_self
+            self._saved_other_obj = saved_other
+            self._saved_self_version = 0
+            self._saved_other_version = 0
+        else:
+            self._saved_self_obj = None
+            self._saved_other_obj = None
+            self._saved_self_version = (<TensorImpl>self_)._version_value
+            self._saved_other_version = self._saved_self_version if self_ is other else (<TensorImpl>other)._version_value
+        self._saved_tensors_list = _npu_empty_saved_tensors
+        self._saved_fields = _npu_empty_saved_fields
+
+    def __init__(self, self_, other):
+        self._init_fast(self_, other)
+
+    @property
+    def next_functions(self):
+        cached = _npu_get_binary_edges(self._self, self._other, self._next_functions_cache)
+        self._next_functions_cache = cached
+        return cached
+
+    cpdef object _saved_proxy_tensor_py(self, int slot):
+        if slot == 0:
+            return self._self
+        return self._other
+
+    cpdef bint _saved_proxy_released_py(self, int slot):
+        if slot == 0:
+            return self._saved_self_released
+        return self._saved_other_released
+
+    cpdef void _saved_proxy_release_py(self, int slot):
+        if slot == 0:
+            self._saved_self_released = True
+        else:
+            self._saved_other_released = True
+
+    cpdef object _saved_proxy_materialize_py(self, int slot):
+        if slot == 0:
+            return _npu_materialize_tensor_version(self._self, self._saved_self_version, self._saved_self_released)
+        return _npu_materialize_tensor_version(self._other, self._saved_other_version, self._saved_other_released)
+
+    cdef object _raw_saved_self_proxy(self):
+        if self._saved_self_obj is None:
+            self._saved_self_obj = _npu_saved_tensor_proxy(self, 0)
+        return self._saved_self_obj
+
+    cdef object _raw_saved_other_proxy(self):
+        if self._saved_other_obj is None:
+            if self._self is self._other:
+                self._saved_other_obj = self._raw_saved_self_proxy()
+            else:
+                self._saved_other_obj = _npu_saved_tensor_proxy(self, 1)
+        return self._saved_other_obj
+
+    def saved_tensors(self):
+        cdef object self_saved
+        cdef object other_saved
+        if self._saved_self_obj is not None:
+            self_saved = self._saved_self_obj.materialize()
+        else:
+            self_saved = self._saved_proxy_materialize_py(0)
+        if self._saved_other_obj is not None:
+            other_saved = self._saved_other_obj.materialize()
+        elif self._self is self._other and self._saved_self_obj is not None:
+            other_saved = self._saved_self_obj.materialize()
+        else:
+            other_saved = self._saved_proxy_materialize_py(1)
+        return (self_saved, other_saved)
+
+    def release_saved_tensors(self):
+        if self._saved_self_obj is not None:
+            self._saved_self_obj.release()
+        else:
+            self._saved_self_released = True
+        if self._self is self._other or self._saved_other_obj is self._saved_self_obj:
+            self._saved_other_released = True
+            return
+        if self._saved_other_obj is not None:
+            self._saved_other_obj.release()
+        else:
+            self._saved_other_released = True
+
+    def __getattr__(self, name):
+        if name == "_raw_saved_self":
+            return self._raw_saved_self_proxy()
+        if name == "_raw_saved_other":
+            return self._raw_saved_other_proxy()
+        if name == "_saved_self":
+            if self._saved_self_obj is not None:
+                return self._saved_self_obj.materialize()
+            return self._saved_proxy_materialize_py(0)
+        if name == "_saved_other":
+            if self._saved_other_obj is not None:
+                return self._saved_other_obj.materialize()
+            if self._self is self._other and self._saved_self_obj is not None:
+                return self._saved_self_obj.materialize()
+            return self._saved_proxy_materialize_py(1)
+        if name == "_raw_saved_tensors":
+            return (self._raw_saved_self_proxy(), self._raw_saved_other_proxy())
+        if name == "_saved_tensors":
+            return self.saved_tensors()
+        return _CyAutogradNode.__getattr__(self, name)
+
+    def backward(self, grad):
+        grad_self = None
+        grad_other = None
+        if self._saved_self_obj is not None:
+            self_ = self._saved_self_obj.materialize()
+        else:
+            self_ = self._saved_proxy_materialize_py(0)
+        if self._saved_other_obj is not None:
+            other = self._saved_other_obj.materialize()
+        elif self._self is self._other and self._saved_self_obj is not None:
+            other = self._saved_self_obj.materialize()
+        else:
+            other = self._saved_proxy_materialize_py(1)
+        _ensure_npu_refs()
+        _ensure_npu_autograd_refs()
+        # grad_self = grad / other
+        # grad_other = -grad * self / (other^2)
+        if _npu_create_graph_fn():
+            # Under create_graph the gradient itself must be differentiable,
+            # so route through the dispatched (graph-building) ops.
+            if getattr(self_, "requires_grad", False):
+                grad_self = _npu_dispatch_mul_fn("true_divide", None, grad, other)
+            if getattr(other, "requires_grad", False):
+                # grad_other = -grad * self / other^2
+                tmp = _npu_dispatch_mul_fn("mul", None, grad, self_)
+                tmp = _npu_dispatch_mul_fn("true_divide", None, tmp, _npu_dispatch_mul_fn("mul", None, other, other))
+                grad_other = _npu_dispatch_mul_fn("mul", None, tmp, -1)
+            return grad_self, grad_other
+        if getattr(self_, "requires_grad", False):
+            grad_self = _mark_npu_owned_backward_grad(_cy_fast_npu_div_exact(<TensorImpl>grad, <TensorImpl>other))
+        if getattr(other, "requires_grad", False):
+            # grad_other = -grad * self / (other^2)
+            other_sq = _cy_fast_npu_mul(other, other)
+            tmp = _cy_fast_npu_div_exact(<TensorImpl>_cy_fast_npu_mul(grad, self_), <TensorImpl>other_sq)
+            grad_other = _mark_npu_owned_backward_grad(_cy_fast_npu_mul_scalar_exact(<TensorImpl>tmp, -1))
+        return grad_self, grad_other
+
+
 cdef class _NpuAddmmBackward(_CyAutogradNode):
     cdef public object _self
     cdef public object _mat1
@@ -2728,6 +2944,26 @@ cpdef object attach_npu_mul_grad(object result, object a, object b):
     return result
 
 
+cpdef object attach_npu_sub_grad(object result, object a, object b):
+    """Attach NPU sub backward node. Exposed for training-mode forward fast paths."""
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuSubBackward grad_fn = _NpuSubBackward.__new__(_NpuSubBackward)
+    grad_fn._init_fast(a, b)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
+cpdef object attach_npu_div_grad(object result, object a, object b):
+    """Attach NPU div backward node. Exposed for training-mode forward fast paths."""
+    cdef TensorImpl out = <TensorImpl>result
+    cdef _NpuDivBackward grad_fn = _NpuDivBackward.__new__(_NpuDivBackward)
+    grad_fn._init_fast(a, b)
+    out.grad_fn = grad_fn
+    out.requires_grad = True
+    return result
+
+
 cdef inline object _attach_npu_scalar_pass_grad(object result, object a, object name):
     cdef TensorImpl out = <TensorImpl>result
     cdef _NpuScalarPassBackward grad_fn = _NpuScalarPassBackward.__new__(_NpuScalarPassBackward)
@@ -2990,6 +3226,8 @@ def sub(a, b, *, alpha=1):
             npu_state = _exact_npu_binary_hot_state(a, b)
             if npu_state == 1 and not _npu_profiler_active_flag:
                 return _cy_fast_npu_sub_exact(<TensorImpl>a, <TensorImpl>b)
+            if npu_state == 2:
+                return attach_npu_sub_grad(_cy_fast_npu_sub_exact(<TensorImpl>a, <TensorImpl>b), a, b)
         if _exact_base_npu_tensor_scalar(a, b):
             npu_state = _exact_npu_scalar_hot_state(a)
             if npu_state == 1 and not _npu_profiler_active_flag:
@@ -3027,6 +3265,8 @@ def div(a, b, *, rounding_mode=None):
             npu_state = _exact_npu_binary_hot_state(a, b)
             if npu_state == 1 and not _npu_profiler_active_flag:
                 return _cy_fast_npu_div_exact(<TensorImpl>a, <TensorImpl>b)
+            if npu_state == 2:
+                return attach_npu_div_grad(_cy_fast_npu_div_exact(<TensorImpl>a, <TensorImpl>b), a, b)
         if _exact_base_npu_tensor_scalar(a, b):
             npu_state = _exact_npu_scalar_hot_state(a)
             if npu_state == 1 and not _npu_profiler_active_flag:

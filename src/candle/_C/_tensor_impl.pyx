@@ -23,6 +23,8 @@ IF HAS_NPU_CYTHON:
     from candle._C._functional_ops cimport (
         attach_npu_add_grad,
         attach_npu_mul_grad,
+        attach_npu_sub_grad,
+        attach_npu_div_grad,
     )
 from candle._C._tensor_api cimport (
     _npu_functionalize_active_flag,
@@ -186,6 +188,9 @@ cdef class TensorImpl:
         IF HAS_NPU_CYTHON:
             if _can_use_npu_binary_slot_direct(self, other):
                 return _slot_fast_npu_sub_exact(self, <TensorImpl>other)
+            if _can_use_npu_binary_slot_train(self, other):
+                result = _slot_fast_npu_sub_exact(self, <TensorImpl>other)
+                return attach_npu_sub_grad(result, self, other)
             if _can_use_npu_scalar_slot_direct(self, other):
                 return _slot_fast_npu_sub_scalar_exact(self, other)
         return _slot_tensor_sub(self, other)
@@ -205,6 +210,9 @@ cdef class TensorImpl:
         IF HAS_NPU_CYTHON:
             if _can_use_npu_binary_slot_direct(self, other):
                 return _slot_fast_npu_div_exact(self, <TensorImpl>other)
+            if _can_use_npu_binary_slot_train(self, other):
+                result = _slot_fast_npu_div_exact(self, <TensorImpl>other)
+                return attach_npu_div_grad(result, self, other)
             if _can_use_npu_scalar_slot_direct(self, other):
                 return _slot_fast_npu_div_scalar_exact(self, other)
         return _slot_tensor_truediv(self, other)

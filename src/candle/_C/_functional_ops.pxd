@@ -8,3 +8,5 @@ Exposes autograd attach functions for use in other Cython modules
 # Autograd attach functions for training-mode fast paths
 cpdef object attach_npu_add_grad(object result, object a, object b)
 cpdef object attach_npu_mul_grad(object result, object a, object b)
+cpdef object attach_npu_sub_grad(object result, object a, object b)
+cpdef object attach_npu_div_grad(object result, object a, object b)
