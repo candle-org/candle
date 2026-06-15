@@ -39,13 +39,17 @@ def test_generated_backward_node_correctness(npu_device):
 
 
 def test_backward_has_backward_method_not_apply(npu_device):
-    """The generated node class must define `backward` (what the engine calls),
-    not just `apply`."""
+    """The generated node class must resolve `backward` (what the engine calls),
+    not `apply`. For nodes whose formula cannot compile in the .pyx, the class
+    subclasses the correct Python functions.py node and inherits backward."""
     import candle as torch
 
     x = torch.ones(2, 2, device=npu_device, dtype=torch.float32, requires_grad=True)
     y = x.abs()
     node_cls = type(y.grad_fn)
-    assert "backward" in node_cls.__dict__, (
-        f"{node_cls.__name__} must define backward() in its own __dict__"
+    assert hasattr(node_cls, "backward"), (
+        f"{node_cls.__name__} must resolve backward() (own or inherited)"
+    )
+    assert not hasattr(node_cls, "apply") or "apply" not in node_cls.__dict__, (
+        f"{node_cls.__name__} should not define apply() in its own __dict__"
     )

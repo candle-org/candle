@@ -169,7 +169,7 @@ _HELPER_FALLBACKS = {
     "infinitely_differentiable_native_group_norm_backward": "_native_group_norm_helper(grads, input, result1, result2, weight, N, C, HxW, group, eps, grad_input_mask)",
     "infinitely_differentiable_silu_backward": "_silu_grad(grad, self, keyset)",
     "clamp_backward(grad, self, min, max)": "_clamp_backward_helper(grad, self, min, max, keyset)",
-    "fmap(reverse_list_symint": "_roll_backward_helper(grad, shifts, dims)",
+    "fmap(reverse_list_symint": "_roll_backward_helper(grad, grad, shifts, dims, keyset)",
     "grads[0].defined() ? (grads[1].defined() ? at::where(self >= 0, grads[0], grads[0] * weight + grads[1] * self)": "_prelu_kernel_backward_grad_output_helper(grads, self, weight, grad_output)",
     "std::get<0>(convolution_backward_symint(grad_output_p, input_p, weight_t": "_convolution_backward_jvp_input_helper(grad_output_p, grad_output_t, input_p, weight_p, weight_t, bias_sizes, stride, padding, dilation, transposed, output_padding, groups)",
     "std::get<1>(convolution_backward_symint(grad_output_p, input_t": "_convolution_backward_jvp_weight_helper(grad_output_p, grad_output_t, input_p, input_t, weight_p, bias_sizes, stride, padding, dilation, transposed, output_padding, groups)",
