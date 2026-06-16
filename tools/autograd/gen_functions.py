@@ -108,18 +108,22 @@ def _mark_npu_owned_backward_grad(grad):
 
 def _mul_tensor_backward_helper(grad, other, dtype, keyset):
     del dtype
-    return _mark_npu_owned_backward_grad(redispatch("mul", keyset, grad, other))
+    # Phase 2: Use direct slot call instead of redispatch to bypass Python dispatch overhead
+    # grad.__mul__(other) calls Cython fast path directly for NPU tensors
+    return _mark_npu_owned_backward_grad(grad.__mul__(other))
 
 
 def _div_tensor_self_backward_helper(grad, other, dtype, *extra_and_keyset):
     del dtype
     keyset = extra_and_keyset[-1]
-    return redispatch("div", keyset, grad, other)
+    # Phase 2: Direct slot call instead of redispatch
+    return grad.__truediv__(other)
 
 
 def _div_tensor_other_backward_helper(grad, self_, other, *extra_and_keyset):
     keyset = extra_and_keyset[-1]
-    return redispatch("neg", keyset, redispatch("div", keyset, redispatch("mul", keyset, grad, self_), redispatch("mul", keyset, other, other)))
+    # Phase 2: Direct slot calls - formula: -((grad * self_) / (other * other))
+    return (grad.__mul__(self_).__truediv__(other.__mul__(other))).__neg__()
 
 
 def _matmul_backward_helper(grad, self_, other, grad_input_mask, keyset):

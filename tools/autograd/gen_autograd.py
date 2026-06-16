@@ -9,7 +9,7 @@ import argparse
 import sys
 from pathlib import Path
 
-_PRESERVE_IN_PLACE_FILES = {"functions.py", "variable_type.py", "registration.py"}
+_PRESERVE_IN_PLACE_FILES = {"variable_type.py", "registration.py"}  # Phase 2: allow regenerating functions.py
 
 
 def main(yaml_path: str | Path, output_dir: str | Path) -> None:
