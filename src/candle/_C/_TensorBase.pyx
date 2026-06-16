@@ -387,6 +387,10 @@ class TensorBase(TensorImpl):
         from candle._functional import ones_like
         return ones_like(self)
 
+    def _zeros_like(self):
+        from candle._functional import zeros_like
+        return zeros_like(self)
+
     def record_stream(self, stream):
         pass
 

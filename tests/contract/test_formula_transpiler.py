@@ -80,7 +80,7 @@ def test_transpile_native_group_norm_uses_helper_fallback():
 
 def test_transpile_roll_uses_helper_fallback():
     formula = 'grad.roll_symint(fmap(reverse_list_symint(shifts), [](c10::SymInt i){return -i;}), reverse_list(dims))'
-    assert transpile(formula) == '_roll_backward_helper(grad, shifts, dims)'
+    assert transpile(formula) == '_roll_backward_helper(grad, grad, shifts, dims, keyset)'
 
 
 def test_transpile_convolution_backward_jvp_uses_helper_fallback():

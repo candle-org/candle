@@ -1737,6 +1737,12 @@ def _inverse_permutation(dims):
     for i, d in enumerate(dims):
         inv[d] = i
     return inv
+
+
+# Backward node classes whose formulas cannot compile in this .pyx (undefined
+# helpers/vars) or whose op is in the skip set subclass the corresponding node
+# from the Python functions.py module, which is correct. Imported once here.
+from candle._generated import functions as _py_functions
 '''
 
 # The helpers block: all the def helper functions from _HEADER that node apply()
@@ -1884,6 +1890,7 @@ _SAFE_FORMULA_GLOBAL_NAMES = {
     "int",
     "bool",
     "range",
+    "hasattr",
 }
 
 
@@ -1995,22 +2002,139 @@ def gen_functions_pyx(infos: list) -> str:  # type: ignore[type-arg]
     if alias_lines:
         parts.append("\n\n# Canonical overload aliases")
         parts.extend(alias_lines)
+
+    # Re-export node classes for ops skipped above (pyx_backward_skip_ops) and
+    # any other backward classes that _variable_type_cy references but are not
+    # generated here. These subclass the correct Python functions.py node so the
+    # engine gets a working node whose __module__ is _functions_cy.
+    skipped_names: list = []
+    seen_cls: set = set()
+    for info in infos:
+        cls = info.backward_name
+        if cls in seen_cls:
+            continue
+        seen_cls.add(cls)
+        if info.op_name in pyx_backward_skip_ops:
+            skipped_names.append(cls)
+    if skipped_names:
+        parts.append("\n\n# Skipped-ops node classes: subclass the Python functions.py node")
+        for cls in skipped_names:
+            parts.append(f"class {cls}(_py_functions.{cls}):")
+            parts.append("    pass")
     content = "\n".join(parts) + "\n"
     content = _re.sub(r'(?<!_)\bredispatch\(', '_redispatch(', content)
     content = _re.sub(r'(?<!_)\breduce_grad\(', '_reduce_grad(', content)
     content = _re.sub(r'(?<!_)\bcurrent_dispatch_keyset\(', '_current_dispatch_keyset(', content)
     return content
 
+def _add_scalar_guards_to_formula(formula: str, local_names: set) -> str:
+    """Wrap .dtype and .shape accesses with hasattr guards for scalar safety.
+
+    When a saved tensor arg can be a Python scalar (int/float) instead of a
+    Tensor during higher-order backward (create_graph=True), accessing .dtype
+    or .shape raises AttributeError. The Python generator manually adds hasattr
+    guards; this function does the same for Cython formulas.
+
+    Example:
+        "other.dtype" → "other.dtype if hasattr(other, 'dtype') else grad.dtype"
+        "self_.shape" → "self_.shape if hasattr(self_, 'shape') else ()"
+    """
+    import re
+    # Match identifier.dtype or identifier.shape
+    attr_pattern = re.compile(r'\b(\w+)\.(dtype|shape)\b')
+
+    def replace_attr(match):
+        var = match.group(1)
+        attr = match.group(2)
+        # Only guard if the variable is a known local (saved tensor arg)
+        if var not in local_names:
+            return match.group(0)
+        if attr == 'dtype':
+            # Fallback to grad.dtype (always available)
+            return f"{var}.{attr} if hasattr({var}, '{attr}') else grad.dtype"
+        elif attr == 'shape':
+            # Fallback to empty tuple
+            return f"{var}.{attr} if hasattr({var}, '{attr}') else ()"
+        return match.group(0)
+
+    return attr_pattern.sub(replace_attr, formula)
+
+
+def _node_is_cython_safe(info: DifferentiabilityInfo) -> bool:
+    """Return True if every derivative formula can run as a real Cython body.
+
+    Mirrors the local_names construction in _gen_one_node_pyx so the safety
+    check matches what the generated backward() body will actually see.
+    """
+    saved_inputs = info.all_saved_inputs
+    saved_outputs = info.all_saved_outputs
+    non_tensor_args = info.non_tensor_args
+    all_saved = [n for n in saved_inputs
+                 if not any(a.name == n and a.is_tensor_list for a in info.args)] + saved_outputs
+
+    local_names: set[str] = {"grad", "keyset"}
+    for name in saved_inputs:
+        arg = next((a for a in info.args if a.name == name), None)
+        if arg and arg.is_tensor_list:
+            continue
+        local_names.add(_safe_local(name))
+    for name in saved_outputs:
+        local_names.add(_safe_local(name))
+
+    tensor_args = [a for a in info.args if a.is_tensor or a.is_optional_tensor or a.is_tensor_list]
+    saved_set = set(saved_outputs)
+    for name in saved_inputs:
+        arg = next((a for a in info.args if a.name == name), None)
+        if arg and arg.is_tensor_list:
+            continue
+        saved_set.add(name)
+    import re as _re
+    _ident_pat = _re.compile(r"\b([a-zA-Z_]\w*)\b")
+    formula_referenced: set = set()
+    for d in info.derivatives:
+        formula_referenced |= set(_ident_pat.findall(d.formula))
+    tensor_arg_names = {a.name for a in tensor_args}
+    unsaved_referenced = (formula_referenced & tensor_arg_names) - saved_set
+    for name in sorted(unsaved_referenced):
+        local_names.add(_safe_local(name))
+    for arg in non_tensor_args:
+        local_names.add(_safe_local(arg.name))
+    if any('grad_input_mask' in d.formula for d in info.derivatives):
+        local_names.add("grad_input_mask")
+
+    for deriv in info.derivatives:
+        formula = transpile(deriv.formula)
+        formula = _rewrite_keyword_refs(formula, {arg.name for arg in info.args})
+        if not _is_cython_safe_formula(formula, local_names):
+            return False
+    return True
+
+
 def _gen_one_node_pyx(info: DifferentiabilityInfo) -> str:
     """Generate a single backward Node class for the .pyx module.
 
     Mirrors _gen_one_node exactly but:
-    - calls _ensure_refs() at the start of apply() to populate cached globals
+    - calls _ensure_refs() at the start of backward() to populate cached globals
     - uses the cached globals (_grad_context, _backward_dispatch_keyset, etc.)
       instead of module-level Python imports
+    - emits def backward (the method the autograd engine calls), not apply
+    - calls saved_tensors() once into _saved and indexes that, matching Node
+    - for formulas that cannot compile in the .pyx (undefined helpers/vars),
+      subclasses the correct Python functions.py node instead of defining a
+      broken class, so the engine still gets a working backward
     - does NOT use negative indexing (wraparound=False footgun)
     """
     cls_name = info.backward_name
+
+    # If any derivative's formula is not cython-safe, the node cannot run a real
+    # formula here. Subclass the Python functions.py node (which is correct) so
+    # the engine gets a working node whose __module__ is _functions_cy.
+    if not _node_is_cython_safe(info):
+        return (
+            f"\nclass {cls_name}(_py_functions.{cls_name}):\n"
+            f"    pass\n"
+        )
+
     saved_inputs = info.all_saved_inputs
     saved_outputs = info.all_saved_outputs
     non_tensor_args = info.non_tensor_args
@@ -2050,25 +2174,32 @@ def _gen_one_node_pyx(info: DifferentiabilityInfo) -> str:
             lines.append(f"            tensors.append({p})")
         lines.append("        if tensors:")
         lines.append("            super().save_for_backward(*tensors)")
+        # Populate _saved_fields so Node.__getattr__ resolves _raw_saved_* / _saved_*
+        for name in all_saved:
+            lines.append(f"        if self._saved_{name}_idx is not None:")
+            lines.append(f"            self._saved_fields[{name!r}] = self._saved_tensors_list[self._saved_{name}_idx]")
 
-    # apply method
-    lines.append("\n    def apply(self, grad):")
+    # backward method (the engine calls node.backward(grad))
+    lines.append("\n    def backward(self, grad):")
     lines.append("        _ensure_refs()")
-    lines.append("        keyset = _backward_dispatch_keyset(self._raw_keyset)")
+    lines.append("        keyset = _backward_dispatch_keyset(self._raw_keyset, self._active_keyset)")
 
-    # Retrieve saved tensors
+    # Retrieve saved tensors — call saved_tensors() once into _saved
     local_names: set[str] = {"grad", "keyset"}
+    optional_tensor_names = {a.name for a in info.args if a.is_optional_tensor}
+    if all_saved:
+        lines.append("        _saved = self.saved_tensors()")
     for name in saved_inputs:
         arg = next((a for a in info.args if a.name == name), None)
         if arg and arg.is_tensor_list:
             continue
         local = _safe_local(name)
         local_names.add(local)
-        lines.append(f"        {local} = self.saved_tensors[self._saved_{name}_idx] if self._saved_{name}_idx is not None else None")
+        lines.append(f"        {local} = _saved[self._saved_{name}_idx] if self._saved_{name}_idx is not None else None")
     for name in saved_outputs:
         local = _safe_local(name)
         local_names.add(local)
-        lines.append(f"        {local} = self.saved_tensors[self._saved_{name}_idx] if self._saved_{name}_idx is not None else None")
+        lines.append(f"        {local} = _saved[self._saved_{name}_idx] if self._saved_{name}_idx is not None else None")
 
     # Retrieve unsaved tensor args referenced in formulas
     tensor_args = [a for a in info.args if a.is_tensor or a.is_optional_tensor or a.is_tensor_list]
@@ -2122,6 +2253,7 @@ def _gen_one_node_pyx(info: DifferentiabilityInfo) -> str:
     for deriv in info.derivatives:
         formula = transpile(deriv.formula)
         formula = _rewrite_keyword_refs(formula, {arg.name for arg in info.args})
+        formula = _add_scalar_guards_to_formula(formula, local_names)
         safe_formula = _is_cython_safe_formula(formula, local_names)
         if len(deriv.var_names) == 1:
             var_name = deriv.var_names[0]

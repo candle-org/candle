@@ -434,7 +434,7 @@ cdef inline void _ensure_refs():
         _current_dispatch_keyset = _cdk
         from .._dispatch.dispatcher import redispatch as _rd
         _redispatch = _rd
-        from . import functions as _f
+        from . import _functions_cy as _f
         _F = _f
 '''
 
