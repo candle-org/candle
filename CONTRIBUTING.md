@@ -56,7 +56,7 @@ conda activate candle
 
 # 3. Install build dependencies and the package in editable mode
 pip install 'cython>=3.0' 'setuptools>=68.0' wheel
-pip install -r requirements/requirements-test.txt   # includes numpy, scipy, pytest, torch (CPU)
+pip install -c requirements/constraints-test-cpu.txt -r requirements/requirements-test.txt
 pip install -e . --no-build-isolation
 ```
 

@@ -2,6 +2,9 @@
 
 Usage:
     python -m tools.autograd.gen_autograd [--yaml PATH] [--output-dir PATH]
+
+Use an empty output directory to generate all files from scratch. Existing
+files with hand-maintained runtime changes are preserved during in-place runs.
 """
 from __future__ import annotations
 
@@ -9,7 +12,9 @@ import argparse
 import sys
 from pathlib import Path
 
-_PRESERVE_IN_PLACE_FILES = {"variable_type.py", "registration.py"}  # Phase 2: allow regenerating functions.py
+# These Python files still contain hand-maintained runtime changes that the
+# generators do not reproduce, including backward helpers in functions.py.
+_PRESERVE_IN_PLACE_FILES = {"functions.py", "variable_type.py", "registration.py"}
 
 
 def main(yaml_path: str | Path, output_dir: str | Path) -> None:

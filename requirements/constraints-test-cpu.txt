@@ -1,0 +1,3 @@
+# CPU and contract tests compare exact exception types and messages with PyTorch.
+# Update this reference alongside a full parity run.
+torch==2.12.0
