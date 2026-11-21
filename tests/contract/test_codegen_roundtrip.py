@@ -14,6 +14,7 @@ or rewrite any of the checked-in files.
 
 from __future__ import annotations
 
+import ast
 import difflib
 import shutil
 from pathlib import Path
@@ -68,3 +69,22 @@ def test_gen_autograd_roundtrips_checked_in_generated_sources(tmp_path):
         )
 
     assert mismatches == [], "\n\n".join(mismatches)
+
+
+def test_gen_autograd_generates_functions_in_fresh_output_dir(tmp_path):
+    root = Path(__file__).resolve().parents[2]
+    output_dir = tmp_path / "generated"
+    gen_autograd_main(root / "tools" / "autograd" / "derivatives.yaml", output_dir)
+
+    generated = ast.parse(_read(output_dir / "functions.py"))
+    maintained = ast.parse(_read(root / "src" / "candle" / "_generated" / "functions.py"))
+    assert any(isinstance(node, ast.ClassDef) and node.name == "MulTensorBackward0" for node in generated.body)
+
+    helpers = (
+        "_mul_tensor_backward_helper",
+        "_div_tensor_self_backward_helper",
+    )
+    generated_helpers = {node.name: ast.dump(node) for node in generated.body if isinstance(node, ast.FunctionDef)}
+    maintained_helpers = {node.name: ast.dump(node) for node in maintained.body if isinstance(node, ast.FunctionDef)}
+    for helper in helpers:
+        assert generated_helpers[helper] == maintained_helpers[helper], helper
